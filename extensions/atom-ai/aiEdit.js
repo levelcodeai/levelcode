@@ -1,0 +1,188 @@
+/*---------------------------------------------------------------------------------------------
+ *  Atom++ — AI (M2, feature: edit with diff)
+ *
+ *  Select code → describe a change → the model rewrites it → review a side-by-side diff →
+ *  Apply or Discard using the buttons on the diff editor's toolbar. The proposed text is
+ *  served through a virtual document so the diff shows syntax-highlighted before/after
+ *  without touching your file until you click Apply.
+ *--------------------------------------------------------------------------------------------*/
+// @ts-check
+'use strict';
+
+const vscode = require('vscode');
+const path = require('path');
+
+const SCHEME = 'atompp-ai';
+const CTX_DIFF_ACTIVE = 'atompp.ai.diffActive';
+
+/** @type {Map<string,string>} virtual-doc uri -> content */
+const contents = new Map();
+/** @type {Map<string,{docUri:vscode.Uri, range:vscode.Range, newText:string, origUri:vscode.Uri}>} keyed by proposed uri */
+const pending = new Map();
+let counter = 0;
+let providerRegistered = false;
+
+const EDIT_SYSTEM =
+	'You are a precise code editor. Rewrite the user\'s code so it satisfies their instruction. ' +
+	'Output ONLY the rewritten code — no explanations, no commentary, and no Markdown code fences.';
+
+function stripFences(text) {
+	let s = text.trim();
+	s = s.replace(/^```[a-zA-Z0-9_+\-.]*\n?/, '');
+	s = s.replace(/\n?```$/, '');
+	return s;
+}
+
+function registerProvider(context) {
+	if (providerRegistered) { return; }
+	providerRegistered = true;
+	context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(SCHEME, {
+		provideTextDocumentContent(uri) { return contents.get(uri.toString()) || ''; }
+	}));
+}
+
+/** The proposed-uri of the diff in the currently active tab, if it's one of ours. */
+function activeProposedUri() {
+	const group = vscode.window.tabGroups.activeTabGroup;
+	const input = /** @type {any} */ (group && group.activeTab && group.activeTab.input);
+	if (input && input.modified && input.modified.scheme === SCHEME && pending.has(input.modified.toString())) {
+		return input.modified;
+	}
+	return undefined;
+}
+
+function updateDiffContext() {
+	vscode.commands.executeCommand('setContext', CTX_DIFF_ACTIVE, !!activeProposedUri());
+}
+
+function cleanup(propUri) {
+	const key = propUri.toString();
+	const p = pending.get(key);
+	if (p) { contents.delete(p.origUri.toString()); }
+	contents.delete(key);
+	pending.delete(key);
+}
+
+async function closeDiffTab(propUri) {
+	for (const group of vscode.window.tabGroups.all) {
+		for (const tab of group.tabs) {
+			const input = /** @type {any} */ (tab.input);
+			if (input && input.modified && input.modified.toString() === propUri.toString()) {
+				await vscode.window.tabGroups.close(tab);
+			}
+		}
+	}
+}
+
+async function applyEdit() {
+	const propUri = activeProposedUri();
+	if (!propUri) { return; }
+	const p = pending.get(propUri.toString());
+	if (!p) { return; }
+	const we = new vscode.WorkspaceEdit();
+	we.replace(p.docUri, p.range, p.newText);
+	await vscode.workspace.applyEdit(we);
+	cleanup(propUri);
+	await closeDiffTab(propUri);
+	updateDiffContext();
+	vscode.window.setStatusBarMessage('$(check) Atom++ AI: edit applied', 2000);
+}
+
+async function discardEdit() {
+	const propUri = activeProposedUri();
+	if (!propUri) { return; }
+	cleanup(propUri);
+	await closeDiffTab(propUri);
+	updateDiffContext();
+	vscode.window.setStatusBarMessage('Atom++ AI: edit discarded', 1500);
+}
+
+/** @param {{aiConfig:()=>any, getClaudeKey:()=>Promise<string|undefined>, streamClaude:Function, streamOllama:Function}} deps */
+async function editSelection(deps) {
+	const ed = vscode.window.activeTextEditor;
+	if (!ed || ed.selection.isEmpty) {
+		vscode.window.showInformationMessage('Atom++ AI: select the code you want to edit first.');
+		return;
+	}
+	const instruction = await vscode.window.showInputBox({
+		title: 'Atom++ AI — Edit selection',
+		prompt: 'Describe the change',
+		placeHolder: 'e.g. add error handling and a JSDoc comment',
+		ignoreFocusOut: true
+	});
+	if (!instruction) { return; }
+
+	const doc = ed.document;
+	const range = new vscode.Range(ed.selection.start, ed.selection.end);
+	const original = doc.getText(range);
+	const lang = doc.languageId || '';
+	const userMsg = `Instruction: ${instruction}\n\nCode (${lang}):\n${original}`;
+
+	let result = '';
+	try {
+		await vscode.window.withProgress(
+			{ location: vscode.ProgressLocation.Notification, title: 'Atom++ AI is editing…', cancellable: true },
+			async (_progress, token) => {
+				const ac = new AbortController();
+				token.onCancellationRequested(() => ac.abort());
+				const onDelta = (d) => { result += d; };
+				const cfg = deps.aiConfig();
+				if (cfg.get('provider', 'claude') === 'claude') {
+					const key = await deps.getClaudeKey();
+					if (!key) { throw new Error('No Anthropic API key set.'); }
+					await deps.streamClaude({
+						apiKey: key, model: cfg.get('claude.model', 'claude-sonnet-4-6'),
+						maxTokens: cfg.get('claude.maxTokens', 4096), system: EDIT_SYSTEM,
+						messages: [{ role: 'user', content: userMsg }], signal: ac.signal, onDelta
+					});
+				} else {
+					await deps.streamOllama({
+						url: cfg.get('ollama.url', 'http://localhost:11434'), model: cfg.get('ollama.model', 'llama3.1'),
+						system: EDIT_SYSTEM, messages: [{ role: 'user', content: userMsg }], signal: ac.signal, onDelta
+					});
+				}
+			}
+		);
+	} catch (e) {
+		vscode.window.showErrorMessage('Atom++ AI edit failed: ' + String((e && e.message) || e));
+		return;
+	}
+
+	const proposed = stripFences(result);
+	if (!proposed.trim()) { vscode.window.showWarningMessage('Atom++ AI: no edit was produced.'); return; }
+
+	const ext = path.extname(doc.uri.fsPath) || '.txt';
+	const n = ++counter;
+	const origUri = vscode.Uri.parse(`${SCHEME}:/${n}/current${ext}`);
+	const propUri = vscode.Uri.parse(`${SCHEME}:/${n}/proposed${ext}`);
+	contents.set(origUri.toString(), original);
+	contents.set(propUri.toString(), proposed);
+	pending.set(propUri.toString(), { docUri: doc.uri, range, newText: proposed, origUri });
+
+	await vscode.commands.executeCommand('vscode.diff', origUri, propUri,
+		'Atom++ AI: proposed edit — use ✓ Apply / ✗ Discard above', { preview: true });
+	updateDiffContext();
+}
+
+/** @param {vscode.ExtensionContext} context @param {object} deps */
+function registerAiEdit(context, deps) {
+	registerProvider(context);
+	context.subscriptions.push(
+		vscode.commands.registerCommand('atompp.ai.editSelection', () => editSelection(deps)),
+		vscode.commands.registerCommand('atompp.ai.applyEdit', applyEdit),
+		vscode.commands.registerCommand('atompp.ai.discardEdit', discardEdit),
+		vscode.window.tabGroups.onDidChangeTabGroups(updateDiffContext),
+		vscode.window.tabGroups.onDidChangeTabs((e) => {
+			// If the user closes our diff tab without choosing, clean up.
+			for (const tab of e.closed) {
+				const input = /** @type {any} */ (tab.input);
+				if (input && input.modified && input.modified.scheme === SCHEME) {
+					cleanup(input.modified);
+				}
+			}
+			updateDiffContext();
+		})
+	);
+}
+
+module.exports = { registerAiEdit };

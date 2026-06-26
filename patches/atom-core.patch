@@ -1,0 +1,66 @@
+diff --git a/build/lib/copilot.ts b/build/lib/copilot.ts
+index 74babc79..a95c9cf4 100644
+--- a/build/lib/copilot.ts
++++ b/build/lib/copilot.ts
+@@ -185,7 +185,10 @@ export function prepareBuiltInCopilotRipgrepShim(platform: string, arch: string,
+ 	const copilotBase = path.join(extensionNodeModules, '@github', 'copilot');
+ 	const copilotSdkBase = path.join(copilotBase, 'sdk');
+ 	if (!fs.existsSync(copilotSdkBase)) {
+-		throw new Error(`[prepareBuiltInCopilotRipgrepShim] Copilot SDK directory not found at ${copilotSdkBase}`);
++		// [Atom++] We don't ship the proprietary GitHub Copilot extension, so there's
++		// no Copilot SDK to shim — skip instead of failing the build. (M2 adds our own AI.)
++		console.log('[prepareBuiltInCopilotRipgrepShim] Copilot not bundled (Atom++); skipping ripgrep shim.');
++		return;
+ 	}
+ 	pruneNonTargetCopilotSdkPrebuilds(platformArch, path.join(copilotSdkBase, 'prebuilds'), copilotPlatforms);
+ 	pruneNonTargetCopilotSdkPrebuilds(tgrepPlatformArch, path.join(copilotSdkBase, path.join('tgrep', 'bin')), copilotTgrepPlatforms);
+diff --git a/build/lib/extensions.ts b/build/lib/extensions.ts
+index e487ff5c..ec0f5734 100644
+--- a/build/lib/extensions.ts
++++ b/build/lib/extensions.ts
+@@ -461,26 +461,12 @@ function doPackageLocalExtensionsStream(forWeb: boolean, disableMangle: boolean,
+  * This is used by non-CI local builds where copilot is not downloaded as a VSIX
+  * but must be compiled from source and included in the build.
+  */
+-export function packageCopilotExtensionStream(disableMangle: boolean): Stream {
+-	const extensionPath = path.join(root, 'extensions', 'copilot');
+-	if (!fs.existsSync(extensionPath)) {
+-		return es.readArray([]);
+-	}
+-
+-	const localExtensionsStream = minifyExtensionResources(
+-		fromLocal(extensionPath, false, disableMangle)
+-			.pipe(rename(p => p.dirname = `extensions/copilot/${p.dirname}`))
+-	);
+-
+-	const productionDependencies = getProductionDependencies('extensions/copilot');
+-	const dependenciesSrc = productionDependencies.map(d => path.relative(root, d)).map(d => [`${d}/**`, `!${d}/**/{test,tests}/**`]).flat();
+-
+-	return es.merge(
+-		localExtensionsStream,
+-		gulp.src(dependenciesSrc, { base: '.' })
+-			.pipe(util2.cleanNodeModules(path.join(root, 'build', '.moduleignore')))
+-			.pipe(util2.cleanNodeModules(path.join(root, 'build', `.moduleignore.${process.platform}`)))
+-	).pipe(util2.setExecutableBit(['**/*.sh']));
++export function packageCopilotExtensionStream(_disableMangle: boolean): Stream {
++	// [Atom++] Do not bundle the proprietary GitHub Copilot Chat extension. It is not
++	// MIT-licensed and cannot be redistributed in a non-Microsoft product; Atom++'s own
++	// AI layer (M2) replaces it. Returning an empty stream drops it from the build and
++	// also avoids its fragile from-source packaging (missing shims.txt, prebuilt binaries).
++	return es.readArray([]);
+ }
+ 
+ export function packageMarketplaceExtensionsStream(forWeb: boolean): Stream {
+diff --git a/src/vs/workbench/contrib/files/browser/files.contribution.ts b/src/vs/workbench/contrib/files/browser/files.contribution.ts
+index 574c2d8e..398873be 100644
+--- a/src/vs/workbench/contrib/files/browser/files.contribution.ts
++++ b/src/vs/workbench/contrib/files/browser/files.contribution.ts
+@@ -125,7 +125,7 @@ const hotExitConfiguration: IConfigurationPropertySchema = isNative ?
+ 		'type': 'string',
+ 		'scope': ConfigurationScope.APPLICATION,
+ 		'enum': [HotExitConfiguration.OFF, HotExitConfiguration.ON_EXIT, HotExitConfiguration.ON_EXIT_AND_WINDOW_CLOSE],
+-		'default': HotExitConfiguration.ON_EXIT,
++		'default': HotExitConfiguration.ON_EXIT_AND_WINDOW_CLOSE, // [Atom++] Sublime-style persistence by default (was ON_EXIT)
+ 		'markdownEnumDescriptions': [
+ 			nls.localize('hotExit.off', 'Disable hot exit. A prompt will show when attempting to close a window with editors that have unsaved changes.'),
+ 			nls.localize('hotExit.onExit', 'Hot exit will be triggered when the last window is closed on Windows/Linux or when the `workbench.action.quit` command is triggered (command palette, keybinding, menu). All windows without folders opened will be restored upon next launch. A list of previously opened windows with unsaved files can be accessed via `File > Open Recent > More...`'),

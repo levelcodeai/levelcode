@@ -12,7 +12,7 @@
  * product.json.vanilla so you can always diff/restore.
  */
 
-import { readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, copyFileSync, readdirSync, cpSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -77,6 +77,31 @@ if (!existsSync(vanillaBackup)) {
 
 const merged = deepMerge(product, overlay);
 writeFileSync(productPath, JSON.stringify(merged, null, "\t") + "\n", "utf8");
+
+// Apply the Atom++ app icon, if we have one, so rebuilds/rebootstraps keep it.
+const icnsSrc = join(repoRoot, "branding", "icons", "atom-plus-plus.icns");
+const icnsDst = join(vscodeDir, "resources", "darwin", "code.icns");
+if (existsSync(icnsSrc) && existsSync(dirname(icnsDst))) {
+  copyFileSync(icnsSrc, icnsDst);
+  console.log(`[apply-branding] Installed app icon -> ${icnsDst}`);
+}
+const pngSrc = join(repoRoot, "branding", "icons", "atom-plus-plus-1024.png");
+const pngDst = join(vscodeDir, "resources", "linux", "code.png");
+if (existsSync(pngSrc) && existsSync(dirname(pngDst))) {
+  copyFileSync(pngSrc, pngDst);
+}
+
+// Install our bundled Atom++ extensions into the checkout. The canonical, version-controlled
+// source lives in this repo's extensions/ folder; the copies inside vscode/ are generated.
+const extSrcRoot = join(repoRoot, "extensions");
+if (existsSync(extSrcRoot)) {
+  for (const name of readdirSync(extSrcRoot)) {
+    const src = join(extSrcRoot, name);
+    if (!statSync(src).isDirectory()) { continue; }
+    cpSync(src, join(vscodeDir, "extensions", name), { recursive: true, force: true });
+    console.log(`[apply-branding] Installed extension -> extensions/${name}`);
+  }
+}
 
 console.log(`[apply-branding] Atom++ branding applied to ${productPath}`);
 console.log(`[apply-branding]   nameLong        = ${merged.nameLong}`);

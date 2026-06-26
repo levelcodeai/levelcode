@@ -105,9 +105,20 @@ if [ -f "$VSCODE_DIR/.nvmrc" ]; then
   info "Node $(node -v) matches .nvmrc (${WANT_NODE}) ✓"
 fi
 
-# --- apply branding ---------------------------------------------------------
-info "Applying Atom++ branding overlay"
+# --- apply branding + extensions --------------------------------------------
+info "Applying Atom++ branding overlay + installing extensions"
 node "$SCRIPT_DIR/apply-branding.mjs" "$VSCODE_DIR"
+
+# --- apply core source patches ----------------------------------------------
+# A fresh checkout is pristine; these patches re-apply our [Atom++] core edits.
+if [ -f "$ROOT_DIR/patches/atom-core.patch" ]; then
+  info "Applying Atom++ core patches"
+  if ! git -C "$VSCODE_DIR" apply --3way "$ROOT_DIR/patches/atom-core.patch"; then
+    err "Core patch failed to apply (upstream likely changed these files on tag ${VSCODE_TAG})."
+    err "Re-create it after resolving — see docs/CORE-PATCHES.md."
+    exit 1
+  fi
+fi
 
 # --- install deps -----------------------------------------------------------
 info "Installing dependencies (this is the slow part — several minutes)"

@@ -1,0 +1,107 @@
+{
+	"name": "atom-ai",
+	"displayName": "Atom++ AI",
+	"description": "Native, Claude-first AI for Atom++ — chat with your code, no middle-man backend.",
+	"publisher": "atompp",
+	"version": "0.1.0",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.126.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./extension.js",
+	"contributes": {
+		"languageModelChatProviders": [
+			{ "vendor": "atompp", "displayName": "Atom++ (Claude)" }
+		],
+		"viewsContainers": {
+			"activitybar": [
+				{ "id": "atomAi", "title": "Atom++ AI", "icon": "media/atom-ai.svg" }
+			]
+		},
+		"views": {
+			"atomAi": [
+				{ "id": "atomAi.chat", "name": "Chat", "type": "webview" }
+			]
+		},
+		"commands": [
+			{ "command": "atompp.ai.focus", "title": "AI: Focus Chat", "category": "Atom++" },
+			{ "command": "atompp.ai.newChat", "title": "AI: New Chat", "category": "Atom++", "icon": "$(add)" },
+			{ "command": "atompp.ai.pickModel", "title": "AI: Select Model…", "category": "Atom++" },
+			{ "command": "atompp.ai.addSelection", "title": "AI: Add Selection to Chat", "category": "Atom++" },
+			{ "command": "atompp.ai.editSelection", "title": "AI: Edit Selection…", "category": "Atom++", "icon": "$(sparkle)" },
+			{ "command": "atompp.ai.applyEdit", "title": "Apply AI Edit", "category": "Atom++", "icon": "$(check)" },
+			{ "command": "atompp.ai.discardEdit", "title": "Discard AI Edit", "category": "Atom++", "icon": "$(close)" },
+			{ "command": "atompp.ai.setApiKey", "title": "AI: Set Anthropic API Key…", "category": "Atom++", "icon": "$(key)" },
+			{ "command": "atompp.ai.clearApiKey", "title": "AI: Clear Anthropic API Key", "category": "Atom++" }
+		],
+		"menus": {
+			"view/title": [
+				{ "command": "atompp.ai.newChat", "when": "view == atomAi.chat", "group": "navigation@1" },
+				{ "command": "atompp.ai.setApiKey", "when": "view == atomAi.chat", "group": "navigation@2" }
+			],
+			"editor/context": [
+				{ "command": "atompp.ai.editSelection", "when": "editorHasSelection", "group": "z_atompp@1" },
+				{ "command": "atompp.ai.addSelection", "when": "editorHasSelection", "group": "z_atompp@2" }
+			],
+			"editor/title": [
+				{ "command": "atompp.ai.applyEdit", "when": "atompp.ai.diffActive", "group": "navigation@1" },
+				{ "command": "atompp.ai.discardEdit", "when": "atompp.ai.diffActive", "group": "navigation@2" }
+			],
+			"commandPalette": [
+				{ "command": "atompp.ai.applyEdit", "when": "false" },
+				{ "command": "atompp.ai.discardEdit", "when": "false" }
+			]
+		},
+		"keybindings": [
+			{ "command": "atompp.ai.addSelection", "key": "cmd+alt+a", "when": "editorTextFocus && editorHasSelection" },
+			{ "command": "atompp.ai.editSelection", "key": "cmd+alt+e", "when": "editorTextFocus && editorHasSelection" }
+		],
+		"configuration": {
+			"title": "Atom++ AI",
+			"properties": {
+				"atompp.ai.provider": {
+					"type": "string",
+					"enum": ["claude", "ollama"],
+					"enumDescriptions": ["Anthropic Claude (bring your own API key)", "Local models via Ollama"],
+					"default": "claude",
+					"description": "Which AI provider the chat uses."
+				},
+				"atompp.ai.claude.model": {
+					"type": "string",
+					"enum": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+					"enumDescriptions": ["Claude Opus 4.8 (most capable)", "Claude Sonnet 4.6 (balanced)", "Claude Haiku 4.5 (fastest)"],
+					"default": "claude-sonnet-4-6",
+					"description": "Claude model to use."
+				},
+				"atompp.ai.claude.maxTokens": {
+					"type": "number",
+					"default": 4096,
+					"minimum": 256,
+					"description": "Maximum tokens in a Claude response."
+				},
+				"atompp.ai.ollama.url": {
+					"type": "string",
+					"default": "http://localhost:11434",
+					"description": "Base URL of your local Ollama server."
+				},
+				"atompp.ai.ollama.model": {
+					"type": "string",
+					"default": "llama3.1",
+					"description": "Ollama model name (must be pulled locally, e.g. `ollama pull llama3.1`)."
+				}
+			}
+		}
+	}
+}
