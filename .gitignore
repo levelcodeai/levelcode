@@ -1,0 +1,14 @@
+# The upstream Code-OSS checkout is produced by scripts/bootstrap.sh — never commit it.
+/vscode/
+/.vscode-pinned-tag
+
+# Build outputs (siblings of vscode/ created by gulp)
+/VSCode-darwin-*/
+/VSCode-linux-*/
+/VSCode-win32-*/
+
+# Node / OS noise
+node_modules/
+.DS_Store
+*.log
+out/

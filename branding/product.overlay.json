@@ -1,0 +1,51 @@
+{
+  "_comment": "Atom++ branding overlay. This is DEEP-MERGED onto the stock vscode/product.json by scripts/apply-branding.mjs. Keep it minimal — only the keys we intentionally change. Do not paste a whole product.json here; merging keeps us compatible across upstream versions.",
+
+  "nameShort": "Atom++",
+  "nameLong": "Atom++",
+  "applicationName": "atom-plus-plus",
+  "serverApplicationName": "atom-plus-plus-server",
+  "serverDataFolderName": ".atom-plus-plus-server",
+  "dataFolderName": ".atom-plus-plus",
+  "darwinBundleIdentifier": "net.systemu.atom-plus-plus",
+  "win32AppUserModelId": "SystemU.AtomPlusPlus",
+  "win32MutexName": "atomplusplus",
+  "win32DirName": "Atom++",
+  "win32NameVersion": "Atom++",
+  "win32RegValueName": "AtomPlusPlus",
+  "win32AppId": "{{EA2A1F4B-0000-0000-0000-ATOMPLUSPLUS}}",
+  "win32x64AppId": "{{EA2A1F4B-0001-0000-0000-ATOMPLUSPLUS}}",
+  "win32arm64AppId": "{{EA2A1F4B-0002-0000-0000-ATOMPLUSPLUS}}",
+  "win32UserAppId": "{{EA2A1F4B-0003-0000-0000-ATOMPLUSPLUS}}",
+  "win32x64UserAppId": "{{EA2A1F4B-0004-0000-0000-ATOMPLUSPLUS}}",
+  "win32arm64UserAppId": "{{EA2A1F4B-0005-0000-0000-ATOMPLUSPLUS}}",
+
+  "urlProtocol": "atom-plus-plus",
+  "quality": "stable",
+
+  "licenseName": "MIT",
+  "licenseUrl": "https://github.com/systemu-net/atom-plus-plus/blob/main/LICENSE",
+  "reportIssueUrl": "https://github.com/systemu-net/atom-plus-plus/issues/new",
+
+  "enableTelemetry": false,
+  "telemetryOptOutUrl": "",
+  "aiConfig": {
+    "ariaKey": ""
+  },
+
+  "extensionsGallery": {
+    "serviceUrl": "https://open-vsx.org/vscode/gallery",
+    "itemUrl": "https://open-vsx.org/vscode/item",
+    "resourceUrlTemplate": "https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}",
+    "controlUrl": "",
+    "recommendationsUrl": ""
+  },
+
+  "linkProtectionTrustedDomains": [
+    "https://open-vsx.org"
+  ],
+
+  "_atomPlusPlus": {
+    "note": "Namespace reserved for Atom++ feature flags (M1 Notepad++ pack, M2 AI core, M3 hackability). Upstream ignores unknown keys, so this is a safe place to carry our config across rebases."
+  }
+}
