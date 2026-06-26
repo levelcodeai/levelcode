@@ -40,6 +40,7 @@
 			{ "command": "atompp.ai.newChat", "title": "AI: New Chat", "category": "Atom++", "icon": "$(add)" },
 			{ "command": "atompp.ai.pickModel", "title": "AI: Select Model…", "category": "Atom++" },
 			{ "command": "atompp.ai.addSelection", "title": "AI: Add Selection to Chat", "category": "Atom++" },
+			{ "command": "atompp.ai.addFileContext", "title": "AI: Add Files to Chat…", "category": "Atom++", "icon": "$(new-file)" },
 			{ "command": "atompp.ai.editSelection", "title": "AI: Edit Selection…", "category": "Atom++", "icon": "$(sparkle)" },
 			{ "command": "atompp.ai.applyEdit", "title": "Keep AI Edit", "category": "Atom++", "icon": "$(check)" },
 			{ "command": "atompp.ai.discardEdit", "title": "Discard AI Edit", "category": "Atom++", "icon": "$(close)" },
@@ -49,8 +50,9 @@
 		],
 		"menus": {
 			"view/title": [
-				{ "command": "atompp.ai.newChat", "when": "view == atomAi.chat", "group": "navigation@1" },
-				{ "command": "atompp.ai.setApiKey", "when": "view == atomAi.chat", "group": "navigation@2" }
+				{ "command": "atompp.ai.addFileContext", "when": "view == atomAi.chat", "group": "navigation@1" },
+				{ "command": "atompp.ai.newChat", "when": "view == atomAi.chat", "group": "navigation@2" },
+				{ "command": "atompp.ai.setApiKey", "when": "view == atomAi.chat", "group": "navigation@3" }
 			],
 			"editor/context": [
 				{ "command": "atompp.ai.editSelection", "when": "editorHasSelection", "group": "z_atompp@1" },

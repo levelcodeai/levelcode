@@ -35,6 +35,8 @@ let activeWebview;
 let conversation = [];
 /** @type {string | null} */
 let pendingContext = null;
+/** Files pinned as chat context (whole codebase-wide context). @type {{id:string,uri:vscode.Uri,name:string,rel:string}[]} */
+let contextFiles = [];
 /** @type {AbortController | null} */
 let abort = null;
 
@@ -75,11 +77,78 @@ function addSelection() {
 	post({ type: 'context', label: sel.label });
 }
 
+function postContextFiles() {
+	post({ type: 'contextFiles', files: contextFiles.map((f) => ({ id: f.id, name: f.name, rel: f.rel })) });
+}
+
+function removeFileContext(id) {
+	contextFiles = contextFiles.filter((f) => f.id !== id);
+	postContextFiles();
+}
+
+/** Unified "+ Add context" picker: choose the current selection and/or files from the workspace. */
+async function addContext() {
+	/** @type {any[]} */
+	const items = [];
+	const sel = captureSelection();
+	if (sel) { items.push({ label: '$(selection) Selected code', description: sel.label, _kind: 'sel', _sel: sel }); }
+
+	const excludes = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
+	const uris = await vscode.workspace.findFiles('**/*', excludes, 5000);
+	if (sel && uris.length) { items.push({ label: 'Workspace files', kind: vscode.QuickPickItemKind.Separator }); }
+	for (const u of uris) {
+		items.push({ label: '$(file) ' + path.basename(u.fsPath), description: vscode.workspace.asRelativePath(u), _kind: 'file', _uri: u });
+	}
+	if (!items.length) { vscode.window.showInformationMessage('Atom++ AI: no workspace files to add.'); return; }
+
+	const picks = await vscode.window.showQuickPick(items, {
+		canPickMany: true,
+		matchOnDescription: true,
+		placeHolder: 'Add context — pick the selection and/or files (type to filter)'
+	});
+	if (!picks || !picks.length) { return; }
+
+	for (const p of picks) {
+		if (p._kind === 'sel') {
+			pendingContext = p._sel.block;
+			post({ type: 'context', label: p._sel.label });
+		} else if (p._kind === 'file') {
+			const id = p._uri.fsPath;
+			if (!contextFiles.find((f) => f.id === id)) {
+				contextFiles.push({ id, uri: p._uri, name: path.basename(id), rel: vscode.workspace.asRelativePath(p._uri) });
+			}
+		}
+	}
+	vscode.commands.executeCommand('atomAi.chat.focus');
+	postContextFiles();
+}
+
+/** Read pinned context files as content blocks, capped to protect the context window. */
+async function contextFileBlocks() {
+	const PER_FILE = 80 * 1024;
+	const TOTAL = 250 * 1024;
+	const blocks = [];
+	let used = 0;
+	for (const f of contextFiles) {
+		try {
+			const doc = await vscode.workspace.openTextDocument(f.uri);
+			let body = doc.getText();
+			if (body.length > PER_FILE) { body = body.slice(0, PER_FILE) + '\n…(file truncated for context)…'; }
+			if (used + body.length > TOTAL) { blocks.push('…(some pinned files omitted to fit the context window)…'); break; }
+			used += body.length;
+			blocks.push('File `' + f.rel + '`:\n```' + (doc.languageId || '') + '\n' + body + '\n```');
+		} catch { /* unreadable/binary file — skip */ }
+	}
+	return blocks;
+}
+
 function newChat() {
 	conversation = [];
 	pendingContext = null;
+	contextFiles = [];
 	if (abort) { abort.abort(); }
 	post({ type: 'reset' });
+	postContextFiles();
 }
 
 /** The currently open file as a context block (capped), or null. */
@@ -113,6 +182,7 @@ async function handleSend(text) {
 	const blocks = [];
 	const fileBlock = activeFileBlock();
 	if (fileBlock) { blocks.push(fileBlock); }
+	blocks.push(...await contextFileBlocks());
 	if (pendingContext) { blocks.push(pendingContext); }
 	const userContent = blocks.length ? (blocks.join('\n\n') + '\n\n' + text) : text;
 	conversation.push({ role: 'user', content: userContent });
@@ -214,10 +284,12 @@ class ChatViewProvider {
 		view.webview.html = getHtml();
 		view.webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
-				case 'ready': sendConfigToWebview(); postActiveFile(); break;
+				case 'ready': sendConfigToWebview(); postActiveFile(); postContextFiles(); break;
 				case 'send': await handleSend(msg.text); break;
 				case 'stop': if (abort) { abort.abort(); } break;
 				case 'addSelection': addSelection(); break;
+				case 'addContext': await addContext(); break;
+				case 'removeContext': removeFileContext(msg.id); break;
 				case 'newChat': newChat(); break;
 				case 'setKey': await promptForKey(); break;
 				case 'pickModel': await pickModel(); break;
@@ -249,6 +321,7 @@ function activate(context) {
 		vscode.commands.registerCommand('atompp.ai.newChat', newChat),
 		vscode.commands.registerCommand('atompp.ai.pickModel', pickModel),
 		vscode.commands.registerCommand('atompp.ai.addSelection', addSelection),
+		vscode.commands.registerCommand('atompp.ai.addFileContext', addContext),
 		vscode.commands.registerCommand('atompp.ai.setApiKey', promptForKey),
 		vscode.commands.registerCommand('atompp.ai.clearApiKey', async () => {
 			await context.secrets.delete(SECRET_KEY);

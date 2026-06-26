@@ -61,6 +61,13 @@
     padding: 2px 4px; border-radius: 4px;
     background: var(--accent); color: #fff; opacity: .9;
   }
+  .chip.pinned { padding-right: 4px; }
+  .chip .x {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; margin-left: 1px; cursor: pointer;
+    border-radius: 50%; font-size: 9px; opacity: .55;
+  }
+  .chip .x:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.35)); }
   .addchip {
     display: inline-flex; align-items: center; gap: 5px;
     font-size: 11px; line-height: 1; padding: 4px 9px; cursor: pointer;
@@ -167,6 +174,7 @@
   let streaming = false;
   let activeFileLabel = null;
   let selLabel = null;
+  let ctxFiles = [];       // files pinned as context: {id,name,rel}
 
   function esc(s){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
@@ -185,12 +193,22 @@
   function selChip(label){
     return '<span class="chip" title="Selected code, sent as context">📎 <span class="name">' + esc(label) + '</span></span>';
   }
+  function pinnedChip(f){
+    return '<span class="chip pinned" title="' + esc(f.rel) + ' — pinned as context">' +
+      '<span class="badge">' + esc(badgeFor(f.name)) + '</span>' +
+      '<span class="name">' + esc(f.name) + '</span>' +
+      '<span class="x" data-id="' + esc(f.id) + '" title="Remove">✕</span></span>';
+  }
   function renderChips(){
-    let h = '<button class="addchip" id="addctx" title="Add selected code as context (⌥⌘A)"><span class="plus">+</span> Add context</button>';
+    let h = '<button class="addchip" id="addctx" title="Add files or selection as context"><span class="plus">+</span> Add context</button>';
     if (activeFileLabel) { h += fileChip(activeFileLabel); }
+    for (const f of ctxFiles) { h += pinnedChip(f); }
     if (selLabel) { h += selChip(selLabel); }
     chipsEl.innerHTML = h;
-    document.getElementById('addctx').onclick = () => vscode.postMessage({ type: 'addSelection' });
+    document.getElementById('addctx').onclick = () => vscode.postMessage({ type: 'addContext' });
+    chipsEl.querySelectorAll('.x').forEach(x => {
+      x.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: 'removeContext', id: x.getAttribute('data-id') }); };
+    });
   }
 
   function render(md){
@@ -247,7 +265,7 @@
   }
 
   sendBtn.onclick = doSend;
-  document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'addSelection' });
+  document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'addContext' });
   document.getElementById('model').onclick = () => vscode.postMessage({ type: 'pickModel' });
   document.getElementById('settings').onclick = () => vscode.postMessage({ type: 'openSettings' });
 
@@ -275,11 +293,12 @@
       current = null; setStreaming(false);
     }
     else if (m.type === 'activeFile'){ activeFileLabel = m.label; renderChips(); }
+    else if (m.type === 'contextFiles'){ ctxFiles = m.files || []; renderChips(); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
-      selLabel = null; renderChips();
+      selLabel = null; ctxFiles = []; renderChips();
       pending = ''; shown = ''; doneSignaled = false; flushAll = false; current = null; setStreaming(false);
     }
   });
