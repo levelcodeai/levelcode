@@ -34,9 +34,9 @@ docs/M0-RUNBOOK.md, EXIT-TEST.md, M1-SPEC.md
 branding/product.overlay.json   Atom++ identity + Open VSX gallery (deep-merged onto product.json)
 branding/icons/             app icon source PNG, generated .icns, 1024 png
 extensions/atom-npp-pack/   Notepad++ power-editing pack (plain JS, no build step)
-extensions/atom-ai/         native Claude AI (chat, providers, edit-with-diff, LM provider)
+extensions/atom-ai/         native Claude AI (chat, inline completion, providers, edit-with-diff, LM provider)
 patches/atom-core.patch     our core source edits, applied on bootstrap
-scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-icon.sh
+scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-dmg.sh, make-icon.sh
 vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 ```
 
@@ -46,6 +46,7 @@ vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 ./scripts/bootstrap.sh        # fresh: clone Code-OSS @ pinned tag, brand, install extensions, apply patches, npm ci
 ./scripts/run-dev.sh          # dev: sync + compile + launch (Copilot disabled). Fast iteration.
 ./scripts/build-macos.sh      # package Atom++.app (arch-aware). Output: VSCode-darwin-<arch>/Atom++.app
+./scripts/make-dmg.sh         # ad-hoc sign Atom++.app + wrap it into a single distributable Atom++-<arch>.dmg
 ./scripts/make-icon.sh        # regenerate .icns from branding/icons/atom-plus-plus-source.png (sips+iconutil)
 ```
 
@@ -88,10 +89,20 @@ line operations (sort/dedup/case/…), column incrementing numbers, encoding/EOL
 big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol/bigFile.js.
 
 **M2 — native AI (`extensions/atom-ai/`, working):**
-- `providers.js` — streaming Anthropic Messages API + Ollama `/api/chat` (direct, BYO key, no backend).
-- `extension.js` — webview chat panel: streaming, model picker (Claude Opus 4.8 / Sonnet 4.6 / Haiku 4.5 + Ollama),
-  `Add selection` context, and **auto-includes the whole open file** as context (chip in input; `atompp.ai.includeActiveFile`).
-  Key stored in SecretStorage (`atompp.ai.anthropicKey`).
+- `providers.js` — streaming + non-streaming Anthropic Messages API + Ollama (direct, BYO key, no backend).
+  `streamClaude`/`streamOllama` for chat, `completeClaude`/`completeOllama` for inline completion.
+- `extension.js` — webview chat panel **in the secondary (right) side bar** (`viewsContainers.secondarySidebar`),
+  opens by default on first launch (`globalState` `didAutoOpen`), `Cmd+Alt+I` to focus. Model picker
+  (Opus 4.8 / Sonnet 4.6 / Haiku 4.5 + Ollama). Context: auto-includes the open file
+  (`atompp.ai.includeActiveFile`), **pin any workspace files** via a searchable picker (`addContext`,
+  removable chips), and **automatic retrieval** (`gatherAutoContext`) — ripgrep content search + filename +
+  workspace symbols, scoped to the active sub-project, shown as a `🔎 Auto-context` line. Key in SecretStorage
+  (`atompp.ai.anthropicKey`). Settings under `atompp.ai.chat.*`.
+- `media/chat.html` — the chat UI: Codex-style composer (context chips, model/mode toolbar) and a
+  `requestAnimationFrame` **typewriter** that reveals streamed text smoothly instead of dumping chunks.
+- `inlineComplete.js` — **inline tab-completion** (ghost text): `InlineCompletionItemProvider` over all files,
+  debounced (`atompp.ai.completions.debounce`, 150ms), cancels in-flight on keystroke, silent key lookup
+  (never prompts mid-typing). Status-bar toggle + `atompp.ai.toggleCompletions`. Default model Haiku.
 - `lmProvider.js` — registers Claude as a native `LanguageModelChatProvider` (vendor `atompp`). Stable API.
 - `aiEdit.js` — **edit-with-diff**: select code → `Cmd+Alt+E` → instruction → side-by-side diff → ✓ Keep / ✗ Discard
   buttons on the diff toolbar (gated on `atompp.ai.diffActive`).
@@ -104,7 +115,10 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
   "right" means driving VS Code's native chat-editing: register a chat participant + a complete
   `IDefaultChatAgent` in product.json + patch out Copilot's sign-in/entitlement gating in `chatSetup*`. Big,
   multi-session core effort. We use the diff-tab review instead.
-- Not yet built: inline tab-completion, codebase-wide (multi-file) chat context, Notepad++ keymap preset.
+- Built since M2 shipped: inline tab-completion (`inlineComplete.js`), multi-file + auto-retrieval chat context
+  (`gatherAutoContext`), chat moved to the right side bar, typewriter streaming, `make-dmg.sh` packaging.
+- Not yet built: Notepad++ keymap preset (M1 leftover); agentic multi-file tasks (M4); M3 hackability
+  (settings UI, user init script, package generator, theme studio, settings import).
 
 ## Conventions
 
