@@ -29,6 +29,7 @@
 
   "enableTelemetry": false,
   "telemetryOptOutUrl": "",
+  "voiceWsUrl": "",
   "aiConfig": {
     "ariaKey": ""
   },

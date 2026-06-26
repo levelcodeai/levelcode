@@ -26,7 +26,7 @@
 			{ "vendor": "atompp", "displayName": "Atom++ (Claude)" }
 		],
 		"viewsContainers": {
-			"activitybar": [
+			"secondarySidebar": [
 				{ "id": "atomAi", "title": "Atom++ AI", "icon": "media/atom-ai.svg" }
 			]
 		},
@@ -65,6 +65,7 @@
 			]
 		},
 		"keybindings": [
+			{ "command": "atompp.ai.focus", "key": "cmd+alt+i" },
 			{ "command": "atompp.ai.addSelection", "key": "cmd+alt+a", "when": "editorTextFocus && editorHasSelection" },
 			{ "command": "atompp.ai.editSelection", "key": "cmd+alt+e", "when": "editorTextFocus && editorHasSelection" }
 		],

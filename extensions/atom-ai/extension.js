@@ -220,6 +220,7 @@ class ChatViewProvider {
 				case 'newChat': newChat(); break;
 				case 'setKey': await promptForKey(); break;
 				case 'pickModel': await pickModel(); break;
+				case 'openSettings': vscode.commands.executeCommand('workbench.action.openSettings', '@ext:atompp.atom-ai'); break;
 			}
 		});
 	}
@@ -275,6 +276,14 @@ function activate(context) {
 		if (!key && !silent) { key = await promptForKey(); }
 		return key;
 	});
+
+	// AI-first: reveal the chat (in the secondary side bar) on first launch. We do this once
+	// and then defer to VS Code's own per-workspace layout persistence, so if the user later
+	// closes the panel we don't keep forcing it back open.
+	if (!context.globalState.get('atompp.ai.didAutoOpen')) {
+		context.globalState.update('atompp.ai.didAutoOpen', true);
+		setTimeout(() => { vscode.commands.executeCommand('atomAi.chat.focus'); }, 600);
+	}
 }
 
 function deactivate() { if (abort) { abort.abort(); } }

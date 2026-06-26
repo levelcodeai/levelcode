@@ -5,61 +5,194 @@
 <meta http-equiv="Content-Security-Policy" content="__CSP__">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-  :root { color-scheme: light dark; }
-  body { margin:0; padding:0; font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); background: transparent; display:flex; flex-direction:column; height:100vh; }
-  #log { flex:1; overflow-y:auto; padding:10px; display:flex; flex-direction:column; gap:10px; }
-  .msg { padding:8px 10px; border-radius:8px; white-space:pre-wrap; word-wrap:break-word; line-height:1.45; }
-  .user { background: var(--vscode-input-background); border:1px solid var(--vscode-input-border, transparent); }
-  .assistant { background: var(--vscode-editorWidget-background, rgba(127,127,127,.08)); }
-  .role { font-size:11px; opacity:.6; margin-bottom:4px; text-transform:uppercase; letter-spacing:.04em; }
+  :root {
+    color-scheme: light dark;
+    --radius: 12px;
+    --pill-radius: 999px;
+    --border: var(--vscode-input-border, var(--vscode-panel-border, rgba(127,127,127,.28)));
+    --muted: var(--vscode-descriptionForeground, rgba(127,127,127,.85));
+    --field-bg: var(--vscode-input-background, rgba(127,127,127,.06));
+    --accent: var(--vscode-focusBorder, #4c8dff);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-foreground);
+    background: transparent;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+
+  /* ---- conversation log ---- */
+  #log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { white-space: pre-wrap; word-wrap: break-word; line-height: 1.5; }
+  .msg .role { font-size: 11px; opacity: .55; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+  .msg.user .body { background: var(--field-bg); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
+  .msg.assistant .body { padding: 1px 2px; }
   .err { color: var(--vscode-errorForeground); }
-  pre { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.15)); padding:8px; border-radius:6px; overflow-x:auto; }
-  code { font-family: var(--vscode-editor-font-family, monospace); }
-  #empty { opacity:.6; padding:18px; text-align:center; }
-  #ctx { margin:0 10px; }
-  .chip { display:inline-flex; align-items:center; gap:6px; font-size:11px; padding:3px 8px; border-radius:10px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
-  #bar { border-top:1px solid var(--vscode-panel-border, rgba(127,127,127,.25)); padding:8px; display:flex; flex-direction:column; gap:6px; }
-  #row { display:flex; gap:6px; align-items:flex-end; }
-  textarea { flex:1; resize:none; min-height:34px; max-height:140px; padding:7px 9px; border-radius:6px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border:1px solid var(--vscode-input-border, var(--vscode-contrastBorder, #8884)); font-family:inherit; font-size:inherit; box-sizing:border-box; }
-  button { cursor:pointer; border:none; border-radius:6px; padding:7px 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-  button:hover { background: var(--vscode-button-hoverBackground); }
-  button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
-  #meta { display:flex; justify-content:space-between; align-items:center; font-size:11px; opacity:.7; }
-  #meta a { color: var(--vscode-textLink-foreground); cursor:pointer; }
+  pre { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.15)); padding: 9px 10px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+  code { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: .92em; }
+  #empty { margin: auto; max-width: 280px; text-align: center; opacity: .65; line-height: 1.55; padding: 20px; }
+  #empty .big { font-size: 1.15em; opacity: .9; margin-bottom: 6px; }
+
+  /* ---- composer ---- */
+  #composer {
+    margin: 8px; padding: 8px 8px 6px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--field-bg);
+    display: flex; flex-direction: column; gap: 7px;
+    transition: border-color .12s ease, box-shadow .12s ease;
+  }
+  #composer.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+  #chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; line-height: 1; padding: 4px 8px;
+    border-radius: var(--pill-radius);
+    border: 1px solid var(--border); background: var(--vscode-badge-background, rgba(127,127,127,.12));
+    color: var(--vscode-foreground); max-width: 100%;
+  }
+  .chip .name { font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+  .chip .badge {
+    font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+    font-size: 9px; font-weight: 700; letter-spacing: .03em;
+    padding: 2px 4px; border-radius: 4px;
+    background: var(--accent); color: #fff; opacity: .9;
+  }
+  .addchip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; line-height: 1; padding: 4px 9px; cursor: pointer;
+    border-radius: var(--pill-radius);
+    border: 1px dashed var(--border); background: transparent; color: var(--muted);
+  }
+  .addchip:hover { color: var(--vscode-foreground); border-color: var(--accent); }
+  .addchip .plus { font-size: 13px; line-height: 1; }
+
+  textarea#input {
+    width: 100%; resize: none; min-height: 46px; max-height: 200px;
+    padding: 4px 4px; border: none; outline: none;
+    color: var(--vscode-input-foreground, var(--vscode-foreground));
+    background: transparent; font-family: inherit; font-size: 13px; line-height: 1.45;
+  }
+  textarea#input::placeholder { color: var(--muted); opacity: .8; }
+
+  #toolbar { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  #toolbar .left { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .tbtn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; cursor: pointer;
+    border: none; border-radius: 7px; background: transparent; color: var(--muted);
+    font-size: 15px; line-height: 1;
+  }
+  .tbtn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); color: var(--vscode-foreground); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 7px;
+    color: var(--vscode-foreground); cursor: pointer; user-select: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pill:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
+  .pill.static { cursor: default; }
+  .pill.static:hover { background: transparent; }
+  .pill .mono { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); opacity: .7; }
+  .pill .caret { opacity: .5; font-size: 10px; }
+  .sep { width: 1px; height: 16px; background: var(--border); margin: 0 2px; flex: 0 0 auto; }
+
+  #send {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; flex: 0 0 auto; cursor: pointer;
+    border: none; border-radius: 8px;
+    background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+    font-size: 15px; line-height: 1;
+  }
+  #send:hover { background: var(--vscode-button-hoverBackground); }
+  #send.stop { background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.3)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+
+  /* ---- status footer ---- */
+  #status {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 14px 8px; font-size: 11px; color: var(--muted);
+  }
+  #status .item { display: inline-flex; align-items: center; gap: 4px; }
 </style>
 </head>
 <body>
-  <div id="log"><div id="empty">Ask Atom++ AI about your code.<br>Use <b>Add selection</b> (or ⌥⌘A) to send the selected code as context.</div></div>
-  <div id="ctx"></div>
-  <div id="bar">
-    <div id="meta"><a id="model" title="Click to change model">…</a><span><a id="addsel">Add selection</a> · <a id="new">New chat</a></span></div>
-    <div id="row">
-      <textarea id="input" placeholder="Message Atom++ AI…  (Enter to send, Shift+Enter for newline)"></textarea>
-      <button id="send">Send</button>
-      <button id="stop" class="secondary" style="display:none">Stop</button>
+  <div id="log">
+    <div id="empty">
+      <div class="big">Atom++ AI</div>
+      Ask about your code, or describe what to build.<br>
+      The open file is sent as context. Add a selection with <b>+</b> or ⌥⌘A.
     </div>
   </div>
+
+  <div id="composer">
+    <div id="chips"></div>
+    <textarea id="input" rows="2" placeholder="Describe what to build"></textarea>
+    <div id="toolbar">
+      <div class="left">
+        <button class="tbtn" id="attach" title="Add selected code as context (⌥⌘A)">+</button>
+        <span class="sep"></span>
+        <span class="pill static" id="mode" title="Chat mode. Agent mode is coming in M4.">
+          <span class="mono">&lt;/&gt;</span> Chat
+        </span>
+        <span class="pill" id="model" title="Click to change model">Auto <span class="caret">▾</span></span>
+        <button class="tbtn" id="settings" title="Atom++ AI settings">&#9776;</button>
+      </div>
+      <button id="send" title="Send (Enter)">&#8629;</button>
+    </div>
+  </div>
+
+  <div id="status">
+    <span class="item" id="st-local" title="Requests go directly from your machine to the provider — no Atom++ backend.">🖥 Local</span>
+    <span class="item" id="st-key" title="Bring your own API key, stored in your OS keychain.">🛡 Direct · BYO key</span>
+  </div>
+
 <script nonce="__NONCE__">
   const vscode = acquireVsCodeApi();
   const log = document.getElementById('log');
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send');
-  const stopBtn = document.getElementById('stop');
-  const ctxEl = document.getElementById('ctx');
+  const chipsEl = document.getElementById('chips');
+  const composer = document.getElementById('composer');
   const FENCE = String.fromCharCode(96, 96, 96);
   const TICK = String.fromCharCode(96);
   let current = null;
-  let raw = '';
+  let shown = '';          // text revealed in the bubble so far
+  let pending = '';        // received from the model but not yet revealed (typewriter buffer)
+  let animating = false;   // is the rAF reveal loop running
+  let doneSignaled = false;// model finished; finalize once the buffer drains
+  let flushAll = false;    // dump the whole buffer at once (on stop)
+  let streaming = false;
   let activeFileLabel = null;
   let selLabel = null;
 
   function esc(s){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-  function renderChips(){
-    let h = '';
-    if (activeFileLabel){ h += '<span class="chip" title="The open file is sent to the AI as context">📄 ' + esc(activeFileLabel) + '</span> '; }
-    if (selLabel){ h += '<span class="chip">📎 ' + esc(selLabel) + '</span>'; }
-    ctxEl.innerHTML = h;
+
+  // "name.ext · 12 lines" -> badge from extension (JS, TS, PY…), capped at 3 chars.
+  function badgeFor(label){
+    const name = (label || '').split('·')[0].trim();
+    const dot = name.lastIndexOf('.');
+    if (dot < 0 || dot === name.length - 1) { return 'TXT'; }
+    return name.slice(dot + 1).toUpperCase().slice(0, 3);
   }
+  function fileChip(label){
+    return '<span class="chip" title="' + esc(label) + ' — sent as context">' +
+      '<span class="badge">' + esc(badgeFor(label)) + '</span>' +
+      '<span class="name">' + esc(label.split('·')[0].trim()) + '</span></span>';
+  }
+  function selChip(label){
+    return '<span class="chip" title="Selected code, sent as context">📎 <span class="name">' + esc(label) + '</span></span>';
+  }
+  function renderChips(){
+    let h = '<button class="addchip" id="addctx" title="Add selected code as context (⌥⌘A)"><span class="plus">+</span> Add context</button>';
+    if (activeFileLabel) { h += fileChip(activeFileLabel); }
+    if (selLabel) { h += selChip(selLabel); }
+    chipsEl.innerHTML = h;
+    document.getElementById('addctx').onclick = () => vscode.postMessage({ type: 'addSelection' });
+  }
+
   function render(md){
     const parts = md.split(FENCE);
     let out = '';
@@ -81,31 +214,85 @@
     d.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'Atom++ AI') + '</div><div class="body">' + html + '</div>';
     log.appendChild(d); log.scrollTop = log.scrollHeight; return d.querySelector('.body');
   }
+
+  // Typewriter reveal: deltas land in `pending`; this loop moves them into `shown`
+  // at a steady pace so output flows in naturally instead of dumping in blocks.
+  // It self-balances — a big backlog (fast model) is drained faster so it never lags far behind.
+  function pump(){
+    if (pending.length === 0){
+      animating = false;
+      if (doneSignaled){ doneSignaled = false; current = null; setStreaming(false); }
+      return;
+    }
+    const backlog = pending.length;
+    const take = flushAll ? backlog : Math.min(backlog, Math.max(3, Math.ceil(backlog / 20)));
+    shown += pending.slice(0, take);
+    pending = pending.slice(take);
+    if (current){ current.innerHTML = render(shown); log.scrollTop = log.scrollHeight; }
+    requestAnimationFrame(pump);
+  }
+  function ensurePump(){ if (!animating){ animating = true; requestAnimationFrame(pump); } }
+
+  function setStreaming(on){
+    streaming = on;
+    sendBtn.classList.toggle('stop', on);
+    sendBtn.innerHTML = on ? '&#9632;' : '&#8629;';     // ■ while streaming, ↵ otherwise
+    sendBtn.title = on ? 'Stop' : 'Send (Enter)';
+  }
   function doSend(){
+    if (streaming) { flushAll = true; ensurePump(); vscode.postMessage({ type: 'stop' }); return; }
     const t = input.value.trim(); if (!t) return;
-    add('user', render(t)); input.value = ''; input.style.height = '34px';
+    add('user', render(t)); input.value = ''; auto();
     vscode.postMessage({ type: 'send', text: t });
   }
+
   sendBtn.onclick = doSend;
-  stopBtn.onclick = () => vscode.postMessage({ type: 'stop' });
-  document.getElementById('addsel').onclick = () => vscode.postMessage({ type: 'addSelection' });
-  document.getElementById('new').onclick = () => vscode.postMessage({ type: 'newChat' });
+  document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'addSelection' });
   document.getElementById('model').onclick = () => vscode.postMessage({ type: 'pickModel' });
+  document.getElementById('settings').onclick = () => vscode.postMessage({ type: 'openSettings' });
+
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); doSend(); } });
-  input.addEventListener('input', () => { input.style.height = '34px'; input.style.height = Math.min(input.scrollHeight, 140) + 'px'; });
+  function auto(){ input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 200) + 'px'; }
+  input.addEventListener('input', auto);
+  input.addEventListener('focus', () => composer.classList.add('focused'));
+  input.addEventListener('blur', () => composer.classList.remove('focused'));
 
   window.addEventListener('message', ev => {
     const m = ev.data;
-    if (m.type === 'config'){ document.getElementById('model').textContent = (m.provider === 'claude' ? 'Claude' : 'Ollama') + ' · ' + m.model + ' ▾'; }
-    else if (m.type === 'assistantStart'){ raw = ''; current = add('assistant', ''); sendBtn.style.display = 'none'; stopBtn.style.display = ''; }
-    else if (m.type === 'assistantDelta'){ raw += m.text; if (current){ current.innerHTML = render(raw); log.scrollTop = log.scrollHeight; } }
-    else if (m.type === 'assistantDone'){ current = null; sendBtn.style.display = ''; stopBtn.style.display = 'none'; }
-    else if (m.type === 'assistantError'){ add('assistant', '<span class="err">' + esc(m.message) + '</span>'); sendBtn.style.display = ''; stopBtn.style.display = 'none'; current = null; }
+    if (m.type === 'config'){
+      const label = m.provider === 'claude' ? prettyModel(m.model) : m.model;
+      const mEl = document.getElementById('model');
+      mEl.innerHTML = esc(label) + ' <span class="caret">▾</span>';
+      mEl.title = (m.provider === 'claude' ? 'Claude' : 'Ollama') + ' · ' + m.model + ' — click to change';
+    }
+    else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = add('assistant', ''); setStreaming(true); }
+    else if (m.type === 'assistantDelta'){ pending += m.text; ensurePump(); }
+    else if (m.type === 'assistantDone'){ doneSignaled = true; ensurePump(); }
+    else if (m.type === 'assistantError'){
+      pending = ''; flushAll = false; doneSignaled = false;
+      const html = '<span class="err">' + esc(m.message) + '</span>';
+      if (current){ current.innerHTML = html; } else { add('assistant', html); }
+      current = null; setStreaming(false);
+    }
     else if (m.type === 'activeFile'){ activeFileLabel = m.label; renderChips(); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
-    else if (m.type === 'reset'){ log.innerHTML = '<div id="empty">New chat started.</div>'; selLabel = null; renderChips(); current = null; sendBtn.style.display = ''; stopBtn.style.display = 'none'; }
+    else if (m.type === 'reset'){
+      log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
+      selLabel = null; renderChips();
+      pending = ''; shown = ''; doneSignaled = false; flushAll = false; current = null; setStreaming(false);
+    }
   });
+
+  function prettyModel(id){
+    if (!id) return 'Auto';
+    if (id.indexOf('opus') >= 0) return 'Opus 4.8';
+    if (id.indexOf('sonnet') >= 0) return 'Sonnet 4.6';
+    if (id.indexOf('haiku') >= 0) return 'Haiku 4.5';
+    return id;
+  }
+
+  renderChips();
   vscode.postMessage({ type: 'ready' });
 </script>
 </body>

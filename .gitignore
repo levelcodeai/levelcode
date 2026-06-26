@@ -7,6 +7,9 @@
 /VSCode-linux-*/
 /VSCode-win32-*/
 
+# Distributable disk images (produced by scripts/make-dmg.sh)
+/*.dmg
+
 # Node / OS noise
 node_modules/
 .DS_Store
