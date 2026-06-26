@@ -11,6 +11,7 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
+const cp = require('child_process');
 const { streamClaude, streamOllama, completeClaude, completeOllama, listOllamaModels } = require('./providers');
 const { registerAiEdit } = require('./aiEdit');
 const { registerLmProvider } = require('./lmProvider');
@@ -23,6 +24,8 @@ const CLAUDE_MODELS = [
 ];
 
 const SECRET_KEY = 'atompp.ai.anthropicKey';
+const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
+const STOPWORDS = new Set(['the','and','for','with','that','this','how','does','what','where','when','why','from','into','your','you','are','was','were','will','can','could','should','would','about','have','has','its','it','the','file','code','function','please','show','tell','explain','using','use','used','there','their','then','than','they','them','some','any','all','not','but','get','set']);
 const SYSTEM_PROMPT =
 	'You are Atom++\'s built-in AI assistant, helping the user write and understand code inside their editor. ' +
 	'Be concise and practical. Use Markdown and fenced code blocks. When given a code selection as context, focus your answer on it.';
@@ -93,8 +96,7 @@ async function addContext() {
 	const sel = captureSelection();
 	if (sel) { items.push({ label: '$(selection) Selected code', description: sel.label, _kind: 'sel', _sel: sel }); }
 
-	const excludes = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
-	const uris = await vscode.workspace.findFiles('**/*', excludes, 5000);
+	const uris = await vscode.workspace.findFiles('**/*', FILE_EXCLUDES, 5000);
 	if (sel && uris.length) { items.push({ label: 'Workspace files', kind: vscode.QuickPickItemKind.Separator }); }
 	for (const u of uris) {
 		items.push({ label: '$(file) ' + path.basename(u.fsPath), description: vscode.workspace.asRelativePath(u), _kind: 'file', _uri: u });
@@ -142,6 +144,177 @@ async function contextFileBlocks() {
 	return blocks;
 }
 
+/** List workspace files once (cached per send), respecting the standard excludes. */
+async function listWorkspaceFiles() {
+	if (!vscode.workspace.workspaceFolders || !vscode.workspace.workspaceFolders.length) { return []; }
+	return vscode.workspace.findFiles('**/*', FILE_EXCLUDES, 5000);
+}
+
+/** Identifiers/keywords from a question, minus common stop-words. */
+function extractKeywords(text) {
+	const raw = text.match(/[A-Za-z_][A-Za-z0-9_]{2,}/g) || [];
+	const seen = new Set();
+	const out = [];
+	for (const w of raw) {
+		const lw = w.toLowerCase();
+		if (STOPWORDS.has(lw) || seen.has(lw)) { continue; }
+		seen.add(lw);
+		out.push(w);
+		if (out.length >= 12) { break; }
+	}
+	return out;
+}
+
+/** Resolve the ripgrep binary bundled with the editor (dev and packaged paths differ). */
+let _rgPath; // cached: string | null
+function rgPath() {
+	if (_rgPath !== undefined) { return _rgPath; }
+	const root = vscode.env.appRoot;
+	const candidates = [
+		path.join(root, 'node_modules', '@vscode', 'ripgrep', 'bin', 'rg'),
+		path.join(root, 'node_modules', '@vscode', 'ripgrep-universal', 'bin', process.platform + '-' + process.arch, 'rg'),
+		path.join(root, 'node_modules.asar.unpacked', '@vscode', 'ripgrep', 'bin', 'rg')
+	];
+	_rgPath = candidates.find((c) => { try { return fs.existsSync(c); } catch { return false; } }) || null;
+	return _rgPath;
+}
+
+/** Files (absolute paths) under cwd whose CONTENT contains the literal term. Empty on any failure. */
+function rgFiles(term, cwd) {
+	return new Promise((resolve) => {
+		const bin = rgPath();
+		if (!bin || !cwd) { resolve([]); return; }
+		const args = [
+			'--files-with-matches', '--no-messages', '--no-config', '-i', '-F',
+			'--max-filesize', '1M', '--max-count', '1',
+			'-g', '!**/node_modules/**', '-g', '!**/.git/**', '-g', '!**/out/**',
+			'-g', '!**/dist/**', '-g', '!**/*.map', '-g', '!**/*.min.*',
+			'-e', term, '.'
+		];
+		let out = '';
+		let done = false;
+		const finish = (paths) => { if (!done) { done = true; resolve(paths); } };
+		try {
+			const child = cp.spawn(bin, args, { cwd });
+			const timer = setTimeout(() => { try { child.kill(); } catch { /* noop */ } finish([]); }, 4000);
+			child.stdout.on('data', (d) => { out += d.toString(); });
+			child.on('error', () => { clearTimeout(timer); finish([]); });
+			child.on('close', () => {
+				clearTimeout(timer);
+				finish(out.split('\n').map((s) => s.trim()).filter(Boolean).map((rel) => path.resolve(cwd, rel)));
+			});
+		} catch { finish([]); }
+	});
+}
+
+/** Scope retrieval to the active file's top-level sub-project, so unrelated sibling trees
+ *  (e.g. a vendored source dump) don't pollute results. Returns the search dir + rel prefix. */
+function activeProjectScope() {
+	const folders = vscode.workspace.workspaceFolders || [];
+	const fallback = { dir: folders.length ? folders[0].uri.fsPath : '', prefix: '' };
+	if (!aiConfig().get('chat.scopeToActiveProject', true)) { return fallback; }
+	const ed = vscode.window.activeTextEditor;
+	if (!ed || ed.document.uri.scheme !== 'file') { return fallback; }
+	const wsFolder = vscode.workspace.getWorkspaceFolder(ed.document.uri);
+	if (!wsFolder) { return fallback; }
+	const rel = path.relative(wsFolder.uri.fsPath, ed.document.uri.fsPath);
+	if (!rel || rel.startsWith('..')) { return fallback; }
+	const top = rel.split(path.sep)[0];
+	const topPath = path.join(wsFolder.uri.fsPath, top);
+	try { if (!fs.statSync(topPath).isDirectory()) { return fallback; } } catch { return fallback; }
+	return { dir: topPath, prefix: top + '/' };
+}
+
+/** A specific identifier (long or camelCase) is a much stronger relevance signal than a common word. */
+function contentWeight(kw) {
+	return (kw.length >= 8 || /[A-Z]/.test(kw.slice(1))) ? 6 : 3;
+}
+
+/**
+ * Auto-discover files relevant to the question via ripgrep content search (primary),
+ * filename matches, and workspace symbols — scoped to the active sub-project. Returns their
+ * contents as context blocks (capped). Skips the active & pinned files; thresholds out noise.
+ * @returns {Promise<{blocks:string[], names:string[]}>}
+ */
+async function gatherAutoContext(question, allFiles) {
+	const cfg = aiConfig();
+	const keywords = extractKeywords(question);
+	if (!keywords.length) { return { blocks: [], names: [] }; }
+	const scope = activeProjectScope();
+	const inScope = (uri) => !scope.prefix || vscode.workspace.asRelativePath(uri).startsWith(scope.prefix);
+
+	/** @type {Map<string,{uri:vscode.Uri,score:number}>} */
+	const score = new Map();
+	const bump = (uri, s) => {
+		const k = uri.fsPath;
+		const cur = score.get(k);
+		if (cur) { cur.score += s; } else { score.set(k, { uri, score: s }); }
+	};
+
+	// 1. CONTENT search via ripgrep (primary signal — finds files by what's inside them).
+	const terms = keywords.slice(0, 6);
+	const hits = await Promise.all(terms.map((kw) => rgFiles(kw, scope.dir)));
+	for (let i = 0; i < terms.length; i++) {
+		for (const abs of hits[i]) { bump(vscode.Uri.file(abs), contentWeight(terms[i])); }
+	}
+
+	// 2. filename matches (scoped).
+	for (const u of allFiles) {
+		if (!inScope(u)) { continue; }
+		const base = path.basename(u.fsPath).toLowerCase();
+		for (const kw of keywords) { if (kw.length >= 3 && base.includes(kw.toLowerCase())) { bump(u, 4); } }
+	}
+
+	// 3. workspace symbols (scoped; uses language-server indexes when present).
+	for (const kw of terms) {
+		let syms = [];
+		try { syms = await vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', kw) || []; } catch { syms = []; }
+		for (const sym of syms.slice(0, 20)) {
+			const uri = sym && sym.location && sym.location.uri;
+			if (!uri || !inScope(uri)) { continue; }
+			const exact = sym.name && sym.name.toLowerCase() === kw.toLowerCase();
+			bump(uri, exact ? 5 : 2);
+		}
+	}
+
+	const MIN_SCORE = 4; // a single common-word match (3) is not enough on its own.
+	const activeUri = vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.uri.fsPath : null;
+	const pinned = new Set(contextFiles.map((f) => f.id));
+	const max = Math.max(0, cfg.get('chat.autoContextMaxFiles', 4));
+	const ranked = [...score.values()]
+		.filter((e) => e.score >= MIN_SCORE && e.uri.fsPath !== activeUri && !pinned.has(e.uri.fsPath))
+		.sort((a, b) => b.score - a.score)
+		.slice(0, max);
+
+	const blocks = [];
+	const names = [];
+	let used = 0;
+	const PER = 60 * 1024, TOTAL = 180 * 1024;
+	for (const e of ranked) {
+		try {
+			const doc = await vscode.workspace.openTextDocument(e.uri);
+			let body = doc.getText();
+			if (body.length > PER) { body = body.slice(0, PER) + '\n…(truncated)…'; }
+			if (used + body.length > TOTAL) { break; }
+			used += body.length;
+			const rel = vscode.workspace.asRelativePath(e.uri);
+			blocks.push('Possibly relevant file `' + rel + '`:\n```' + (doc.languageId || '') + '\n' + body + '\n```');
+			names.push(rel);
+		} catch { /* unreadable/binary — skip */ }
+	}
+	return { blocks, names };
+}
+
+/** A compact list of project file paths, so the model knows the repo structure. */
+function workspaceMapBlock(allFiles) {
+	if (!allFiles.length) { return null; }
+	const rels = allFiles.map((u) => vscode.workspace.asRelativePath(u)).sort();
+	const CAP = 400;
+	let list = rels.slice(0, CAP).join('\n');
+	if (rels.length > CAP) { list += '\n…(' + (rels.length - CAP) + ' more files)…'; }
+	return 'Project files (paths only, for orientation):\n```\n' + list + '\n```';
+}
+
 function newChat() {
 	conversation = [];
 	pendingContext = null;
@@ -180,13 +353,26 @@ async function handleSend(text) {
 	const provider = cfg.get('provider', 'claude');
 
 	const blocks = [];
+
+	// Workspace-derived context (auto-retrieval + optional file map) — one file listing, reused.
+	const wantAuto = cfg.get('chat.autoContext', true);
+	const wantMap = cfg.get('chat.workspaceMap', false);
+	let allFiles = [];
+	if (wantAuto || wantMap) { allFiles = await listWorkspaceFiles(); }
+	if (wantMap) { const mb = workspaceMapBlock(allFiles); if (mb) { blocks.push(mb); } }
+
 	const fileBlock = activeFileBlock();
 	if (fileBlock) { blocks.push(fileBlock); }
 	blocks.push(...await contextFileBlocks());
+
+	const auto = wantAuto ? await gatherAutoContext(text, allFiles) : { blocks: [], names: [] };
+	blocks.push(...auto.blocks);
+
 	if (pendingContext) { blocks.push(pendingContext); }
 	const userContent = blocks.length ? (blocks.join('\n\n') + '\n\n' + text) : text;
 	conversation.push({ role: 'user', content: userContent });
 	post({ type: 'userMessage', text });
+	if (auto.names.length) { post({ type: 'autoContext', names: auto.names }); }
 	pendingContext = null;
 	post({ type: 'clearContext' });
 	post({ type: 'assistantStart' });

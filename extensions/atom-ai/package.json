@@ -87,6 +87,27 @@
 					"default": true,
 					"description": "Automatically send the currently open file to the AI as context with each chat message."
 				},
+				"atompp.ai.chat.autoContext": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically find and include workspace files relevant to your chat question (via filename + symbol search)."
+				},
+				"atompp.ai.chat.autoContextMaxFiles": {
+					"type": "number",
+					"default": 4,
+					"minimum": 0,
+					"description": "Maximum number of files auto-included as context per chat message."
+				},
+				"atompp.ai.chat.scopeToActiveProject": {
+					"type": "boolean",
+					"default": true,
+					"description": "Limit auto-context search to the active file's top-level sub-folder, so unrelated sibling projects in the same workspace don't pollute results."
+				},
+				"atompp.ai.chat.workspaceMap": {
+					"type": "boolean",
+					"default": false,
+					"description": "Include a list of all project file paths with each chat message, so the AI knows the repo structure. Uses more tokens."
+				},
 				"atompp.ai.completions.enabled": {
 					"type": "boolean",
 					"default": true,

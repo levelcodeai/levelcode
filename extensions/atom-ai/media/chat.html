@@ -33,6 +33,8 @@
   .err { color: var(--vscode-errorForeground); }
   pre { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.15)); padding: 9px 10px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
   code { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: .92em; }
+  .autoctx { font-size: 11px; opacity: .55; margin: -4px 2px 2px; }
+  .autoctx .files { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
   #empty { margin: auto; max-width: 280px; text-align: center; opacity: .65; line-height: 1.55; padding: 20px; }
   #empty .big { font-size: 1.15em; opacity: .9; margin-bottom: 6px; }
 
@@ -232,6 +234,13 @@
     d.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'Atom++ AI') + '</div><div class="body">' + html + '</div>';
     log.appendChild(d); log.scrollTop = log.scrollHeight; return d.querySelector('.body');
   }
+  function addAutoCtx(names){
+    if (!names || !names.length) { return; }
+    clearEmpty();
+    const d = document.createElement('div'); d.className = 'autoctx';
+    d.innerHTML = '🔎 Auto-context: <span class="files">' + names.map(esc).join(', ') + '</span>';
+    log.appendChild(d); log.scrollTop = log.scrollHeight;
+  }
 
   // Typewriter reveal: deltas land in `pending`; this loop moves them into `shown`
   // at a steady pace so output flows in naturally instead of dumping in blocks.
@@ -294,6 +303,7 @@
     }
     else if (m.type === 'activeFile'){ activeFileLabel = m.label; renderChips(); }
     else if (m.type === 'contextFiles'){ ctxFiles = m.files || []; renderChips(); }
+    else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
