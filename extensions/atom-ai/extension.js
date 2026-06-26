@@ -81,12 +81,39 @@ function newChat() {
 	post({ type: 'reset' });
 }
 
+/** The currently open file as a context block (capped), or null. */
+function activeFileBlock() {
+	const ed = vscode.window.activeTextEditor;
+	if (!ed || ed.document.uri.scheme !== 'file') { return null; }
+	if (!aiConfig().get('includeActiveFile', true)) { return null; }
+	const name = path.basename(ed.document.uri.fsPath);
+	const lang = ed.document.languageId || '';
+	let body = ed.document.getText();
+	const MAX = 120 * 1024;
+	if (body.length > MAX) { body = body.slice(0, MAX) + '\n…(file truncated for context)…'; }
+	return 'Currently open file `' + name + '` (full contents):\n```' + lang + '\n' + body + '\n```';
+}
+
+/** Tell the webview which file is open, to show as a context chip. */
+function postActiveFile() {
+	const ed = vscode.window.activeTextEditor;
+	if (!ed || ed.document.uri.scheme !== 'file' || !aiConfig().get('includeActiveFile', true)) {
+		post({ type: 'activeFile', label: null });
+		return;
+	}
+	post({ type: 'activeFile', label: path.basename(ed.document.uri.fsPath) + ' · ' + ed.document.lineCount + ' lines' });
+}
+
 async function handleSend(text) {
 	if (!text || !text.trim()) { return; }
 	const cfg = aiConfig();
 	const provider = cfg.get('provider', 'claude');
 
-	const userContent = pendingContext ? (pendingContext + '\n\n' + text) : text;
+	const blocks = [];
+	const fileBlock = activeFileBlock();
+	if (fileBlock) { blocks.push(fileBlock); }
+	if (pendingContext) { blocks.push(pendingContext); }
+	const userContent = blocks.length ? (blocks.join('\n\n') + '\n\n' + text) : text;
 	conversation.push({ role: 'user', content: userContent });
 	post({ type: 'userMessage', text });
 	pendingContext = null;
@@ -186,7 +213,7 @@ class ChatViewProvider {
 		view.webview.html = getHtml();
 		view.webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
-				case 'ready': sendConfigToWebview(); break;
+				case 'ready': sendConfigToWebview(); postActiveFile(); break;
 				case 'send': await handleSend(msg.text); break;
 				case 'stop': if (abort) { abort.abort(); } break;
 				case 'addSelection': addSelection(); break;
@@ -215,6 +242,7 @@ function activate(context) {
 		vscode.window.registerWebviewViewProvider('atomAi.chat', new ChatViewProvider(), {
 			webviewOptions: { retainContextWhenHidden: true }
 		}),
+		vscode.window.onDidChangeActiveTextEditor(() => postActiveFile()),
 		vscode.commands.registerCommand('atompp.ai.focus', () => vscode.commands.executeCommand('atomAi.chat.focus')),
 		vscode.commands.registerCommand('atompp.ai.newChat', newChat),
 		vscode.commands.registerCommand('atompp.ai.pickModel', pickModel),

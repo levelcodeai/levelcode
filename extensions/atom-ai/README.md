@@ -20,6 +20,6 @@ Native, Claude-first AI for Atom++. The chat lives in its own activity-bar panel
 **Settings:** `atompp.ai.provider`, `atompp.ai.claude.model`, `atompp.ai.claude.maxTokens`,
 `atompp.ai.ollama.url`, `atompp.ai.ollama.model`.
 
-**Edit with diff:** select code → `⌥⌘E` (or right-click → *AI: Edit Selection…*) → describe the change. The model rewrites it, you review a side-by-side diff, and click **Apply** or **Discard**. Your file isn't changed until you Apply.
+**Edit with inline review:** select code → `⌥⌘E` (or right-click → *AI: Edit Selection…*) → describe the change. The model rewrites it and the result appears **inline in the editor** with changed lines highlighted green and a CodeLens above each change offering **✓ Keep / ✗ Undo** (plus **Keep All / Undo All** at the top). Keep accepts a change; Undo restores the original for that hunk. Nothing is final until you Keep.
 
 Coming next in M2: inline tab-completion, and codebase-wide context.

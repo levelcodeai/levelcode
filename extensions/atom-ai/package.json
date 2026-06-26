@@ -41,7 +41,7 @@
 			{ "command": "atompp.ai.pickModel", "title": "AI: Select Model…", "category": "Atom++" },
 			{ "command": "atompp.ai.addSelection", "title": "AI: Add Selection to Chat", "category": "Atom++" },
 			{ "command": "atompp.ai.editSelection", "title": "AI: Edit Selection…", "category": "Atom++", "icon": "$(sparkle)" },
-			{ "command": "atompp.ai.applyEdit", "title": "Apply AI Edit", "category": "Atom++", "icon": "$(check)" },
+			{ "command": "atompp.ai.applyEdit", "title": "Keep AI Edit", "category": "Atom++", "icon": "$(check)" },
 			{ "command": "atompp.ai.discardEdit", "title": "Discard AI Edit", "category": "Atom++", "icon": "$(close)" },
 			{ "command": "atompp.ai.setApiKey", "title": "AI: Set Anthropic API Key…", "category": "Atom++", "icon": "$(key)" },
 			{ "command": "atompp.ai.clearApiKey", "title": "AI: Clear Anthropic API Key", "category": "Atom++" }
@@ -77,6 +77,11 @@
 					"enumDescriptions": ["Anthropic Claude (bring your own API key)", "Local models via Ollama"],
 					"default": "claude",
 					"description": "Which AI provider the chat uses."
+				},
+				"atompp.ai.includeActiveFile": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically send the currently open file to the AI as context with each chat message."
 				},
 				"atompp.ai.claude.model": {
 					"type": "string",

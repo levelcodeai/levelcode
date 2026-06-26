@@ -50,8 +50,16 @@
   const TICK = String.fromCharCode(96);
   let current = null;
   let raw = '';
+  let activeFileLabel = null;
+  let selLabel = null;
 
   function esc(s){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  function renderChips(){
+    let h = '';
+    if (activeFileLabel){ h += '<span class="chip" title="The open file is sent to the AI as context">📄 ' + esc(activeFileLabel) + '</span> '; }
+    if (selLabel){ h += '<span class="chip">📎 ' + esc(selLabel) + '</span>'; }
+    ctxEl.innerHTML = h;
+  }
   function render(md){
     const parts = md.split(FENCE);
     let out = '';
@@ -93,9 +101,10 @@
     else if (m.type === 'assistantDelta'){ raw += m.text; if (current){ current.innerHTML = render(raw); log.scrollTop = log.scrollHeight; } }
     else if (m.type === 'assistantDone'){ current = null; sendBtn.style.display = ''; stopBtn.style.display = 'none'; }
     else if (m.type === 'assistantError'){ add('assistant', '<span class="err">' + esc(m.message) + '</span>'); sendBtn.style.display = ''; stopBtn.style.display = 'none'; current = null; }
-    else if (m.type === 'context'){ ctxEl.innerHTML = '<span class="chip">📎 ' + esc(m.label) + '</span>'; }
-    else if (m.type === 'clearContext'){ ctxEl.innerHTML = ''; }
-    else if (m.type === 'reset'){ log.innerHTML = '<div id="empty">New chat started.</div>'; ctxEl.innerHTML = ''; current = null; sendBtn.style.display = ''; stopBtn.style.display = 'none'; }
+    else if (m.type === 'activeFile'){ activeFileLabel = m.label; renderChips(); }
+    else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
+    else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
+    else if (m.type === 'reset'){ log.innerHTML = '<div id="empty">New chat started.</div>'; selLabel = null; renderChips(); current = null; sendBtn.style.display = ''; stopBtn.style.display = 'none'; }
   });
   vscode.postMessage({ type: 'ready' });
 </script>

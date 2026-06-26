@@ -12,7 +12,7 @@
  * product.json.vanilla so you can always diff/restore.
  */
 
-import { readFileSync, writeFileSync, existsSync, copyFileSync, readdirSync, cpSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, copyFileSync, readdirSync, cpSync, statSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -98,7 +98,9 @@ if (existsSync(extSrcRoot)) {
   for (const name of readdirSync(extSrcRoot)) {
     const src = join(extSrcRoot, name);
     if (!statSync(src).isDirectory()) { continue; }
-    cpSync(src, join(vscodeDir, "extensions", name), { recursive: true, force: true });
+    const dst = join(vscodeDir, "extensions", name);
+    rmSync(dst, { recursive: true, force: true }); // clean overwrite (avoids stale/locked files)
+    cpSync(src, dst, { recursive: true });
     console.log(`[apply-branding] Installed extension -> extensions/${name}`);
   }
 }

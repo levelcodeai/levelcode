@@ -1,10 +1,10 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI (M2, feature: edit with diff)
+ *  Atom++ — AI (M2: edit selection → reviewable diff)
  *
  *  Select code → describe a change → the model rewrites it → review a side-by-side diff →
- *  Apply or Discard using the buttons on the diff editor's toolbar. The proposed text is
- *  served through a virtual document so the diff shows syntax-highlighted before/after
- *  without touching your file until you click Apply.
+ *  ✓ Keep / ✗ Discard from the diff editor's toolbar. The proposed text is served through a
+ *  virtual document so the diff is syntax-highlighted before/after, and your file isn't
+ *  changed until you Keep.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -97,6 +97,14 @@ async function discardEdit() {
 	vscode.window.setStatusBarMessage('Atom++ AI: edit discarded', 1500);
 }
 
+/** Whole-line range covering the selection. */
+function fullLineRange(editor) {
+	const sel = editor.selection;
+	let endLine = sel.end.line;
+	if (sel.end.character === 0 && endLine > sel.start.line) { endLine -= 1; }
+	return new vscode.Range(sel.start.line, 0, endLine, editor.document.lineAt(endLine).text.length);
+}
+
 /** @param {{aiConfig:()=>any, getClaudeKey:()=>Promise<string|undefined>, streamClaude:Function, streamOllama:Function}} deps */
 async function editSelection(deps) {
 	const ed = vscode.window.activeTextEditor;
@@ -113,7 +121,7 @@ async function editSelection(deps) {
 	if (!instruction) { return; }
 
 	const doc = ed.document;
-	const range = new vscode.Range(ed.selection.start, ed.selection.end);
+	const range = fullLineRange(ed);
 	const original = doc.getText(range);
 	const lang = doc.languageId || '';
 	const userMsg = `Instruction: ${instruction}\n\nCode (${lang}):\n${original}`;
@@ -160,7 +168,7 @@ async function editSelection(deps) {
 	pending.set(propUri.toString(), { docUri: doc.uri, range, newText: proposed, origUri });
 
 	await vscode.commands.executeCommand('vscode.diff', origUri, propUri,
-		'Atom++ AI: proposed edit — use ✓ Apply / ✗ Discard above', { preview: true });
+		'Atom++ AI: proposed edit — use ✓ Keep / ✗ Discard above', { preview: true });
 	updateDiffContext();
 }
 
@@ -173,12 +181,9 @@ function registerAiEdit(context, deps) {
 		vscode.commands.registerCommand('atompp.ai.discardEdit', discardEdit),
 		vscode.window.tabGroups.onDidChangeTabGroups(updateDiffContext),
 		vscode.window.tabGroups.onDidChangeTabs((e) => {
-			// If the user closes our diff tab without choosing, clean up.
 			for (const tab of e.closed) {
 				const input = /** @type {any} */ (tab.input);
-				if (input && input.modified && input.modified.scheme === SCHEME) {
-					cleanup(input.modified);
-				}
+				if (input && input.modified && input.modified.scheme === SCHEME) { cleanup(input.modified); }
 			}
 			updateDiffContext();
 		})
