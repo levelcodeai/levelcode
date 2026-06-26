@@ -1,0 +1,23 @@
+{
+	"name": "atom-themes",
+	"displayName": "Atom++ Themes",
+	"description": "Signature Atom++ themes — One Dark and One Light, adapted from Atom's iconic MIT palette.",
+	"publisher": "atompp",
+	"version": "0.1.0",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.126.0"
+	},
+	"categories": [
+		"Themes"
+	],
+	"contributes": {
+		"themes": [
+			{ "label": "Atom++ One Dark", "uiTheme": "vs-dark", "path": "./themes/atom-one-dark.json" },
+			{ "label": "Atom++ One Light", "uiTheme": "vs", "path": "./themes/atom-one-light.json" }
+		],
+		"configurationDefaults": {
+			"workbench.colorTheme": "Atom++ One Dark"
+		}
+	}
+}
