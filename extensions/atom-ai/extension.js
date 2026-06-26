@@ -11,9 +11,10 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
-const { streamClaude, streamOllama, listOllamaModels } = require('./providers');
+const { streamClaude, streamOllama, completeClaude, completeOllama, listOllamaModels } = require('./providers');
 const { registerAiEdit } = require('./aiEdit');
 const { registerLmProvider } = require('./lmProvider');
+const { registerInlineComplete } = require('./inlineComplete');
 
 const CLAUDE_MODELS = [
 	{ label: 'Claude Opus 4.8', id: 'claude-opus-4-8', detail: 'Most capable' },
@@ -275,6 +276,14 @@ function activate(context) {
 		let key = await context.secrets.get(SECRET_KEY);
 		if (!key && !silent) { key = await promptForKey(); }
 		return key;
+	});
+
+	// Inline (ghost-text) tab-completion. Silent key lookup — it must never prompt mid-typing.
+	registerInlineComplete(context, {
+		aiConfig,
+		getKeySilent: () => context.secrets.get(SECRET_KEY),
+		completeClaude,
+		completeOllama
 	});
 
 	// AI-first: reveal the chat (in the secondary side bar) on first launch. We do this once

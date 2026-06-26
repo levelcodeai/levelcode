@@ -44,7 +44,8 @@
 			{ "command": "atompp.ai.applyEdit", "title": "Keep AI Edit", "category": "Atom++", "icon": "$(check)" },
 			{ "command": "atompp.ai.discardEdit", "title": "Discard AI Edit", "category": "Atom++", "icon": "$(close)" },
 			{ "command": "atompp.ai.setApiKey", "title": "AI: Set Anthropic API Key…", "category": "Atom++", "icon": "$(key)" },
-			{ "command": "atompp.ai.clearApiKey", "title": "AI: Clear Anthropic API Key", "category": "Atom++" }
+			{ "command": "atompp.ai.clearApiKey", "title": "AI: Clear Anthropic API Key", "category": "Atom++" },
+			{ "command": "atompp.ai.toggleCompletions", "title": "AI: Toggle Inline Completions", "category": "Atom++" }
 		],
 		"menus": {
 			"view/title": [
@@ -83,6 +84,24 @@
 					"type": "boolean",
 					"default": true,
 					"description": "Automatically send the currently open file to the AI as context with each chat message."
+				},
+				"atompp.ai.completions.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show inline AI code completions (ghost text) as you type. Accept with Tab."
+				},
+				"atompp.ai.completions.model": {
+					"type": "string",
+					"enum": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-8"],
+					"enumDescriptions": ["Claude Haiku 4.5 (fastest — recommended)", "Claude Sonnet 4.6 (balanced)", "Claude Opus 4.8 (most capable, slower)"],
+					"default": "claude-haiku-4-5-20251001",
+					"description": "Claude model used for inline completions. A fast model is recommended for low latency."
+				},
+				"atompp.ai.completions.debounce": {
+					"type": "number",
+					"default": 150,
+					"minimum": 0,
+					"description": "Idle time in milliseconds before requesting an inline completion (lower = snappier but more requests)."
 				},
 				"atompp.ai.claude.model": {
 					"type": "string",

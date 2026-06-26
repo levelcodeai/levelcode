@@ -95,6 +95,52 @@ async function streamOllama(opts) {
 	});
 }
 
+/**
+ * Non-streaming single completion from Claude. Returns the full text response.
+ * Used for inline (ghost-text) completions where we need the whole insertion at once.
+ * @param {{apiKey:string, model:string, maxTokens:number, system:string,
+ *          messages:{role:string,content:string}[], stop?:string[], signal?:AbortSignal}} opts
+ * @returns {Promise<string>}
+ */
+async function completeClaude(opts) {
+	const body = {
+		model: opts.model,
+		max_tokens: opts.maxTokens,
+		system: opts.system,
+		messages: opts.messages
+	};
+	if (opts.stop && opts.stop.length) { body.stop_sequences = opts.stop; }
+	const res = await fetch('https://api.anthropic.com/v1/messages', {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json',
+			'x-api-key': opts.apiKey,
+			'anthropic-version': '2023-06-01'
+		},
+		body: JSON.stringify(body),
+		signal: opts.signal
+	});
+	if (!res.ok) {
+		const text = await res.text().catch(() => '');
+		throw new Error(`Anthropic API ${res.status}: ${text || res.statusText}`);
+	}
+	const data = await res.json();
+	const parts = Array.isArray(data.content) ? data.content : [];
+	return parts.filter((p) => p && p.type === 'text').map((p) => p.text).join('');
+}
+
+/**
+ * Non-streaming single completion from Ollama (collects the streamed chat response).
+ * @param {{url:string, model:string, system:string,
+ *          messages:{role:string,content:string}[], signal?:AbortSignal}} opts
+ * @returns {Promise<string>}
+ */
+async function completeOllama(opts) {
+	let out = '';
+	await streamOllama({ ...opts, onDelta: (t) => { out += t; } });
+	return out;
+}
+
 /** Best-effort list of locally available Ollama models. Returns [] if unreachable. */
 async function listOllamaModels(url) {
 	try {
@@ -108,4 +154,4 @@ async function listOllamaModels(url) {
 	}
 }
 
-module.exports = { streamClaude, streamOllama, listOllamaModels };
+module.exports = { streamClaude, streamOllama, completeClaude, completeOllama, listOllamaModels };
