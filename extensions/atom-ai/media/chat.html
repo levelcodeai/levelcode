@@ -31,8 +31,82 @@
   .msg.user .body { background: var(--field-bg); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
   .msg.assistant .body { padding: 1px 2px; }
   .err { color: var(--vscode-errorForeground); }
-  pre { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.15)); padding: 9px 10px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+  pre { background: var(--vscode-editor-background, #282c34); border: 1px solid var(--border); padding: 9px 11px; border-radius: 8px; overflow-x: auto; margin: 8px 0; color: var(--vscode-editor-foreground, var(--vscode-foreground)); }
+  pre code { background: none; padding: 0; }
   code { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: .92em; }
+  :not(pre) > code { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.16)); padding: 1px 5px; border-radius: 4px; }
+  /* Lightweight syntax highlighting — matched to the Atom++ One Dark palette (One Light via body.vscode-light). */
+  .tok-cm { color: #5c6370; font-style: italic; }
+  .tok-str { color: #98c379; }
+  .tok-num { color: #d19a66; }
+  .tok-kw { color: #c678dd; }
+  .tok-fn { color: #61afef; }
+  .tok-cn { color: #e5c07b; }
+  body.vscode-light .tok-cm { color: #a0a1a7; }
+  body.vscode-light .tok-str { color: #50a14f; }
+  body.vscode-light .tok-num { color: #986801; }
+  body.vscode-light .tok-kw { color: #a626a4; }
+  body.vscode-light .tok-fn { color: #4078f2; }
+  body.vscode-light .tok-cn { color: #c18401; }
+  .pill#mode.agent { background: var(--accent); color: #fff; }
+  .pill#mode.agent .mono { opacity: .85; }
+  .agentline { font-size: 12px; opacity: .8; margin: 1px 2px; display: flex; gap: 6px; align-items: baseline; }
+  .agentline .ic { flex: 0 0 auto; }
+  .agentline .t { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agentstatus { font-size: 12px; margin: 5px 2px; opacity: .9; display: flex; gap: 7px; align-items: center; font-style: italic; }
+  .agentstatus .spin { display: inline-block; font-style: normal; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .agentdone { font-size: 12px; margin: 4px 2px 2px; opacity: .8; font-weight: 600; }
+  .approval { border: 1px solid var(--border); border-radius: 10px; margin: 6px 2px; overflow: hidden; background: var(--field-bg); display: flex; flex-direction: column; max-height: 70vh; }
+  .approval .ahead { flex: 0 0 auto; padding: 7px 10px; font-size: 12px; border-bottom: 1px solid var(--border); }
+  .approval .ahead code { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.18)); padding: 1px 5px; border-radius: 4px; }
+  .approval .cmd { margin: 8px 10px; padding: 7px 9px; border-radius: 6px; background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.15)); overflow-x: auto; }
+  .approval .why { padding: 0 10px 8px; font-size: 11px; opacity: .7; }
+  .approval .abtns { flex: 0 0 auto; display: flex; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); background: var(--field-bg); }
+  .approval .abtns button { cursor: pointer; border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; }
+  .approval .abtns .approve { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .approval .abtns .approve:hover { background: var(--vscode-button-hoverBackground); }
+  .approval .abtns .skip { background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.25)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+  .approval .verdict { font-size: 12px; opacity: .8; }
+
+  /* ---- applied-edit review (apply-then-review) ---- */
+  #reviewBar {
+    display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+    padding: 7px 12px; font-size: 12px;
+    background: var(--vscode-editorWidget-background, #21252b);
+    border-bottom: 1px solid var(--border);
+  }
+  #reviewBar .rcount { font-weight: 600; }
+  #reviewBar .rspacer { flex: 1 1 auto; }
+  #reviewBar button { cursor: pointer; border: none; border-radius: 6px; padding: 4px 12px; font-size: 12px; }
+  #reviewBar .keepall { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  #reviewBar .keepall:hover { background: var(--vscode-button-hoverBackground); }
+  #reviewBar .undoall { background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.25)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+  .editcard { border: 1px solid var(--border); border-radius: 10px; margin: 6px 2px; overflow: hidden; background: var(--field-bg); }
+  .editcard.resolved { opacity: .7; }
+  .editcard .ahead { padding: 7px 10px; font-size: 12px; }
+  .editcard .ahead code { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.18)); padding: 1px 5px; border-radius: 4px; }
+  .editcard .counts { float: right; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; }
+  .editcard .counts .a { color: #4ec97a; } .editcard .counts .d { color: #e06c75; }
+  .editcard .diffwrap { border-top: 1px solid var(--border); }
+  .editcard .diffwrap > summary { cursor: pointer; font-size: 11px; opacity: .7; padding: 5px 10px; user-select: none; }
+  .editcard .diffwrap .diff { max-height: 240px; }
+  .editcard .abtns { display: flex; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); }
+  .editcard .abtns button { cursor: pointer; border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; }
+  .editcard .abtns .keep { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .editcard .abtns .keep:hover { background: var(--vscode-button-hoverBackground); }
+  .editcard .abtns .undo { background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.25)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+  .editcard .abtns .secondary2 { background: transparent; color: var(--muted); }
+  .editcard .abtns .secondary2:hover { color: var(--vscode-foreground); }
+  .editcard .verdict { font-size: 12px; opacity: .85; }
+  .diff { flex: 1 1 auto; min-height: 0; overflow: auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; line-height: 1.5; padding: 4px 0; }
+  .diff .dl { white-space: pre-wrap; word-break: break-word; padding: 0 10px 0 4px; }
+  .diff .dl .s { display: inline-block; width: 12px; opacity: .6; user-select: none; }
+  .diff .dl.add { background: rgba(70,160,90,.16); }
+  .diff .dl.del { background: rgba(220,90,90,.16); }
+  .diff .dl.add .s { color: #4ec97a; }
+  .diff .dl.del .s { color: #e06c75; }
+  .diff .dl.ctx { opacity: .55; }
   .autoctx { font-size: 11px; opacity: .55; margin: -4px 2px 2px; }
   .autoctx .files { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
   #empty { margin: auto; max-width: 280px; text-align: center; opacity: .65; line-height: 1.55; padding: 20px; }
@@ -128,6 +202,12 @@
 </style>
 </head>
 <body>
+  <div id="reviewBar" style="display:none">
+    <span class="rcount">Reviewing 0 changes</span>
+    <span class="rspacer"></span>
+    <button class="keepall">Keep all</button>
+    <button class="undoall">Undo all</button>
+  </div>
   <div id="log">
     <div id="empty">
       <div class="big">Atom++ AI</div>
@@ -143,8 +223,8 @@
       <div class="left">
         <button class="tbtn" id="attach" title="Add selected code as context (⌥⌘A)">+</button>
         <span class="sep"></span>
-        <span class="pill static" id="mode" title="Chat mode. Agent mode is coming in M4.">
-          <span class="mono">&lt;/&gt;</span> Chat
+        <span class="pill" id="mode" title="Toggle Chat / Agent mode">
+          <span class="mono">&lt;/&gt;</span> <span id="modeLabel">Chat</span>
         </span>
         <span class="pill" id="model" title="Click to change model">Auto <span class="caret">▾</span></span>
         <button class="tbtn" id="settings" title="Atom++ AI settings">&#9776;</button>
@@ -160,7 +240,18 @@
 
 <script nonce="__NONCE__">
   const vscode = acquireVsCodeApi();
+  window.onerror = function(msg){
+    try {
+      const d = document.createElement('div'); d.className = 'agentline';
+      d.innerHTML = '<span class="ic">⚠️</span><span class="t" style="color:var(--vscode-errorForeground)">UI error: ' + String(msg) + '</span>';
+      document.getElementById('log').appendChild(d);
+    } catch(e) {}
+  };
   const log = document.getElementById('log');
+  const reviewBar = document.getElementById('reviewBar');
+  const editCards = {};   // id -> applied-edit card element
+  reviewBar.querySelector('.keepall').onclick = () => vscode.postMessage({ type: 'reviewKeepAll' });
+  reviewBar.querySelector('.undoall').onclick = () => vscode.postMessage({ type: 'reviewUndoAll' });
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send');
   const chipsEl = document.getElementById('chips');
@@ -177,8 +268,12 @@
   let activeFileLabel = null;
   let selLabel = null;
   let ctxFiles = [];       // files pinned as context: {id,name,rel}
+  let agentMode = false;   // Chat vs Agent
+  let agentStatusEl = null;
+  let agentBubble = null;  // current streaming agent text bubble
+  let agentRaw = '';
 
-  function esc(s){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
   // "name.ext · 12 lines" -> badge from extension (JS, TS, PY…), capped at 3 chars.
   function badgeFor(label){
@@ -213,13 +308,39 @@
     });
   }
 
+  // Generic, dependency-free syntax highlighter — colors via .tok-* classes (theme-aware).
+  const HL_KW = new Set(('def end if elsif else unless return do class module while until for in function const let var ' +
+    'import from export default new delete typeof instanceof rescue begin ensure raise yield then when case switch ' +
+    'break continue async await try catch finally throw public private protected static extends implements interface ' +
+    'type enum struct func package true false nil null none undefined self this super and or not is as with lambda ' +
+    'proc require require_relative attr_accessor attr_reader attr_writer puts print').split(' '));
+  function highlight(code){
+    let out = '', i = 0; const n = code.length;
+    const push = (cls, txt) => { out += cls ? '<span class="' + cls + '">' + esc(txt) + '</span>' : esc(txt); };
+    while (i < n){
+      const c = code[i];
+      if (c === '#' || (c === '/' && code[i + 1] === '/')){ let j = code.indexOf('\n', i); if (j < 0) j = n; push('tok-cm', code.slice(i, j)); i = j; continue; }
+      if (c === '/' && code[i + 1] === '*'){ let j = code.indexOf('*/', i); j = j < 0 ? n : j + 2; push('tok-cm', code.slice(i, j)); i = j; continue; }
+      if (c === '"' || c === "'" || c === '`'){ let j = i + 1; while (j < n && code[j] !== c){ if (code[j] === '\\') j++; j++; } j = Math.min(j + 1, n); push('tok-str', code.slice(i, j)); i = j; continue; }
+      if (/[0-9]/.test(c) && !/[A-Za-z0-9_]/.test(code[i - 1] || '')){ let j = i; while (j < n && /[0-9._xXa-fA-F]/.test(code[j])) j++; push('tok-num', code.slice(i, j)); i = j; continue; }
+      if (/[A-Za-z_$@:]/.test(c)){ let j = i; while (j < n && /[A-Za-z0-9_$]/.test(code[j])) j++; const w = code.slice(i, j);
+        let cls = '';
+        if (HL_KW.has(w)) cls = 'tok-kw';
+        else if (/^[A-Z]/.test(w)) cls = 'tok-cn';
+        else { let k = j; while (k < n && code[k] === ' ') k++; if (code[k] === '(') cls = 'tok-fn'; }
+        push(cls, w); i = j; continue;
+      }
+      push('', c); i++;
+    }
+    return out;
+  }
   function render(md){
     const parts = md.split(FENCE);
     let out = '';
     for (let i = 0; i < parts.length; i++){
       if (i % 2 === 1){
         const body = parts[i].replace(/^[a-zA-Z0-9_+-]*\n/, '');
-        out += '<pre><code>' + esc(body) + '</code></pre>';
+        out += '<pre><code>' + highlight(body) + '</code></pre>';
       } else {
         const inlineCode = new RegExp(TICK + '([^' + TICK + ']+)' + TICK, 'g');
         out += esc(parts[i]).replace(inlineCode, '<code>$1</code>');
@@ -239,6 +360,96 @@
     clearEmpty();
     const d = document.createElement('div'); d.className = 'autoctx';
     d.innerHTML = '🔎 Auto-context: <span class="files">' + names.map(esc).join(', ') + '</span>';
+    log.appendChild(d); log.scrollTop = log.scrollHeight;
+  }
+  function clearStatus(){ if (agentStatusEl){ agentStatusEl.remove(); agentStatusEl = null; } }
+  function addAgentLine(icon, text){
+    clearEmpty(); clearStatus();
+    const d = document.createElement('div'); d.className = 'agentline';
+    d.innerHTML = '<span class="ic">' + esc(icon || '•') + '</span><span class="t">' + esc(text || '') + '</span>';
+    log.appendChild(d); log.scrollTop = log.scrollHeight;
+  }
+  function setAgentStatus(text){
+    clearStatus();
+    const d = document.createElement('div'); d.className = 'agentstatus';
+    d.innerHTML = '<span class="spin">◜</span> ' + esc(text);
+    log.appendChild(d); agentStatusEl = d; log.scrollTop = log.scrollHeight;
+  }
+  function applyMode(agent){
+    agentMode = agent;
+    document.getElementById('modeLabel').textContent = agent ? 'Agent' : 'Chat';
+    document.getElementById('mode').classList.toggle('agent', agent);
+    input.placeholder = agent ? 'Give the agent a goal…' : 'Describe what to build';
+  }
+  function diffHtml(diff){
+    let h = '<div class="diff">';
+    for (const d of (diff || [])){
+      const sign = d.type === 'add' ? '+' : d.type === 'del' ? '-' : ' ';
+      h += '<div class="dl ' + d.type + '"><span class="s">' + sign + '</span>' + esc(d.text) + '</div>';
+    }
+    return h + '</div>';
+  }
+  // Blocking approval — run_command ONLY (file edits no longer gate; they apply-then-review).
+  function addApproval(m){
+    clearEmpty(); clearStatus(); agentBubble = null;
+    const card = document.createElement('div'); card.className = 'approval';
+    const body = '<pre class="cmd">' + esc(m.command) + '</pre>' + (m.explanation ? '<div class="why">' + esc(m.explanation) + '</div>' : '');
+    card.innerHTML = '<div class="ahead">▶️ Run command</div>' + body +
+      '<div class="abtns"><button class="approve">Approve</button><button class="skip">Skip</button></div>';
+    log.appendChild(card); log.scrollTop = log.scrollHeight;
+    const done = (approved) => {
+      vscode.postMessage({ type: 'approvalResponse', id: m.id, approved });
+      card.querySelector('.abtns').innerHTML = '<span class="verdict">' + (approved ? '✅ Approved' : '⊘ Skipped') + '</span>';
+    };
+    card.querySelector('.approve').onclick = () => done(true);
+    card.querySelector('.skip').onclick = () => done(false);
+  }
+
+  // Non-blocking applied-edit card (the agent already changed the file; you review after).
+  function addEditCard(m){
+    clearEmpty(); clearStatus(); agentBubble = null;
+    let card = editCards[m.id];
+    if (!card){
+      card = document.createElement('div'); card.className = 'editcard';
+      editCards[m.id] = card; log.appendChild(card);
+    }
+    const head = (m.exists ? '✏️ Edited' : '🆕 Created') + ' <code>' + esc(m.path) + '</code> <span class="counts"><span class="a">+' + (m.add||0) + '</span> <span class="d">-' + (m.del||0) + '</span></span>';
+    card.innerHTML =
+      '<div class="ahead">' + head + '</div>' +
+      '<details class="diffwrap"><summary>diff</summary>' + diffHtml(m.diff) + '</details>' +
+      '<div class="abtns">' +
+        '<button class="keep">Keep</button>' +
+        '<button class="undo">Undo</button>' +
+        '<button class="opendiff secondary2">Open diff</button>' +
+      '</div>';
+    card.querySelector('.keep').onclick = () => vscode.postMessage({ type: 'reviewKeepFile', id: m.id });
+    card.querySelector('.undo').onclick = () => vscode.postMessage({ type: 'reviewUndoFile', id: m.id });
+    card.querySelector('.opendiff').onclick = () => vscode.postMessage({ type: 'reviewOpenDiff', id: m.id });
+    log.scrollTop = log.scrollHeight;
+  }
+  function resolveEditCard(m){
+    const card = editCards[m.id]; if (!card) { return; }
+    const map = { kept: '✅ Kept', undone: '⤺ Undid', 'kept-user-edited': '✎ Kept (you edited it)' };
+    const btns = card.querySelector('.abtns');
+    if (btns){ btns.innerHTML = '<span class="verdict">' + (map[m.verdict] || '✅ Kept') + '</span>'; }
+    card.classList.add('resolved');
+    delete editCards[m.id];
+  }
+  function updateReviewBar(count){
+    if (count > 0){
+      reviewBar.style.display = 'flex';
+      reviewBar.querySelector('.rcount').textContent = 'Reviewing ' + count + ' change' + (count === 1 ? '' : 's');
+    } else {
+      reviewBar.style.display = 'none';
+    }
+  }
+  function addAgentDone(reason, edits){
+    const map = { done: '✓ Done', stopped: '■ Stopped', limit: '■ Stopped (step limit reached)', error: '' };
+    let text = map[reason] !== undefined ? map[reason] : '✓ Done';
+    if (reason === 'done' && !(edits > 0)) { text = '✓ Done — no files changed'; }
+    else if ((reason === 'done' || reason === 'limit') && edits > 0) { text += ' · ' + edits + ' file' + (edits === 1 ? '' : 's') + ' changed — review them'; }
+    if (!text) { return; }
+    const d = document.createElement('div'); d.className = 'agentdone'; d.textContent = text;
     log.appendChild(d); log.scrollTop = log.scrollHeight;
   }
 
@@ -276,6 +487,7 @@
   sendBtn.onclick = doSend;
   document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'addContext' });
   document.getElementById('model').onclick = () => vscode.postMessage({ type: 'pickModel' });
+  document.getElementById('mode').onclick = () => vscode.postMessage({ type: 'setMode', agent: !agentMode });
   document.getElementById('settings').onclick = () => vscode.postMessage({ type: 'openSettings' });
 
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); doSend(); } });
@@ -304,11 +516,24 @@
     else if (m.type === 'activeFile'){ activeFileLabel = m.label; renderChips(); }
     else if (m.type === 'contextFiles'){ ctxFiles = m.files || []; renderChips(); }
     else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
+    else if (m.type === 'mode'){ applyMode(!!m.agent); }
+    else if (m.type === 'agentStart'){ setStreaming(true); agentBubble = null; agentRaw = ''; setAgentStatus('thinking…'); }
+    else if (m.type === 'agentStatus'){ agentBubble = null; setAgentStatus(m.text || 'working…'); }
+    else if (m.type === 'agentDelta'){ clearStatus(); if (!agentBubble){ agentBubble = add('assistant', ''); agentRaw = ''; } agentRaw += m.text; agentBubble.innerHTML = render(agentRaw); log.scrollTop = log.scrollHeight; }
+    else if (m.type === 'agentTurnEnd'){ agentBubble = null; agentRaw = ''; }
+    else if (m.type === 'agentTool'){ agentBubble = null; addAgentLine(m.icon, m.text); }
+    else if (m.type === 'agentApproval'){ addApproval(m); }
+    else if (m.type === 'editApplied'){ addEditCard(m); }
+    else if (m.type === 'editResolved'){ resolveEditCard(m); }
+    else if (m.type === 'reviewState'){ updateReviewBar(m.count); }
+    else if (m.type === 'agentError'){ clearStatus(); agentBubble = null; add('assistant', '<span class="err">' + esc(m.message) + '</span>'); }
+    else if (m.type === 'agentDone'){ clearStatus(); agentBubble = null; addAgentDone(m.reason, m.edits); setStreaming(false); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
       selLabel = null; ctxFiles = []; renderChips();
+      for (const k in editCards) { delete editCards[k]; } updateReviewBar(0);
       pending = ''; shown = ''; doneSignaled = false; flushAll = false; current = null; setStreaming(false);
     }
   });

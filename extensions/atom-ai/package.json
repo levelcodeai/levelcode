@@ -46,13 +46,19 @@
 			{ "command": "atompp.ai.discardEdit", "title": "Discard AI Edit", "category": "Atom++", "icon": "$(close)" },
 			{ "command": "atompp.ai.setApiKey", "title": "AI: Set Anthropic API Key…", "category": "Atom++", "icon": "$(key)" },
 			{ "command": "atompp.ai.clearApiKey", "title": "AI: Clear Anthropic API Key", "category": "Atom++" },
-			{ "command": "atompp.ai.toggleCompletions", "title": "AI: Toggle Inline Completions", "category": "Atom++" }
+			{ "command": "atompp.ai.toggleCompletions", "title": "AI: Toggle Inline Completions", "category": "Atom++" },
+			{ "command": "atompp.ai.review.keepActive", "title": "Keep Agent Edit", "category": "Atom++", "icon": "$(check)" },
+			{ "command": "atompp.ai.review.undoActive", "title": "Undo Agent Edit", "category": "Atom++", "icon": "$(discard)" }
 		],
 		"menus": {
 			"view/title": [
 				{ "command": "atompp.ai.addFileContext", "when": "view == atomAi.chat", "group": "navigation@1" },
 				{ "command": "atompp.ai.newChat", "when": "view == atomAi.chat", "group": "navigation@2" },
 				{ "command": "atompp.ai.setApiKey", "when": "view == atomAi.chat", "group": "navigation@3" }
+			],
+			"editor/title": [
+				{ "command": "atompp.ai.review.keepActive", "when": "atompp.ai.reviewActive", "group": "navigation@1" },
+				{ "command": "atompp.ai.review.undoActive", "when": "atompp.ai.reviewActive", "group": "navigation@2" }
 			],
 			"editor/context": [
 				{ "command": "atompp.ai.editSelection", "when": "editorHasSelection", "group": "z_atompp@1" },
@@ -107,6 +113,12 @@
 					"type": "boolean",
 					"default": false,
 					"description": "Include a list of all project file paths with each chat message, so the AI knows the repo structure. Uses more tokens."
+				},
+				"atompp.ai.agent.maxSteps": {
+					"type": "number",
+					"default": 25,
+					"minimum": 1,
+					"description": "Maximum tool-use steps the AI agent may take for one goal before stopping."
 				},
 				"atompp.ai.completions.enabled": {
 					"type": "boolean",

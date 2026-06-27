@@ -16,6 +16,8 @@ const { streamClaude, streamOllama, completeClaude, completeOllama, listOllamaMo
 const { registerAiEdit } = require('./aiEdit');
 const { registerLmProvider } = require('./lmProvider');
 const { registerInlineComplete } = require('./inlineComplete');
+const { runAgent } = require('./agent');
+const { registerReview } = require('./reviewSession');
 
 const CLAUDE_MODELS = [
 	{ label: 'Claude Opus 4.8', id: 'claude-opus-4-8', detail: 'Most capable' },
@@ -42,6 +44,13 @@ let pendingContext = null;
 let contextFiles = [];
 /** @type {AbortController | null} */
 let abort = null;
+/** Agent mode: sending runs the autonomous tool loop instead of plain chat. */
+let agentMode = false;
+/** Apply-then-review session (Keep/Undo for applied agent edits). Set in activate(). */
+let review;
+/** Persistent agent transcript for the session (tool calls + results), so follow-up goals
+ *  remember prior runs. Reset by New Chat. */
+let agentMessages = [];
 
 function post(msg) { if (activeWebview) { activeWebview.postMessage(msg); } }
 
@@ -317,17 +326,24 @@ function workspaceMapBlock(allFiles) {
 
 function newChat() {
 	conversation = [];
+	agentMessages = [];
 	pendingContext = null;
 	contextFiles = [];
 	if (abort) { abort.abort(); }
+	if (review) { review.finalizeAll(); } // drop review UI without reverting the user's files
 	post({ type: 'reset' });
 	postContextFiles();
 }
 
 /** The currently open file as a context block (capped), or null. */
+/** True only for real files inside the workspace (excludes temp diff files, output, etc.). */
+function isWorkspaceFile(uri) {
+	return uri && uri.scheme === 'file' && !!vscode.workspace.getWorkspaceFolder(uri);
+}
+
 function activeFileBlock() {
 	const ed = vscode.window.activeTextEditor;
-	if (!ed || ed.document.uri.scheme !== 'file') { return null; }
+	if (!ed || !isWorkspaceFile(ed.document.uri)) { return null; }
 	if (!aiConfig().get('includeActiveFile', true)) { return null; }
 	const name = path.basename(ed.document.uri.fsPath);
 	const lang = ed.document.languageId || '';
@@ -340,15 +356,98 @@ function activeFileBlock() {
 /** Tell the webview which file is open, to show as a context chip. */
 function postActiveFile() {
 	const ed = vscode.window.activeTextEditor;
-	if (!ed || ed.document.uri.scheme !== 'file' || !aiConfig().get('includeActiveFile', true)) {
+	if (!ed || !isWorkspaceFile(ed.document.uri) || !aiConfig().get('includeActiveFile', true)) {
 		post({ type: 'activeFile', label: null });
 		return;
 	}
 	post({ type: 'activeFile', label: path.basename(ed.document.uri.fsPath) + ' · ' + ed.document.lineCount + ' lines' });
 }
 
+/** Pending in-chat approval requests, keyed by id, resolved by the webview. */
+const pendingApprovals = new Map();
+let approvalSeq = 0;
+
+/** Ask the webview to approve an action; resolves true/false. */
+function requestApproval(req) {
+	const id = String(++approvalSeq);
+	return new Promise((resolve) => {
+		pendingApprovals.set(id, resolve);
+		post(Object.assign({ type: 'agentApproval', id }, req));
+	});
+}
+function resolveApproval(id, approved) {
+	const r = pendingApprovals.get(id);
+	if (r) { pendingApprovals.delete(id); r(!!approved); }
+}
+function clearApprovals() {
+	for (const [, r] of pendingApprovals) { r(false); }
+	pendingApprovals.clear();
+}
+
+/** Heal any dangling tool_use (e.g. from a run the user stopped mid-tool) by inserting the
+ *  missing tool_result blocks, so the next API call doesn't 400. */
+function repairAgentMemory() {
+	for (let i = 0; i < agentMessages.length; i++) {
+		const m = agentMessages[i];
+		if (m.role !== 'assistant' || !Array.isArray(m.content)) { continue; }
+		const ids = m.content.filter((c) => c.type === 'tool_use').map((c) => c.id);
+		if (!ids.length) { continue; }
+		const next = agentMessages[i + 1];
+		const have = (next && next.role === 'user' && Array.isArray(next.content))
+			? new Set(next.content.filter((c) => c.type === 'tool_result').map((c) => c.tool_use_id)) : new Set();
+		const missing = ids.filter((id) => !have.has(id)).map((id) => ({ type: 'tool_result', tool_use_id: id, content: 'Cancelled.' }));
+		if (!missing.length) { continue; }
+		if (next && next.role === 'user' && Array.isArray(next.content)) { next.content.unshift(...missing); }
+		else { agentMessages.splice(i + 1, 0, { role: 'user', content: missing }); }
+	}
+}
+
+/** Keep agent memory bounded. Trim oldest messages, but only at a goal boundary (a
+ *  string-content user message) so we never orphan a tool_use/tool_result pair. */
+function trimAgentMemory() {
+	const MAX = 80, KEEP = 60;
+	if (agentMessages.length <= MAX) { return; }
+	let cut = agentMessages.length - KEEP;
+	while (cut < agentMessages.length && !(agentMessages[cut].role === 'user' && typeof agentMessages[cut].content === 'string')) { cut++; }
+	if (cut > 0 && cut < agentMessages.length) { agentMessages.splice(0, cut); }
+}
+
+async function agentFlow(text) {
+	const cfg = aiConfig();
+	if (cfg.get('provider', 'claude') !== 'claude') {
+		post({ type: 'agentError', message: 'Agent mode currently requires the Claude provider.' });
+		post({ type: 'agentDone', reason: 'error' });
+		return;
+	}
+	let key = await ctx.secrets.get(SECRET_KEY);
+	if (!key) { key = await promptForKey(); }
+	if (!key) { post({ type: 'agentError', message: 'No Anthropic API key set.' }); post({ type: 'agentDone', reason: 'error' }); return; }
+
+	post({ type: 'agentStart' });
+	abort = new AbortController();
+	repairAgentMemory();
+	agentMessages.push({ role: 'user', content: text });
+	trimAgentMemory();
+	try {
+		await runAgent({
+			messages: agentMessages, // persists across runs → the agent remembers the session
+			apiKey: key,
+			model: cfg.get('claude.model', 'claude-sonnet-4-6'),
+			maxSteps: Math.max(1, cfg.get('agent.maxSteps', 25)),
+			post,
+			approve: requestApproval,           // run_command only
+			applyEdit: (req) => review.applyEdit(req), // file edits: apply-then-review
+			signal: abort.signal
+		});
+	} finally {
+		clearApprovals();
+		abort = null;
+	}
+}
+
 async function handleSend(text) {
 	if (!text || !text.trim()) { return; }
+	if (agentMode) { await agentFlow(text); return; }
 	const cfg = aiConfig();
 	const provider = cfg.get('provider', 'claude');
 
@@ -470,9 +569,16 @@ class ChatViewProvider {
 		view.webview.html = getHtml();
 		view.webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
-				case 'ready': sendConfigToWebview(); postActiveFile(); postContextFiles(); break;
+				case 'ready': sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); break;
+				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'send': await handleSend(msg.text); break;
-				case 'stop': if (abort) { abort.abort(); } break;
+				case 'stop': if (abort) { abort.abort(); } clearApprovals(); break;
+				case 'approvalResponse': resolveApproval(msg.id, msg.approved); break;
+				case 'reviewKeepFile': review.keepFile(msg.id, 'kept'); break;
+				case 'reviewUndoFile': await review.undoFile(msg.id); break;
+				case 'reviewKeepAll': review.keepAll(); break;
+				case 'reviewUndoAll': await review.undoAll(); break;
+				case 'reviewOpenDiff': await review.openDiff(msg.id); break;
 				case 'addSelection': addSelection(); break;
 				case 'addContext': await addContext(); break;
 				case 'removeContext': removeFileContext(msg.id); break;
@@ -536,6 +642,9 @@ function activate(context) {
 		if (!key && !silent) { key = await promptForKey(); }
 		return key;
 	});
+
+	// Apply-then-review: agent edits land immediately and are reviewed with Keep/Undo (editor + panel).
+	review = registerReview(context, post);
 
 	// Inline (ghost-text) tab-completion. Silent key lookup — it must never prompt mid-typing.
 	registerInlineComplete(context, {
