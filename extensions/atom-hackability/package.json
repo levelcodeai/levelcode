@@ -22,7 +22,10 @@
 		"commands": [
 			{ "command": "atompp.init.edit", "title": "Open Init Script", "category": "Atom++" },
 			{ "command": "atompp.init.reload", "title": "Reload Init Script", "category": "Atom++" },
-			{ "command": "atompp.keymap.apply", "title": "Apply Keymap Preset…", "category": "Atom++" }
+			{ "command": "atompp.keymap.apply", "title": "Apply Keymap Preset…", "category": "Atom++" },
+			{ "command": "atompp.package.generate", "title": "Generate Package…", "category": "Atom++" },
+			{ "command": "atompp.package.develop", "title": "Develop Package (Hot Reload)…", "category": "Atom++" },
+			{ "command": "atompp.package.stop", "title": "Stop Developing Package", "category": "Atom++" }
 		],
 		"configuration": {
 			"title": "Atom++ Hackability",
