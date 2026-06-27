@@ -16,6 +16,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { createRequire } = require('module');
+const { registerKeymaps } = require('./keymaps');
 
 const INIT_DIR = path.join(os.homedir(), '.atom-plus-plus');
 const INIT_PATH = path.join(INIT_DIR, 'init.js');
@@ -144,6 +145,7 @@ function activate(context) {
 		vscode.commands.registerCommand('atompp.init.reload', () => runInit(true)),
 		{ dispose: disposeUser }
 	);
+	registerKeymaps(context);
 	runInit(false);
 }
 

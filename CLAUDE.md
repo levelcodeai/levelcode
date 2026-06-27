@@ -36,7 +36,7 @@ branding/icons/             app icon source PNG, generated .icns, 1024 png
 extensions/atom-npp-pack/   Notepad++ power-editing pack (plain JS, no build step)
 extensions/atom-ai/         native Claude AI (chat, inline completion, providers, edit-with-diff, LM provider)
 extensions/atom-themes/     signature One Dark / One Light themes (JSON, default via configurationDefaults)
-extensions/atom-hackability/ user init script (~/.atom-plus-plus/init.js) — runs your code at startup, live-reloadable
+extensions/atom-hackability/ user init script (~/.atom-plus-plus/init.js, live-reloadable) + Atom/NPP keymap presets
 patches/atom-core.patch     our core source edits, applied on bootstrap
 scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-dmg.sh, make-icon.sh
 vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
@@ -119,8 +119,10 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
   multi-session core effort. We use the diff-tab review instead.
 - Built since M2 shipped: inline tab-completion (`inlineComplete.js`), multi-file + auto-retrieval chat context
   (`gatherAutoContext`), chat moved to the right side bar, typewriter streaming, `make-dmg.sh` packaging.
-- Not yet built: Notepad++ keymap preset (M1 leftover); agentic multi-file tasks (M4); M3 hackability
-  (settings UI, user init script, package generator, theme studio, settings import).
+- M3 so far: One Dark/Light themes (`atom-themes`), user init script + Atom/Notepad++ keymap presets
+  (`atom-hackability`). The Atom/NPP keymap also clears the old M1 leftover.
+- Not yet built: agentic multi-file tasks (M4); remaining M3 hackability — settings UI, package generator +
+  hot reload, theme studio, VS Code settings import.
 
 ## Conventions
 

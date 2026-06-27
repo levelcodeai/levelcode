@@ -21,7 +21,8 @@
 	"contributes": {
 		"commands": [
 			{ "command": "atompp.init.edit", "title": "Open Init Script", "category": "Atom++" },
-			{ "command": "atompp.init.reload", "title": "Reload Init Script", "category": "Atom++" }
+			{ "command": "atompp.init.reload", "title": "Reload Init Script", "category": "Atom++" },
+			{ "command": "atompp.keymap.apply", "title": "Apply Keymap Preset…", "category": "Atom++" }
 		],
 		"configuration": {
 			"title": "Atom++ Hackability",
