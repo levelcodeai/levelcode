@@ -36,6 +36,7 @@ branding/icons/             app icon source PNG, generated .icns, 1024 png
 extensions/atom-npp-pack/   Notepad++ power-editing pack (plain JS, no build step)
 extensions/atom-ai/         native Claude AI (chat, inline completion, providers, edit-with-diff, LM provider)
 extensions/atom-themes/     signature One Dark / One Light themes (JSON, default via configurationDefaults)
+extensions/atom-hackability/ user init script (~/.atom-plus-plus/init.js) — runs your code at startup, live-reloadable
 patches/atom-core.patch     our core source edits, applied on bootstrap
 scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-dmg.sh, make-icon.sh
 vscode/                     GITIGNORED upstream Code-OSS checkout (generated)

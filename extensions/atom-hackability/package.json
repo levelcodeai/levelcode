@@ -1,0 +1,37 @@
+{
+	"name": "atom-hackability",
+	"displayName": "Atom++ Hackability",
+	"description": "Atom-style hackability for Atom++ — a user init script that runs your own code at startup.",
+	"publisher": "atompp",
+	"version": "0.1.0",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.126.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"capabilities": {
+		"untrustedWorkspaces": { "supported": true }
+	},
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./extension.js",
+	"contributes": {
+		"commands": [
+			{ "command": "atompp.init.edit", "title": "Open Init Script", "category": "Atom++" },
+			{ "command": "atompp.init.reload", "title": "Reload Init Script", "category": "Atom++" }
+		],
+		"configuration": {
+			"title": "Atom++ Hackability",
+			"properties": {
+				"atompp.init.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Run your user init script (~/.atom-plus-plus/init.js) when Atom++ starts."
+				}
+			}
+		}
+	}
+}
