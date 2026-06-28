@@ -196,6 +196,7 @@ async function streamClaudeAgentTurn(opts) {
 	/** @type {any[]} */
 	const blocks = [];
 	let stopReason = 'end_turn';
+	const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
 	await readLines(res, (line) => {
 		const s = line.trim();
 		if (!s.startsWith('data:')) { return; }
@@ -203,7 +204,12 @@ async function streamClaudeAgentTurn(opts) {
 		if (!data || data === '[DONE]') { return; }
 		let ev;
 		try { ev = JSON.parse(data); } catch { return; }
-		if (ev.type === 'content_block_start') {
+		if (ev.type === 'message_start') {
+			const u = (ev.message && ev.message.usage) || {};
+			usage.input_tokens = u.input_tokens || 0;
+			usage.cache_read_input_tokens = u.cache_read_input_tokens || 0;
+			usage.cache_creation_input_tokens = u.cache_creation_input_tokens || 0;
+		} else if (ev.type === 'content_block_start') {
 			const b = ev.content_block || {};
 			if (b.type === 'tool_use') {
 				blocks[ev.index] = { type: 'tool_use', id: b.id, name: b.name, _json: '' };
@@ -218,14 +224,25 @@ async function streamClaudeAgentTurn(opts) {
 			else if (ev.delta.type === 'input_json_delta') { blk._json += ev.delta.partial_json || ''; }
 		} else if (ev.type === 'content_block_stop') {
 			const blk = blocks[ev.index];
-			if (blk && blk.type === 'tool_use') { try { blk.input = blk._json ? JSON.parse(blk._json) : {}; } catch { blk.input = {}; } delete blk._json; }
+			if (blk && blk.type === 'tool_use') { try { blk.input = blk._json ? JSON.parse(blk._json) : {}; } catch { blk.input = {}; blk._malformed = true; } delete blk._json; }
 		} else if (ev.type === 'message_delta') {
 			if (ev.delta && ev.delta.stop_reason) { stopReason = ev.delta.stop_reason; }
+			if (ev.usage && ev.usage.output_tokens) { usage.output_tokens = ev.usage.output_tokens; }
 		} else if (ev.type === 'error') {
 			throw new Error(ev.error && ev.error.message ? ev.error.message : 'Anthropic stream error');
 		}
 	});
-	return { content: blocks.filter(Boolean), stop_reason: stopReason };
+	// Finalize any tool_use block that never received a content_block_stop (e.g. the response was
+	// truncated by max_tokens mid-arguments). EVERY tool_use MUST carry an `input` field or the next
+	// request 400s ("messages.N.content.M.tool_use.input: Field required").
+	for (const blk of blocks) {
+		if (!blk || blk.type !== 'tool_use') { continue; }
+		if (!('input' in blk)) {
+			try { blk.input = blk._json ? JSON.parse(blk._json) : {}; } catch { blk.input = {}; blk._malformed = true; }
+		}
+		if ('_json' in blk) { delete blk._json; }
+	}
+	return { content: blocks.filter(Boolean), stop_reason: stopReason, usage: usage };
 }
 
 /** Best-effort list of locally available Ollama models. Returns [] if unreachable. */

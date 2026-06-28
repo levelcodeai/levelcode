@@ -25,6 +25,8 @@ const SYSTEM = [
 	'- Use write_file ONLY to create a new file (or fully rewrite a short one); it needs the COMPLETE content. Do not rewrite large files — use edit_file repeatedly instead.',
 	'- Your file edits are APPLIED IMMEDIATELY and the user reviews them afterward in the editor with Keep/Undo — do NOT wait for approval, and do NOT re-edit a file you just edited. Only run_command still needs approval; if the user skips a command, adapt or stop.',
 	'- Paths are relative to the workspace root.',
+	'- For a multi-step goal, call update_plan FIRST with a short checklist (3-8 short items, all "pending"), then call it again to set an item "in_progress" when you start it and "done" when finished. Skip the plan for trivial single-step goals.',
+	'- If the goal truly depends on a decision only the user can make (tech stack, scope, where to create files, must-have features), call ask_user ONCE with concise multiple-choice questions (a short header + 2-4 concrete options each) INSTEAD of writing the questions as prose. Then act on their answers and do not ask again. Do NOT ask about things you can reasonably decide yourself — prefer a sensible default and proceed.',
 	'- When the goal is finished, end with a one-line summary starting with "Done:" and STOP (no more tools).'
 ].join('\n');
 
@@ -32,9 +34,11 @@ const TOOLS = [
 	{ name: 'list_files', description: 'List workspace files (optional glob like "**/*.js"). Excludes node_modules/.git/build dirs.', input_schema: { type: 'object', properties: { glob: { type: 'string' } } } },
 	{ name: 'read_file', description: 'Read a workspace file (path relative to the workspace root).', input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
 	{ name: 'search', description: 'Search file contents for a literal string. Returns file:line snippets.', input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+	{ name: 'update_plan', description: 'Declare or update your task checklist for a multi-step goal. Pass the FULL list each time, each item with a status. Call it once up front (all pending), then again to mark an item in_progress when you start it and done when finished. Skip for trivial single-step goals.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, status: { type: 'string', enum: ['pending', 'in_progress', 'done'] } }, required: ['title', 'status'] } } }, required: ['todos'] } },
 	{ name: 'edit_file', description: 'Make a targeted edit to an EXISTING file: replace an exact, unique snippet (old_str) with new_str. Applied immediately; the user reviews it with Keep/Undo. old_str must appear exactly once — include enough surrounding context to be unique.', input_schema: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' } }, required: ['path', 'old_str', 'new_str'] } },
 	{ name: 'write_file', description: 'Create a new file (or fully overwrite a short one) with the COMPLETE content. For edits to existing files, prefer edit_file. Applied immediately; the user reviews it with Keep/Undo.', input_schema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
-	{ name: 'run_command', description: 'Run a shell command in the workspace root. Requires approval.', input_schema: { type: 'object', properties: { command: { type: 'string' }, explanation: { type: 'string' } }, required: ['command'] } }
+	{ name: 'run_command', description: 'Run a shell command in the workspace root. Requires approval.', input_schema: { type: 'object', properties: { command: { type: 'string' }, explanation: { type: 'string' } }, required: ['command'] } },
+	{ name: 'ask_user', description: 'Ask the user one or more multiple-choice questions when the goal genuinely depends on a decision only they can make (tech stack, scope, where to put files, must-have features). The user picks by CLICKING — do NOT write questions as prose. Ask ONCE up front with all your questions, then proceed with the answers and never re-ask. Prefer sensible defaults over asking; only ask when a wrong guess would waste real work.', input_schema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'object', properties: { header: { type: 'string', description: 'a 1-3 word tag for the question' }, question: { type: 'string' }, multiSelect: { type: 'boolean', description: 'true if several options can be picked at once' }, options: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] } } }, required: ['question', 'options'] } } }, required: ['questions'] } }
 ];
 
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -117,6 +121,45 @@ function safeJoin(root, rel) {
 	return pth;
 }
 
+/** EOL/BOM-tolerant edit. raw = file content (may have BOM + CRLF); old/new from the model (often LF).
+ *  Matches across line-ending differences and preserves the file's EOL; strips the BOM from the
+ *  result (VS Code's encoding re-adds it on save). Returns { proposed } or { error }. */
+function applyStringEdit(raw, oldStr, newStr) {
+	if (!oldStr.trim()) { return { error: 'old_str is empty or only whitespace — include real surrounding code so the match is unambiguous.' }; }
+	const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+	const toEol = (s) => s.replace(/\r\n/g, '\n').replace(/\n/g, eol);
+	const variants = []; const seen = new Set();
+	for (const v of [oldStr, toEol(oldStr)]) { if (v && !seen.has(v)) { seen.add(v); variants.push(v); } }
+	// Collect ALL distinct match positions across every EOL variant (so mixed-EOL files can't hide a second match).
+	const byPos = new Map();
+	for (const v of variants) {
+		let from = 0, idx;
+		while ((idx = raw.indexOf(v, from)) >= 0) { if (!byPos.has(idx)) { byPos.set(idx, v.length); } from = idx + v.length; }
+	}
+	if (byPos.size === 0) { return { error: 'old_str was not found. Copy the exact text from the file (whitespace matters; line endings are handled automatically).' }; }
+	if (byPos.size > 1) { return { error: 'old_str appears more than once; add more surrounding context to make it unique.' }; }
+	const idx = byPos.keys().next().value;
+	const len = byPos.get(idx);
+	const proposed = (raw.slice(0, idx) + toEol(newStr) + raw.slice(idx + len)).replace(/^﻿/, '');
+	return { proposed };
+}
+
+/** Compact summary of a tool's input for debug logs (truncate long strings). */
+function inputPreview(input) {
+	if (!input || typeof input !== 'object') { return input; }
+	const out = {};
+	for (const k of Object.keys(input)) {
+		const v = input[k];
+		out[k] = typeof v === 'string' ? (v.length > 60 ? v.slice(0, 60) + '…(' + v.length + 'ch)' : v) : v;
+	}
+	return out;
+}
+
+/** Cheap binary sniff — a NUL byte in the first 8KB means it isn't text we should round-trip as UTF-8. */
+function isBinaryFile(abs) {
+	try { const buf = fs.readFileSync(abs); const n = Math.min(buf.length, 8000); for (let i = 0; i < n; i++) { if (buf[i] === 0) { return true; } } return false; } catch { return false; }
+}
+
 function runCommand(root, command) {
 	return new Promise((resolve) => {
 		cp.exec(command, { cwd: root, timeout: 60000, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
@@ -134,35 +177,40 @@ async function runTool(tu, ctx) {
 	const input = tu.input || {};
 	try {
 		if (tu.name === 'list_files') {
-			ctx.post({ type: 'agentTool', icon: '📁', text: 'list_files ' + (input.glob || '') });
+			ctx.post({ type: 'agentTool', icon: 'list-tree', text: 'list_files ' + (input.glob || '') });
 			const uris = await vscode.workspace.findFiles(input.glob || '**/*', FILE_EXCLUDES, 600);
 			return uris.map((u) => vscode.workspace.asRelativePath(u)).join('\n') || '(no files)';
 		}
 		if (tu.name === 'read_file') {
-			ctx.post({ type: 'agentTool', icon: '📄', text: 'read ' + input.path });
+			ctx.post({ type: 'agentTool', icon: 'file', text: 'read ' + input.path });
 			const abs = safeJoin(root, input.path || '');
 			if (!abs || !fs.existsSync(abs)) { return 'ERROR: file not found: ' + input.path; }
-			let body = fs.readFileSync(abs, 'utf8');
+			if (isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — not reading it as text.'; }
+			let body = fs.readFileSync(abs, 'utf8').replace(/^﻿/, ''); // drop BOM so old_str matches cleanly
 			if (body.length > 100 * 1024) { body = body.slice(0, 100 * 1024) + '\n…(truncated)…'; }
 			return body;
 		}
 		if (tu.name === 'search') {
-			ctx.post({ type: 'agentTool', icon: '🔎', text: 'search "' + input.query + '"' });
+			ctx.post({ type: 'agentTool', icon: 'search', text: 'search "' + input.query + '"' });
 			return (await rgSearch(String(input.query || ''), root)) || '(no matches)';
+		}
+		if (tu.name === 'update_plan') {
+			const todos = Array.isArray(input.todos) ? input.todos.slice(0, 20) : [];
+			ctx.post({ type: 'plan', todos });
+			const done = todos.filter((t) => t && t.status === 'done').length;
+			return 'Plan updated (' + done + '/' + todos.length + ' done).';
 		}
 		if (tu.name === 'edit_file') {
 			const abs = safeJoin(root, input.path || '');
 			if (!abs) { return 'ERROR: path is outside the workspace'; }
 			if (!fs.existsSync(abs)) { return 'ERROR: file not found: ' + input.path + ' (use write_file to create it)'; }
+			if (isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — refusing to edit it as text.'; }
 			const cur = fs.readFileSync(abs, 'utf8');
 			const oldStr = String(input.old_str || '');
-			const newStr = String(input.new_str || '');
 			if (!oldStr) { return 'ERROR: old_str is empty.'; }
-			const idx = cur.indexOf(oldStr);
-			if (idx < 0) { return 'ERROR: old_str was not found in ' + input.path + '. Read the file and copy the exact text (including whitespace).'; }
-			if (cur.indexOf(oldStr, idx + 1) >= 0) { return 'ERROR: old_str appears more than once in ' + input.path + '. Add more surrounding context so it is unique.'; }
-			const proposed = cur.slice(0, idx) + newStr + cur.slice(idx + oldStr.length);
-			const ok = await ctx.applyEdit({ path: input.path, exists: true, proposed });
+			const res = applyStringEdit(cur, oldStr, String(input.new_str || ''));
+			if (res.error) { return 'ERROR: ' + res.error + ' (' + input.path + ')'; }
+			const ok = await ctx.applyEdit({ path: input.path, exists: true, proposed: res.proposed });
 			if (!ok) { return 'ERROR: could not apply the edit to ' + input.path + ' (file may be read-only or in conflict).'; }
 			ctx.editCount = (ctx.editCount || 0) + 1;
 			return 'Applied edit to ' + input.path + ' (the user is reviewing it with Keep/Undo; do not re-edit it).';
@@ -171,7 +219,12 @@ async function runTool(tu, ctx) {
 			const abs = safeJoin(root, input.path || '');
 			if (!abs) { return 'ERROR: path is outside the workspace'; }
 			const existed = fs.existsSync(abs);
-			const newStr = String(input.content || '');
+			let newStr = String(input.content || '');
+			if (existed) {
+				if (isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — refusing to overwrite it.'; }
+				try { if (fs.statSync(abs).size > 100 * 1024) { return 'ERROR: ' + input.path + ' is large (>100KB) and you only saw the first 100KB on read. Use edit_file for targeted changes — a full write_file risks dropping content you did not see.'; } } catch { /* */ }
+				const raw = fs.readFileSync(abs, 'utf8'); const eol = raw.includes('\r\n') ? '\r\n' : '\n'; newStr = newStr.replace(/\r\n/g, '\n').replace(/\n/g, eol);
+			}
 			const ok = await ctx.applyEdit({ path: input.path, exists: existed, proposed: newStr });
 			if (!ok) { return 'ERROR: could not write ' + input.path + ' (path may be read-only or in conflict).'; }
 			ctx.editCount = (ctx.editCount || 0) + 1;
@@ -180,8 +233,21 @@ async function runTool(tu, ctx) {
 		if (tu.name === 'run_command') {
 			const approved = await ctx.approve({ kind: 'command', command: String(input.command || ''), explanation: input.explanation || '' });
 			if (!approved) { return 'User skipped this command. Do not retry it.'; }
-			ctx.post({ type: 'agentTool', icon: '▶️', text: 'ran: ' + input.command });
+			ctx.post({ type: 'agentTool', icon: 'terminal', text: 'ran: ' + input.command });
 			return await runCommand(root, String(input.command || ''));
+		}
+		if (tu.name === 'ask_user') {
+			const questions = Array.isArray(input.questions) ? input.questions : [];
+			if (!questions.length) { return 'ERROR: ask_user needs a non-empty "questions" array.'; }
+			if (typeof ctx.ask !== 'function') { return 'ERROR: interactive questions are unavailable here. Choose sensible defaults and proceed.'; }
+			const res = await ctx.ask({ questions });
+			if (!res || !res.answers) { return 'The user dismissed the questions without answering. Pick sensible defaults and proceed; only ask again if truly essential.'; }
+			const lines = res.answers.map((a) => {
+				const sel = (a.selected && a.selected.length) ? a.selected.join(', ') : '(no selection)';
+				return '- ' + (a.header ? a.header + ' — ' : '') + (a.question || '') + ' → ' + sel;
+			});
+			if (res.notes) { lines.push('- Additional notes from the user: ' + res.notes); }
+			return 'The user answered your questions (these are their recorded decisions — honor them and do NOT ask again):\n' + lines.join('\n') + '\n\nProceed with the work using these answers.';
 		}
 		return 'ERROR: unknown tool ' + tu.name;
 	} catch (e) {
@@ -203,6 +269,7 @@ async function runAgent(ctx) {
 	if (!root) { ctx.post({ type: 'agentError', message: 'Open a folder first — the agent works on your workspace.' }); ctx.post({ type: 'agentDone', reason: 'error' }); return; }
 	ctx.root = root;
 
+	const dbg = ctx.dbg || (() => {});
 	const messages = ctx.messages;
 	let step = 0;
 	let reason = 'done';
@@ -211,18 +278,41 @@ async function runAgent(ctx) {
 		while (step++ < ctx.maxSteps) {
 			if (ctx.signal.aborted) { reason = 'stopped'; break; }
 			ctx.post({ type: 'agentStatus', text: 'thinking…' });
+			dbg('turn.request', { step, transcriptMsgs: messages.length });
 			let streamed = false;
+			let textChars = 0;
 			const turn = await streamClaudeAgentTurn({
 				apiKey: ctx.apiKey, model: ctx.model, maxTokens: 8192, system: SYSTEM,
 				messages, tools: TOOLS, signal: ctx.signal,
-				onText: (t) => { streamed = true; ctx.post({ type: 'agentDelta', text: t }); },
+				onText: (t) => { streamed = true; textChars += t.length; ctx.post({ type: 'agentDelta', text: t }); },
 				onToolStart: (name) => {
+					dbg('tool.start', { name });
 					const verb = name === 'edit_file' || name === 'write_file' ? 'preparing edit (' + name + ')…'
-						: name === 'run_command' ? 'preparing command…' : 'running ' + name + '…';
+						: name === 'run_command' ? 'preparing command…' : name === 'update_plan' ? 'planning…' : 'running ' + name + '…';
 					ctx.post({ type: 'agentStatus', text: verb });
 				}
 			});
 			if (streamed) { ctx.post({ type: 'agentTurnEnd' }); }
+			dbg('turn.response', { step, stop: turn.stop_reason, blocks: turn.content.length, textChars, tools: turn.content.filter((c) => c.type === 'tool_use').map((c) => c.name + (c._malformed ? '!malformed' : '')) });
+			// Report real context usage (input_tokens = how full the transcript is) so the UI can meter + warn.
+			if (turn.usage) {
+				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens });
+				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model });
+			}
+
+			// Guard: never push an empty assistant message — Anthropic 400s on content:[] (e.g. a
+			// turn cut off before any output). Substitute a placeholder and recover or stop.
+			const hasReal = turn.content.some((c) => (c.type === 'text' && c.text.trim()) || c.type === 'tool_use');
+			if (!hasReal) {
+				messages.push({ role: 'assistant', content: [{ type: 'text', text: '(no output)' }] });
+				if (turn.stop_reason === 'max_tokens' && nudges++ < 3) {
+					ctx.post({ type: 'agentTool', icon: 'warning', text: 'cut off with no content — retrying smaller' });
+					messages.push({ role: 'user', content: 'Your last turn produced no usable output (cut off). Take a smaller step and continue.' });
+					continue;
+				}
+				reason = (turn.stop_reason === 'max_tokens') ? 'limit' : 'done';
+				break;
+			}
 			messages.push({ role: 'assistant', content: turn.content });
 
 			const toolUses = turn.content.filter((c) => c.type === 'tool_use');
@@ -232,39 +322,63 @@ async function runAgent(ctx) {
 				const results = [];
 				let cancelled = false;
 				for (const tu of toolUses) {
-					if (cancelled || ctx.signal.aborted) { cancelled = true; results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'Cancelled by the user.' }); continue; }
+					if (cancelled || ctx.signal.aborted) { cancelled = true; dbg('tool.cancelled', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'Cancelled by the user.' }); continue; }
+					if (tu._malformed) { dbg('tool.malformed', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'ERROR: your tool arguments were cut off (truncated JSON). Retry with smaller input — for edits use edit_file with a short snippet.' }); continue; }
+					dbg('tool.call', { name: tu.name, input: inputPreview(tu.input) });
 					const out = await runTool(tu, ctx);
+					dbg('tool.result', { name: tu.name, chars: String(out).length, error: String(out).startsWith('ERROR') });
 					results.push({ type: 'tool_result', tool_use_id: tu.id, content: String(out) });
+				}
+				// max_tokens can co-occur with a (possibly truncated) tool_use — surface it here too.
+				if (turn.stop_reason === 'max_tokens') {
+					ctx.post({ type: 'agentTool', icon: 'warning', text: 'response was cut off — making smaller edits' });
+					results.push({ type: 'text', text: 'Your previous turn was cut off (length limit). Make smaller, targeted edits (edit_file with short snippets); avoid huge tool inputs.' });
 				}
 				messages.push({ role: 'user', content: results });
 				if (cancelled || ctx.signal.aborted) { reason = 'stopped'; break; }
-				nudges = 0;
+				if (turn.stop_reason === 'max_tokens' && nudges++ >= 3) { reason = 'limit'; break; }
+				if (turn.stop_reason !== 'max_tokens') { nudges = 0; }
 				continue;
 			}
 
 			// No tool calls this turn.
 			const text = turn.content.filter((c) => c.type === 'text').map((c) => c.text).join('');
 			if (turn.stop_reason === 'max_tokens') {
-				ctx.post({ type: 'agentTool', icon: '⚠️', text: 'response was cut off — switching to smaller edits' });
+				ctx.post({ type: 'agentTool', icon: 'warning', text: 'response was cut off — switching to smaller edits' });
 				messages.push({ role: 'user', content: 'Your last response was cut off (too long). Use edit_file for small, targeted changes instead of rewriting whole files. Continue.' });
 				if (nudges++ < 3) { continue; }
 				reason = 'limit'; break;
 			}
 			if (/(^|\n)\s*done\s*:/i.test(text) || /\bdone\.?\s*$/i.test(text.trim())) { reason = 'done'; break; }
-			// The model stalled on intent without acting — nudge it to act (a few times).
-			if (nudges++ < 3) {
+			// Only nudge when the model PROMISED an action but didn't call a tool (a real stall) —
+			// not when it gave a complete conversational answer (e.g. a joke, an explanation, a question).
+			const promisesAction = /[:…]\s*$/.test(text.trim())
+				|| /\b(let me|let['’]?s|now i['’]?ll|i['’]?ll|i will|going to|i'?m going to)\b[^.!?]*\b(add|edit|create|write|update|insert|implement|fix|change|modify|refactor|append|replace|check|read|look|search|run)\b/i.test(text)
+				|| /\bnext[, ]/i.test(text);
+			if (promisesAction && nudges++ < 3) {
+				dbg('nudge', { n: nudges, stop: turn.stop_reason });
 				messages.push({ role: 'user', content: 'Stop planning. You have read enough. Make your next edit_file (or write_file) call NOW — do not describe it, do it. If the goal is truly complete, reply with a one-line summary starting with "Done:".' });
 				continue;
 			}
+			dbg(promisesAction ? 'stall.giveup' : 'turn.complete', { nudges, promised: promisesAction });
 			reason = 'done';
 			break;
 		}
 		if (step > ctx.maxSteps) { reason = 'limit'; }
 	} catch (e) {
+		const msg = String((e && e.message) || e);
+		dbg('agent.error', { msg, aborted: ctx.signal.aborted });
 		if (ctx.signal.aborted) { reason = 'stopped'; }
-		else { ctx.post({ type: 'agentError', message: String((e && e.message) || e) }); reason = 'error'; }
+		else if (/prompt is too long|context.{0,12}(limit|window|length)|exceed.{0,20}(context|maximum)|too many tokens/i.test(msg)) {
+			// Real context-window overflow — surface a clear, actionable message instead of the raw 400.
+			ctx.post({ type: 'agentError', message: 'You’ve hit the model’s context window (the conversation got too long). Start a New chat to reset it, switch to a larger-context model, or pin fewer files — then continue.', kind: 'context' });
+			reason = 'error';
+		}
+		else { ctx.post({ type: 'agentError', message: msg }); reason = 'error'; }
 	} finally {
-		ctx.post({ type: 'agentDone', reason, edits: ctx.editCount || 0 });
+		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, credits: ctx.credits != null ? ctx.credits : null });
+		// credits: null until the M10 gateway returns real usage; the response bar shows it when present.
+		ctx.post({ type: 'agentDone', reason, edits: ctx.editCount || 0, credits: ctx.credits != null ? ctx.credits : null });
 	}
 }
 

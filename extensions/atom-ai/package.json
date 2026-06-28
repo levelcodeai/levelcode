@@ -45,6 +45,7 @@
 			{ "command": "atompp.ai.applyEdit", "title": "Keep AI Edit", "category": "Atom++", "icon": "$(check)" },
 			{ "command": "atompp.ai.discardEdit", "title": "Discard AI Edit", "category": "Atom++", "icon": "$(close)" },
 			{ "command": "atompp.ai.setApiKey", "title": "AI: Set Anthropic API Key…", "category": "Atom++", "icon": "$(key)" },
+			{ "command": "atompp.ai.account", "title": "Account: Sign in to Atom++…", "category": "Atom++", "icon": "$(account)" },
 			{ "command": "atompp.ai.clearApiKey", "title": "AI: Clear Anthropic API Key", "category": "Atom++" },
 			{ "command": "atompp.ai.toggleCompletions", "title": "AI: Toggle Inline Completions", "category": "Atom++" },
 			{ "command": "atompp.ai.review.keepActive", "title": "Keep Agent Edit", "category": "Atom++", "icon": "$(check)" },
@@ -113,6 +114,21 @@
 					"type": "boolean",
 					"default": false,
 					"description": "Include a list of all project file paths with each chat message, so the AI knows the repo structure. Uses more tokens."
+				},
+				"atompp.cloud.endpoint": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Base URL of your Atom++ Cloud account server (for sign-in + settings/skills sync). Leave empty until the backend exists (roadmap M9). **Your AI provider keys never go to this server — AI requests stay direct from your machine to your provider.**"
+				},
+				"atompp.ai.contextWindow": {
+					"type": "number",
+					"default": 200000,
+					"description": "The model's context window in tokens, used for the in-chat context-usage meter and warning. Claude 4 models are 200000; raise to 1000000 if you've enabled the 1M-token context beta."
+				},
+				"atompp.ai.debug": {
+					"type": "boolean",
+					"default": true,
+					"description": "Print detailed debug logs (every agent/chat action) inline in the chat, prefixed with 🐛 DEBUG. For diagnosing agent/chat issues."
 				},
 				"atompp.ai.agent.maxSteps": {
 					"type": "number",

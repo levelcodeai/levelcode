@@ -26,12 +26,72 @@
 
   /* ---- conversation log ---- */
   #log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
-  .msg { white-space: pre-wrap; word-wrap: break-word; line-height: 1.5; }
+  /* Log is a flex column → children default to flex-shrink:1. Any child with overflow:hidden (e.g. the
+     approval/edit cards) then gets an auto min-size of 0 and the flex algorithm crushes it to an invisible
+     line once the log overflows. Pin every child to its natural height; the log itself scrolls instead. */
+  #log > * { flex-shrink: 0; }
+  /* ---- per-response copy button (hover-reveal under a completed assistant message) ---- */
+  .msgactions { margin-top: 5px; display: flex; gap: 6px; }
+  .msgcopy {
+    opacity: 0; transition: opacity .12s, color .12s, background .12s;
+    cursor: pointer; border: 1px solid var(--border); border-radius: 6px;
+    background: transparent; color: var(--muted);
+    font-size: 11px; line-height: 1.4; padding: 2px 8px;
+  }
+  .msg:hover .msgcopy, .msgcopy:focus-visible, .msgcopy.done { opacity: .8; }
+  .msgcopy:hover { opacity: 1; color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
+  .msgcopy.done { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); border-color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  /* ---- jump-to-latest affordance (shown only when auto-scroll is paused) ---- */
+  #jumpLatest {
+    position: fixed; right: 16px; bottom: 96px; z-index: 20;
+    width: 30px; height: 30px; display: none;
+    align-items: center; justify-content: center; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 50%;
+    background: var(--vscode-editorWidget-background, #21252b);
+    color: var(--vscode-foreground); opacity: .92;
+    box-shadow: 0 2px 8px rgba(0,0,0,.28);
+    font-size: 15px; line-height: 1; padding: 0;
+  }
+  #jumpLatest.show { display: inline-flex; }
+  #jumpLatest:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.25)); }
+  .msg { white-space: normal; word-wrap: break-word; line-height: 1.5; }
   .msg .role { font-size: 11px; opacity: .55; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+  /* rendered-markdown block elements inside a message body */
+  .msg .body p { margin: 0 0 8px; }
+  .msg .body ul, .msg .body ol { margin: 0 0 8px; padding-left: 22px; }
+  .msg .body li { margin: 2px 0; }
+  .msg .body li > ul, .msg .body li > ol { margin: 2px 0; }
+  .msg .body h1, .msg .body h2, .msg .body h3, .msg .body h4, .msg .body h5, .msg .body h6 { margin: 12px 0 6px; line-height: 1.3; font-weight: 600; }
+  .msg .body h1 { font-size: 1.3em; } .msg .body h2 { font-size: 1.18em; } .msg .body h3 { font-size: 1.07em; }
+  .msg .body h4, .msg .body h5, .msg .body h6 { font-size: 1em; }
+  .msg .body blockquote { margin: 0 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--muted); }
+  .msg .body hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .msg .body a { color: var(--accent); text-decoration: none; }
+  .msg .body a:hover { text-decoration: underline; }
+  .msg .body table { border-collapse: collapse; margin: 0 0 8px; display: block; overflow-x: auto; font-size: .95em; }
+  .msg .body th, .msg .body td { border: 1px solid var(--border); padding: 4px 9px; text-align: left; }
+  .msg .body th { background: var(--vscode-editorWidget-background, rgba(127,127,127,.1)); font-weight: 600; }
+  .msg .body del { opacity: .65; }
+  /* clickable file chips (mentions of real project files) */
+  .filechip { display: inline-flex; align-items: center; gap: 4px; vertical-align: -2px; margin: 0 1px; padding: 0 6px 0 3px; border: 1px solid var(--border); border-radius: 5px; background: var(--vscode-editorWidget-background, rgba(127,127,127,.1)); cursor: pointer; font-size: .92em; line-height: 1.7; }
+  .filechip:hover { border-color: var(--accent); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.2)); }
+  .filechip .fcname { color: var(--accent); }
+  .filechip:hover .fcname { text-decoration: underline; }
+  .filechip:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .ficon { font-size: 8.5px; font-weight: 700; line-height: 1; padding: 2px 3px; border-radius: 3px; letter-spacing: .02em; color: #1f1f1f; background: #9aa0a6; }
+  .ficon-js, .ficon-mjs, .ficon-cjs, .ficon-jsx { background: #f0db4f; color: #323330; }
+  .ficon-ts, .ficon-tsx { background: #3178c6; color: #fff; }
+  .ficon-css, .ficon-scss { background: #2965f1; color: #fff; }
+  .ficon-html, .ficon-htm { background: #e34c26; color: #fff; }
+  .ficon-md { background: #519aba; color: #fff; }
+  .ficon-json, .ficon-yml, .ficon-yaml { background: #cbcb41; color: #323330; }
+  .ficon-py { background: #3572a5; color: #fff; }
+  .ficon-rb { background: #cc342d; color: #fff; }
+  .msg .body > div > :last-child, .msg .body > p:last-child, .msg .body > ul:last-child, .msg .body > ol:last-child { margin-bottom: 0; }
   .msg.user .body { background: var(--field-bg); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
   .msg.assistant .body { padding: 1px 2px; }
   .err { color: var(--vscode-errorForeground); }
-  pre { background: var(--vscode-editor-background, #282c34); border: 1px solid var(--border); padding: 9px 11px; border-radius: 8px; overflow-x: auto; margin: 8px 0; color: var(--vscode-editor-foreground, var(--vscode-foreground)); }
+  pre { background: var(--vscode-editor-background, #282c34); border: 1px solid var(--border); padding: 9px 11px; border-radius: 8px; overflow-x: auto; margin: 8px 0; min-height: 1.3em; color: var(--vscode-editor-foreground, var(--vscode-foreground)); }
   pre code { background: none; padding: 0; }
   code { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: .92em; }
   :not(pre) > code { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.16)); padding: 1px 5px; border-radius: 4px; }
@@ -56,7 +116,30 @@
   .agentstatus { font-size: 12px; margin: 5px 2px; opacity: .9; display: flex; gap: 7px; align-items: center; font-style: italic; }
   .agentstatus .spin { display: inline-block; font-style: normal; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* shimmering "glance" text while the agent is working (Cursor/Claude-Code style sweep) */
+  .shimmer {
+    background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 38%, var(--vscode-foreground) 50%, var(--muted) 62%, var(--muted) 100%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+    animation: shimmer 1.8s linear infinite;
+  }
+  @keyframes shimmer { 0% { background-position: 160% 0; } 100% { background-position: -160% 0; } }
+  @media (prefers-reduced-motion: reduce) { .shimmer { animation: none; color: var(--muted); -webkit-text-fill-color: var(--muted); } }
   .agentdone { font-size: 12px; margin: 4px 2px 2px; opacity: .8; font-weight: 600; }
+  /* response action bar: (retry)(copy)(helpful)(unhelpful) … model · credits */
+  .agentbar { display: flex; align-items: center; gap: 8px; margin: 6px 2px 2px; }
+  .agentbar-actions { display: flex; align-items: center; gap: 2px; }
+  .agentbar .abicon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; padding: 0; border: none; border-radius: 6px; cursor: pointer; background: transparent; color: var(--muted); transition: color .12s, background .12s; }
+  .agentbar .abicon svg { width: 15px; height: 15px; display: block; }
+  .agentbar .abicon:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.16)); }
+  .agentbar .abicon.ok { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  .agentbar .abicon.up.active { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  .agentbar .abicon.down.active { color: var(--vscode-errorForeground, #f14c4c); }
+  .agentbar-meta { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+  .agentbar-meta .abhint { opacity: .85; margin-right: 3px; }
+  .agentbar-meta .abmodel { cursor: pointer; }
+  .agentbar-meta .abmodel:hover { color: var(--vscode-foreground); text-decoration: underline; }
   .approval { border: 1px solid var(--border); border-radius: 10px; margin: 6px 2px; overflow: hidden; background: var(--field-bg); display: flex; flex-direction: column; max-height: 70vh; }
   .approval .ahead { flex: 0 0 auto; padding: 7px 10px; font-size: 12px; border-bottom: 1px solid var(--border); }
   .approval .ahead code { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.18)); padding: 1px 5px; border-radius: 4px; }
@@ -69,14 +152,79 @@
   .approval .abtns .skip { background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.25)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
   .approval .verdict { font-size: 12px; opacity: .8; }
 
+  /* run_command approval styled as a real terminal window (uses VS Code terminal theme colors) */
+  .approval.term { display: block; max-height: none; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--vscode-terminal-background, var(--vscode-editor-background, #1e1e1e)); font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); }
+  .term .termbar { display: flex; align-items: center; gap: 9px; padding: 6px 11px; background: var(--vscode-titleBar-activeBackground, rgba(127,127,127,.16)); border-bottom: 1px solid var(--border); }
+  .term .tdots { display: inline-flex; gap: 6px; }
+  .term .tdots i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .term .tdots .r { background: #ff5f56; } .term .tdots .y { background: #ffbd2e; } .term .tdots .g { background: #27c93f; }
+  .term .tbartitle { font-size: 11px; color: var(--muted); letter-spacing: .02em; }
+  .term .termbody { padding: 12px 14px; color: var(--vscode-terminal-foreground, var(--vscode-foreground)); font-size: 12.5px; line-height: 1.65; }
+  .term .termline { white-space: pre-wrap; word-break: break-word; }
+  .term .tprompt { color: var(--vscode-terminal-ansiBrightGreen, var(--vscode-terminal-ansiGreen, #7ee787)); font-weight: 700; }
+  .term .tcwd { color: var(--vscode-terminal-ansiBrightCyan, var(--vscode-terminal-ansiCyan, #56b6c2)); margin: 0 7px 0 5px; }
+  .term .tcmd { color: var(--vscode-terminal-foreground, var(--vscode-foreground)); }
+  .term .tcaret { display: inline-block; width: 7px; height: 14px; margin-left: 3px; vertical-align: text-bottom; background: var(--vscode-terminalCursor-foreground, var(--vscode-terminal-foreground, #d4d4d4)); animation: termblink 1.05s steps(1) infinite; }
+  @keyframes termblink { 50% { opacity: 0; } }
+  .term .termwhy { color: var(--vscode-terminal-ansiBrightBlack, var(--muted)); font-size: 11.5px; margin-top: 7px; white-space: pre-wrap; word-break: break-word; }
+  .term .termfoot { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--border); background: var(--field-bg); }
+  .term .termask { font-size: 11.5px; color: var(--muted); }
+  .term .tspacer { flex: 1 1 auto; }
+  .term .termfoot button { cursor: pointer; border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; }
+  .term .termfoot .approve { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .term .termfoot .approve:hover { background: var(--vscode-button-hoverBackground); }
+  .term .termfoot .skip { background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.25)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+  .term .verdict { font-size: 12px; color: var(--muted); }
+  .term.ran .verdict { color: var(--vscode-terminal-ansiBrightGreen, var(--vscode-terminal-ansiGreen, #7ee787)); }
+
+  /* ---- ask_user: clickable clarifying questions ---- */
+  .questions { border: 1px solid var(--border); border-radius: 10px; margin: 6px 2px; padding: 10px 11px 11px; background: var(--field-bg); }
+  .questions .qhead { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  .questions .qblock { margin: 8px 0 10px; }
+  .questions .qtag { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; margin-bottom: 3px; }
+  .questions .qtext { font-size: 12.5px; margin-bottom: 6px; }
+  .questions .qopts { display: flex; flex-direction: column; gap: 5px; }
+  .questions .qopt {
+    display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px;
+    background: var(--vscode-editorWidget-background, rgba(127,127,127,.08)); color: var(--vscode-foreground);
+    font-size: 12px; line-height: 1.35; transition: border-color .12s, background .12s;
+  }
+  .questions .qopt:hover { border-color: var(--accent); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.16)); }
+  .questions .qopt.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .questions .qopt[disabled] { cursor: default; opacity: .9; }
+  .questions .qopt[disabled]:not(.sel) { opacity: .45; }
+  .questions .qnum {
+    flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; margin-top: 1px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600; background: rgba(127,127,127,.22); color: var(--vscode-foreground);
+  }
+  .questions .qopt.sel .qnum { background: var(--accent); color: var(--vscode-button-foreground, #fff); }
+  .questions .qlabel { display: flex; flex-direction: column; gap: 1px; }
+  .questions .qdesc { font-size: 11px; opacity: .65; }
+  .questions .qnotes {
+    width: 100%; box-sizing: border-box; margin-top: 6px; resize: vertical;
+    background: var(--vscode-input-background, var(--field-bg)); color: var(--vscode-foreground);
+    border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; font-size: 12px; font-family: inherit;
+  }
+  .questions .qbtns { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+  .questions .qsend { cursor: pointer; border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .questions .qsend:hover { background: var(--vscode-button-hoverBackground); }
+  .questions .qverdict { font-size: 12px; font-weight: 600; color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  .questions.answered { opacity: .92; }
+
   /* ---- applied-edit review (apply-then-review) ---- */
+  /* Sits between the message log and the composer — sticky review summary for applied edits. */
   #reviewBar {
     display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
-    padding: 7px 12px; font-size: 12px;
+    margin: 0 8px 8px; padding: 7px 11px; font-size: 12px;
     background: var(--vscode-editorWidget-background, #21252b);
-    border-bottom: 1px solid var(--border);
+    border: 1px solid var(--border); border-radius: 8px;
   }
   #reviewBar .rcount { font-weight: 600; }
+  #reviewBar .rstat { font-size: 11px; font-variant-numeric: tabular-nums; }
+  #reviewBar .rstat .add { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  #reviewBar .rstat .del { color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c); margin-left: 5px; }
   #reviewBar .rspacer { flex: 1 1 auto; }
   #reviewBar button { cursor: pointer; border: none; border-radius: 6px; padding: 4px 12px; font-size: 12px; }
   #reviewBar .keepall { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
@@ -87,10 +235,11 @@
   .editcard .ahead { padding: 7px 10px; font-size: 12px; }
   .editcard .ahead code { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.18)); padding: 1px 5px; border-radius: 4px; }
   .editcard .counts { float: right; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; }
-  .editcard .counts .a { color: #4ec97a; } .editcard .counts .d { color: #e06c75; }
+  .editcard .counts .a { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); } .editcard .counts .d { color: var(--vscode-gitDecoration-deletedResourceForeground, #e06c75); }
   .editcard .diffwrap { border-top: 1px solid var(--border); }
   .editcard .diffwrap > summary { cursor: pointer; font-size: 11px; opacity: .7; padding: 5px 10px; user-select: none; }
-  .editcard .diffwrap .diff { max-height: 240px; }
+  .editcard .diffwrap .diff { max-height: 380px; overflow-y: scroll; scrollbar-gutter: stable; padding-bottom: 6px; }
+  .editcard .diffempty { padding: 7px 12px; font-size: 11px; opacity: .6; font-style: italic; }
   .editcard .abtns { display: flex; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); }
   .editcard .abtns button { cursor: pointer; border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; }
   .editcard .abtns .keep { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
@@ -99,13 +248,47 @@
   .editcard .abtns .secondary2 { background: transparent; color: var(--muted); }
   .editcard .abtns .secondary2:hover { color: var(--vscode-foreground); }
   .editcard .verdict { font-size: 12px; opacity: .85; }
-  .diff { flex: 1 1 auto; min-height: 0; overflow: auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; line-height: 1.5; padding: 4px 0; }
-  .diff .dl { white-space: pre-wrap; word-break: break-word; padding: 0 10px 0 4px; }
+
+  /* ---- agent plan checklist ---- */
+  /* context-window usage meter (appears >50%, warns >80%, critical >92%) */
+  #ctxBar { flex: 0 0 auto; margin: 0 8px 6px; padding: 7px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--vscode-editorWidget-background, rgba(127,127,127,.08)); font-size: 11px; }
+  #ctxBar .ctxrow { display: flex; justify-content: space-between; align-items: center; color: var(--muted); margin-bottom: 5px; }
+  #ctxBar .ctxnum { font-variant-numeric: tabular-nums; }
+  #ctxBar .ctxtrack { height: 5px; border-radius: 3px; background: rgba(127,127,127,.22); overflow: hidden; }
+  #ctxBar .ctxfill { height: 100%; background: var(--accent); transition: width .3s ease; }
+  #ctxBar.lvl-warn .ctxfill { background: var(--vscode-editorWarning-foreground, #e0a030); }
+  #ctxBar.lvl-crit .ctxfill { background: var(--vscode-errorForeground, #f14c4c); }
+  #ctxBar.lvl-warn { border-color: color-mix(in srgb, #e0a030 45%, var(--border)); }
+  #ctxBar.lvl-crit { border-color: color-mix(in srgb, #f14c4c 50%, var(--border)); }
+  #ctxBar .ctxtip { margin-top: 8px; line-height: 1.5; color: var(--vscode-foreground); }
+  #ctxBar .ctxnew { margin-left: 5px; cursor: pointer; border: none; border-radius: 5px; padding: 3px 10px; font-size: 11px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  #ctxBar .ctxnew:hover { background: var(--vscode-button-hoverBackground); }
+  /* sticky active-plan bar (sits just above the review bar) — opaque so the log can't show behind it */
+  #planBar { flex: 0 0 auto; padding: 8px 8px 6px; max-height: 38vh; overflow-y: auto; scrollbar-gutter: stable;
+    background: var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e));
+    border-top: 1px solid var(--border); box-shadow: 0 -8px 14px -8px rgba(0,0,0,.4); }
+  #planBar .plancard { margin: 0; }
+  .plancard { border: 1px solid var(--border); border-radius: 10px; margin: 6px 2px; overflow: hidden; background: var(--field-bg); }
+  .plancard .phead { padding: 7px 11px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--border); }
+  .plancard .pcount { float: right; opacity: .65; font-weight: 400; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
+  .plancard .pitems { padding: 4px 0 6px; }
+  .plancard .pitem { display: flex; gap: 8px; align-items: baseline; padding: 3px 11px; font-size: 12px; line-height: 1.4; }
+  .plancard .pitem .pic { width: 13px; flex: 0 0 auto; text-align: center; }
+  .plancard .pitem.done .ptitle { opacity: .55; text-decoration: line-through; }
+  .plancard .pitem.done .pic { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
+  .plancard .pitem.doing .pic { color: var(--accent); animation: agentpulse 1.3s ease-in-out infinite; }
+  .plancard .pitem.doing .ptitle { font-weight: 600; }
+  .plancard .pitem.todo .pic { opacity: .4; }
+  @keyframes agentpulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+  .diff { overflow: auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; line-height: 1.5; padding: 4px 0; }
+  .diff .dl { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 10px 0 22px; text-indent: -16px; }
   .diff .dl .s { display: inline-block; width: 12px; opacity: .6; user-select: none; }
+  .diff::-webkit-scrollbar { width: 10px; height: 10px; }
+  .diff::-webkit-scrollbar-thumb { background: var(--scrollbar, rgba(127,127,127,.4)); border-radius: 6px; }
   .diff .dl.add { background: rgba(70,160,90,.16); }
   .diff .dl.del { background: rgba(220,90,90,.16); }
-  .diff .dl.add .s { color: #4ec97a; }
-  .diff .dl.del .s { color: #e06c75; }
+  .diff .dl.add .s { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
+  .diff .dl.del .s { color: var(--vscode-gitDecoration-deletedResourceForeground, #e06c75); }
   .diff .dl.ctx { opacity: .55; }
   .autoctx { font-size: 11px; opacity: .55; margin: -4px 2px 2px; }
   .autoctx .files { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
@@ -125,11 +308,12 @@
   #chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
   .chip {
     display: inline-flex; align-items: center; gap: 5px;
-    font-size: 11px; line-height: 1; padding: 4px 8px;
+    font-size: 11px; line-height: 1.4; padding: 3px 8px 3px 5px;
     border-radius: var(--pill-radius);
-    border: 1px solid var(--border); background: var(--vscode-badge-background, rgba(127,127,127,.12));
+    border: 1px solid var(--border); background: var(--vscode-editorWidget-background, rgba(127,127,127,.08));
     color: var(--vscode-foreground); max-width: 100%;
   }
+  .chip:hover { border-color: var(--accent); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.14)); }
   .chip .name { font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
   .chip .badge {
     font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
@@ -194,20 +378,71 @@
   #send.stop { background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.3)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
 
   /* ---- status footer ---- */
+  .dbg { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; color: #7fb3d5; opacity: .8; border-left: 2px solid rgba(126,166,194,.45); padding: 1px 8px; margin: 1px 2px 1px 4px; white-space: pre-wrap; word-break: break-all; }
+  body.vscode-light .dbg, body.vscode-high-contrast-light .dbg { color: #2c6488; opacity: .92; border-left-color: rgba(44,100,136,.55); }
   #status {
     display: flex; align-items: center; gap: 10px;
     padding: 5px 14px 8px; font-size: 11px; color: var(--muted);
   }
+  #atomLogo { width: 22px; height: 22px; flex: 0 0 auto; }
+  .miniatom { width: 22px; height: 22px; flex: 0 0 auto; }
+  /* inline codicons sized to the surrounding text */
+  .ci { width: 1em; height: 1em; display: inline-block; vertical-align: -0.13em; flex: 0 0 auto; }
+  .orbit { stroke: var(--vscode-foreground); opacity: .55; }
+  .arc { stroke: var(--accent); }
+  .electron { stroke: var(--accent); fill: var(--accent); }
   #status .item { display: inline-flex; align-items: center; gap: 4px; }
+  #ctxStat { font-variant-numeric: tabular-nums; }
+  #ctxStat.ctx-warn { color: var(--vscode-editorWarning-foreground, #e0a030); }
+  #ctxStat.ctx-crit { color: var(--vscode-errorForeground, #f14c4c); }
+  #status .grow { flex: 1 1 auto; }
+  /* ---- account avatar button ---- */
+  .acct { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; background: transparent; cursor: pointer; }
+  .acctavatar {
+    display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border-radius: 50%; border: 1px solid var(--border); color: var(--vscode-foreground);
+    background: var(--vscode-editorWidget-background, rgba(127,127,127,.12)); transition: border-color .12s, background .12s;
+  }
+  .acct:hover .acctavatar { border-color: var(--accent); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.2)); }
+  .acctavatar.signed { background: var(--accent); color: var(--vscode-button-foreground, #fff); border-color: transparent; font-weight: 600; font-size: 11px; letter-spacing: .02em; }
+  /* ---- overlay + account card ---- */
+  .overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.45); padding: 16px; }
+  .acctcard {
+    position: relative; width: 100%; max-width: 320px; box-sizing: border-box;
+    background: var(--vscode-editorWidget-background, #21252b); color: var(--vscode-foreground);
+    border: 1px solid var(--border); border-radius: 12px; padding: 22px 20px 20px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.4);
+  }
+  .ovclose { position: absolute; top: 9px; right: 10px; border: none; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+  .ovclose:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
+  .acctbody { text-align: center; }
+  .acctbody .bigavatar {
+    width: 56px; height: 56px; border-radius: 50%; margin: 4px auto 12px; display: flex; align-items: center; justify-content: center;
+    border: 2px solid var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
+    font-size: 19px; font-weight: 700;
+  }
+  .acctbody h2 { margin: 0 0 4px; font-size: 15px; }
+  .acctbody .sub { font-size: 12px; color: var(--muted); margin: 0 0 16px; line-height: 1.45; }
+  .acctbody .abtn {
+    display: flex; width: 100%; box-sizing: border-box; align-items: center; justify-content: center; gap: 8px;
+    margin: 7px 0; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); cursor: pointer;
+    font-size: 12.5px; background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.18)); color: var(--vscode-foreground);
+  }
+  .acctbody .abtn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.28)); }
+  .acctbody .abtn.primary { background: var(--accent); color: var(--vscode-button-foreground, #fff); border-color: transparent; font-weight: 600; }
+  .acctbody .abtn.primary:hover { filter: brightness(1.08); }
+  .acctbody .arow { display: flex; gap: 8px; }
+  .acctbody .arow .abtn { margin: 7px 0; }
+  .acctbody .meta { font-size: 12px; color: var(--muted); margin: 2px 0 14px; }
+  .acctbody .synced { font-size: 11px; color: var(--muted); margin-top: 12px; line-height: 1.5; }
+  .acctbody .note { font-size: 11px; line-height: 1.5; margin-top: 14px; padding: 8px 10px; border-radius: 8px; text-align: left; }
+  .acctbody .note.warn { background: color-mix(in srgb, #e0a030 16%, transparent); border: 1px solid color-mix(in srgb, #e0a030 40%, transparent); }
+  .acctbody .note.priv { background: var(--field-bg); border: 1px solid var(--border); color: var(--muted); }
+  .acctbody .link { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .acctbody .link:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
-  <div id="reviewBar" style="display:none">
-    <span class="rcount">Reviewing 0 changes</span>
-    <span class="rspacer"></span>
-    <button class="keepall">Keep all</button>
-    <button class="undoall">Undo all</button>
-  </div>
   <div id="log">
     <div id="empty">
       <div class="big">Atom++ AI</div>
@@ -215,16 +450,31 @@
       The open file is sent as context. Add a selection with <b>+</b> or ⌥⌘A.
     </div>
   </div>
+  <button id="jumpLatest" title="Jump to latest" aria-label="Jump to latest">&#8595;</button>
+
+  <!-- context-window usage meter (appears as the conversation fills the model's window) -->
+  <div id="ctxBar" style="display:none"></div>
+
+  <!-- active agent plan — sticky, just above the Keep all / Undo all bar -->
+  <div id="planBar" style="display:none"></div>
+
+  <div id="reviewBar" style="display:none">
+    <span class="rcount">Reviewing 0 changes</span>
+    <span class="rstat"></span>
+    <span class="rspacer"></span>
+    <button class="keepall">Keep all</button>
+    <button class="undoall">Undo all</button>
+  </div>
 
   <div id="composer">
     <div id="chips"></div>
-    <textarea id="input" rows="2" placeholder="Describe what to build"></textarea>
+    <textarea id="input" rows="2" placeholder="Give the agent a goal…"></textarea>
     <div id="toolbar">
       <div class="left">
         <button class="tbtn" id="attach" title="Add selected code as context (⌥⌘A)">+</button>
         <span class="sep"></span>
-        <span class="pill" id="mode" title="Toggle Chat / Agent mode">
-          <span class="mono">&lt;/&gt;</span> <span id="modeLabel">Chat</span>
+        <span class="pill agent" id="mode" title="Toggle Chat / Agent mode">
+          <span class="mono">&lt;/&gt;</span> <span id="modeLabel">Agent</span>
         </span>
         <span class="pill" id="model" title="Click to change model">Auto <span class="caret">▾</span></span>
         <button class="tbtn" id="settings" title="Atom++ AI settings">&#9776;</button>
@@ -234,8 +484,42 @@
   </div>
 
   <div id="status">
-    <span class="item" id="st-local" title="Requests go directly from your machine to the provider — no Atom++ backend.">🖥 Local</span>
-    <span class="item" id="st-key" title="Bring your own API key, stored in your OS keychain.">🛡 Direct · BYO key</span>
+    <svg id="atomLogo" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-label="Atom++">
+      <defs>
+        <path id="orb" d="M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z"/>
+        <path id="orbHalf" d="M 100,28 A 36,72 0 0,1 100,172"/>
+      </defs>
+      <g>
+        <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0 100 100" to="360 100 100" dur="14s" repeatCount="indefinite"/>
+        <g transform="rotate(0 100 100)"><use href="#orb" class="orbit" fill="none" stroke-width="9" stroke-linecap="round"/><use href="#orbHalf" class="arc" fill="none" stroke-width="9" stroke-linecap="round"/></g>
+        <g transform="rotate(60 100 100)"><use href="#orb" class="orbit" fill="none" stroke-width="9" stroke-linecap="round"/><use href="#orbHalf" class="arc" fill="none" stroke-width="9" stroke-linecap="round"/></g>
+        <g transform="rotate(120 100 100)"><use href="#orb" class="orbit" fill="none" stroke-width="9" stroke-linecap="round"/><use href="#orbHalf" class="arc" fill="none" stroke-width="9" stroke-linecap="round"/></g>
+        <g transform="rotate(0 100 100)"><circle class="electron" r="7" stroke-width="2.5"><animateMotion dur="3s" repeatCount="indefinite" path="M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z"/></circle></g>
+        <g transform="rotate(60 100 100)"><circle class="electron" r="7" stroke-width="2.5"><animateMotion dur="3s" begin="-1s" repeatCount="indefinite" path="M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z"/></circle></g>
+        <g transform="rotate(120 100 100)"><circle class="electron" r="7" stroke-width="2.5"><animateMotion dur="3s" begin="-2s" repeatCount="indefinite" path="M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z"/></circle></g>
+      </g>
+      <circle class="orbit" cx="100" cy="100" r="15" fill="none" stroke-width="8"><animate attributeName="r" values="15;16.5;15" dur="1.8s" repeatCount="indefinite"/></circle>
+    </svg>
+    <span class="item" id="st-local" title="Requests go directly from your machine to the provider — no Atom++ backend."><svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7.31299 1.26164C7.69849 0.897163 8.30151 0.897163 8.68701 1.26164L13.5305 5.84098C13.8302 6.12431 14 6.51853 14 6.93094V12.5002C14 13.3286 13.3284 14.0002 12.5 14.0002H10.5C9.67157 14.0002 9 13.3286 9 12.5002V10.0002C9 9.72407 8.77614 9.50021 8.5 9.50021H7.5C7.22386 9.50021 7 9.72407 7 10.0002V12.5002C7 13.3286 6.32843 14.0002 5.5 14.0002H3.5C2.67157 14.0002 2 13.3286 2 12.5002V6.93094C2 6.51853 2.1698 6.12431 2.46948 5.84098L7.31299 1.26164ZM8 1.98828L3.15649 6.56762C3.0566 6.66207 3 6.79347 3 6.93094V12.5002C3 12.7763 3.22386 13.0002 3.5 13.0002H5.5C5.77614 13.0002 6 12.7763 6 12.5002V10.0002C6 9.17179 6.67157 8.50022 7.5 8.50022H8.5C9.32843 8.50022 10 9.17179 10 10.0002V12.5002C10 12.7763 10.2239 13.0002 10.5 13.0002H12.5C12.7761 13.0002 13 12.7763 13 12.5002V6.93094C13 6.79347 12.9434 6.66207 12.8435 6.56762L8 1.98828Z"/></svg> Local</span>
+    <span class="item" id="st-key" title="Bring your own API key, stored in your OS keychain."><svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.25 7.25C9.25 7.76258 8.94148 8.2031 8.5 8.39599V9.50358C8.5 9.77973 8.27614 10.0036 8 10.0036C7.72386 10.0036 7.5 9.77973 7.5 9.50358V8.39599C7.05852 8.2031 6.75 7.76258 6.75 7.25C6.75 6.55964 7.30964 6 8 6C8.69036 6 9.25 6.55964 9.25 7.25ZM7.14309 2.04175C6.78097 2.2883 6.21583 2.61563 5.42482 2.91681C4.6399 3.21566 3.90375 3.36204 3.36353 3.43333C3.09405 3.46889 2.87509 3.48554 2.72547 3.49331C2.6507 3.49719 2.5934 3.49885 2.55593 3.49954L2.50489 3.50003C2.37157 3.49872 2.24323 3.55072 2.14842 3.64449C2.05344 3.73841 2 3.86643 2 4V6.75508C2 9.40779 3.4013 11.8632 5.68525 13.2124L7.74707 14.4305C7.90399 14.5232 8.09891 14.5232 8.2558 14.4304L10.3162 13.2126C12.5993 11.8632 14 9.40823 14 6.7561V4C14 3.86598 13.9462 3.73757 13.8507 3.64358C13.7552 3.54964 13.626 3.49794 13.4921 3.50007L13.4421 3.49981C13.4048 3.49928 13.3478 3.49787 13.2735 3.49426C13.1246 3.48705 12.9066 3.47109 12.6384 3.43602C12.1006 3.36573 11.3679 3.21959 10.5869 2.91771C9.79733 2.61248 9.22913 2.28442 8.86335 2.03774C8.68039 1.91435 8.54795 1.81124 8.46371 1.74141C8.4256 1.70981 8.38768 1.6777 8.35191 1.64343C8.2576 1.55073 8.13037 1.49913 7.99807 1.50001C7.86585 1.50089 7.73916 1.55434 7.64611 1.64819L7.53744 1.74536C7.45475 1.81517 7.32423 1.91842 7.14309 2.04175ZM3 6.75508V4.47725C3.14066 4.46608 3.30705 4.44945 3.49436 4.42473C4.09055 4.34605 4.90577 4.18447 5.78065 3.85136C6.64943 3.52057 7.28362 3.15585 7.70588 2.86835C7.82102 2.78996 7.92034 2.71735 8.00434 2.65277C8.08878 2.71677 8.18861 2.78886 8.30421 2.86682C8.72757 3.15233 9.362 3.51631 10.2264 3.85045C11.0994 4.18794 11.9134 4.34976 12.5088 4.42759C12.6947 4.45189 12.86 4.46809 13 4.47888V6.7561C13 9.05461 11.7861 11.1822 9.80736 12.3518L8.00133 13.4192L6.19388 12.3515C4.21446 11.1821 3 9.0541 3 6.75508Z"/></svg> Direct · BYO key</span>
+    <span class="item" id="ctxStat" title="Model context-window usage">Context · 200k</span>
+    <span class="grow"></span>
+    <button id="acctBtn" class="acct" title="Atom++ account" aria-label="Atom++ account">
+      <span class="acctavatar" id="acctAvatar">
+        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+          <circle cx="12" cy="8.6" r="3.3" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M5.5 18.7a6.6 6.6 0 0 1 13 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+      </span>
+    </button>
+  </div>
+
+  <!-- Atom++ account / sign-in panel (overlay inside the chat webview) -->
+  <div id="acctOverlay" class="overlay" style="display:none">
+    <div class="acctcard">
+      <button class="ovclose" id="acctClose" title="Close" aria-label="Close">&#10005;</button>
+      <div class="acctbody" id="acctBody"></div>
+    </div>
   </div>
 
 <script nonce="__NONCE__">
@@ -243,11 +527,54 @@
   window.onerror = function(msg){
     try {
       const d = document.createElement('div'); d.className = 'agentline';
-      d.innerHTML = '<span class="ic">⚠️</span><span class="t" style="color:var(--vscode-errorForeground)">UI error: ' + String(msg) + '</span>';
+      d.innerHTML = '<span class="ic"><svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M14.831 11.965L9.206 1.714C8.965 1.274 8.503 1 8 1C7.497 1 7.035 1.274 6.794 1.714L1.169 11.965C1.059 12.167 1 12.395 1 12.625C1 13.383 1.617 14 2.375 14H13.625C14.383 14 15 13.383 15 12.625C15 12.395 14.941 12.167 14.831 11.965ZM8.75 11.25C8.75 11.664 8.414 12 8 12C7.586 12 7.25 11.664 7.25 11.25C7.25 10.836 7.586 10.5 8 10.5C8.414 10.5 8.75 10.836 8.75 11.25ZM7.5 9V5.5C7.5 5.224 7.724 5 8 5C8.276 5 8.5 5.224 8.5 5.5V9C8.5 9.276 8.276 9.5 8 9.5C7.724 9.5 7.5 9.276 7.5 9Z"/></svg></span><span class="t" style="color:var(--vscode-errorForeground)">UI error: ' + String(msg) + '</span>';
       document.getElementById('log').appendChild(d);
     } catch(e) {}
   };
   const log = document.getElementById('log');
+  // ---- stick-to-bottom engine -------------------------------------------------
+  // Single source of truth: are we glued to the bottom? Default true (fresh chat).
+  // While streaming, content is appended ~60x/sec; we only auto-scroll when `stuck`,
+  // so the moment the user scrolls up to read, auto-scroll pauses until they return.
+  //
+  // We pause ONLY on a genuine upward scroll, and resume when the user returns to the bottom.
+  // This is timing-independent (no race with the rAF pump) and growth-proof: new content is added at
+  // the bottom and never moves scrollTop, so growth can't be mistaken for a user scroll-up. And because
+  // re-stick is keyed on reaching the bottom (not on "scrollTop differs from our last write"), scrolling
+  // back down to the exact same bottom on static content always re-engages — the failure mode a
+  // by-value "ignore our own write" guard has.
+  const STICK_SLOP = 24;            // px from bottom still counted as "at bottom" (absorbs sub-pixel rounding)
+  const SCROLL_UP_EPS = 2;          // ignore <2px upward jitter (sub-pixel/zoom noise), not a real scroll-up
+  let stuck = true;
+  let lastTop = 0;                  // previous scrollTop, used to detect scroll direction
+  const jumpBtn = document.getElementById('jumpLatest');
+  function atBottom(){
+    return (log.scrollHeight - log.scrollTop - log.clientHeight) <= STICK_SLOP;
+  }
+  function updateJumpBtn(){
+    jumpBtn.classList.toggle('show', !stuck);
+  }
+  function toBottom(){
+    log.scrollTop = log.scrollHeight;
+    lastTop = log.scrollTop;          // keep direction tracking in sync with our own write
+  }
+  // Replacement for every `log.scrollTop = log.scrollHeight` render site. No-op while paused.
+  function scrollIfStuck(){ if (stuck) { toBottom(); } }
+  // User intent (send / jump button / reset): always snap to bottom and re-engage.
+  function forceStick(){ stuck = true; toBottom(); updateJumpBtn(); }
+  log.addEventListener('scroll', () => {
+    const top = log.scrollTop;
+    const wasStuck = stuck;
+    if (top < lastTop - SCROLL_UP_EPS) { stuck = false; }   // genuine scroll up → pause auto-scroll
+    else if (atBottom()) { stuck = true; }                  // back at the bottom → resume
+    lastTop = top;
+    if (stuck !== wasStuck) { updateJumpBtn(); }
+  }, { passive: true });
+  jumpBtn.onclick = forceStick;
+  // File chips: click (or Enter/Space) reveals the file in Explorer and opens it in the editor.
+  function openChip(chip){ if (chip && chip.dataset.path){ vscode.postMessage({ type: 'openFile', path: chip.dataset.path }); } }
+  log.addEventListener('click', function(e){ const c = e.target.closest && e.target.closest('.filechip'); if (c){ e.preventDefault(); openChip(c); } });
+  log.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ const c = e.target.closest && e.target.closest('.filechip'); if (c){ e.preventDefault(); openChip(c); } } });
   const reviewBar = document.getElementById('reviewBar');
   const editCards = {};   // id -> applied-edit card element
   reviewBar.querySelector('.keepall').onclick = () => vscode.postMessage({ type: 'reviewKeepAll' });
@@ -268,12 +595,39 @@
   let activeFileLabel = null;
   let selLabel = null;
   let ctxFiles = [];       // files pinned as context: {id,name,rel}
-  let agentMode = false;   // Chat vs Agent
+  let agentMode = true;    // Chat vs Agent — Agent is the default
   let agentStatusEl = null;
   let agentBubble = null;  // current streaming agent text bubble
   let agentRaw = '';
+  // The Atom animation, used as the universal "working" indicator (replaces the spinner + "thinking…").
+  const ORB = 'M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z';
+  function atomOrbit(deg){ return '<g transform="rotate(' + deg + ' 100 100)"><path class="orbit" d="' + ORB + '" fill="none" stroke-width="9" stroke-linecap="round"/><path class="arc" d="M 100,28 A 36,72 0 0,1 100,172" fill="none" stroke-width="9" stroke-linecap="round"/></g>'; }
+  function atomElectron(deg, begin){ return '<g transform="rotate(' + deg + ' 100 100)"><circle class="electron" r="7" stroke-width="2.5"><animateMotion dur="3s"' + (begin ? ' begin="' + begin + '"' : '') + ' repeatCount="indefinite" path="' + ORB + '"/></circle></g>'; }
+  const ATOM_SVG = '<svg class="miniatom" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><g>'
+    + '<animateTransform attributeName="transform" type="rotate" from="0 100 100" to="360 100 100" dur="14s" repeatCount="indefinite"/>'
+    + atomOrbit(0) + atomOrbit(60) + atomOrbit(120)
+    + atomElectron(0, '') + atomElectron(60, '-1s') + atomElectron(120, '-2s')
+    + '</g><circle class="orbit" cx="100" cy="100" r="15" fill="none" stroke-width="8"><animate attributeName="r" values="15;16.5;15" dur="1.8s" repeatCount="indefinite"/></circle></svg>';
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  // Inline VS Code codicons (MIT, @vscode/codicons) — replaces UI emojis, CSP/font-free.
+  const IC = {
+    'bug': { vb: '0 0 16 16', p: '<path d="M14.5 8H13V6C13 5.63 12.898 5.283 12.722 4.985L13.853 3.854C14.048 3.659 14.048 3.342 13.853 3.147C13.658 2.952 13.341 2.952 13.146 3.147L12.015 4.278C11.717 4.102 11.37 4 11 4C11 2.346 9.654 1 8 1C6.346 1 5 2.346 5 4C4.63 4 4.283 4.102 3.985 4.278L2.854 3.147C2.659 2.952 2.342 2.952 2.147 3.147C1.952 3.342 1.952 3.659 2.147 3.854L3.278 4.985C3.102 5.283 3 5.63 3 6V8H1.5C1.224 8 1 8.224 1 8.5C1 8.776 1.224 9 1.5 9H3C3 10.199 3.424 11.3 4.13 12.163L2.396 13.897C2.201 14.092 2.201 14.409 2.396 14.604C2.494 14.702 2.622 14.75 2.75 14.75C2.878 14.75 3.006 14.701 3.104 14.604L4.838 12.87C5.7 13.576 6.802 14 8.001 14C9.2 14 10.301 13.576 11.164 12.87L12.898 14.604C12.996 14.702 13.124 14.75 13.252 14.75C13.38 14.75 13.508 14.701 13.606 14.604C13.801 14.409 13.801 14.092 13.606 13.897L11.872 12.163C12.578 11.301 13.002 10.199 13.002 9H14.502C14.778 9 15.002 8.776 15.002 8.5C15.002 8.224 14.778 8 14.502 8H14.5ZM8 2C9.103 2 10 2.897 10 4H6C6 2.897 6.897 2 8 2ZM12 9C12 11.206 10.206 13 8 13C5.794 13 4 11.206 4 9V6C4 5.449 4.448 5 5 5H11C11.552 5 12 5.449 12 6V9Z"/>' },
+    'terminal': { vb: '0 0 24 24', p: '<path d="M18.75 1.5H5.25C3.1815 1.5 1.5 3.183 1.5 5.25V18.75C1.5 20.8185 3.1815 22.5 5.25 22.5H18.75C20.8185 22.5 22.5 20.8185 22.5 18.75V5.25C22.5 3.183 20.8185 1.5 18.75 1.5ZM21 18.75C21 19.9905 19.9905 21 18.75 21H5.25C4.0095 21 3 19.9905 3 18.75V5.25C3 4.0095 4.0095 3 5.25 3H18.75C19.9905 3 21 4.0095 21 5.25V18.75ZM10.281 13.281L5.781 17.781C5.634 17.928 5.442 18 5.25 18C5.058 18 4.866 17.9265 4.719 17.781C4.4265 17.4885 4.4265 17.013 4.719 16.7205L8.688 12.7515L4.719 8.7825C4.4265 8.49 4.4265 8.0145 4.719 7.722C5.0115 7.4295 5.487 7.4295 5.7795 7.722L10.2795 12.222C10.572 12.5145 10.572 12.99 10.2795 13.2825L10.281 13.281ZM19.5 17.25C19.5 17.664 19.164 18 18.75 18H11.25C10.836 18 10.5 17.664 10.5 17.25C10.5 16.836 10.836 16.5 11.25 16.5H18.75C19.164 16.5 19.5 16.836 19.5 17.25Z"/>' },
+    'copy': { vb: '0 0 16 16', p: '<path d="M3 5V12.73C2.4 12.38 2 11.74 2 11V5C2 2.79 3.79 1 6 1H9C9.74 1 10.38 1.4 10.73 2H6C4.35 2 3 3.35 3 5ZM11 15H6C4.897 15 4 14.103 4 13V5C4 3.897 4.897 3 6 3H11C12.103 3 13 3.897 13 5V13C13 14.103 12.103 15 11 15ZM12 5C12 4.448 11.552 4 11 4H6C5.448 4 5 4.448 5 5V13C5 13.552 5.448 14 6 14H11C11.552 14 12 13.552 12 13V5Z"/>' },
+    'list-tree': { vb: '0 0 16 16', p: '<path d="M2 3.5C2 3.22386 2.22386 3 2.5 3H13.5C13.7761 3 14 3.22386 14 3.5C14 3.77614 13.7761 4 13.5 4H6V6H13.5C13.7761 6 14 6.22386 14 6.5C14 6.77614 13.7761 7 13.5 7H6V9H13.5C13.7761 9 14 9.22386 14 9.5C14 9.77614 13.7761 10 13.5 10H6V12H13.5C13.7761 12 14 12.2239 14 12.5C14 12.7761 13.7761 13 13.5 13H5.5C5.22386 13 5 12.7761 5 12.5V4H2.5C2.22386 4 2 3.77614 2 3.5Z"/>' },
+    'file': { vb: '0 0 16 16', p: '<path d="M5 1C3.89543 1 3 1.89543 3 3V13C3 14.1046 3.89543 15 5 15H11C12.1046 15 13 14.1046 13 13V5.41421C13 5.01639 12.842 4.63486 12.5607 4.35355L9.64645 1.43934C9.36514 1.15804 8.98361 1 8.58579 1H5ZM4 3C4 2.44772 4.44772 2 5 2H8V4.5C8 5.32843 8.67157 6 9.5 6H12V13C12 13.5523 11.5523 14 11 14H5C4.44772 14 4 13.5523 4 13V3ZM11.7929 5H9.5C9.22386 5 9 4.77614 9 4.5V2.20711L11.7929 5Z"/>' },
+    'search': { vb: '0 0 16 16', p: '<path d="M10.0195 10.7266C9.06578 11.5217 7.83875 12 6.5 12C3.46243 12 1 9.53757 1 6.5C1 3.46243 3.46243 1 6.5 1C9.53757 1 12 3.46243 12 6.5C12 7.83875 11.5217 9.06578 10.7266 10.0195L13.8535 13.1464C14.0488 13.3417 14.0488 13.6583 13.8535 13.8536C13.6583 14.0488 13.3417 14.0488 13.1464 13.8536L10.0195 10.7266ZM11 6.5C11 4.01472 8.98528 2 6.5 2C4.01472 2 2 4.01472 2 6.5C2 8.98528 4.01472 11 6.5 11C8.98528 11 11 8.98528 11 6.5Z"/>' },
+    'warning': { vb: '0 0 16 16', p: '<path d="M14.831 11.965L9.206 1.714C8.965 1.274 8.503 1 8 1C7.497 1 7.035 1.274 6.794 1.714L1.169 11.965C1.059 12.167 1 12.395 1 12.625C1 13.383 1.617 14 2.375 14H13.625C14.383 14 15 13.383 15 12.625C15 12.395 14.941 12.167 14.831 11.965ZM13.625 13H2.375C2.168 13 2 12.832 2 12.625C2 12.561 2.016 12.5 2.046 12.445L7.671 2.195C7.736 2.075 7.863 2 8 2C8.137 2 8.264 2.075 8.329 2.195L13.954 12.445C13.984 12.501 14 12.561 14 12.625C14 12.832 13.832 13 13.625 13ZM8.75 11.25C8.75 11.664 8.414 12 8 12C7.586 12 7.25 11.664 7.25 11.25C7.25 10.836 7.586 10.5 8 10.5C8.414 10.5 8.75 10.836 8.75 11.25ZM7.5 9V5.5C7.5 5.224 7.724 5 8 5C8.276 5 8.5 5.224 8.5 5.5V9C8.5 9.276 8.276 9.5 8 9.5C7.724 9.5 7.5 9.276 7.5 9Z"/>' },
+    'edit': { vb: '0 0 16 16', p: '<path d="M14.236 1.76386C13.2123 0.740172 11.5525 0.740171 10.5289 1.76386L2.65722 9.63549C2.28304 10.0097 2.01623 10.4775 1.88467 10.99L1.01571 14.3755C0.971767 14.5467 1.02148 14.7284 1.14646 14.8534C1.27144 14.9783 1.45312 15.028 1.62432 14.9841L5.00978 14.1151C5.52234 13.9836 5.99015 13.7168 6.36433 13.3426L14.236 5.47097C15.2596 4.44728 15.2596 2.78755 14.236 1.76386ZM11.236 2.47097C11.8691 1.8378 12.8957 1.8378 13.5288 2.47097C14.162 3.10413 14.162 4.1307 13.5288 4.76386L12.75 5.54269L10.4571 3.24979L11.236 2.47097ZM9.75002 3.9569L12.0429 6.24979L5.65722 12.6355C5.40969 12.883 5.10023 13.0595 4.76117 13.1465L2.19447 13.8053L2.85327 11.2386C2.9403 10.8996 3.1168 10.5901 3.36433 10.3426L9.75002 3.9569Z"/>' },
+    'check': { vb: '0 0 16 16', p: '<path d="M13.6572 3.13573C13.8583 2.9465 14.175 2.95614 14.3643 3.15722C14.5535 3.35831 14.5438 3.675 14.3428 3.86425L5.84277 11.8642C5.64597 12.0494 5.33756 12.0446 5.14648 11.8535L1.64648 8.35351C1.45121 8.15824 1.45121 7.84174 1.64648 7.64647C1.84174 7.45121 2.15825 7.45121 2.35351 7.64647L5.50976 10.8027L13.6572 3.13573Z"/>' },
+    'circle-slash': { vb: '0 0 16 16', p: '<path d="M11.8746 3.41833C9.51718 1.42026 5.98144 1.53327 3.75736 3.75736C1.53327 5.98144 1.42026 9.51719 3.41833 11.8746L11.8746 3.41833ZM12.5817 4.12543L4.12543 12.5817C6.48282 14.5797 10.0186 14.4667 12.2426 12.2426C14.4667 10.0186 14.5797 6.48282 12.5817 4.12543ZM3.05025 3.05025C5.78392 0.316582 10.2161 0.316582 12.9497 3.05025C15.6834 5.78392 15.6834 10.2161 12.9497 12.9497C10.2161 15.6834 5.78392 15.6834 3.05025 12.9497C0.316583 10.2161 0.316582 5.78392 3.05025 3.05025Z"/>' },
+    'stop-circle': { vb: '0 0 16 16', p: '<path d="M6 5C5.44772 5 5 5.44772 5 6V10C5 10.5523 5.44772 11 6 11H10C10.5523 11 11 10.5523 11 10V6C11 5.44772 10.5523 5 10 5H6ZM1 8C1 4.13401 4.13401 1 8 1C11.866 1 15 4.13401 15 8C15 11.866 11.866 15 8 15C4.13401 15 1 11.866 1 8ZM8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14C11.3137 14 14 11.3137 14 8C14 4.68629 11.3137 2 8 2Z"/>' },
+    'shield': { vb: '0 0 16 16', p: '<path d="M9.25 7.25C9.25 7.76258 8.94148 8.2031 8.5 8.39599V9.50358C8.5 9.77973 8.27614 10.0036 8 10.0036C7.72386 10.0036 7.5 9.77973 7.5 9.50358V8.39599C7.05852 8.2031 6.75 7.76258 6.75 7.25C6.75 6.55964 7.30964 6 8 6C8.69036 6 9.25 6.55964 9.25 7.25ZM7.14309 2.04175C6.78097 2.2883 6.21583 2.61563 5.42482 2.91681C4.6399 3.21566 3.90375 3.36204 3.36353 3.43333C3.09405 3.46889 2.87509 3.48554 2.72547 3.49331C2.6507 3.49719 2.5934 3.49885 2.55593 3.49954L2.50489 3.50003C2.37157 3.49872 2.24323 3.55072 2.14842 3.64449C2.05344 3.73841 2 3.86643 2 4V6.75508C2 9.40779 3.4013 11.8632 5.68525 13.2124L7.74707 14.4305C7.90399 14.5232 8.09891 14.5232 8.2558 14.4304L10.3162 13.2126C12.5993 11.8632 14 9.40823 14 6.7561V4C14 3.86598 13.9462 3.73757 13.8507 3.64358C13.7552 3.54964 13.626 3.49794 13.4921 3.50007L13.4421 3.49981C13.4048 3.49928 13.3478 3.49787 13.2735 3.49426C13.1246 3.48705 12.9066 3.47109 12.6384 3.43602C12.1006 3.36573 11.3679 3.21959 10.5869 2.91771C9.79733 2.61248 9.22913 2.28442 8.86335 2.03774C8.68039 1.91435 8.54795 1.81124 8.46371 1.74141C8.4256 1.70981 8.38768 1.6777 8.35191 1.64343C8.2576 1.55073 8.13037 1.49913 7.99807 1.50001C7.86585 1.50089 7.73916 1.55434 7.64611 1.64819L7.53744 1.74536C7.45475 1.81517 7.32423 1.91842 7.14309 2.04175ZM3 6.75508V4.47725C3.14066 4.46608 3.30705 4.44945 3.49436 4.42473C4.09055 4.34605 4.90577 4.18447 5.78065 3.85136C6.64943 3.52057 7.28362 3.15585 7.70588 2.86835C7.82102 2.78996 7.92034 2.71735 8.00434 2.65277C8.08878 2.71677 8.18861 2.78886 8.30421 2.86682C8.72757 3.15233 9.362 3.51631 10.2264 3.85045C11.0994 4.18794 11.9134 4.34976 12.5088 4.42759C12.6947 4.45189 12.86 4.46809 13 4.47888V6.7561C13 9.05461 11.7861 11.1822 9.80736 12.3518L8.00133 13.4192L6.19388 12.3515C4.21446 11.1821 3 9.0541 3 6.75508Z"/>' },
+    'question': { vb: '0 0 16 16', p: '<path d="M8 11C8.41421 11 8.75 11.3358 8.75 11.75C8.75 12.1642 8.41421 12.5 8 12.5C7.58579 12.5 7.25 12.1642 7.25 11.75C7.25 11.3358 7.58579 11 8 11Z"/><path d="M8 4C9.262 4 10.25 4.988 10.25 6.25C10.25 7.333 9.68352 7.89852 9.22852 8.35352C8.82052 8.76052 8.5 9.082 8.5 9.75C8.5 10.026 8.276 10.25 8 10.25C7.724 10.25 7.5 10.026 7.5 9.75C7.5 8.667 8.06648 8.10148 8.52148 7.64648C8.92948 7.23948 9.25 6.918 9.25 6.25C9.25 5.538 8.712 5 8 5C7.288 5 6.75 5.538 6.75 6.25C6.75 6.526 6.526 6.75 6.25 6.75C5.974 6.75 5.75 6.526 5.75 6.25C5.75 4.988 6.738 4 8 4Z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M8 1C11.86 1 15 4.14 15 8C15 11.86 11.86 15 8 15C4.14 15 1 11.86 1 8C1 4.14 4.14 1 8 1ZM8 2C4.691 2 2 4.691 2 8C2 11.309 4.691 14 8 14C11.309 14 14 11.309 14 8C14 4.691 11.309 2 8 2Z"/>' },
+    'home': { vb: '0 0 16 16', p: '<path d="M7.31299 1.26164C7.69849 0.897163 8.30151 0.897163 8.68701 1.26164L13.5305 5.84098C13.8302 6.12431 14 6.51853 14 6.93094V12.5002C14 13.3286 13.3284 14.0002 12.5 14.0002H10.5C9.67157 14.0002 9 13.3286 9 12.5002V10.0002C9 9.72407 8.77614 9.50021 8.5 9.50021H7.5C7.22386 9.50021 7 9.72407 7 10.0002V12.5002C7 13.3286 6.32843 14.0002 5.5 14.0002H3.5C2.67157 14.0002 2 13.3286 2 12.5002V6.93094C2 6.51853 2.1698 6.12431 2.46948 5.84098L7.31299 1.26164ZM8 1.98828L3.15649 6.56762C3.0566 6.66207 3 6.79347 3 6.93094V12.5002C3 12.7763 3.22386 13.0002 3.5 13.0002H5.5C5.77614 13.0002 6 12.7763 6 12.5002V10.0002C6 9.17179 6.67157 8.50022 7.5 8.50022H8.5C9.32843 8.50022 10 9.17179 10 10.0002V12.5002C10 12.7763 10.2239 13.0002 10.5 13.0002H12.5C12.7761 13.0002 13 12.7763 13 12.5002V6.93094C13 6.79347 12.9434 6.66207 12.8435 6.56762L8 1.98828Z"/>' },
+  };
+  function codicon(name, cls){ const i = IC[name]; if (!i) { return esc(name || ''); } return '<svg class="ci' + (cls ? ' ' + cls : '') + '" viewBox="' + i.vb + '" fill="currentColor" aria-hidden="true">' + i.p + '</svg>'; }
 
   // "name.ext · 12 lines" -> badge from extension (JS, TS, PY…), capped at 3 chars.
   function badgeFor(label){
@@ -283,16 +637,17 @@
     return name.slice(dot + 1).toUpperCase().slice(0, 3);
   }
   function fileChip(label){
+    const fn = (label || '').split('·')[0].trim();
     return '<span class="chip" title="' + esc(label) + ' — sent as context">' +
-      '<span class="badge">' + esc(badgeFor(label)) + '</span>' +
-      '<span class="name">' + esc(label.split('·')[0].trim()) + '</span></span>';
+      fileIcon(fn) +
+      '<span class="name">' + esc(fn) + '</span></span>';
   }
   function selChip(label){
     return '<span class="chip" title="Selected code, sent as context">📎 <span class="name">' + esc(label) + '</span></span>';
   }
   function pinnedChip(f){
     return '<span class="chip pinned" title="' + esc(f.rel) + ' — pinned as context">' +
-      '<span class="badge">' + esc(badgeFor(f.name)) + '</span>' +
+      fileIcon(f.name) +
       '<span class="name">' + esc(f.name) + '</span>' +
       '<span class="x" data-id="' + esc(f.id) + '" title="Remove">✕</span></span>';
   }
@@ -317,63 +672,235 @@
   function highlight(code){
     let out = '', i = 0; const n = code.length;
     const push = (cls, txt) => { out += cls ? '<span class="' + cls + '">' + esc(txt) + '</span>' : esc(txt); };
+    const adv = (j) => { i = (j > i) ? j : i + 1; };   // HARD progress guard: never let i stall (no UI freeze)
+    let safety = 0;
     while (i < n){
+      if (++safety > 200000) { push('', code.slice(i)); break; }   // absolute backstop
       const c = code[i];
-      if (c === '#' || (c === '/' && code[i + 1] === '/')){ let j = code.indexOf('\n', i); if (j < 0) j = n; push('tok-cm', code.slice(i, j)); i = j; continue; }
-      if (c === '/' && code[i + 1] === '*'){ let j = code.indexOf('*/', i); j = j < 0 ? n : j + 2; push('tok-cm', code.slice(i, j)); i = j; continue; }
-      if (c === '"' || c === "'" || c === '`'){ let j = i + 1; while (j < n && code[j] !== c){ if (code[j] === '\\') j++; j++; } j = Math.min(j + 1, n); push('tok-str', code.slice(i, j)); i = j; continue; }
-      if (/[0-9]/.test(c) && !/[A-Za-z0-9_]/.test(code[i - 1] || '')){ let j = i; while (j < n && /[0-9._xXa-fA-F]/.test(code[j])) j++; push('tok-num', code.slice(i, j)); i = j; continue; }
-      if (/[A-Za-z_$@:]/.test(c)){ let j = i; while (j < n && /[A-Za-z0-9_$]/.test(code[j])) j++; const w = code.slice(i, j);
+      if (c === '#' || (c === '/' && code[i + 1] === '/')){ let j = code.indexOf('\n', i); if (j < 0) j = n; push('tok-cm', code.slice(i, j)); adv(j); continue; }
+      if (c === '/' && code[i + 1] === '*'){ let j = code.indexOf('*/', i); j = j < 0 ? n : j + 2; push('tok-cm', code.slice(i, j)); adv(j); continue; }
+      if (c === '"' || c === "'" || c === '`'){ let j = i + 1; while (j < n && code[j] !== c){ if (code[j] === '\\') j++; j++; } j = Math.min(j + 1, n); push('tok-str', code.slice(i, j)); adv(j); continue; }
+      if (/[0-9]/.test(c) && !/[A-Za-z0-9_]/.test(code[i - 1] || '')){ let j = i; while (j < n && /[0-9._xXa-fA-F]/.test(code[j])) j++; push('tok-num', code.slice(i, j)); adv(j); continue; }
+      if (/[A-Za-z_$]/.test(c)){   // identifiers start with letter/_/$ only — @ and : fall through (and always advance)
+        let j = i; while (j < n && /[A-Za-z0-9_$]/.test(code[j])) j++; const w = code.slice(i, j);
         let cls = '';
         if (HL_KW.has(w)) cls = 'tok-kw';
         else if (/^[A-Z]/.test(w)) cls = 'tok-cn';
         else { let k = j; while (k < n && code[k] === ' ') k++; if (code[k] === '(') cls = 'tok-fn'; }
-        push(cls, w); i = j; continue;
+        push(cls, w); adv(j); continue;
       }
       push('', c); i++;
     }
     return out;
   }
+  // ---- Clickable file chips: mentions of real project files become chips that reveal + open ----
+  let fileIndex = null;   // { paths:Set, byBase:Map<basename,[rel]> } — the workspace file list
+  function escAttr(s){ return esc(s).replace(/"/g, '&quot;'); }
+  function setFileIndex(rels){
+    const paths = new Set(rels || []); const byBase = new Map();
+    for (const r of (rels || [])){ const b = r.split('/').pop(); if (!byBase.has(b)) byBase.set(b, []); byBase.get(b).push(r); }
+    fileIndex = { paths: paths, byBase: byBase };
+  }
+  function resolveFile(tok){
+    if (!fileIndex || !tok) return null;
+    const t = String(tok).replace(/^\.\//, '');
+    if (fileIndex.paths.has(t)) return t;
+    const list = fileIndex.byBase.get(t.split('/').pop());
+    if (!list) return null;
+    if (t.indexOf('/') >= 0){ const hit = list.find(function(r){ return r === t || r.endsWith('/' + t); }); return hit || null; }
+    return list[0];   // bare basename → first known path (click still resolves the real one)
+  }
+  function fileIcon(rel){
+    const ext = (rel.split('.').pop() || '').toLowerCase();
+    const map = { js:'JS', mjs:'JS', cjs:'JS', jsx:'JS', ts:'TS', tsx:'TS', css:'CSS', scss:'CSS', html:'HTML', htm:'HTML', md:'MD', json:'JSON', py:'PY', rb:'RB', sh:'SH', go:'GO', rs:'RS', yml:'YML', yaml:'YML' };
+    const lbl = map[ext] || (ext ? ext.toUpperCase().slice(0, 4) : 'FILE');
+    return '<span class="ficon ficon-' + esc(ext) + '">' + esc(lbl) + '</span>';
+  }
+  function fileLinkChip(rel, safeLabel){
+    return '<span class="filechip" data-path="' + escAttr(rel) + '" title="' + escAttr(rel) + '" role="button" tabindex="0">' + fileIcon(rel) + '<span class="fcname">' + safeLabel + '</span></span>';
+  }
+  // Linkify file references in an ESCAPED text fragment; matched against the real index (no false positives).
+  function linkifyFiles(s){
+    if (!fileIndex) return s;
+    return s.replace(/(^|[^\w/.\-])((?:[\w.\-]+\/)*[\w\-]+(?:\.[\w\-]+)+)(?![\w/\-])/g, function(m, pre, tok){
+      const rel = resolveFile(tok);
+      return rel ? (pre + fileLinkChip(rel, tok)) : m;
+    });
+  }
+
+  // ---- Markdown rendering (safe: HTML-escaped first; only http(s)/mailto links) ----
+  // Inline formatting on a non-code fragment (bold/italic/strike/links). Operates on escaped text.
+  function mdFmt(t){
+    let s = esc(t);
+    s = linkifyFiles(s);
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)(?:\s+"[^"]*")?\)/g, function(m, txt, u){ return '<a href="' + u + '" title="' + u + '">' + txt + '</a>'; });
+    s = s.replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>');
+    s = s.replace(/(^|[^_\w])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
+    s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
+    return s;
+  }
+  // Split text into inline-code spans (escaped, never formatted) and formatted text — no sentinels.
+  function mdInline(text){
+    const re = new RegExp(TICK + '([^' + TICK + '\\n]+)' + TICK, 'g');
+    let out = '', last = 0, m;
+    while ((m = re.exec(text))){
+      const code = m[1], rel = resolveFile(code.trim());
+      out += mdFmt(text.slice(last, m.index)) + (rel ? fileLinkChip(rel, esc(code)) : '<code>' + esc(code) + '</code>');
+      last = m.index + m[0].length;
+    }
+    return out + mdFmt(text.slice(last));
+  }
+  function mdListItem(line){ return /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line); }
+  function mdBlockKind(lines, i){
+    const line = lines[i];
+    if (!line.trim()) return 'blank';
+    if (/^#{1,6}\s+/.test(line)) return 'h';
+    if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) return 'hr';
+    if (/^>\s?/.test(line)) return 'quote';
+    if (line.indexOf('|') >= 0){ const sep = lines[i + 1] || ''; if (/^[\s|:-]+$/.test(sep) && sep.indexOf('-') >= 0) return 'table'; }
+    if (/^(\s*)([-*+]|\d+[.)])\s+/.test(line)) return 'list';
+    return 'p';
+  }
+  function mdParseList(lines, start){
+    const stack = []; let html = '', i = start;
+    while (i < lines.length){
+      if (!lines[i].trim()){ let j = i + 1; while (j < lines.length && !lines[j].trim()) j++; if (j < lines.length && mdListItem(lines[j])){ i++; continue; } break; }
+      const m = mdListItem(lines[i]); if (!m) break;
+      const indent = m[1].replace(/\t/g, '  ').length, ordered = /^\d/.test(m[2]), tag = ordered ? 'ol' : 'ul';
+      while (stack.length && stack[stack.length - 1].indent > indent){ const t = stack.pop(); html += '</li></' + t.tag + '>'; }
+      if (!stack.length || stack[stack.length - 1].indent < indent){ stack.push({ indent: indent, tag: tag }); html += '<' + tag + '>'; }
+      else { html += '</li>'; if (stack[stack.length - 1].tag !== tag){ html += '</' + stack[stack.length - 1].tag + '><' + tag + '>'; stack[stack.length - 1].tag = tag; } }
+      html += '<li>' + mdInline(m[3]); i++;
+    }
+    while (stack.length){ const t = stack.pop(); html += '</li></' + t.tag + '>'; }
+    return [html, i];
+  }
+  function mdTableBlock(lines, start){
+    const cells = function(r){ return r.replace(/^\s*\|?|\|?\s*$/g, '').split('|').map(function(c){ return c.trim(); }); };
+    let html = '<table><thead><tr>' + cells(lines[start]).map(function(h){ return '<th>' + mdInline(h) + '</th>'; }).join('') + '</tr></thead><tbody>';
+    let i = start + 2;
+    for (; i < lines.length; i++){ if (!lines[i].trim() || lines[i].indexOf('|') < 0) break; html += '<tr>' + cells(lines[i]).map(function(c){ return '<td>' + mdInline(c) + '</td>'; }).join('') + '</tr>'; }
+    return [html + '</tbody></table>', i];
+  }
+  function mdBlocks(src){
+    const lines = String(src).split('\n'); let html = '', i = 0;
+    while (i < lines.length){
+      const k = mdBlockKind(lines, i);
+      if (k === 'blank'){ i++; continue; }
+      if (k === 'h'){ const m = /^(#{1,6})\s+(.*)$/.exec(lines[i]); const n = m[1].length; html += '<h' + n + '>' + mdInline(m[2]) + '</h' + n + '>'; i++; continue; }
+      if (k === 'hr'){ html += '<hr>'; i++; continue; }
+      if (k === 'quote'){ const buf = []; while (i < lines.length && mdBlockKind(lines, i) === 'quote'){ buf.push(lines[i].replace(/^>\s?/, '')); i++; } html += '<blockquote>' + mdBlocks(buf.join('\n')) + '</blockquote>'; continue; }
+      if (k === 'table'){ const t = mdTableBlock(lines, i); html += t[0]; i = t[1]; continue; }
+      if (k === 'list'){ const t = mdParseList(lines, i); html += t[0]; i = t[1]; continue; }
+      const buf = []; while (i < lines.length && mdBlockKind(lines, i) === 'p'){ buf.push(lines[i]); i++; }
+      html += '<p>' + mdInline(buf.join('\n')).replace(/\n/g, '<br>') + '</p>';
+    }
+    return html;
+  }
   function render(md){
-    const parts = md.split(FENCE);
+    const parts = String(md == null ? '' : md).split(FENCE);
     let out = '';
     for (let i = 0; i < parts.length; i++){
       if (i % 2 === 1){
         const body = parts[i].replace(/^[a-zA-Z0-9_+-]*\n/, '');
         out += '<pre><code>' + highlight(body) + '</code></pre>';
       } else {
-        const inlineCode = new RegExp(TICK + '([^' + TICK + ']+)' + TICK, 'g');
-        out += esc(parts[i]).replace(inlineCode, '<code>$1</code>');
+        out += mdBlocks(parts[i]);
       }
     }
     return out;
+  }
+  // Index just past the last fully-closed code block. Everything before it is stable forever.
+  function lastStableIndex(text){
+    const pos = []; let p = text.indexOf(FENCE);
+    while (p >= 0){ pos.push(p); p = text.indexOf(FENCE, p + 3); }
+    const stableFences = pos.length - (pos.length % 2);
+    if (stableFences === 0) { return 0; }
+    const end = pos[stableFences - 1] + 3;
+    const nl = text.indexOf('\n', end);
+    return nl >= 0 ? nl + 1 : text.length;
+  }
+  // A streaming renderer: completed code/diff blocks are FROZEN into immutable child nodes
+  // (never re-rendered), so later-streamed text can never truncate or corrupt them.
+  function makeStream(bodyEl){
+    const live = document.createElement('div'); bodyEl.appendChild(live);
+    return { body: bodyEl, live: live, committedLen: 0 };
+  }
+  function streamFeed(s, fullText){
+    const stable = lastStableIndex(fullText);
+    if (stable > s.committedLen){
+      const seg = document.createElement('div');
+      seg.innerHTML = render(fullText.slice(s.committedLen, stable));
+      s.body.insertBefore(seg, s.live);   // freeze the now-complete blocks before the live tail
+      s.committedLen = stable;
+    }
+    s.live.innerHTML = render(fullText.slice(s.committedLen));
+    scrollIfStuck();
+  }
+  function streamSetHtml(s, html){ s.body.innerHTML = html; }
+  // When a response finishes, drop a hover-reveal "Copy" button under it so you can grab the raw
+  // markdown to re-iterate. `raw` is the exact text the model produced (not the rendered HTML).
+  function finalizeStream(s, raw){
+    if (!s || !s.body) { return; }
+    const msg = s.body.parentElement;            // the .msg.assistant wrapper
+    if (!msg || msg.querySelector('.msgcopy')) { return; }   // already finalized
+    const text = (raw || '').trim();
+    if (!text) { return; }
+    const bar = document.createElement('div'); bar.className = 'msgactions';
+    const btn = document.createElement('button'); btn.className = 'msgcopy'; btn.type = 'button';
+    btn.title = 'Copy this response'; btn.innerHTML = codicon('copy') + ' Copy';
+    btn.onclick = () => {
+      vscode.postMessage({ type: 'copy', text: raw });
+      btn.innerHTML = codicon('check') + ' Copied'; btn.classList.add('done');
+      try { clearTimeout(btn._t); } catch(e){}
+      btn._t = setTimeout(() => { btn.innerHTML = codicon('copy') + ' Copy'; btn.classList.remove('done'); }, 1200);
+    };
+    bar.appendChild(btn); msg.appendChild(bar);
+  }
+  // Finalize the live agent text bubble (if any) before the agent moves to a tool/status/turn-end.
+  let lastAgentResponse = '';   // raw text of the last finalized agent response (for the Copy action)
+  function finishAgentBubble(){
+    if (agentBubble){ finalizeStream(agentBubble, agentRaw); if (agentRaw.trim()){ lastAgentResponse = agentRaw; } }
+    agentBubble = null; agentRaw = '';
   }
   function clearEmpty(){ const e = document.getElementById('empty'); if (e) e.remove(); }
   function add(role, html){
     clearEmpty();
     const d = document.createElement('div'); d.className = 'msg ' + role;
     d.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'Atom++ AI') + '</div><div class="body">' + html + '</div>';
-    log.appendChild(d); log.scrollTop = log.scrollHeight; return d.querySelector('.body');
+    log.appendChild(d); scrollIfStuck(); return d.querySelector('.body');
   }
   function addAutoCtx(names){
     if (!names || !names.length) { return; }
     clearEmpty();
     const d = document.createElement('div'); d.className = 'autoctx';
-    d.innerHTML = '🔎 Auto-context: <span class="files">' + names.map(esc).join(', ') + '</span>';
-    log.appendChild(d); log.scrollTop = log.scrollHeight;
+    d.innerHTML = codicon('search') + ' Auto-context: <span class="files">' + names.map(esc).join(', ') + '</span>';
+    log.appendChild(d); scrollIfStuck();
+  }
+  function addDebug(m){
+    const d = document.createElement('div'); d.className = 'dbg';
+    let ts = ''; try { ts = new Date().toLocaleTimeString(); } catch(e) {}
+    let data = '';
+    if (m.data != null){ try { data = ' ' + JSON.stringify(m.data); } catch(e){ data = ' [unserializable]'; } }
+    d.innerHTML = codicon('bug') + esc(' DEBUG [' + ts + '] ' + (m.label || '') + data);
+    log.appendChild(d); scrollIfStuck();
   }
   function clearStatus(){ if (agentStatusEl){ agentStatusEl.remove(); agentStatusEl = null; } }
   function addAgentLine(icon, text){
     clearEmpty(); clearStatus();
     const d = document.createElement('div'); d.className = 'agentline';
-    d.innerHTML = '<span class="ic">' + esc(icon || '•') + '</span><span class="t">' + esc(text || '') + '</span>';
-    log.appendChild(d); log.scrollTop = log.scrollHeight;
+    d.innerHTML = '<span class="ic">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span><span class="t">' + esc(text || '') + '</span>';
+    log.appendChild(d); scrollIfStuck();
   }
   function setAgentStatus(text){
     clearStatus();
     const d = document.createElement('div'); d.className = 'agentstatus';
-    d.innerHTML = '<span class="spin">◜</span> ' + esc(text);
-    log.appendChild(d); agentStatusEl = d; log.scrollTop = log.scrollHeight;
+    const t = (!text || text === 'thinking…') ? 'Thinking…' : text;   // shimmering label while the agent works
+    d.innerHTML = ATOM_SVG + '<span class="shimmer">' + esc(t) + '</span>';
+    log.appendChild(d); agentStatusEl = d; scrollIfStuck();
   }
   function applyMode(agent){
     agentMode = agent;
@@ -392,31 +919,98 @@
   // Blocking approval — run_command ONLY (file edits no longer gate; they apply-then-review).
   function addApproval(m){
     clearEmpty(); clearStatus(); agentBubble = null;
-    const card = document.createElement('div'); card.className = 'approval';
-    const body = '<pre class="cmd">' + esc(m.command) + '</pre>' + (m.explanation ? '<div class="why">' + esc(m.explanation) + '</div>' : '');
-    card.innerHTML = '<div class="ahead">▶️ Run command</div>' + body +
-      '<div class="abtns"><button class="approve">Approve</button><button class="skip">Skip</button></div>';
-    log.appendChild(card); log.scrollTop = log.scrollHeight;
+    const cwd = m.cwd || 'workspace';
+    const card = document.createElement('div'); card.className = 'approval term';
+    card.innerHTML =
+      '<div class="termbar"><span class="tdots"><i class="r"></i><i class="y"></i><i class="g"></i></span>'
+        + '<span class="tbartitle">zsh — ' + esc(cwd) + '</span></div>'
+      + '<div class="termbody">'
+        + '<div class="termline"><span class="tprompt">➜</span> <span class="tcwd">' + esc(cwd) + '</span> '
+        + '<span class="tcmd">' + esc(m.command) + '</span><span class="tcaret"></span></div>'
+        + (m.explanation ? '<div class="termwhy"># ' + esc(m.explanation) + '</div>' : '')
+      + '</div>'
+      + '<div class="termfoot"><span class="termask">⌘ Atom++ wants to run this in your terminal</span>'
+        + '<span class="tspacer"></span>'
+        + '<button class="approve" title="Run the command (⏎)">▶ Run</button>'
+        + '<button class="skip" title="Don’t run it">Skip</button></div>';
+    log.appendChild(card); scrollIfStuck();
     const done = (approved) => {
       vscode.postMessage({ type: 'approvalResponse', id: m.id, approved });
-      card.querySelector('.abtns').innerHTML = '<span class="verdict">' + (approved ? '✅ Approved' : '⊘ Skipped') + '</span>';
+      card.classList.add(approved ? 'ran' : 'skipped');
+      const caret = card.querySelector('.tcaret'); if (caret) { caret.remove(); }
+      card.querySelector('.termfoot').innerHTML = '<span class="verdict">' + (approved ? codicon('check') + ' Running in terminal…' : codicon('circle-slash') + ' Skipped') + '</span>';
     };
     card.querySelector('.approve').onclick = () => done(true);
     card.querySelector('.skip').onclick = () => done(false);
+  }
+
+  // Blocking clarifying questions (ask_user) — clickable numbered options the agent waits on.
+  function addQuestions(m){
+    clearEmpty(); clearStatus(); agentBubble = null;
+    const qs = m.questions || [];
+    const state = qs.map((q) => ({ multi: !!q.multiSelect, sel: new Set() }));
+    const card = document.createElement('div'); card.className = 'questions';
+    let h = '<div class="qhead">' + codicon('question') + ' A few quick decisions — click to choose</div>';
+    qs.forEach((q, qi) => {
+      h += '<div class="qblock">';
+      if (q.header){ h += '<div class="qtag">' + esc(q.header) + (q.multiSelect ? ' · pick any' : '') + '</div>'; }
+      h += '<div class="qtext">' + esc(q.question || '') + '</div><div class="qopts">';
+      (q.options || []).forEach((o, oi) => {
+        h += '<button class="qopt" data-q="' + qi + '" data-o="' + oi + '">'
+           + '<span class="qnum">' + (oi + 1) + '</span>'
+           + '<span class="qlabel">' + esc(o.label || '')
+           + (o.description ? '<span class="qdesc">' + esc(o.description) + '</span>' : '')
+           + '</span></button>';
+      });
+      h += '</div></div>';
+    });
+    h += '<textarea class="qnotes" rows="2" placeholder="Anything else? (optional)"></textarea>';
+    h += '<div class="qbtns"><button class="qsend">Send answers</button></div>';
+    card.innerHTML = h;
+    log.appendChild(card); scrollIfStuck();
+
+    card.querySelectorAll('.qopt').forEach((btn) => {
+      btn.onclick = () => {
+        const qi = +btn.dataset.q, oi = +btn.dataset.o, st = state[qi];
+        if (st.multi){ st.sel.has(oi) ? st.sel.delete(oi) : st.sel.add(oi); }
+        else { st.sel.clear(); st.sel.add(oi); }
+        card.querySelectorAll('.qopt[data-q="' + qi + '"]').forEach((b) => {
+          b.classList.toggle('sel', st.sel.has(+b.dataset.o));
+        });
+      };
+    });
+    card.querySelector('.qsend').onclick = () => {
+      const answers = qs.map((q, qi) => ({
+        header: q.header || '', question: q.question || '',
+        selected: [...state[qi].sel].sort((a, b) => a - b).map((oi) => ((q.options || [])[oi] || {}).label || '')
+      }));
+      const notes = card.querySelector('.qnotes').value.trim();
+      vscode.postMessage({ type: 'questionsResponse', id: m.id, answers, notes });
+      card.classList.add('answered');                                   // freeze as a visible record
+      card.querySelectorAll('.qopt').forEach((b) => { b.disabled = true; });
+      card.querySelector('.qnotes').disabled = true;
+      card.querySelector('.qbtns').innerHTML = '<span class="qverdict">' + codicon('check') + ' Answers recorded</span>';
+    };
   }
 
   // Non-blocking applied-edit card (the agent already changed the file; you review after).
   function addEditCard(m){
     clearEmpty(); clearStatus(); agentBubble = null;
     let card = editCards[m.id];
+    let wasOpen = true;
     if (!card){
       card = document.createElement('div'); card.className = 'editcard';
       editCards[m.id] = card; log.appendChild(card);
+    } else {
+      const prev = card.querySelector('details.diffwrap'); if (prev) { wasOpen = prev.open; } // preserve user's collapse state
     }
-    const head = (m.exists ? '✏️ Edited' : '🆕 Created') + ' <code>' + esc(m.path) + '</code> <span class="counts"><span class="a">+' + (m.add||0) + '</span> <span class="d">-' + (m.del||0) + '</span></span>';
+    const head = (m.exists ? codicon('edit') + ' Edited' : codicon('file') + ' Created') + ' <code>' + esc(m.path) + '</code> <span class="counts"><span class="a">+' + (m.add||0) + '</span> <span class="d">-' + (m.del||0) + '</span></span>';
+    const hasDiff = (m.diff || []).length > 0;
+    const diffPart = hasDiff
+      ? '<details class="diffwrap"' + (wasOpen ? ' open' : '') + '><summary>diff</summary>' + diffHtml(m.diff) + '</details>'
+      : '<div class="diffempty">(no textual change)</div>';
     card.innerHTML =
-      '<div class="ahead">' + head + '</div>' +
-      '<details class="diffwrap"><summary>diff</summary>' + diffHtml(m.diff) + '</details>' +
+      '<div class="ahead">' + head + '</div>' + diffPart +
       '<div class="abtns">' +
         '<button class="keep">Keep</button>' +
         '<button class="undo">Undo</button>' +
@@ -425,32 +1019,111 @@
     card.querySelector('.keep').onclick = () => vscode.postMessage({ type: 'reviewKeepFile', id: m.id });
     card.querySelector('.undo').onclick = () => vscode.postMessage({ type: 'reviewUndoFile', id: m.id });
     card.querySelector('.opendiff').onclick = () => vscode.postMessage({ type: 'reviewOpenDiff', id: m.id });
-    log.scrollTop = log.scrollHeight;
+    scrollIfStuck();
   }
   function resolveEditCard(m){
     const card = editCards[m.id]; if (!card) { return; }
-    const map = { kept: '✅ Kept', undone: '⤺ Undid', 'kept-user-edited': '✎ Kept (you edited it)' };
+    const map = { kept: codicon('check') + ' Kept', undone: codicon('circle-slash') + ' Undid', 'kept-user-edited': codicon('edit') + ' Kept (you edited it)' };
     const btns = card.querySelector('.abtns');
-    if (btns){ btns.innerHTML = '<span class="verdict">' + (map[m.verdict] || '✅ Kept') + '</span>'; }
+    if (btns){ btns.innerHTML = '<span class="verdict">' + (map[m.verdict] || (codicon('check') + ' Kept')) + '</span>'; }
+    const det = card.querySelector('details.diffwrap'); if (det) { det.open = false; } // collapse so resolved cards don't stack tall
     card.classList.add('resolved');
     delete editCards[m.id];
   }
-  function updateReviewBar(count){
+  // ---- context-window usage: always-visible footer stat + a warning bar when it fills ----
+  const ctxBar = document.getElementById('ctxBar');
+  const ctxStat = document.getElementById('ctxStat');
+  let ctxState = null;
+  function fmtTok(n){ n = Math.max(0, Math.round(n)); return n >= 1000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '') + 'k' : String(n); }
+  function renderContext(d){
+    const limit = (d && d.limit) || (ctxState && ctxState.limit) || 200000;
+    const used = (d && typeof d.input === 'number') ? d.input : (ctxState ? ctxState.input : 0);
+    ctxState = { input: used, limit: limit };
+    const pct = Math.min(100, Math.round(used / limit * 100));
+    const level = pct >= 92 ? 'crit' : pct >= 80 ? 'warn' : 'ok';
+    // 1) footer indicator — ALWAYS visible (this is where you can see it at a glance)
+    if (ctxStat){
+      ctxStat.textContent = used > 0 ? ('Context ' + pct + '%') : ('Context · ' + fmtTok(limit));
+      ctxStat.title = used > 0 ? (fmtTok(used) + ' / ' + fmtTok(limit) + ' tokens used (' + pct + '%) of the model context window')
+        : ('Model context window: ' + fmtTok(limit) + ' tokens (fills as the conversation grows)');
+      ctxStat.className = 'item ctx-' + level;
+    }
+    // 2) warning bar above the composer — only once it's getting full
+    if (used > 0 && pct >= 75){
+      const tip = '<div class="ctxtip">' + (level === 'crit' ? 'Context is almost full.' : 'Context is getting full.')
+        + ' Start a new chat to reset it, switch to a larger-context model, or pin fewer files.'
+        + ' <button class="ctxnew">New chat</button></div>';
+      ctxBar.className = 'lvl-' + level;
+      ctxBar.innerHTML =
+        '<div class="ctxrow"><span class="ctxlabel">Context window</span><span class="ctxnum">' + fmtTok(used) + ' / ' + fmtTok(limit) + ' (' + pct + '%)</span></div>'
+        + '<div class="ctxtrack"><div class="ctxfill" style="width:' + pct + '%"></div></div>' + tip;
+      ctxBar.style.display = 'block';
+      const nb = ctxBar.querySelector('.ctxnew'); if (nb){ nb.onclick = () => vscode.postMessage({ type: 'newChat' }); }
+    } else { ctxBar.style.display = 'none'; ctxBar.className = ''; }
+  }
+  const planBar = document.getElementById('planBar');
+  function renderPlan(todos){
+    if (!todos || !todos.length){ planBar.style.display = 'none'; planBar.innerHTML = ''; return; }
+    const total = todos.length, done = todos.filter(t => t && t.status === 'done').length;
+    let h = '<div class="phead">Plan <span class="pcount">' + done + '/' + total + '</span></div><div class="pitems">';
+    for (const t of todos){
+      const st = t.status === 'done' ? 'done' : t.status === 'in_progress' ? 'doing' : 'todo';
+      const ic = st === 'done' ? '✓' : st === 'doing' ? '◉' : '○';
+      h += '<div class="pitem ' + st + '"><span class="pic">' + ic + '</span><span class="ptitle">' + esc(t.title) + '</span></div>';
+    }
+    planBar.innerHTML = '<div class="plancard">' + h + '</div></div>';
+    planBar.style.display = 'block';
+    scrollIfStuck();   // log shrank as the sticky plan appeared — keep pinned if we were at bottom
+  }
+  function updateReviewBar(count, add, del){
     if (count > 0){
       reviewBar.style.display = 'flex';
-      reviewBar.querySelector('.rcount').textContent = 'Reviewing ' + count + ' change' + (count === 1 ? '' : 's');
+      reviewBar.querySelector('.rcount').textContent = count + ' file' + (count === 1 ? '' : 's') + ' changed';
+      const stat = reviewBar.querySelector('.rstat');
+      stat.innerHTML = (add || del)
+        ? '<span class="add">+' + (add || 0) + '</span><span class="del">-' + (del || 0) + '</span>'
+        : '';
     } else {
       reviewBar.style.display = 'none';
     }
   }
-  function addAgentDone(reason, edits){
-    const map = { done: '✓ Done', stopped: '■ Stopped', limit: '■ Stopped (step limit reached)', error: '' };
-    let text = map[reason] !== undefined ? map[reason] : '✓ Done';
-    if (reason === 'done' && !(edits > 0)) { text = '✓ Done — no files changed'; }
-    else if ((reason === 'done' || reason === 'limit') && edits > 0) { text += ' · ' + edits + ' file' + (edits === 1 ? '' : 's') + ' changed — review them'; }
-    if (!text) { return; }
-    const d = document.createElement('div'); d.className = 'agentdone'; d.textContent = text;
-    log.appendChild(d); log.scrollTop = log.scrollHeight;
+  // Authentic VS Code codicon paths (MIT, @vscode/codicons), inlined to stay CSP/font-free.
+  function abSvg(d){ return '<svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="' + d + '"/></svg>'; }
+  const ICON_RETRY = abSvg('M3 8C3 5.23858 5.23858 3 8 3C9.63527 3 11.0878 3.78495 12.0005 5H10C9.72386 5 9.5 5.22386 9.5 5.5C9.5 5.77614 9.72386 6 10 6H12.8904C12.8973 6.00014 12.9041 6.00014 12.911 6H13C13.2761 6 13.5 5.77614 13.5 5.5V2.5C13.5 2.22386 13.2761 2 13 2C12.7239 2 12.5 2.22386 12.5 2.5V4.03138C11.4009 2.78613 9.79253 2 8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14C11.1301 14 13.6999 11.6035 13.9756 8.54488C14.0003 8.26985 13.7975 8.0268 13.5225 8.00202C13.2474 7.97723 13.0044 8.1801 12.9796 8.45512C12.75 11.003 10.6079 13 8 13C5.23858 13 3 10.7614 3 8Z');
+  const ICON_COPY = abSvg('M3 5V12.73C2.4 12.38 2 11.74 2 11V5C2 2.79 3.79 1 6 1H9C9.74 1 10.38 1.4 10.73 2H6C4.35 2 3 3.35 3 5ZM11 15H6C4.897 15 4 14.103 4 13V5C4 3.897 4.897 3 6 3H11C12.103 3 13 3.897 13 5V13C13 14.103 12.103 15 11 15ZM12 5C12 4.448 11.552 4 11 4H6C5.448 4 5 4.448 5 5V13C5 13.552 5.448 14 6 14H11C11.552 14 12 13.552 12 13V5Z');
+  const ICON_UP = abSvg('M12.999 6.00002H10.672L11.207 4.21802C11.278 3.98102 11.314 3.73902 11.314 3.49602C11.314 2.12002 10.192 0.999023 8.81298 0.999023C8.42998 0.999023 8.08498 1.21202 7.91398 1.55402L5.82998 5.72202C5.74498 5.89202 5.57398 5.99802 5.38298 5.99802H3.00098C1.89798 5.99802 1.00098 6.89502 1.00098 7.99802V12.998C1.00098 14.101 1.89798 14.998 3.00098 14.998H11.163C12.727 14.998 13.283 13.796 13.565 12.893L14.908 8.59602C14.969 8.40102 15 8.19902 15 7.99602C15 6.89402 14.103 5.99802 12.999 5.99802V6.00002ZM1.99998 13V8.00002C1.99998 7.44902 2.44898 7.00002 2.99998 7.00002H3.99998V14H2.99998C2.44898 14 1.99998 13.551 1.99998 13ZM13.954 8.29802L12.611 12.596C12.247 13.761 11.769 13.999 11.163 13.999H5.00098V6.99902H5.38298C5.95498 6.99902 6.46898 6.68102 6.72498 6.17002L8.80898 2.00202C8.80898 2.00202 8.81098 2.00002 8.81298 2.00002C9.64098 2.00002 10.314 2.67102 10.314 3.49702C10.314 3.64202 10.292 3.78802 10.249 3.93202L9.52098 6.35702C9.47598 6.50802 9.50398 6.67202 9.59898 6.79902C9.69398 6.92602 9.84198 7.00102 9.99998 7.00102H12.999C13.551 7.00102 14 7.44802 14 7.99902C14 8.10002 13.984 8.20102 13.954 8.30002V8.29802Z');
+  const ICON_DOWN = abSvg('M13 1H4.838C3.274 1 2.717 2.202 2.435 3.105L1.092 7.404C1.031 7.6 1 7.801 1 8.002C1 9.104 1.897 10 3.001 10H5.328L4.794 11.781C4.723 12.016 4.687 12.26 4.687 12.504C4.687 13.88 5.809 15.001 7.189 15.001C7.571 15.001 7.915 14.789 8.087 14.446L10.171 10.277C10.256 10.107 10.427 10.001 10.618 10.001H13C14.103 10.001 15 9.104 15 8.001V3C15 1.897 14.103 1 13 1ZM9.276 9.829L7.193 13.996L7.188 13.999C6.36 13.999 5.686 13.328 5.686 12.502C5.686 12.356 5.707 12.21 5.75 12.067L6.478 9.642C6.524 9.491 6.495 9.327 6.401 9.2C6.306 9.073 6.158 8.998 6 8.998H3.001C2.449 8.998 2 8.551 2 8C2 7.9 2.016 7.799 2.047 7.699L3.39 3.401C3.753 2.236 4.232 1.998 4.838 1.998H11V8.998H10.618C10.046 8.998 9.531 9.316 9.276 9.827V9.829ZM14 8C14 8.551 13.552 9 13 9H12V2H13C13.552 2 14 2.449 14 3V8Z');
+  function modelLabel(){
+    try { const t = (document.getElementById('model').textContent || 'Auto').replace('▾', '').trim(); return t || 'Auto'; } catch(e){ return 'Auto'; }
+  }
+  // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · credits.
+  function addAgentDone(reason, edits, credits){
+    const bar = document.createElement('div'); bar.className = 'agentbar';
+    const actions = document.createElement('div'); actions.className = 'agentbar-actions';
+    const mk = (cls, title, svg) => { const b = document.createElement('button'); b.className = 'abicon ' + cls; b.title = title; b.setAttribute('aria-label', title); b.innerHTML = svg; return b; };
+    const retry = mk('retry', 'Retry', ICON_RETRY);
+    const copy = mk('copy', 'Copy response', ICON_COPY);
+    const up = mk('up', 'Helpful', ICON_UP);
+    const down = mk('down', 'Unhelpful', ICON_DOWN);
+    actions.append(retry, copy, up, down);
+    let hint = reason === 'stopped' ? 'Stopped' : reason === 'limit' ? 'Stopped — step limit' : reason === 'error' ? 'Error' : '';
+    const meta = document.createElement('div'); meta.className = 'agentbar-meta';
+    meta.innerHTML = (hint ? '<span class="abhint">' + esc(hint) + '</span>' : '')
+      + '<span class="abmodel" title="Click to change model">' + esc(modelLabel()) + '</span>'
+      + (credits != null ? '<span class="abcredits">· ' + esc(String(credits)) + ' credit' + (Number(credits) === 1 ? '' : 's') + '</span>' : '');
+    bar.append(actions, meta);
+    log.appendChild(bar); scrollIfStuck();
+
+    retry.onclick = () => vscode.postMessage({ type: 'retry' });
+    copy.onclick = () => {
+      vscode.postMessage({ type: 'copy', text: lastAgentResponse });
+      copy.classList.add('ok'); copy.title = 'Copied';
+      try { clearTimeout(copy._t); } catch(e){}
+      copy._t = setTimeout(() => { copy.classList.remove('ok'); copy.title = 'Copy response'; }, 1200);
+    };
+    up.onclick = () => { vscode.postMessage({ type: 'feedback', value: 'up' }); up.classList.toggle('active'); down.classList.remove('active'); };
+    down.onclick = () => { vscode.postMessage({ type: 'feedback', value: 'down' }); down.classList.toggle('active'); up.classList.remove('active'); };
+    const mm = meta.querySelector('.abmodel'); if (mm) { mm.onclick = () => vscode.postMessage({ type: 'pickModel' }); }
   }
 
   // Typewriter reveal: deltas land in `pending`; this loop moves them into `shown`
@@ -459,14 +1132,14 @@
   function pump(){
     if (pending.length === 0){
       animating = false;
-      if (doneSignaled){ doneSignaled = false; current = null; setStreaming(false); }
+      if (doneSignaled){ doneSignaled = false; finalizeStream(current, shown); current = null; setStreaming(false); }
       return;
     }
     const backlog = pending.length;
     const take = flushAll ? backlog : Math.min(backlog, Math.max(3, Math.ceil(backlog / 20)));
     shown += pending.slice(0, take);
     pending = pending.slice(take);
-    if (current){ current.innerHTML = render(shown); log.scrollTop = log.scrollHeight; }
+    if (current){ streamFeed(current, shown); }
     requestAnimationFrame(pump);
   }
   function ensurePump(){ if (!animating){ animating = true; requestAnimationFrame(pump); } }
@@ -480,7 +1153,7 @@
   function doSend(){
     if (streaming) { flushAll = true; ensurePump(); vscode.postMessage({ type: 'stop' }); return; }
     const t = input.value.trim(); if (!t) return;
-    add('user', render(t)); input.value = ''; auto();
+    add('user', render(t)); forceStick(); input.value = ''; auto();
     vscode.postMessage({ type: 'send', text: t });
   }
 
@@ -489,6 +1162,62 @@
   document.getElementById('model').onclick = () => vscode.postMessage({ type: 'pickModel' });
   document.getElementById('mode').onclick = () => vscode.postMessage({ type: 'setMode', agent: !agentMode });
   document.getElementById('settings').onclick = () => vscode.postMessage({ type: 'openSettings' });
+
+  // ---- Atom++ account / sign-in ----
+  let account = { signedIn: false };
+  const acctBtn = document.getElementById('acctBtn');
+  const acctAvatar = document.getElementById('acctAvatar');
+  const acctOverlay = document.getElementById('acctOverlay');
+  const acctBody = document.getElementById('acctBody');
+  const PERSON_SVG = acctAvatar.innerHTML;   // keep the default glyph to restore on sign-out
+  function initials(name){
+    const p = String(name || '').trim().split(/\s+/).filter(Boolean);
+    return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase();
+  }
+  function openAccount(){ acctOverlay.style.display = 'flex'; }
+  function closeAccount(){ acctOverlay.style.display = 'none'; }
+  function renderAccount(state){
+    account = state || { signedIn: false };
+    if (account.signedIn){
+      acctAvatar.textContent = initials(account.name || account.email);
+      acctAvatar.classList.add('signed');
+      acctBody.innerHTML =
+        '<div class="bigavatar">' + esc(initials(account.name || account.email)) + '</div>'
+        + '<h2>' + esc(account.name || 'Signed in') + '</h2>'
+        + '<p class="meta">' + esc(account.email || '') + (account.plan ? ' · ' + esc(account.plan) : '') + '</p>'
+        + '<button class="abtn" data-act="manage">Manage account</button>'
+        + '<button class="abtn" data-act="signout">Sign out</button>'
+        + '<div class="synced">' + codicon('check') + ' Synced: settings · skills · keymaps</div>';
+    } else {
+      acctAvatar.innerHTML = PERSON_SVG;
+      acctAvatar.classList.remove('signed');
+      const warn = account.status === 'unconfigured'
+        ? '<div class="note warn">Atom++ Cloud isn’t live yet — this is the client UI; the backend (accounts + sync) is on the roadmap (M9). Point <code>atompp.cloud.endpoint</code> at a server to connect.</div>'
+        : '';
+      acctBody.innerHTML =
+        '<div class="bigavatar">' + PERSON_SVG + '</div>'
+        + '<h2>Sign in to Atom++</h2>'
+        + '<p class="sub">Sync your settings, skills, and keymaps across devices.</p>'
+        + '<button class="abtn primary" data-act="signin">Sign in with browser</button>'
+        + '<div class="arow"><button class="abtn" data-act="github">GitHub</button><button class="abtn" data-act="google">Google</button></div>'
+        + '<a class="link" data-act="create">Create an account</a>'
+        + warn
+        + '<div class="note priv">Privacy: the account only syncs settings/skills. AI requests stay <b>direct from your machine to your provider</b> — your keys never touch the cloud.</div>';
+    }
+  }
+  acctBtn.onclick = openAccount;
+  document.getElementById('acctClose').onclick = closeAccount;
+  acctOverlay.onclick = (e) => { if (e.target === acctOverlay) closeAccount(); };
+  acctBody.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-act]'); if (!el) return;
+    const act = el.dataset.act;
+    if (act === 'signout') { vscode.postMessage({ type: 'accountSignOut' }); }
+    else if (act === 'manage') { vscode.postMessage({ type: 'accountManage' }); }
+    else if (act === 'github' || act === 'google') { vscode.postMessage({ type: 'accountSignIn', provider: act }); }
+    else if (act === 'create') { vscode.postMessage({ type: 'accountSignIn', create: true }); }
+    else { vscode.postMessage({ type: 'accountSignIn' }); }
+  });
+  renderAccount({ signedIn: false });
 
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); doSend(); } });
   function auto(){ input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 200) + 'px'; }
@@ -504,37 +1233,44 @@
       mEl.innerHTML = esc(label) + ' <span class="caret">▾</span>';
       mEl.title = (m.provider === 'claude' ? 'Claude' : 'Ollama') + ' · ' + m.model + ' — click to change';
     }
-    else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = add('assistant', ''); setStreaming(true); }
+    else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
     else if (m.type === 'assistantDelta'){ pending += m.text; ensurePump(); }
     else if (m.type === 'assistantDone'){ doneSignaled = true; ensurePump(); }
     else if (m.type === 'assistantError'){
       pending = ''; flushAll = false; doneSignaled = false;
       const html = '<span class="err">' + esc(m.message) + '</span>';
-      if (current){ current.innerHTML = html; } else { add('assistant', html); }
+      if (current){ streamSetHtml(current, html); } else { add('assistant', html); }
       current = null; setStreaming(false);
     }
     else if (m.type === 'activeFile'){ activeFileLabel = m.label; renderChips(); }
     else if (m.type === 'contextFiles'){ ctxFiles = m.files || []; renderChips(); }
     else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
     else if (m.type === 'mode'){ applyMode(!!m.agent); }
-    else if (m.type === 'agentStart'){ setStreaming(true); agentBubble = null; agentRaw = ''; setAgentStatus('thinking…'); }
-    else if (m.type === 'agentStatus'){ agentBubble = null; setAgentStatus(m.text || 'working…'); }
-    else if (m.type === 'agentDelta'){ clearStatus(); if (!agentBubble){ agentBubble = add('assistant', ''); agentRaw = ''; } agentRaw += m.text; agentBubble.innerHTML = render(agentRaw); log.scrollTop = log.scrollHeight; }
-    else if (m.type === 'agentTurnEnd'){ agentBubble = null; agentRaw = ''; }
-    else if (m.type === 'agentTool'){ agentBubble = null; addAgentLine(m.icon, m.text); }
+    else if (m.type === 'agentStart'){ setStreaming(true); agentBubble = null; agentRaw = ''; renderPlan([]); setAgentStatus('thinking…'); }
+    else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); }
+    else if (m.type === 'agentDelta'){ clearStatus(); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
+    else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
+    else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text); }
     else if (m.type === 'agentApproval'){ addApproval(m); }
+    else if (m.type === 'agentQuestions'){ addQuestions(m); }
     else if (m.type === 'editApplied'){ addEditCard(m); }
     else if (m.type === 'editResolved'){ resolveEditCard(m); }
-    else if (m.type === 'reviewState'){ updateReviewBar(m.count); }
-    else if (m.type === 'agentError'){ clearStatus(); agentBubble = null; add('assistant', '<span class="err">' + esc(m.message) + '</span>'); }
-    else if (m.type === 'agentDone'){ clearStatus(); agentBubble = null; addAgentDone(m.reason, m.edits); setStreaming(false); }
+    else if (m.type === 'reviewState'){ updateReviewBar(m.count, m.add, m.del); }
+    else if (m.type === 'plan'){ renderPlan(m.todos || []); }
+    else if (m.type === 'contextUsage'){ renderContext(m); }
+    else if (m.type === 'debug'){ addDebug(m); }
+    else if (m.type === 'account'){ renderAccount(m); if (m.open) openAccount(); }
+    else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
+    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); add('assistant', '<span class="err">' + esc(m.message) + '</span>'); }
+    else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits); setStreaming(false); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
       selLabel = null; ctxFiles = []; renderChips();
-      for (const k in editCards) { delete editCards[k]; } updateReviewBar(0);
+      for (const k in editCards) { delete editCards[k]; } updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
       pending = ''; shown = ''; doneSignaled = false; flushAll = false; current = null; setStreaming(false);
+      forceStick();
     }
   });
 

@@ -45,7 +45,7 @@ let contextFiles = [];
 /** @type {AbortController | null} */
 let abort = null;
 /** Agent mode: sending runs the autonomous tool loop instead of plain chat. */
-let agentMode = false;
+let agentMode = true;
 /** Apply-then-review session (Keep/Undo for applied agent edits). Set in activate(). */
 let review;
 /** Persistent agent transcript for the session (tool calls + results), so follow-up goals
@@ -55,6 +55,9 @@ let agentMessages = [];
 function post(msg) { if (activeWebview) { activeWebview.postMessage(msg); } }
 
 function aiConfig() { return vscode.workspace.getConfiguration('atompp.ai'); }
+
+/** Inline debug trace — prints a 🐛 DEBUG line in the chat (gated by atompp.ai.debug). */
+function dbg(label, data) { if (aiConfig().get('debug', true)) { post({ type: 'debug', label, data: data != null ? data : null }); } }
 
 async function promptForKey() {
 	const key = await vscode.window.showInputBox({
@@ -370,18 +373,45 @@ let approvalSeq = 0;
 /** Ask the webview to approve an action; resolves true/false. */
 function requestApproval(req) {
 	const id = String(++approvalSeq);
+	const wf = vscode.workspace.workspaceFolders;
+	const cwd = (wf && wf[0]) ? wf[0].name : '~';
+	dbg('approval.request', { id, kind: req.kind, cmd: req.command });
 	return new Promise((resolve) => {
 		pendingApprovals.set(id, resolve);
-		post(Object.assign({ type: 'agentApproval', id }, req));
+		post(Object.assign({ type: 'agentApproval', id, cwd }, req));
 	});
 }
 function resolveApproval(id, approved) {
+	dbg('approval.response', { id, approved: !!approved });
 	const r = pendingApprovals.get(id);
 	if (r) { pendingApprovals.delete(id); r(!!approved); }
 }
 function clearApprovals() {
 	for (const [, r] of pendingApprovals) { r(false); }
 	pendingApprovals.clear();
+}
+
+/** Pending in-chat clarifying-question prompts (ask_user), keyed by id, resolved by the webview. */
+const pendingQuestions = new Map();
+let questionSeq = 0;
+
+/** Ask the webview to present clickable multiple-choice questions; resolves with {answers, notes} or null. */
+function requestQuestions(req) {
+	const id = String(++questionSeq);
+	dbg('ask.request', { id, questions: (req.questions || []).length });
+	return new Promise((resolve) => {
+		pendingQuestions.set(id, resolve);
+		post({ type: 'agentQuestions', id, questions: req.questions || [] });
+	});
+}
+function resolveQuestions(id, answers, notes) {
+	dbg('ask.response', { id, answered: Array.isArray(answers) ? answers.length : 0, notes: !!notes });
+	const r = pendingQuestions.get(id);
+	if (r) { pendingQuestions.delete(id); r({ answers: answers || [], notes: notes || '' }); }
+}
+function clearQuestions() {
+	for (const [, r] of pendingQuestions) { r(null); }
+	pendingQuestions.clear();
 }
 
 /** Heal any dangling tool_use (e.g. from a run the user stopped mid-tool) by inserting the
@@ -412,7 +442,9 @@ function trimAgentMemory() {
 	if (cut > 0 && cut < agentMessages.length) { agentMessages.splice(0, cut); }
 }
 
+let lastAgentGoal = null;   // remembered so the response bar's Retry can re-run it
 async function agentFlow(text) {
+	if (text && text.trim()) { lastAgentGoal = text; }
 	const cfg = aiConfig();
 	if (cfg.get('provider', 'claude') !== 'claude') {
 		post({ type: 'agentError', message: 'Agent mode currently requires the Claude provider.' });
@@ -428,19 +460,23 @@ async function agentFlow(text) {
 	repairAgentMemory();
 	agentMessages.push({ role: 'user', content: text });
 	trimAgentMemory();
+	dbg('agent.start', { model: cfg.get('claude.model', 'claude-sonnet-4-6'), maxSteps: cfg.get('agent.maxSteps', 25), transcriptMsgs: agentMessages.length, goalChars: text.length });
 	try {
 		await runAgent({
 			messages: agentMessages, // persists across runs → the agent remembers the session
 			apiKey: key,
 			model: cfg.get('claude.model', 'claude-sonnet-4-6'),
 			maxSteps: Math.max(1, cfg.get('agent.maxSteps', 25)),
-			post,
+			post, dbg,
 			approve: requestApproval,           // run_command only
+			ask: requestQuestions,              // ask_user — clickable clarifying questions
+			contextLimit: cfg.get('contextWindow', 200000), // model context window → drives the usage meter
 			applyEdit: (req) => review.applyEdit(req), // file edits: apply-then-review
 			signal: abort.signal
 		});
 	} finally {
 		clearApprovals();
+		clearQuestions();
 		abort = null;
 	}
 }
@@ -450,6 +486,7 @@ async function handleSend(text) {
 	if (agentMode) { await agentFlow(text); return; }
 	const cfg = aiConfig();
 	const provider = cfg.get('provider', 'claude');
+	dbg('chat.send', { provider, model: provider === 'claude' ? cfg.get('claude.model') : cfg.get('ollama.model'), chars: text.length, history: conversation.length });
 
 	const blocks = [];
 
@@ -569,13 +606,21 @@ class ChatViewProvider {
 		view.webview.html = getHtml();
 		view.webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
-				case 'ready': sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); break;
+				case 'ready': sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: aiConfig().get('contextWindow', 200000) }); if (review) { review.resync(); } break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'send': await handleSend(msg.text); break;
-				case 'stop': if (abort) { abort.abort(); } clearApprovals(); break;
+				case 'stop': dbg('stop.clicked'); if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'approvalResponse': resolveApproval(msg.id, msg.approved); break;
-				case 'reviewKeepFile': review.keepFile(msg.id, 'kept'); break;
-				case 'reviewUndoFile': await review.undoFile(msg.id); break;
+				case 'questionsResponse': resolveQuestions(msg.id, msg.answers, msg.notes); break;
+				case 'accountSignIn': await accountSignIn(msg.provider, msg.create); break;
+				case 'accountSignOut': await accountSignOut(); break;
+				case 'accountManage': await accountManage(); break;
+				case 'copy': try { await vscode.env.clipboard.writeText(String(msg.text || '')); } catch (e) { /* clipboard unavailable */ } break;
+				case 'retry': if (lastAgentGoal && !abort) { dbg('retry', { goalChars: lastAgentGoal.length }); await agentFlow(lastAgentGoal); } break;
+				case 'feedback': dbg('feedback', { value: msg.value }); break;
+				case 'openFile': await openWorkspaceFile(msg.path); break;
+				case 'reviewKeepFile': dbg('review.keep', { id: msg.id }); review.keepFile(msg.id, 'kept'); break;
+				case 'reviewUndoFile': dbg('review.undo', { id: msg.id }); await review.undoFile(msg.id); break;
 				case 'reviewKeepAll': review.keepAll(); break;
 				case 'reviewUndoAll': await review.undoAll(); break;
 				case 'reviewOpenDiff': await review.openDiff(msg.id); break;
@@ -602,6 +647,100 @@ function getHtml() {
 	return html.replace(/__CSP__/g, csp).replace(/__NONCE__/g, nonce);
 }
 
+// ---- Atom++ Cloud account (sign-in + sync) -------------------------------------------------
+// IMPORTANT: this is a SEPARATE, optional layer. The AI path stays BYO-key / no-backend — the
+// account only syncs settings/skills/profile, never proxies AI or sees your provider keys.
+// It is gated on a configured `atompp.cloud.endpoint`; with none set, sign-in is honestly inert.
+const ACCOUNT_TOKEN_KEY = 'atompp.cloud.token';     // session token → SecretStorage
+const ACCOUNT_PROFILE_KEY = 'atompp.cloud.profile'; // {name,email,plan} → globalState
+function cloudEndpoint() { return String(vscode.workspace.getConfiguration('atompp.cloud').get('endpoint', '') || '').replace(/\/+$/, ''); }
+async function currentAccount() {
+	const token = ctx ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
+	if (token) {
+		const p = (ctx && ctx.globalState.get(ACCOUNT_PROFILE_KEY)) || {};
+		return { signedIn: true, name: p.name || p.email || 'Atom++ user', email: p.email || '', plan: p.plan || '' };
+	}
+	return { signedIn: false, status: cloudEndpoint() ? 'signedout' : 'unconfigured' };
+}
+async function postAccount(open) {
+	const a = await currentAccount();
+	post(Object.assign({ type: 'account', open: !!open }, a));
+}
+async function accountSignIn(provider, create) {
+	const endpoint = cloudEndpoint();
+	if (!endpoint) {
+		dbg('account.signin', { unconfigured: true });
+		await postAccount(true);
+		vscode.window.showInformationMessage('Atom++ Cloud isn’t connected yet. Set "atompp.cloud.endpoint" to your account server to sign in. (Accounts + sync are on the roadmap — M9.)');
+		return;
+	}
+	// Canonical editor OAuth callback: open the server's auth page with a redirect back to us.
+	const cb = await vscode.env.asExternalUri(vscode.Uri.parse(`${vscode.env.uriScheme}://atompp.atom-ai/auth/callback`));
+	const path = create ? 'signup' : (provider ? 'oauth/' + encodeURIComponent(provider) : 'login');
+	const url = `${endpoint}/auth/${path}?redirect_uri=${encodeURIComponent(cb.toString())}`;
+	dbg('account.signin', { provider: provider || 'browser', create: !!create });
+	await vscode.env.openExternal(vscode.Uri.parse(url));
+}
+async function accountSignOut() {
+	if (ctx) { await ctx.secrets.delete(ACCOUNT_TOKEN_KEY); await ctx.globalState.update(ACCOUNT_PROFILE_KEY, undefined); }
+	dbg('account.signout');
+	await postAccount();
+}
+async function accountManage() {
+	const endpoint = cloudEndpoint();
+	if (endpoint) { await vscode.env.openExternal(vscode.Uri.parse(endpoint + '/account')); }
+	else { await postAccount(true); }
+}
+// The browser redirects to atom-plus-plus://atompp.atom-ai/auth/callback?token=…&name=…&email=…
+async function handleAuthCallback(uri) {
+	try {
+		const q = new URLSearchParams(uri.query || '');
+		const token = q.get('token');
+		if (!token) { return; }
+		if (ctx) {
+			await ctx.secrets.store(ACCOUNT_TOKEN_KEY, token);
+			await ctx.globalState.update(ACCOUNT_PROFILE_KEY, { name: q.get('name') || '', email: q.get('email') || '', plan: q.get('plan') || '' });
+		}
+		dbg('account.callback', { ok: true });
+		await postAccount(true);
+		vscode.window.showInformationMessage('Signed in to Atom++.');
+	} catch (e) { dbg('account.callback', { error: String((e && e.message) || e) }); }
+}
+
+// ---- Workspace file index (powers clickable file chips in chat) -------------------------------
+let workspaceFiles = new Map();   // relPath -> vscode.Uri
+let fileIndexTimer = null;
+async function buildFileIndex() {
+	try {
+		const map = new Map();
+		const exclude = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/build/**,**/.DS_Store}';
+		const uris = await vscode.workspace.findFiles('**/*', exclude, 8000);
+		const rels = [];
+		for (const u of uris) { const rel = vscode.workspace.asRelativePath(u, false); map.set(rel, u); rels.push(rel); }
+		workspaceFiles = map;
+		post({ type: 'fileIndex', files: rels });
+		dbg('fileIndex', { count: rels.length });
+	} catch (e) { /* ignore index build errors */ }
+}
+function scheduleFileIndex() { if (fileIndexTimer) { clearTimeout(fileIndexTimer); } fileIndexTimer = setTimeout(buildFileIndex, 400); }
+async function openWorkspaceFile(rel) {
+	if (!rel) { return; }
+	let uri = workspaceFiles.get(rel);
+	if (!uri) {
+		for (const f of (vscode.workspace.workspaceFolders || [])) {
+			const cand = vscode.Uri.joinPath(f.uri, rel);
+			try { await vscode.workspace.fs.stat(cand); uri = cand; break; } catch (e) { /* not here */ }
+		}
+		if (!uri) { const found = await vscode.workspace.findFiles('**/' + rel.split('/').pop(), '**/node_modules/**', 1); if (found.length) { uri = found[0]; } }
+	}
+	if (!uri) { vscode.window.showWarningMessage('Atom++: could not locate ' + rel); return; }
+	try {
+		await vscode.commands.executeCommand('revealInExplorer', uri);   // reveal in the (nested) Explorer tree
+		await vscode.window.showTextDocument(uri, { preview: false });   // open in the main editor
+		dbg('openFile', { rel: rel });
+	} catch (e) { dbg('openFile.error', { msg: String((e && e.message) || e) }); }
+}
+
 function activate(context) {
 	ctx = context;
 	context.subscriptions.push(
@@ -619,8 +758,15 @@ function activate(context) {
 			await context.secrets.delete(SECRET_KEY);
 			vscode.window.showInformationMessage('Atom++ AI: Anthropic API key cleared.');
 		}),
+		vscode.commands.registerCommand('atompp.ai.account', () => postAccount(true)),
+		vscode.window.registerUriHandler({ handleUri(uri) { if (uri.path === '/auth/callback') { handleAuthCallback(uri); } } }),
+		vscode.workspace.onDidCreateFiles(scheduleFileIndex),
+		vscode.workspace.onDidDeleteFiles(scheduleFileIndex),
+		vscode.workspace.onDidRenameFiles(scheduleFileIndex),
+		vscode.workspace.onDidChangeWorkspaceFolders(scheduleFileIndex),
 		vscode.workspace.onDidChangeConfiguration((e) => {
 			if (e.affectsConfiguration('atompp.ai')) { sendConfigToWebview(); }
+			if (e.affectsConfiguration('atompp.cloud')) { postAccount(); }
 		})
 	);
 
@@ -644,7 +790,7 @@ function activate(context) {
 	});
 
 	// Apply-then-review: agent edits land immediately and are reviewed with Keep/Undo (editor + panel).
-	review = registerReview(context, post);
+	review = registerReview(context, post, dbg);
 
 	// Inline (ghost-text) tab-completion. Silent key lookup — it must never prompt mid-typing.
 	registerInlineComplete(context, {

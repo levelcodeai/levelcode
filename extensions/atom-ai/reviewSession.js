@@ -14,8 +14,11 @@
 'use strict';
 
 const vscode = require('vscode');
+const fs = require('fs');
 const path = require('path');
 const { makeDiff } = require('./agent');
+
+const PERSIST_KEY = 'atompp.ai.pendingReviews';
 
 const SNAPSHOT_SCHEME = 'atompp-snapshot';
 
@@ -47,7 +50,8 @@ function countDiff(diff) {
  * @param {vscode.ExtensionContext} context
  * @param {(m:any)=>void} post  Send a message to the chat webview.
  */
-function registerReview(context, post) {
+function registerReview(context, post, dbg) {
+	dbg = dbg || (() => {});
 	/** @type {Map<string,{uri:vscode.Uri, rel:string, exists:boolean, snapshot:string, range:vscode.Range, add:number, del:number}>} */
 	const pending = new Map();
 	/** Last text WE wrote per uri — onDidChangeTextDocument ignores any event whose text matches. */
@@ -72,7 +76,11 @@ function registerReview(context, post) {
 	function undecorate(uri) {
 		for (const ed of visibleEditors(uri)) { ed.setDecorations(greenType, []); }
 	}
-	function postState() { post({ type: 'reviewState', count: pending.size }); }
+	function postState() {
+		let add = 0, del = 0;
+		for (const fr of pending.values()) { add += (fr.add || 0); del += (fr.del || 0); }
+		post({ type: 'reviewState', count: pending.size, add, del });
+	}
 
 	// Prominent in-editor controls (CodeLens is small; these are the noticeable surfaces).
 	const keepStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -104,35 +112,53 @@ function registerReview(context, post) {
 		const uri = vscode.Uri.file(abs);
 		const key = uri.toString();
 		const proposed = String(req.proposed != null ? req.proposed : '');
+		const existsNow = fs.existsSync(abs); // re-check at apply time (TOCTOU vs the agent's earlier check)
 
-		// Snapshot the pre-run content ONCE (so a single Undo reverts the whole run's changes to this file).
-		let snapshot = pending.has(key) ? pending.get(key).snapshot : '';
-		if (!pending.has(key) && req.exists) {
-			try { snapshot = (await vscode.workspace.openTextDocument(uri)).getText(); } catch { snapshot = ''; }
-		}
+		// Snapshot the pre-run content ONCE, from DISK (the true baseline — never a dirty buffer).
+		let snapshot;
+		if (pending.has(key)) { snapshot = pending.get(key).snapshot; }
+		else if (existsNow) {
+			try { snapshot = fs.readFileSync(abs, 'utf8').replace(/^﻿/, ''); }
+			catch { return false; } // can't read the file we're about to edit → abort (never a destructive empty-snapshot edit)
+		} else { snapshot = ''; }
 
 		const edit = new vscode.WorkspaceEdit();
-		if (req.exists) {
+		if (existsNow) {
 			const doc = await vscode.workspace.openTextDocument(uri);
 			edit.replace(uri, doc.validateRange(new vscode.Range(0, 0, doc.lineCount + 1, 0)), proposed);
 		} else {
 			edit.createFile(uri, { ignoreIfExists: true });
 			edit.insert(uri, new vscode.Position(0, 0), proposed);
 		}
-		expected.set(key, proposed); // guard the change listener against our own edit (robust across the async boundary)
+		dbg('review.apply', { path: req.path, existsNow, proposedChars: proposed.length });
+		const prevExpected = expected.get(key);
+		expected.set(key, proposed); // guard the change listener against our own edit
 		const ok = await vscode.workspace.applyEdit(edit);
-		if (!ok) { if (!pending.has(key)) { expected.delete(key); } return false; }
+		dbg('review.applyResult', { path: req.path, ok });
+		if (!ok) {
+			if (pending.has(key)) { expected.set(key, prevExpected != null ? prevExpected : pending.get(key).appliedText); }
+			else { expected.delete(key); }
+			return false;
+		}
 
-		// Save so run_command / disk reads see the new content (not a stale unsaved doc).
-		try { const doc = await vscode.workspace.openTextDocument(uri); if (doc.isDirty) { await doc.save(); } } catch { /* */ }
+		// Save so disk reads / run_command see the new content; then re-sync `expected` to the SAVED
+		// text — a formatOnSave / final-newline tweak otherwise looks like a user edit (false auto-Keep).
+		let appliedText = proposed;
+		try {
+			const doc = await vscode.workspace.openTextDocument(uri);
+			if (doc.isDirty) { await doc.save(); }
+			appliedText = doc.getText();
+		} catch { /* */ }
+		expected.set(key, appliedText);
 
-		const diff = makeDiff(snapshot, proposed);
+		const diff = makeDiff(snapshot, appliedText);
 		const { add, del } = countDiff(diff);
-		const span = changedSpan(snapshot, proposed);
+		const span = changedSpan(snapshot, appliedText);
 		const range = new vscode.Range(span.start, 0, span.end, 0);
-		const existed = pending.has(key) ? pending.get(key).exists : req.exists;
-		const fr = { uri, rel: vscode.workspace.asRelativePath(uri), exists: existed, snapshot, range, add, del };
+		const existed = pending.has(key) ? pending.get(key).exists : existsNow;
+		const fr = { uri, rel: vscode.workspace.asRelativePath(uri), exists: existed, snapshot, range, add, del, appliedText };
 		pending.set(key, fr);
+		persist();
 
 		decorate(fr);
 		for (const ed of visibleEditors(uri)) { ed.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport); }
@@ -143,11 +169,18 @@ function registerReview(context, post) {
 		return true;
 	}
 
+	/** Serialize pending reviews so Undo survives a window reload (snapshot is the only irreplaceable bit). */
+	function persist() {
+		const arr = [...pending.values()].map((fr) => ({ uri: fr.uri.toString(), rel: fr.rel, exists: fr.exists, snapshot: fr.snapshot }));
+		try { context.workspaceState.update(PERSIST_KEY, arr); } catch { /* */ }
+	}
+
 	function clearReview(key) {
 		const fr = pending.get(key);
 		if (fr) { undecorate(fr.uri); }
 		pending.delete(key);
 		expected.delete(key);
+		persist();
 		refreshLenses();
 		updateActiveUi();
 	}
@@ -255,7 +288,29 @@ function registerReview(context, post) {
 		{ dispose: () => { for (const fr of pending.values()) { undecorate(fr.uri); } pending.clear(); } }
 	);
 
-	return { applyEdit, keepFile, undoFile, keepAll, undoAll, finalizeAll, openDiff, pendingCount: () => pending.size };
+	// Rehydrate pending reviews from a previous window (so a reload mid-review keeps Keep/Undo working).
+	for (const s of (context.workspaceState.get(PERSIST_KEY, []) || [])) {
+		try {
+			const uri = vscode.Uri.parse(s.uri);
+			let current = '';
+			try { current = fs.readFileSync(uri.fsPath, 'utf8').replace(/^﻿/, ''); } catch { /* file gone */ }
+			const span = changedSpan(s.snapshot, current);
+			const { add, del } = countDiff(makeDiff(s.snapshot, current));
+			pending.set(s.uri, { uri, rel: s.rel, exists: s.exists, snapshot: s.snapshot, range: new vscode.Range(span.start, 0, span.end, 0), add, del, appliedText: current });
+			expected.set(s.uri, current);
+		} catch { /* */ }
+	}
+	if (pending.size) { for (const fr of pending.values()) { decorate(fr); } refreshLenses(); updateActiveUi(); }
+
+	/** Re-send all pending review cards + state to the webview (called when the chat view becomes ready). */
+	function resync() {
+		for (const fr of pending.values()) {
+			post({ type: 'editApplied', id: fr.uri.toString(), path: fr.rel, exists: fr.exists, add: fr.add, del: fr.del, diff: makeDiff(fr.snapshot, fr.appliedText) });
+		}
+		postState();
+	}
+
+	return { applyEdit, keepFile, undoFile, keepAll, undoAll, finalizeAll, openDiff, resync, pendingCount: () => pending.size };
 }
 
 module.exports = { registerReview };
