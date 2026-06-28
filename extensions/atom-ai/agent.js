@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const { streamClaudeAgentTurn } = require('./providers');
+const { formatVerifyFeedback, verifyOutcome, looksUnrunnable } = require('./verify');
 
 const SYSTEM = [
 	"You are Atom++'s built-in autonomous coding agent. You accomplish the user's goal in their",
@@ -27,7 +28,8 @@ const SYSTEM = [
 	'- Paths are relative to the workspace root.',
 	'- For a multi-step goal, call update_plan FIRST with a short checklist (3-8 short items, all "pending"), then call it again to set an item "in_progress" when you start it and "done" when finished. Skip the plan for trivial single-step goals.',
 	'- If the goal truly depends on a decision only the user can make (tech stack, scope, where to create files, must-have features), call ask_user ONCE with concise multiple-choice questions (a short header + 2-4 concrete options each) INSTEAD of writing the questions as prose. Then act on their answers and do not ask again. Do NOT ask about things you can reasonably decide yourself — prefer a sensible default and proceed.',
-	'- When the goal is finished, end with a one-line summary starting with "Done:" and STOP (no more tools).'
+	'- When the goal is finished, end with a one-line summary starting with "Done:" and STOP (no more tools).',
+	'- After you finish, your work is verified automatically: editor diagnostics for the files you changed (plus a verify command, if the user configured one) are checked. If problems are found you will get them back as a follow-up message — fix the ones you introduced, then finish again with "Done:". If a reported problem is clearly pre-existing and unrelated to the goal, do not chase it: note it in one line and finish.'
 ].join('\n');
 
 const TOOLS = [
@@ -40,6 +42,11 @@ const TOOLS = [
 	{ name: 'run_command', description: 'Run a shell command in the workspace root. Requires approval.', input_schema: { type: 'object', properties: { command: { type: 'string' }, explanation: { type: 'string' } }, required: ['command'] } },
 	{ name: 'ask_user', description: 'Ask the user one or more multiple-choice questions when the goal genuinely depends on a decision only they can make (tech stack, scope, where to put files, must-have features). The user picks by CLICKING — do NOT write questions as prose. Ask ONCE up front with all your questions, then proceed with the answers and never re-ask. Prefer sensible defaults over asking; only ask when a wrong guess would waste real work.', input_schema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'object', properties: { header: { type: 'string', description: 'a 1-3 word tag for the question' }, question: { type: 'string' }, multiSelect: { type: 'boolean', description: 'true if several options can be picked at once' }, options: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] } } }, required: ['question', 'options'] } } }, required: ['questions'] } }
 ];
+
+// Rough token estimates (chars/4) for the static prompt segments, so the context popover can break
+// down "what's filling the window" — system + tools are sent on every request, the rest is messages.
+const SYSTEM_TOKENS_EST = Math.round(SYSTEM.length / 4);
+const TOOLS_TOKENS_EST = Math.round(JSON.stringify(TOOLS).length / 4);
 
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
 
@@ -248,6 +255,7 @@ async function runTool(tu, ctx) {
 			const ok = await ctx.applyEdit({ path: input.path, exists: true, proposed: res.proposed });
 			if (!ok) { return 'ERROR: could not apply the edit to ' + input.path + ' (file may be read-only or in conflict).'; }
 			ctx.editCount = (ctx.editCount || 0) + 1;
+			if (ctx.touched) { ctx.touched.add(abs); }   // this run's edited files → verified afterward
 			return 'Applied edit to ' + input.path + ' (the user is reviewing it with Keep/Undo; do not re-edit it).';
 		}
 		if (tu.name === 'write_file') {
@@ -263,6 +271,7 @@ async function runTool(tu, ctx) {
 			const ok = await ctx.applyEdit({ path: input.path, exists: existed, proposed: newStr });
 			if (!ok) { return 'ERROR: could not write ' + input.path + ' (path may be read-only or in conflict).'; }
 			ctx.editCount = (ctx.editCount || 0) + 1;
+			if (ctx.touched) { ctx.touched.add(abs); }   // this run's edited files → verified afterward
 			return 'Applied edit to ' + input.path + ' (pending the user\'s Keep/Undo review).';
 		}
 		if (tu.name === 'run_command') {
@@ -316,6 +325,67 @@ async function runAgent(ctx) {
 	let step = 0;
 	let reason = 'done';
 	let nudges = 0;
+
+	// --- M5 auto-verify loop ------------------------------------------------
+	// When the model wants to finish AND it edited files this run, check its work before handing back:
+	// run the configured verify command (one-shot — typecheck/lint/test) + pull editor diagnostics for
+	// the touched files, then if anything failed feed it back so the agent self-corrects. Bounded by
+	// verify.maxRounds (re-entries) AND maxSteps; respects abort. A failing verify never blocks the user —
+	// after the budget it hands the remaining problems over honestly.
+	let feedbackUsed = 0, verifySeq = 0;
+	async function runVerifyOnce() {
+		const id = 'verify-' + (++verifySeq);
+		const cmd = ((ctx.verify && ctx.verify.command) || '').trim();
+		ctx.post({ type: 'verifyRun', id, command: cmd });
+		let ran = false, exitCode = 0, cmdTail = '';
+		if (cmd) {
+			ran = true;
+			cmdTail = await runCommand(root, cmd,
+				(chunk, stream) => ctx.post({ type: 'verifyOutput', id, chunk, stream }),
+				(code) => { if (ctx.commandStops) { ctx.commandStops.delete(id); } exitCode = (code == null ? -1 : code); },
+				(child, stop) => { if (ctx.commandStops) { ctx.commandStops.set(id, stop); } },
+				ctx.commandTimeout);
+		}
+		// A command that couldn't even start (missing npm script / command-not-found) is a CONFIG problem,
+		// not the agent's code — flag it as unrunnable so we warn the user instead of looping the agent on it.
+		const unrunnable = ran && looksUnrunnable(exitCode, cmdTail);
+		const cmdProblem = ran && exitCode !== 0 && !unrunnable;
+		let diag = { text: '', count: 0 };
+		if (ctx.getNewDiagnostics) { try { diag = await ctx.getNewDiagnostics(); } catch (e) { dbg('verify.diagErr', { msg: String((e && e.message) || e) }); } }
+		return { id, ok: !cmdProblem && diag.count === 0, cmdProblem, unrunnable, cmdTail, diag };
+	}
+	/** Returns true if the loop should CONTINUE (verification failed, fix-feedback pushed). */
+	async function attemptVerify() {
+		const v = ctx.verify;
+		if (!v || !v.enabled) { return false; }
+		if (ctx.signal.aborted) { return false; }
+		if (!(ctx.editCount > 0)) { return false; }                       // no edits this run → nothing to verify
+		const cmd = (v.command || '').trim();
+		const touchedCount = ctx.getTouchedUris ? ctx.getTouchedUris().length : 0;
+		if (!cmd && !touchedCount) { return false; }                      // nothing to check
+		const max = Math.max(0, v.maxRounds || 0);
+		ctx.post({ type: 'agentStatus', text: 'verifying edits…' });
+		const r = await runVerifyOnce();
+		if (ctx.signal.aborted) { return false; }
+		const outcome = verifyOutcome(r.ok, feedbackUsed, max);
+		ctx.post({ type: 'verifyDone', id: r.id, ok: r.ok, exhausted: outcome === 'exhausted', errorCount: r.diag.count, cmdFail: r.cmdProblem, unrunnable: r.unrunnable, hadCommand: !!cmd });
+		if (r.unrunnable) {
+			// The verify command itself is misconfigured — tell the user, never make the agent "fix" it.
+			dbg('verify.unrunnable', { tail: String(r.cmdTail || '').slice(0, 160) });
+			ctx.post({ type: 'agentTool', icon: 'warning', text: 'verify command couldn’t run — check the atompp.ai.verify.command setting' });
+		}
+		if (outcome === 'pass') { dbg('verify.pass', { cmd: !!cmd, touched: touchedCount, unrunnable: r.unrunnable }); return false; }
+		if (outcome === 'exhausted') {
+			dbg('verify.exhausted', { errors: r.diag.count, cmdFail: r.cmdProblem });
+			ctx.post({ type: 'agentTool', icon: 'warning', text: 'verification still failing — left for your review' });
+			return false;
+		}
+		feedbackUsed++;
+		dbg('verify.fail', { round: feedbackUsed, errors: r.diag.count, cmdFail: r.cmdProblem });
+		messages.push({ role: 'user', content: formatVerifyFeedback({ cmdFail: r.cmdProblem, cmdTail: r.cmdTail, diag: r.diag }, feedbackUsed, max, cmd) });
+		return true;
+	}
+
 	try {
 		while (step++ < ctx.maxSteps) {
 			if (ctx.signal.aborted) { reason = 'stopped'; break; }
@@ -335,11 +405,11 @@ async function runAgent(ctx) {
 				}
 			});
 			if (streamed) { ctx.post({ type: 'agentTurnEnd' }); }
-			dbg('turn.response', { step, stop: turn.stop_reason, blocks: turn.content.length, textChars, tools: turn.content.filter((c) => c.type === 'tool_use').map((c) => c.name + (c._malformed ? '!malformed' : '')) });
+			dbg('turn.response', { step, stop: turn.stop_reason, blocks: turn.content.length, textChars, tools: turn.content.filter((c) => c.type === 'tool_use').map((c) => c.name + (turn.malformed && turn.malformed.has(c.id) ? '!malformed' : '')) });
 			// Report real context usage (input_tokens = how full the transcript is) so the UI can meter + warn.
 			if (turn.usage) {
 				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens });
-				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model });
+				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: SYSTEM_TOKENS_EST, tools: TOOLS_TOKENS_EST });
 			}
 
 			// Guard: never push an empty assistant message — Anthropic 400s on content:[] (e.g. a
@@ -365,7 +435,7 @@ async function runAgent(ctx) {
 				let cancelled = false;
 				for (const tu of toolUses) {
 					if (cancelled || ctx.signal.aborted) { cancelled = true; dbg('tool.cancelled', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'Cancelled by the user.' }); continue; }
-					if (tu._malformed) { dbg('tool.malformed', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'ERROR: your tool arguments were cut off (truncated JSON). Retry with smaller input — for edits use edit_file with a short snippet.' }); continue; }
+					if (turn.malformed && turn.malformed.has(tu.id)) { dbg('tool.malformed', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'ERROR: your tool arguments were cut off (truncated JSON). Retry with smaller input — for edits use edit_file with a short snippet.' }); continue; }
 					dbg('tool.call', { name: tu.name, input: inputPreview(tu.input) });
 					const out = await runTool(tu, ctx);
 					dbg('tool.result', { name: tu.name, chars: String(out).length, error: String(out).startsWith('ERROR') });
@@ -391,7 +461,10 @@ async function runAgent(ctx) {
 				if (nudges++ < 3) { continue; }
 				reason = 'limit'; break;
 			}
-			if (/(^|\n)\s*done\s*:/i.test(text) || /\bdone\.?\s*$/i.test(text.trim())) { reason = 'done'; break; }
+			if (/(^|\n)\s*done\s*:/i.test(text) || /\bdone\.?\s*$/i.test(text.trim())) {
+				if (await attemptVerify()) { continue; }   // verification failed → fix feedback pushed, keep going
+				reason = 'done'; break;
+			}
 			// Only nudge when the model PROMISED an action but didn't call a tool (a real stall) —
 			// not when it gave a complete conversational answer (e.g. a joke, an explanation, a question).
 			const promisesAction = /[:…]\s*$/.test(text.trim())
@@ -403,6 +476,7 @@ async function runAgent(ctx) {
 				continue;
 			}
 			dbg(promisesAction ? 'stall.giveup' : 'turn.complete', { nudges, promised: promisesAction });
+			if (await attemptVerify()) { continue; }   // verification failed → fix feedback pushed, keep going
 			reason = 'done';
 			break;
 		}
@@ -420,7 +494,7 @@ async function runAgent(ctx) {
 	} finally {
 		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, credits: ctx.credits != null ? ctx.credits : null });
 		// credits: null until the M10 gateway returns real usage; the response bar shows it when present.
-		ctx.post({ type: 'agentDone', reason, edits: ctx.editCount || 0, credits: ctx.credits != null ? ctx.credits : null });
+		ctx.post({ type: 'agentDone', reason, edits: ctx.editCount || 0, credits: ctx.credits != null ? ctx.credits : null, maxSteps: ctx.maxSteps });
 	}
 }
 

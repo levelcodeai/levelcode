@@ -141,6 +141,27 @@
 					"minimum": 1,
 					"description": "Maximum tool-use steps the AI agent may take for one goal before stopping."
 				},
+				"atompp.ai.verify.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "After the agent finishes editing, automatically verify its work — pull editor diagnostics (type/lint errors) for the files it changed and, if a verify command is set, run it — then feed any failures back so the agent self-corrects until clean (bounded by atompp.ai.verify.maxRounds)."
+				},
+				"atompp.ai.verify.command": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Optional one-shot command run to verify the agent's edits (e.g. `npm run typecheck`, `npm test`, `npm run lint`). It MUST exit on its own — do **not** use a dev server or watch command (those block; the `commandTimeout` backstop force-kills them). Leave empty to verify with editor diagnostics only."
+				},
+				"atompp.ai.verify.maxRounds": {
+					"type": "number",
+					"default": 2,
+					"minimum": 0,
+					"description": "How many times the agent may be sent back to fix failing verification before it stops and hands the remaining problems to you. 0 = report-only (verification still runs and is shown, but the agent won't auto-retry)."
+				},
+				"atompp.ai.verify.includeWarnings": {
+					"type": "boolean",
+					"default": false,
+					"description": "Treat editor warnings (not just errors) as verification failures the agent must fix. Off by default — only errors block."
+				},
 				"atompp.ai.completions.enabled": {
 					"type": "boolean",
 					"default": true,

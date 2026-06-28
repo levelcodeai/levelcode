@@ -18,6 +18,7 @@ const { registerLmProvider } = require('./lmProvider');
 const { registerInlineComplete } = require('./inlineComplete');
 const { runAgent } = require('./agent');
 const { registerReview } = require('./reviewSession');
+const { formatDiagnosticLines, diagKey } = require('./verify');
 
 const CLAUDE_MODELS = [
 	{ label: 'Claude Opus 4.8', id: 'claude-opus-4-8', detail: 'Most capable' },
@@ -437,6 +438,46 @@ function repairAgentMemory() {
 
 /** Keep agent memory bounded. Trim oldest messages, but only at a goal boundary (a
  *  string-content user message) so we never orphan a tool_use/tool_result pair. */
+// --- M5 auto-verify: editor-diagnostics gathering (vscode glue; pure formatting lives in verify.js) ---
+/** Pre-run snapshot of every diagnostic so we only ever report problems the agent NEWLY introduced
+ *  (keyed by severity+message, not position, so they survive the line shifts an edit causes). */
+function snapshotDiagnostics() {
+	const base = new Map();
+	for (const [uri, diags] of vscode.languages.getDiagnostics()) {
+		const set = new Set();
+		for (const d of diags) { set.add(diagKey(d.severity, d.message)); }
+		base.set(uri.toString(), set);
+	}
+	return base;
+}
+/** Language servers publish diagnostics asynchronously after a save — wait until they settle (a quiet
+ *  period after the last relevant change) or a hard cap, so we don't read stale/empty results. */
+function waitForDiagnostics(uris, maxMs) {
+	return new Promise((resolve) => {
+		if (!uris.length) { resolve(); return; }
+		const want = new Set(uris.map((u) => u.toString()));
+		let done = false, quiet = null;
+		const finish = () => { if (done) { return; } done = true; if (quiet) { clearTimeout(quiet); } clearTimeout(hard); sub.dispose(); resolve(); };
+		const sub = vscode.languages.onDidChangeDiagnostics((e) => {
+			if (e.uris.some((u) => want.has(u.toString()))) { if (quiet) { clearTimeout(quiet); } quiet = setTimeout(finish, 250); }
+		});
+		const hard = setTimeout(finish, maxMs);
+	});
+}
+async function collectNewDiagnostics(uris, baseline, includeWarnings) {
+	if (!uris.length) { return { text: '', count: 0 }; }
+	await waitForDiagnostics(uris, 1500);
+	const perFile = uris.map((uri) => ({
+		rel: vscode.workspace.asRelativePath(uri),
+		uriKey: uri.toString(),
+		diags: (vscode.languages.getDiagnostics(uri) || []).map((d) => ({
+			severity: d.severity, message: d.message, source: d.source,
+			line: d.range.start.line, character: d.range.start.character
+		}))
+	}));
+	return formatDiagnosticLines(perFile, baseline, includeWarnings, 40);
+}
+
 function trimAgentMemory() {
 	const MAX = 80, KEEP = 60;
 	if (agentMessages.length <= MAX) { return; }
@@ -464,6 +505,17 @@ async function agentFlow(text) {
 	agentMessages.push({ role: 'user', content: text });
 	trimAgentMemory();
 	dbg('agent.start', { model: cfg.get('claude.model', 'claude-sonnet-4-6'), maxSteps: cfg.get('agent.maxSteps', 25), transcriptMsgs: agentMessages.length, goalChars: text.length });
+	// Auto-verify: capture a pre-run diagnostics baseline (so we only flag NEW problems) and a fresh
+	// per-run set of edited files to verify afterward.
+	const verifyCfg = {
+		enabled: cfg.get('verify.enabled', true),
+		command: cfg.get('verify.command', ''),
+		maxRounds: Math.max(0, cfg.get('verify.maxRounds', 2)),
+		includeWarnings: cfg.get('verify.includeWarnings', false)
+	};
+	const runTouched = new Set();   // abs paths edited this run (agent.js fills it via ctx.touched)
+	const diagBaseline = verifyCfg.enabled ? snapshotDiagnostics() : new Map();
+	dbg('verify.config', { enabled: verifyCfg.enabled, hasCommand: !!verifyCfg.command, maxRounds: verifyCfg.maxRounds, includeWarnings: verifyCfg.includeWarnings });
 	try {
 		await runAgent({
 			messages: agentMessages, // persists across runs → the agent remembers the session
@@ -477,6 +529,10 @@ async function agentFlow(text) {
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
 			commandTimeout: cfg.get('commandTimeout', 120000), // backstop before a command is force-killed (0 = off)
 			applyEdit: (req) => review.applyEdit(req), // file edits: apply-then-review
+			verify: verifyCfg,                  // M5 auto-verify settings
+			touched: runTouched,                // agent.js adds each edited abs path here
+			getTouchedUris: () => [...runTouched].map((p) => vscode.Uri.file(p)),
+			getNewDiagnostics: () => collectNewDiagnostics([...runTouched].map((p) => vscode.Uri.file(p)), diagBaseline, verifyCfg.includeWarnings),
 			signal: abort.signal
 		});
 	} finally {
@@ -623,6 +679,7 @@ class ChatViewProvider {
 				case 'accountManage': await accountManage(); break;
 				case 'copy': try { await vscode.env.clipboard.writeText(String(msg.text || '')); } catch (e) { /* clipboard unavailable */ } break;
 				case 'retry': if (lastAgentGoal && !abort) { dbg('retry', { goalChars: lastAgentGoal.length }); await agentFlow(lastAgentGoal); } break;
+				case 'continueAgent': if (!abort) { const g = lastAgentGoal; dbg('continue', { transcriptMsgs: agentMessages.length }); await agentFlow('Continue from where you left off and finish the task. Pick up exactly where you stopped — do not restart or repeat work that is already done.'); lastAgentGoal = g; } break;
 				case 'feedback': dbg('feedback', { value: msg.value }); break;
 				case 'openFile': await openWorkspaceFile(msg.path); break;
 				case 'reviewKeepFile': dbg('review.keep', { id: msg.id }); review.keepFile(msg.id, 'kept'); break;

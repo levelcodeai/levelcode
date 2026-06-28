@@ -174,6 +174,44 @@ async function claudeAgentTurn(opts) {
 }
 
 /**
+ * Turn the raw, mid-stream block accumulators into **API-clean** content blocks (only the fields the
+ * Anthropic API accepts: type/id/name/input for tool_use, type/text for text — never internal markers
+ * like `_json`, which 400 with "Extra inputs are not permitted"). A tool_use truncated by max_tokens
+ * has unparseable partial JSON: it gets `input:{}` so the request stays valid, and its id is reported
+ * in the returned `malformed` Set so the caller can answer it with a "retry smaller" error instead of
+ * executing it. This is the single source of truth for input resolution + malformed detection.
+ * @returns {{content:any[], malformed:Set<string>}}
+ */
+function finalizeAgentBlocks(blocks) {
+	const malformed = new Set();
+	const content = [];
+	for (const blk of (blocks || [])) {
+		if (!blk) { continue; }
+		if (blk.type === 'tool_use') {
+			let input = blk.input;
+			if (input == null) {
+				if (blk._json) {
+					try {
+						const parsed = JSON.parse(blk._json);
+						if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) { input = parsed; }
+						else { input = {}; malformed.add(blk.id); }   // valid JSON but not a tool-input object
+					} catch { input = {}; malformed.add(blk.id); }    // truncated / corrupt partial JSON
+				} else { input = {}; }                                // genuinely no args (not "cut off")
+			}
+			content.push({ type: 'tool_use', id: blk.id, name: blk.name, input: input });
+		} else if (blk.type === 'text') {
+			content.push({ type: 'text', text: blk.text || '' });
+		} else {
+			// Unknown block type: pass through only non-internal fields (never `_`-prefixed markers).
+			const out = {};
+			for (const k of Object.keys(blk)) { if (k[0] !== '_') { out[k] = blk[k]; } }
+			content.push(out);
+		}
+	}
+	return { content, malformed };
+}
+
+/**
  * Streaming tool-using turn. Streams assistant text via onText, assembles tool_use blocks,
  * and returns the full content + stop_reason for the agent loop.
  * @param {{apiKey:string, model:string, maxTokens:number, system:string,
@@ -222,9 +260,6 @@ async function streamClaudeAgentTurn(opts) {
 			if (!blk) { return; }
 			if (ev.delta.type === 'text_delta') { blk.text += ev.delta.text; opts.onText(ev.delta.text); }
 			else if (ev.delta.type === 'input_json_delta') { blk._json += ev.delta.partial_json || ''; }
-		} else if (ev.type === 'content_block_stop') {
-			const blk = blocks[ev.index];
-			if (blk && blk.type === 'tool_use') { try { blk.input = blk._json ? JSON.parse(blk._json) : {}; } catch { blk.input = {}; blk._malformed = true; } delete blk._json; }
 		} else if (ev.type === 'message_delta') {
 			if (ev.delta && ev.delta.stop_reason) { stopReason = ev.delta.stop_reason; }
 			if (ev.usage && ev.usage.output_tokens) { usage.output_tokens = ev.usage.output_tokens; }
@@ -232,17 +267,9 @@ async function streamClaudeAgentTurn(opts) {
 			throw new Error(ev.error && ev.error.message ? ev.error.message : 'Anthropic stream error');
 		}
 	});
-	// Finalize any tool_use block that never received a content_block_stop (e.g. the response was
-	// truncated by max_tokens mid-arguments). EVERY tool_use MUST carry an `input` field or the next
-	// request 400s ("messages.N.content.M.tool_use.input: Field required").
-	for (const blk of blocks) {
-		if (!blk || blk.type !== 'tool_use') { continue; }
-		if (!('input' in blk)) {
-			try { blk.input = blk._json ? JSON.parse(blk._json) : {}; } catch { blk.input = {}; blk._malformed = true; }
-		}
-		if ('_json' in blk) { delete blk._json; }
-	}
-	return { content: blocks.filter(Boolean), stop_reason: stopReason, usage: usage };
+	// Build API-clean content + the malformed-id set in one pass (the only place input is resolved).
+	const { content, malformed } = finalizeAgentBlocks(blocks);
+	return { content: content, stop_reason: stopReason, usage: usage, malformed: malformed };
 }
 
 /** Best-effort list of locally available Ollama models. Returns [] if unreachable. */
@@ -258,4 +285,4 @@ async function listOllamaModels(url) {
 	}
 }
 
-module.exports = { streamClaude, streamOllama, completeClaude, completeOllama, claudeAgentTurn, streamClaudeAgentTurn, listOllamaModels };
+module.exports = { streamClaude, streamOllama, completeClaude, completeOllama, claudeAgentTurn, streamClaudeAgentTurn, listOllamaModels, finalizeAgentBlocks };
