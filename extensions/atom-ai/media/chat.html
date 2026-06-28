@@ -176,6 +176,21 @@
   .term .termfoot .skip { background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.25)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
   .term .verdict { font-size: 12px; color: var(--muted); }
   .term.ran .verdict { color: var(--vscode-terminal-ansiBrightGreen, var(--vscode-terminal-ansiGreen, #7ee787)); }
+  /* live terminal output (streamed stdout/stderr) — flows under the prompt like a real terminal, no box */
+  .termrun .termout { margin: 4px 0 0; padding: 0; border: none; border-radius: 0; background: none; min-height: 0;
+    max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+    font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 12.5px; line-height: 1.5;
+    color: var(--vscode-terminal-foreground, var(--vscode-foreground)); }
+  .termrun .termout:empty { display: none; margin: 0; }
+  .termrun .termerr { color: var(--vscode-terminal-ansiRed, var(--vscode-errorForeground, #f14c4c)); }
+  .termrun .termstatus { margin-top: 9px; font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .termrun .termstatus.ok { color: var(--vscode-terminal-ansiBrightGreen, var(--vscode-terminal-ansiGreen, #7ee787)); }
+  .termrun .termstatus.bad { color: var(--vscode-errorForeground, #f14c4c); }
+  .termrun .termstatus .ci { width: 1em; height: 1em; }
+  .termrun .termstop { margin-left: auto; cursor: pointer; border: 1px solid var(--border); border-radius: 5px; padding: 2px 9px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px; background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.22)); color: var(--vscode-foreground); }
+  .termrun .termstop:hover { background: var(--vscode-errorForeground, #f14c4c); color: #fff; border-color: transparent; }
+  .termrun .termstop[disabled] { opacity: .6; cursor: default; }
+  .termrun .termstop .ci { width: 1em; height: 1em; }
 
   /* ---- ask_user: clickable clarifying questions ---- */
   .questions { border: 1px solid var(--border); border-radius: 10px; margin: 6px 2px; padding: 10px 11px 11px; background: var(--field-bg); }
@@ -577,6 +592,7 @@
   log.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ const c = e.target.closest && e.target.closest('.filechip'); if (c){ e.preventDefault(); openChip(c); } } });
   const reviewBar = document.getElementById('reviewBar');
   const editCards = {};   // id -> applied-edit card element
+  const termCards = {};   // id -> live terminal-output card element
   reviewBar.querySelector('.keepall').onclick = () => vscode.postMessage({ type: 'reviewKeepAll' });
   reviewBar.querySelector('.undoall').onclick = () => vscode.postMessage({ type: 'reviewUndoAll' });
   const input = document.getElementById('input');
@@ -938,10 +954,46 @@
       vscode.postMessage({ type: 'approvalResponse', id: m.id, approved });
       card.classList.add(approved ? 'ran' : 'skipped');
       const caret = card.querySelector('.tcaret'); if (caret) { caret.remove(); }
-      card.querySelector('.termfoot').innerHTML = '<span class="verdict">' + (approved ? codicon('check') + ' Running in terminal…' : codicon('circle-slash') + ' Skipped') + '</span>';
+      card.querySelector('.termfoot').innerHTML = '<span class="verdict">' + (approved ? codicon('check') + ' Approved' : codicon('circle-slash') + ' Skipped') + '</span>';
     };
     card.querySelector('.approve').onclick = () => done(true);
     card.querySelector('.skip').onclick = () => done(false);
+  }
+
+  // Live terminal: an approved command streams its real stdout/stderr here as it runs.
+  function addTermRun(m){
+    clearEmpty(); clearStatus(); agentBubble = null;
+    const card = document.createElement('div'); card.className = 'approval term termrun';
+    card.innerHTML =
+      '<div class="termbar"><span class="tdots"><i class="r"></i><i class="y"></i><i class="g"></i></span>'
+        + '<span class="tbartitle">zsh — ' + esc(m.cwd || 'workspace') + '</span></div>'
+      + '<div class="termbody">'
+        + '<div class="termline"><span class="tprompt">➜</span> <span class="tcwd">' + esc(m.cwd || '') + '</span> '
+        + '<span class="tcmd">' + esc(m.command || '') + '</span></div>'
+        + '<pre class="termout"></pre>'
+        + '<div class="termstatus running"><span class="tcaret"></span> running… '
+        + '<button class="termstop" title="Stop this command">' + codicon('stop-circle') + ' Stop</button></div>'
+      + '</div>';
+    log.appendChild(card); scrollIfStuck();
+    termCards[m.id] = card;
+    const sb = card.querySelector('.termstop'); if (sb) { sb.onclick = () => { sb.disabled = true; sb.textContent = 'stopping…'; vscode.postMessage({ type: 'stopCommand', id: m.id }); }; }
+  }
+  function termOutputAppend(m){
+    const card = termCards[m.id]; if (!card) { return; }
+    const out = card.querySelector('.termout'); if (!out) { return; }
+    out.insertAdjacentHTML('beforeend', m.stream === 'stderr' ? '<span class="termerr">' + esc(m.chunk) + '</span>' : esc(m.chunk));
+    out.scrollTop = out.scrollHeight;   // keep the latest line visible inside the card
+    scrollIfStuck();
+  }
+  function termExitFinish(m){
+    const card = termCards[m.id]; if (!card) { return; }
+    const st = card.querySelector('.termstatus'); if (!st) { return; }
+    const dur = (typeof m.ms === 'number') ? (m.ms >= 1000 ? (m.ms / 1000).toFixed(1) + 's' : m.ms + 'ms') : '';
+    if (m.how === 'stopped'){ st.innerHTML = codicon('circle-slash') + ' stopped' + (dur ? ' · ' + dur : ''); st.className = 'termstatus bad'; }
+    else if (m.how === 'timeout'){ st.innerHTML = codicon('warning') + ' timed out' + (dur ? ' · ' + dur : ''); st.className = 'termstatus bad'; }
+    else { const ok = m.code === 0; st.innerHTML = (ok ? codicon('check') : codicon('circle-slash')) + ' exit ' + m.code + (dur ? ' · ' + dur : ''); st.className = 'termstatus ' + (ok ? 'ok' : 'bad'); }
+    delete termCards[m.id];
+    scrollIfStuck();
   }
 
   // Blocking clarifying questions (ask_user) — clickable numbered options the agent waits on.
@@ -1253,6 +1305,9 @@
     else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text); }
     else if (m.type === 'agentApproval'){ addApproval(m); }
     else if (m.type === 'agentQuestions'){ addQuestions(m); }
+    else if (m.type === 'termRun'){ addTermRun(m); }
+    else if (m.type === 'termOutput'){ termOutputAppend(m); }
+    else if (m.type === 'termExit'){ termExitFinish(m); }
     else if (m.type === 'editApplied'){ addEditCard(m); }
     else if (m.type === 'editResolved'){ resolveEditCard(m); }
     else if (m.type === 'reviewState'){ updateReviewBar(m.count, m.add, m.del); }
@@ -1268,7 +1323,7 @@
     else if (m.type === 'reset'){
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
       selLabel = null; ctxFiles = []; renderChips();
-      for (const k in editCards) { delete editCards[k]; } updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
+      for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
       pending = ''; shown = ''; doneSignaled = false; flushAll = false; current = null; setStreaming(false);
       forceStick();
     }

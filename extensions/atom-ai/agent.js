@@ -160,14 +160,49 @@ function isBinaryFile(abs) {
 	try { const buf = fs.readFileSync(abs); const n = Math.min(buf.length, 8000); for (let i = 0; i < n; i++) { if (buf[i] === 0) { return true; } } return false; } catch { return false; }
 }
 
-function runCommand(root, command) {
+// Run a shell command, STREAMING its output: onChunk(text, 'stdout'|'stderr') fires as it runs (live
+// terminal in the chat), onExit(code, ms, how) at the end. onStart(child, stop) exposes a stop() that
+// kills the whole process GROUP (server + children) — needed because a server is a child of the shell.
+// Returns the (capped) full output for the model.
+function runCommand(root, command, onChunk, onExit, onStart, timeoutMs) {
 	return new Promise((resolve) => {
-		cp.exec(command, { cwd: root, timeout: 60000, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
-			let out = (stdout || '') + (stderr ? '\n[stderr]\n' + stderr : '');
-			if (err && err.killed) { out += '\n[timed out after 60s]'; }
-			else if (err) { out += '\n[exit ' + (err.code != null ? err.code : '?') + ']'; }
-			resolve(out.slice(0, 8000) || '(no output)');
-		});
+		let out = '', streamed = 0, settled = false, timedOut = false, stopped = false;
+		const STREAM_CAP = 100000;            // max we push to the live terminal view
+		const start = Date.now();
+		const cap = (s, stream) => {
+			out += s;
+			if (out.length > 262144) { out = out.slice(-262144); }   // bound the model buffer's memory
+			if (onChunk && streamed < STREAM_CAP) {
+				const room = STREAM_CAP - streamed;
+				const piece = s.length > room ? s.slice(0, room) : s;
+				onChunk(piece, stream);
+				streamed += piece.length;
+				if (streamed >= STREAM_CAP) { onChunk('\n[output truncated in view]', 'stderr'); }
+			}
+		};
+		let child;
+		// detached:true → the shell becomes its own process-group leader, so process.kill(-pid) kills the
+		// whole tree (the shell AND the server/children it spawned), not just the shell (which orphans the server).
+		try { child = cp.spawn(command, { cwd: root, shell: true, detached: true }); }
+		catch (e) { if (onExit) { onExit(-1, 0, 'error'); } resolve('ERROR: ' + ((e && e.message) || e)); return; }
+		const killGroup = (sig) => { try { if (child.pid) { process.kill(-child.pid, sig); } else { child.kill(sig); } } catch (e) { try { child.kill(sig); } catch (e2) { /* already gone */ } } };
+		const stop = () => { if (settled || stopped) { return; } stopped = true; killGroup('SIGTERM'); setTimeout(() => { if (!settled) { killGroup('SIGKILL'); } }, 1500); };
+		if (onStart) { onStart(child, stop); }
+		if (child.stdout) { child.stdout.on('data', (d) => cap(d.toString(), 'stdout')); }
+		if (child.stderr) { child.stderr.on('data', (d) => cap(d.toString(), 'stderr')); }
+		const to = (timeoutMs && timeoutMs > 0) ? setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs) : null;
+		const finish = (code) => {
+			if (settled) { return; } settled = true;
+			if (to) { clearTimeout(to); }
+			const ms = Date.now() - start;
+			const how = stopped ? 'stopped' : timedOut ? 'timeout' : 'exit';
+			const exit = stopped ? 130 : (timedOut ? 124 : (code == null ? -1 : code));
+			if (onExit) { onExit(exit, ms, how); }
+			const note = stopped ? '\n[stopped by user]' : timedOut ? '\n[timed out]' : (exit !== 0 ? '\n[exit ' + exit + ']' : '');
+			resolve((out + note).slice(0, 8000) || '(no output)');
+		};
+		child.on('close', (code) => finish(code));
+		child.on('error', (e) => { cap('\n' + ((e && e.message) || e), 'stderr'); finish(1); });
 	});
 }
 
@@ -231,10 +266,17 @@ async function runTool(tu, ctx) {
 			return 'Applied edit to ' + input.path + ' (pending the user\'s Keep/Undo review).';
 		}
 		if (tu.name === 'run_command') {
-			const approved = await ctx.approve({ kind: 'command', command: String(input.command || ''), explanation: input.explanation || '' });
+			const cmd = String(input.command || '');
+			const approved = await ctx.approve({ kind: 'command', command: cmd, explanation: input.explanation || '' });
 			if (!approved) { return 'User skipped this command. Do not retry it.'; }
-			ctx.post({ type: 'agentTool', icon: 'terminal', text: 'ran: ' + input.command });
-			return await runCommand(root, String(input.command || ''));
+			const runId = tu.id || ('run-' + Date.now());
+			ctx.post({ type: 'termRun', id: runId, command: cmd, cwd: path.basename(root) || 'workspace' });
+			const stops = ctx.commandStops;   // shared registry so the Stop button / ■ can kill the process group
+			return await runCommand(root, cmd,
+				(chunk, stream) => ctx.post({ type: 'termOutput', id: runId, chunk: chunk, stream: stream }),
+				(code, ms, how) => { if (stops) { stops.delete(runId); } ctx.post({ type: 'termExit', id: runId, code: code, ms: ms, how: how }); },
+				(child, stop) => { if (stops) { stops.set(runId, stop); } },
+				ctx.commandTimeout);
 		}
 		if (tu.name === 'ask_user') {
 			const questions = Array.isArray(input.questions) ? input.questions : [];

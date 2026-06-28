@@ -120,6 +120,11 @@
 					"default": "",
 					"markdownDescription": "Base URL of your Atom++ Cloud account server (for sign-in + settings/skills sync). Leave empty until the backend exists (roadmap M9). **Your AI provider keys never go to this server — AI requests stay direct from your machine to your provider.**"
 				},
+				"atompp.ai.commandTimeout": {
+					"type": "number",
+					"default": 120000,
+					"description": "Backstop timeout in milliseconds before an approved shell command is force-killed (its whole process group). The Stop button on the terminal card is the primary control; set 0 to disable the backstop so long-running servers run until you stop them."
+				},
 				"atompp.ai.contextWindow": {
 					"type": "number",
 					"default": 200000,

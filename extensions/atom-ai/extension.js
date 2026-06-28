@@ -366,6 +366,9 @@ function postActiveFile() {
 	post({ type: 'activeFile', label: path.basename(ed.document.uri.fsPath) + ' · ' + ed.document.lineCount + ' lines' });
 }
 
+/** Running approved commands: runId → stop() that kills the command's process group. */
+const commandStops = new Map();
+
 /** Pending in-chat approval requests, keyed by id, resolved by the webview. */
 const pendingApprovals = new Map();
 let approvalSeq = 0;
@@ -471,6 +474,8 @@ async function agentFlow(text) {
 			approve: requestApproval,           // run_command only
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
 			contextLimit: cfg.get('contextWindow', 200000), // model context window → drives the usage meter
+			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
+			commandTimeout: cfg.get('commandTimeout', 120000), // backstop before a command is force-killed (0 = off)
 			applyEdit: (req) => review.applyEdit(req), // file edits: apply-then-review
 			signal: abort.signal
 		});
@@ -609,7 +614,8 @@ class ChatViewProvider {
 				case 'ready': sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: aiConfig().get('contextWindow', 200000) }); if (review) { review.resync(); } break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'send': await handleSend(msg.text); break;
-				case 'stop': dbg('stop.clicked'); if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
+				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
+				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
 				case 'approvalResponse': resolveApproval(msg.id, msg.approved); break;
 				case 'questionsResponse': resolveQuestions(msg.id, msg.answers, msg.notes); break;
 				case 'accountSignIn': await accountSignIn(msg.provider, msg.create); break;
