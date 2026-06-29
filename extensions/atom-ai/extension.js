@@ -331,6 +331,7 @@ function workspaceMapBlock(allFiles) {
 function newChat() {
 	conversation = [];
 	agentMessages = [];
+	checkpoints.length = 0; currentCheckpoint = null;   // drop the per-turn restore stack
 	pendingContext = null;
 	contextFiles = [];
 	if (abort) { abort.abort(); }
@@ -379,6 +380,40 @@ function reapCommands() {
 	for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* already gone */ } }
 	commandStops.clear();
 	bgRuns.clear();
+}
+
+// Workspace checkpoints: a per-user-turn stack of file pre-images so the user can roll the workspace back
+// to before any turn ran. In-memory per chat session (reset on New Chat); NOT routed through reapCommands
+// (these are pure data, not process state — restoring files must not kill running servers).
+const checkpoints = [];        // oldest-first: { turnId, label, ts, goalMsg, files: Map<key,{before,created}> }
+let currentCheckpoint = null;
+let checkpointSeq = 0;
+/** First-touch hook handed to reviewSession.applyEdit — record a file's pre-image into the open turn. */
+function recordCheckpointTouch(key, before, created) {
+	if (currentCheckpoint && !currentCheckpoint.files.has(key)) { currentCheckpoint.files.set(key, { before: before, created: created }); }
+}
+/** Restore the workspace to before `turnId` ran — reverting that turn AND every turn after it. */
+async function restoreCheckpoint(turnId) {
+	if (abort) { post({ type: 'checkpointBusy', turnId: turnId }); return; }   // never restore under a live turn
+	const idx = checkpoints.findIndex((c) => c.turnId === turnId);
+	if (idx < 0) { post({ type: 'checkpointBusy', turnId: turnId, reason: 'gone' }); return; }
+	const cp = checkpoints[idx];
+	const cutIdx = agentMessages.indexOf(cp.goalMsg);                        // by identity → survives trimAgentMemory
+	// Union of files across this checkpoint + every later one; EARLIEST pre-image wins (true pre-turn state).
+	const union = new Map();
+	for (let i = idx; i < checkpoints.length; i++) {
+		for (const [k, v] of checkpoints[i].files) { if (!union.has(k)) { union.set(k, v); } }
+	}
+	let restored = 0;
+	for (const k of [...union.keys()].reverse()) {                          // reverse for interdependency safety
+		const v = union.get(k);
+		try { if (await review.restoreOne(k, v.before, v.created)) { restored++; } } catch (e) { dbg('checkpoint.restoreErr', { key: k, msg: String((e && e.message) || e) }); }
+	}
+	review.finalizeAll();                                                   // pending Keep/Undo cards now reference stale snapshots
+	if (cutIdx >= 0) { agentMessages.length = cutIdx; }                     // truncate transcript at the goal boundary
+	checkpoints.length = idx;                                              // drop restored + all later checkpoints (no redo)
+	dbg('checkpoint.restore', { turnId: turnId, files: restored, truncatedAt: cutIdx });
+	post({ type: 'checkpointRestored', turnId: turnId, filesRestored: restored });
 }
 
 /** Pending in-chat approval requests, keyed by id, resolved by the webview. */
@@ -513,7 +548,12 @@ async function agentFlow(text) {
 	post({ type: 'agentStart' });
 	abort = new AbortController();
 	repairAgentMemory();
-	agentMessages.push({ role: 'user', content: text });
+	// Open a workspace checkpoint for this turn (before the goal is pushed) so the user can roll back here.
+	const goalMsg = { role: 'user', content: text };
+	currentCheckpoint = { turnId: ++checkpointSeq, label: (text || '').slice(0, 60), ts: Date.now(), goalMsg: goalMsg, files: new Map() };
+	checkpoints.push(currentCheckpoint);
+	post({ type: 'checkpointOpened', turnId: currentCheckpoint.turnId });
+	agentMessages.push(goalMsg);
 	trimAgentMemory();
 	dbg('agent.start', { model: cfg.get('claude.model', 'claude-sonnet-4-6'), maxSteps: cfg.get('agent.maxSteps', 25), transcriptMsgs: agentMessages.length, goalChars: text.length });
 	// Auto-verify: capture a pre-run diagnostics baseline (so we only flag NEW problems) and a fresh
@@ -551,6 +591,7 @@ async function agentFlow(text) {
 		clearApprovals();
 		clearQuestions();
 		abort = null;
+		if (currentCheckpoint) { post({ type: 'checkpointClosed', turnId: currentCheckpoint.turnId, fileCount: currentCheckpoint.files.size }); currentCheckpoint = null; }
 	}
 }
 
@@ -692,6 +733,7 @@ class ChatViewProvider {
 				case 'copy': try { await vscode.env.clipboard.writeText(String(msg.text || '')); } catch (e) { /* clipboard unavailable */ } break;
 				case 'retry': if (lastAgentGoal && !abort) { dbg('retry', { goalChars: lastAgentGoal.length }); await agentFlow(lastAgentGoal); } break;
 				case 'continueAgent': if (!abort) { const g = lastAgentGoal; dbg('continue', { transcriptMsgs: agentMessages.length }); await agentFlow('Continue from where you left off and finish the task. Pick up exactly where you stopped — do not restart or repeat work that is already done.'); lastAgentGoal = g; } break;
+				case 'restoreCheckpoint': dbg('restoreCheckpoint', { turnId: msg.turnId, running: !!abort }); await restoreCheckpoint(msg.turnId); break;
 				case 'feedback': dbg('feedback', { value: msg.value }); break;
 				case 'openFile': await openWorkspaceFile(msg.path); break;
 				case 'reviewKeepFile': dbg('review.keep', { id: msg.id }); review.keepFile(msg.id, 'kept'); break;
@@ -865,7 +907,7 @@ function activate(context) {
 	});
 
 	// Apply-then-review: agent edits land immediately and are reviewed with Keep/Undo (editor + panel).
-	review = registerReview(context, post, dbg);
+	review = registerReview(context, post, dbg, recordCheckpointTouch);
 
 	// Inline (ghost-text) tab-completion. Silent key lookup — it must never prompt mid-typing.
 	registerInlineComplete(context, {

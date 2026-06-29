@@ -50,7 +50,7 @@ function countDiff(diff) {
  * @param {vscode.ExtensionContext} context
  * @param {(m:any)=>void} post  Send a message to the chat webview.
  */
-function registerReview(context, post, dbg) {
+function registerReview(context, post, dbg, recordTouch) {
 	dbg = dbg || (() => {});
 	/** @type {Map<string,{uri:vscode.Uri, rel:string, exists:boolean, snapshot:string, range:vscode.Range, add:number, del:number}>} */
 	const pending = new Map();
@@ -121,6 +121,10 @@ function registerReview(context, post, dbg) {
 			try { snapshot = fs.readFileSync(abs, 'utf8').replace(/^﻿/, ''); }
 			catch { return false; } // can't read the file we're about to edit → abort (never a destructive empty-snapshot edit)
 		} else { snapshot = ''; }
+
+		// Workspace-checkpoint hook: hand the SAME from-disk pre-image to the per-turn checkpoint (snapshot-
+		// on-first-touch). Shares this exact read so the two layers can never diverge. Never blocks an edit.
+		if (recordTouch) { try { recordTouch(key, existsNow ? snapshot : null, !existsNow); } catch (e) { /* checkpoint capture must never break editing */ } }
 
 		const edit = new vscode.WorkspaceEdit();
 		if (existsNow) {
@@ -218,6 +222,29 @@ function registerReview(context, post, dbg) {
 		postState();
 	}
 
+	/** Workspace-checkpoint restore primitive: write a file back to `before` (replace+save, recreating it
+	 *  if it was deleted since), or delete it if the agent had `created` it. Reuses undoFile's write-back +
+	 *  the `expected` re-sync so a restored file isn't later mis-read as a user edit. Returns true on success. */
+	async function restoreOne(key, before, created) {
+		let uri;
+		try { uri = vscode.Uri.parse(key); } catch { return false; }
+		const edit = new vscode.WorkspaceEdit();
+		if (!created && before != null) {
+			let doc = null;
+			try { doc = await vscode.workspace.openTextDocument(uri); } catch { doc = null; }
+			if (doc) { edit.replace(uri, doc.validateRange(new vscode.Range(0, 0, doc.lineCount + 1, 0)), before); }
+			else { edit.createFile(uri, { ignoreIfExists: true }); edit.insert(uri, new vscode.Position(0, 0), before); } // deleted since → recreate
+			expected.set(key, before);
+		} else {
+			edit.deleteFile(uri, { ignoreIfNotExists: true });
+			expected.delete(key);
+		}
+		const ok = await vscode.workspace.applyEdit(edit);
+		if (ok && !created && before != null) { try { const doc = await vscode.workspace.openTextDocument(uri); if (doc.isDirty) { await doc.save(); } } catch { /* */ } }
+		undecorate(uri);
+		return ok;
+	}
+
 	async function openDiff(key) {
 		const fr = pending.get(key);
 		if (!fr) { return; }
@@ -310,7 +337,7 @@ function registerReview(context, post, dbg) {
 		postState();
 	}
 
-	return { applyEdit, keepFile, undoFile, keepAll, undoAll, finalizeAll, openDiff, resync, pendingCount: () => pending.size };
+	return { applyEdit, keepFile, undoFile, keepAll, undoAll, finalizeAll, restoreOne, openDiff, resync, pendingCount: () => pending.size };
 }
 
 module.exports = { registerReview };

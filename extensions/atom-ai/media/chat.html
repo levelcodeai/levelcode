@@ -41,6 +41,20 @@
   .msg:hover .msgcopy, .msgcopy:focus-visible, .msgcopy.done { opacity: .8; }
   .msgcopy:hover { opacity: 1; color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
   .msgcopy.done { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); border-color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  /* per-turn workspace-checkpoint Restore control (hover-revealed on the user message) */
+  .ckwrap { margin-top: 6px; }
+  .ckrestore { opacity: .62; cursor: pointer; border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; font-size: 11px; display: inline-flex; align-items: center; gap: 5px; background: transparent; color: var(--muted); transition: opacity .12s, color .12s, background .12s; }
+  .msg.user:hover .ckrestore, .ckrestore:focus-visible { opacity: .9; }
+  .ckrestore:hover { opacity: 1; color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
+  .ckrestore .ckn { color: var(--muted); }
+  .ckrestore svg, .ckmuted svg { width: 1em; height: 1em; }
+  .ckconfirm { font-size: 11.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .ckconfirm button { cursor: pointer; border: 1px solid var(--border); border-radius: 5px; padding: 2px 9px; font-size: 11px; color: var(--vscode-foreground); background: transparent; }
+  .ckconfirm .ckyes { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
+  .ckconfirm .ckyes:hover { background: var(--vscode-button-hoverBackground); }
+  .ckconfirm .ckno:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
+  .ckmuted { font-size: 11.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+  .ckdivider { text-align: center; font-size: 11px; color: var(--muted); margin: 8px 0; opacity: .85; }
   /* ---- jump-to-latest affordance (shown only when auto-scroll is paused) ---- */
   #jumpLatest {
     position: fixed; right: 16px; bottom: 96px; z-index: 20;
@@ -1428,9 +1442,17 @@
     sendBtn.innerHTML = on ? '&#9632;' : '&#8629;';     // ■ while streaming, ↵ otherwise
     sendBtn.title = on ? 'Stop' : 'Send (Enter)';
   }
+  // Shell-style history recall in the composer: ↑ = previous sent message, ↓ = newer (back to your draft).
+  // Session-only. In multiline text, ↑/↓ recall only when the caret is on the first/last line (arrows still move otherwise).
+  const cmdHistory = []; let histIdx = -1; let histDraft = '';
+  function caretAtFirstLine(el){ return el.value.lastIndexOf('\n', el.selectionStart - 1) === -1; }
+  function caretAtLastLine(el){ return el.value.indexOf('\n', el.selectionEnd) === -1; }
+  function histSet(text){ input.value = text; auto(); const n = text.length; try { input.setSelectionRange(n, n); } catch (e) {} }
   function doSend(){
     if (streaming) { flushAll = true; ensurePump(); vscode.postMessage({ type: 'stop' }); return; }
     const t = input.value.trim(); if (!t) return;
+    cmdHistory.push(t); if (cmdHistory.length > 200) { cmdHistory.shift(); }   // record for ↑/↓ recall
+    histIdx = -1; histDraft = '';
     add('user', render(t)); forceStick(); input.value = ''; auto();
     vscode.postMessage({ type: 'send', text: t });
   }
@@ -1497,12 +1519,66 @@
   });
   renderAccount({ signedIn: false });
 
-  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); doSend(); } });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); doSend(); return; }
+    const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
+    if (e.key === 'ArrowUp' && plain){
+      if (!cmdHistory.length){ return; }
+      if (histIdx === -1){ if (!caretAtFirstLine(input)){ return; } histDraft = input.value; histIdx = cmdHistory.length; }
+      if (histIdx > 0){ histIdx--; histSet(cmdHistory[histIdx]); }
+      e.preventDefault(); return;
+    }
+    if (e.key === 'ArrowDown' && plain){
+      if (histIdx === -1){ return; }
+      if (!caretAtLastLine(input)){ return; }
+      histIdx++;
+      if (histIdx >= cmdHistory.length){ histIdx = -1; histSet(histDraft); }
+      else { histSet(cmdHistory[histIdx]); }
+      e.preventDefault(); return;
+    }
+  });
   function auto(){ input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 200) + 'px'; }
   input.addEventListener('input', auto);
   input.addEventListener('focus', () => composer.classList.add('focused'));
   input.addEventListener('blur', () => composer.classList.remove('focused'));
 
+  // Workspace checkpoints: a hover-revealed "Restore" control on each user turn that changed files.
+  const REVERT = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.8 8a4.2 4.2 0 1 0 1.3-3.05"/><path d="M2.4 3v2.5h2.5"/></svg>';
+  function ckBubble(turnId){ return log.querySelector('.msg.user[data-turn-id="' + turnId + '"]'); }
+  function stampCheckpoint(turnId){
+    const us = log.querySelectorAll('.msg.user'); const u = us[us.length - 1];
+    if (u && !u.dataset.turnId){ u.dataset.turnId = turnId; }
+  }
+  function renderRestoreIdle(wrap, turnId, fileCount){
+    wrap.innerHTML = '<button class="ckrestore" title="Restore the workspace to before this message ran">' + REVERT
+      + ' Restore checkpoint <span class="ckn">· ' + fileCount + ' file' + (fileCount === 1 ? '' : 's') + '</span></button>';
+    wrap.querySelector('.ckrestore').onclick = () => {
+      wrap.innerHTML = '<span class="ckconfirm">Revert the changes from this message onward? <button class="ckyes">Restore</button> <button class="ckno">Cancel</button></span>';
+      wrap.querySelector('.ckno').onclick = () => renderRestoreIdle(wrap, turnId, fileCount);
+      wrap.querySelector('.ckyes').onclick = () => { wrap.innerHTML = '<span class="ckmuted">' + REVERT + ' Restoring…</span>'; vscode.postMessage({ type: 'restoreCheckpoint', turnId: Number(turnId) }); };
+    };
+  }
+  function addRestoreControl(turnId, fileCount){
+    if (!fileCount){ return; }   // turn changed no files → nothing to restore
+    const u = ckBubble(turnId); if (!u){ return; }
+    u.dataset.ckFiles = fileCount;
+    let wrap = u.querySelector('.ckwrap'); if (!wrap){ wrap = document.createElement('div'); wrap.className = 'ckwrap'; u.appendChild(wrap); }
+    renderRestoreIdle(wrap, turnId, fileCount);
+  }
+  function pruneDetached(map){ for (const k in map){ const el = map[k]; if (el && !log.contains(el)){ delete map[k]; } } }
+  function applyCheckpointRestored(m){
+    const u = ckBubble(m.turnId); if (!u){ return; }
+    let n = u.nextSibling; while (n){ const next = n.nextSibling; n.remove(); n = next; }   // drop this turn's output + every later turn
+    const wrap = u.querySelector('.ckwrap'); if (wrap){ wrap.innerHTML = '<span class="ckmuted">' + REVERT + ' Restored to here · ' + (m.filesRestored || 0) + ' file' + (m.filesRestored === 1 ? '' : 's') + ' reverted</span>'; }
+    pruneDetached(editCards); pruneDetached(termCards); pruneDetached(verifyCards);
+    agentBubble = null; agentRaw = ''; setStreaming(false); forceStick();
+  }
+  function checkpointBusyNotice(m){
+    if (m.turnId != null){ const u = ckBubble(m.turnId); const wrap = u && u.querySelector('.ckwrap'); if (wrap){ renderRestoreIdle(wrap, m.turnId, Number(u.dataset.ckFiles || 1)); } }
+    const note = document.createElement('div'); note.className = 'ckdivider';
+    note.textContent = (m.reason === 'gone') ? 'That checkpoint is no longer available.' : 'Stop the running agent before restoring a checkpoint.';
+    log.appendChild(note); scrollIfStuck(); setTimeout(() => { try { note.remove(); } catch(e){} }, 3500);
+  }
   window.addEventListener('message', ev => {
     const m = ev.data;
     if (m.type === 'config'){
@@ -1535,6 +1611,10 @@
     else if (m.type === 'termOutput'){ termOutputAppend(m); }
     else if (m.type === 'termExit'){ termExitFinish(m); }
     else if (m.type === 'bgTask'){ applyBgTask(m); }
+    else if (m.type === 'checkpointOpened'){ stampCheckpoint(m.turnId); }
+    else if (m.type === 'checkpointClosed'){ addRestoreControl(m.turnId, m.fileCount); }
+    else if (m.type === 'checkpointRestored'){ applyCheckpointRestored(m); }
+    else if (m.type === 'checkpointBusy'){ checkpointBusyNotice(m); }
     else if (m.type === 'verifyRun'){ addVerifyRun(m); }
     else if (m.type === 'verifyOutput'){ verifyOutputAppend(m); }
     else if (m.type === 'verifyDone'){ verifyDoneFinish(m); }
