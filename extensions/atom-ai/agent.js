@@ -293,20 +293,21 @@ async function runTool(tu, ctx) {
 				if (entry) {
 					entry.ring = (entry.ring + chunk).slice(-100000);   // bounded tail for read_command_output
 					entry.totalBytes += chunk.length;
-					if (!entry.port) { const p = sniffPort(chunk); if (p) { entry.port = p; } }
-					if (!entry.ready && looksReady(chunk)) { entry.ready = true; }
+					if (!entry.port) { const p = sniffPort(chunk); if (p) { entry.port = p; ctx.post({ type: 'bgTask', id: runId, port: p }); } }
+					if (!entry.ready && looksReady(chunk)) { entry.ready = true; ctx.post({ type: 'bgTask', id: runId, ready: true }); }
 				}
 			};
 			const onExit = (code, ms, how) => {
 				if (stops) { stops.delete(runId); }
-				if (entry) { entry.status = how === 'exit' ? 'exited' : how; entry.code = code; entry.how = how; }   // exited | stopped | timeout
+				if (entry) { entry.status = how === 'exit' ? 'exited' : how; entry.code = code; entry.how = how; ctx.post({ type: 'bgTask', id: runId, status: entry.status, code: code, done: true }); }   // exited | stopped | timeout — drop from tray
 				ctx.post({ type: 'termExit', id: runId, code: code, ms: ms, how: how });
 			};
 			const onStart = (child, stop) => { if (stops) { stops.set(runId, stop); } };
 			if (bg) {
 				// Fire-and-forget: keep streaming + tracking, but return NOW so the agent loop isn't blocked.
 				// No timeout — a background server is meant to run long (Stop / New Chat reap it).
-				(async () => { try { await runCommand(root, cmd, onChunk, onExit, onStart, 0); } catch (e) { entry.status = 'error'; entry.how = 'error'; dbg('bg.error', { id: runId, msg: String((e && e.message) || e) }); } })();
+				ctx.post({ type: 'bgTask', id: runId, command: cmd, status: 'running' });   // add to the Background tasks tray
+				(async () => { try { await runCommand(root, cmd, onChunk, onExit, onStart, 0); } catch (e) { entry.status = 'error'; entry.how = 'error'; ctx.post({ type: 'bgTask', id: runId, status: 'error', done: true }); dbg('bg.error', { id: runId, msg: String((e && e.message) || e) }); } })();
 				return 'Started in the background as id "' + runId + '" — it keeps running while you continue. Use read_command_output with this id to watch its output; wait for a readiness/port line before testing against it. Do not start it again.';
 			}
 			return await runCommand(root, cmd, onChunk, onExit, onStart, ctx.commandTimeout);

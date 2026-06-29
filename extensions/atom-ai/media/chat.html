@@ -293,6 +293,29 @@
   #ctxBar .ctxnew { margin-left: 5px; cursor: pointer; border: none; border-radius: 5px; padding: 3px 10px; font-size: 11px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
   #ctxBar .ctxnew:hover { background: var(--vscode-button-hoverBackground); }
   /* sticky active-plan bar (sits just above the review bar) — opaque so the log can't show behind it */
+  /* Background tasks tray — collapsed by default; lists commands started with background:true */
+  #bgTasksBar { flex: 0 0 auto; margin: 0 8px 6px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+    background: var(--vscode-editorWidget-background, rgba(127,127,127,.08)); font-size: 12px; }
+  .bgt-head { display: flex; align-items: center; gap: 7px; padding: 8px 11px; cursor: pointer; user-select: none; color: var(--vscode-foreground); }
+  .bgt-head:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.12)); }
+  .bgt-livedot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: var(--vscode-terminal-ansiBrightGreen, #7ee787); animation: bgtpulse 1.8s infinite; }
+  @keyframes bgtpulse { 0%{ box-shadow: 0 0 0 0 rgba(126,231,135,.5); } 70%{ box-shadow: 0 0 0 5px rgba(126,231,135,0); } 100%{ box-shadow: 0 0 0 0 rgba(126,231,135,0); } }
+  .bgt-caret { display: inline-flex; transition: transform .15s; color: var(--muted); }
+  .bgt-caret.open { transform: rotate(90deg); }
+  .bgt-caret svg { width: 11px; height: 11px; display: block; }
+  .bgt-title { font-weight: 600; }
+  .bgt-count { color: var(--muted); }
+  .bgt-list { border-top: 1px solid var(--border); }
+  .bgt-row { display: flex; align-items: center; gap: 9px; padding: 7px 11px; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+  .bgt-row:last-child { border-bottom: none; }
+  .bgt-cmd { flex: 1 1 auto; min-width: 0; font-family: var(--vscode-editor-font-family, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bgt-status { flex: 0 0 auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bgt-status .port { color: var(--vscode-terminal-ansiBrightGreen, var(--vscode-terminal-ansiGreen, #7ee787)); }
+  .bgt-stop { flex: 0 0 auto; cursor: pointer; border: 1px solid var(--border); border-radius: 5px; padding: 2px 9px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;
+    background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.22)); color: var(--vscode-foreground); }
+  .bgt-stop:hover { background: var(--vscode-errorForeground, #f14c4c); color: #fff; border-color: transparent; }
+  .bgt-stop[disabled] { opacity: .6; cursor: default; }
+  .bgt-stop svg { width: 1em; height: 1em; }
   #planBar { flex: 0 0 auto; padding: 8px 8px 6px; max-height: 38vh; overflow-y: auto; scrollbar-gutter: stable;
     background: var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e));
     border-top: 1px solid var(--border); box-shadow: 0 -8px 14px -8px rgba(0,0,0,.4); }
@@ -509,6 +532,7 @@
   <button id="jumpLatest" title="Jump to latest" aria-label="Jump to latest">&#8595;</button>
 
   <!-- context-window usage meter (appears as the conversation fills the model's window) -->
+  <div id="bgTasksBar" style="display:none"></div>
   <div id="ctxBar" style="display:none"></div>
 
   <!-- active agent plan — sticky, just above the Keep all / Undo all bar -->
@@ -1266,6 +1290,41 @@
     // 3) live-update the breakdown popover if it's open
     renderCtxCard();
   }
+  // Background tasks tray: aggregates commands started with run_command background:true. Collapsed by
+  // default; lives across turns; each row has Stop. Fed by 'bgTask' events from the host.
+  const bgTasksBar = document.getElementById('bgTasksBar');
+  const bgTasks = {};            // id -> { id, command, status, port, ready }
+  let bgTasksCollapsed = true;
+  const CARET = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M6 4l5 4-5 4z"/></svg>';
+  function renderBgTasks(){
+    const running = Object.keys(bgTasks).map(k => bgTasks[k]).filter(t => t.status === 'running');
+    if (!running.length){ bgTasksBar.style.display = 'none'; bgTasksBar.innerHTML = ''; return; }
+    let html = '<div class="bgt-head"><span class="bgt-livedot"></span>'
+      + '<span class="bgt-caret' + (bgTasksCollapsed ? '' : ' open') + '">' + CARET + '</span>'
+      + '<span class="bgt-title">Background tasks</span><span class="bgt-count">· ' + running.length + ' running</span></div>';
+    if (!bgTasksCollapsed){
+      html += '<div class="bgt-list">' + running.map(t => {
+        const status = t.port ? '<span class="port">running on :' + esc(t.port) + '</span>' : (t.ready ? 'ready' : 'running…');
+        return '<div class="bgt-row"><span class="bgt-cmd" title="' + esc(t.command) + '">' + esc(t.command) + '</span>'
+          + '<span class="bgt-status">' + status + '</span>'
+          + '<button class="bgt-stop" data-id="' + esc(t.id) + '">' + codicon('stop-circle') + ' Stop</button></div>';
+      }).join('') + '</div>';
+    }
+    bgTasksBar.innerHTML = html;
+    bgTasksBar.style.display = 'block';
+    const head = bgTasksBar.querySelector('.bgt-head'); if (head){ head.onclick = () => { bgTasksCollapsed = !bgTasksCollapsed; renderBgTasks(); }; }
+    bgTasksBar.querySelectorAll('.bgt-stop').forEach(b => { b.onclick = (e) => { e.stopPropagation(); b.disabled = true; b.textContent = 'stopping…'; vscode.postMessage({ type: 'stopCommand', id: b.getAttribute('data-id') }); }; });
+  }
+  function applyBgTask(m){
+    if (!m.id){ return; }
+    const t = bgTasks[m.id] || (bgTasks[m.id] = { id: m.id, command: '', status: 'running', port: null, ready: false });
+    if (m.command != null){ t.command = m.command; }
+    if (m.status){ t.status = m.status; }
+    if (m.port){ t.port = m.port; }
+    if (m.ready){ t.ready = true; }
+    if (m.done){ delete bgTasks[m.id]; }   // finished → drop from the running tray
+    renderBgTasks();
+  }
   const planBar = document.getElementById('planBar');
   function renderPlan(todos){
     if (!todos || !todos.length){ planBar.style.display = 'none'; planBar.innerHTML = ''; return; }
@@ -1475,6 +1534,7 @@
     else if (m.type === 'termRun'){ addTermRun(m); }
     else if (m.type === 'termOutput'){ termOutputAppend(m); }
     else if (m.type === 'termExit'){ termExitFinish(m); }
+    else if (m.type === 'bgTask'){ applyBgTask(m); }
     else if (m.type === 'verifyRun'){ addVerifyRun(m); }
     else if (m.type === 'verifyOutput'){ verifyOutputAppend(m); }
     else if (m.type === 'verifyDone'){ verifyDoneFinish(m); }
@@ -1493,7 +1553,7 @@
     else if (m.type === 'reset'){
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
       selLabel = null; ctxFiles = []; renderChips();
-      for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } for (const k in verifyCards) { delete verifyCards[k]; } updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
+      for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } for (const k in verifyCards) { delete verifyCards[k]; } for (const k in bgTasks) { delete bgTasks[k]; } renderBgTasks(); updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
       pending = ''; shown = ''; doneSignaled = false; flushAll = false; current = null; setStreaming(false);
       forceStick();
     }
