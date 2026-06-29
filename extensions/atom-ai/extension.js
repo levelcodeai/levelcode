@@ -334,6 +334,7 @@ function newChat() {
 	pendingContext = null;
 	contextFiles = [];
 	if (abort) { abort.abort(); }
+	reapCommands();                        // kill any background servers/watchers from the old session
 	if (review) { review.finalizeAll(); } // drop review UI without reverting the user's files
 	post({ type: 'reset' });
 	postContextFiles();
@@ -369,6 +370,16 @@ function postActiveFile() {
 
 /** Running approved commands: runId → stop() that kills the command's process group. */
 const commandStops = new Map();
+// Background command registry (runId → {command,status,ring,port,…}) so the agent can read a server's
+// output across turns via read_command_output. Module-scoped so it survives between agent runs; reaped
+// on New Chat + extension unload (servers hold ports — orphaning them breaks the next run).
+const bgRuns = new Map();
+/** Kill every running command and drop all command state (servers must not survive New Chat/unload). */
+function reapCommands() {
+	for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* already gone */ } }
+	commandStops.clear();
+	bgRuns.clear();
+}
 
 /** Pending in-chat approval requests, keyed by id, resolved by the webview. */
 const pendingApprovals = new Map();
@@ -527,6 +538,7 @@ async function agentFlow(text) {
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
 			contextLimit: cfg.get('contextWindow', 200000), // model context window → drives the usage meter
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
+			commandRuns: bgRuns,                // runId → background-process registry (read_command_output reads it)
 			commandTimeout: cfg.get('commandTimeout', 120000), // backstop before a command is force-killed (0 = off)
 			applyEdit: (req) => review.applyEdit(req), // file edits: apply-then-review
 			verify: verifyCfg,                  // M5 auto-verify settings
@@ -872,6 +884,6 @@ function activate(context) {
 	}
 }
 
-function deactivate() { if (abort) { abort.abort(); } }
+function deactivate() { if (abort) { abort.abort(); } reapCommands(); }
 
 module.exports = { activate, deactivate };

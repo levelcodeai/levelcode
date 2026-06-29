@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const { streamClaudeAgentTurn } = require('./providers');
-const { formatVerifyFeedback, verifyOutcome, looksUnrunnable } = require('./verify');
+const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
 
 const SYSTEM = [
 	"You are Atom++'s built-in autonomous coding agent. You accomplish the user's goal in their",
@@ -25,6 +25,7 @@ const SYSTEM = [
 	'- To change an EXISTING file, use edit_file with an exact, unique snippet (old_str) and its replacement (new_str). This is preferred — small and reliable. Read the file first so old_str matches exactly. Prefer SEVERAL small edit_file calls over one huge one (smaller edits are faster and easier to review).',
 	'- Use write_file ONLY to create a new file (or fully rewrite a short one); it needs the COMPLETE content. Do not rewrite large files — use edit_file repeatedly instead.',
 	'- Your file edits are APPLIED IMMEDIATELY and the user reviews them afterward in the editor with Keep/Undo — do NOT wait for approval, and do NOT re-edit a file you just edited. Only run_command still needs approval; if the user skips a command, adapt or stop.',
+	'- Commands that do NOT exit on their own (dev servers, file watchers, tail -f) MUST be run with run_command background:true — it returns immediately so you keep working instead of hanging. After starting one, call read_command_output with the returned id to watch for a readiness/port line (e.g. "listening on :3000") before you test against it. Use a normal foreground run_command for things that finish (builds, installs, tests, git, curl). This pairs with verification: bring the app up in the background, confirm it serves, fix, repeat.',
 	'- Paths are relative to the workspace root.',
 	'- For a multi-step goal, call update_plan FIRST with a short checklist (3-8 short items, all "pending"), then call it again to set an item "in_progress" when you start it and "done" when finished. Skip the plan for trivial single-step goals.',
 	'- If the goal truly depends on a decision only the user can make (tech stack, scope, where to create files, must-have features), call ask_user ONCE with concise multiple-choice questions (a short header + 2-4 concrete options each) INSTEAD of writing the questions as prose. Then act on their answers and do not ask again. Do NOT ask about things you can reasonably decide yourself — prefer a sensible default and proceed.',
@@ -39,7 +40,8 @@ const TOOLS = [
 	{ name: 'update_plan', description: 'Declare or update your task checklist for a multi-step goal. Pass the FULL list each time, each item with a status. Call it once up front (all pending), then again to mark an item in_progress when you start it and done when finished. Skip for trivial single-step goals.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, status: { type: 'string', enum: ['pending', 'in_progress', 'done'] } }, required: ['title', 'status'] } } }, required: ['todos'] } },
 	{ name: 'edit_file', description: 'Make a targeted edit to an EXISTING file: replace an exact, unique snippet (old_str) with new_str. Applied immediately; the user reviews it with Keep/Undo. old_str must appear exactly once — include enough surrounding context to be unique.', input_schema: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' } }, required: ['path', 'old_str', 'new_str'] } },
 	{ name: 'write_file', description: 'Create a new file (or fully overwrite a short one) with the COMPLETE content. For edits to existing files, prefer edit_file. Applied immediately; the user reviews it with Keep/Undo.', input_schema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
-	{ name: 'run_command', description: 'Run a shell command in the workspace root. Requires approval.', input_schema: { type: 'object', properties: { command: { type: 'string' }, explanation: { type: 'string' } }, required: ['command'] } },
+	{ name: 'run_command', description: 'Run a shell command in the workspace root. Requires approval. Pass background:true for commands that do not exit on their own (servers, watchers) so the agent is not blocked — it returns immediately and you read progress later with read_command_output.', input_schema: { type: 'object', properties: { command: { type: 'string' }, explanation: { type: 'string' }, background: { type: 'boolean', description: 'true = start it and keep working without waiting (dev servers, watchers, tail -f). Returns immediately with an id; poll read_command_output for its output/status.' } }, required: ['command'] } },
+	{ name: 'read_command_output', description: 'Read recent output + status of a command started with run_command background:true. Returns a status header ([running on :3000] / [exited 0] / [stopped]) followed by the latest output lines. Poll this to wait for a server to become ready before testing against it.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'the id returned by a background run_command' }, lines: { type: 'number', description: 'max recent output lines to return (default 80, max 400)' } }, required: ['id'] } },
 	{ name: 'ask_user', description: 'Ask the user one or more multiple-choice questions when the goal genuinely depends on a decision only they can make (tech stack, scope, where to put files, must-have features). The user picks by CLICKING — do NOT write questions as prose. Ask ONCE up front with all your questions, then proceed with the answers and never re-ask. Prefer sensible defaults over asking; only ask when a wrong guess would waste real work.', input_schema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'object', properties: { header: { type: 'string', description: 'a 1-3 word tag for the question' }, question: { type: 'string' }, multiSelect: { type: 'boolean', description: 'true if several options can be picked at once' }, options: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] } } }, required: ['question', 'options'] } } }, required: ['questions'] } }
 ];
 
@@ -276,16 +278,56 @@ async function runTool(tu, ctx) {
 		}
 		if (tu.name === 'run_command') {
 			const cmd = String(input.command || '');
+			const bg = input.background === true;
 			const approved = await ctx.approve({ kind: 'command', command: cmd, explanation: input.explanation || '' });
 			if (!approved) { return 'User skipped this command. Do not retry it.'; }
 			const runId = tu.id || ('run-' + Date.now());
-			ctx.post({ type: 'termRun', id: runId, command: cmd, cwd: path.basename(root) || 'workspace' });
+			ctx.post({ type: 'termRun', id: runId, command: cmd, cwd: path.basename(root) || 'workspace', background: bg });
 			const stops = ctx.commandStops;   // shared registry so the Stop button / ■ can kill the process group
-			return await runCommand(root, cmd,
-				(chunk, stream) => ctx.post({ type: 'termOutput', id: runId, chunk: chunk, stream: stream }),
-				(code, ms, how) => { if (stops) { stops.delete(runId); } ctx.post({ type: 'termExit', id: runId, code: code, ms: ms, how: how }); },
-				(child, stop) => { if (stops) { stops.set(runId, stop); } },
-				ctx.commandTimeout);
+			// Only BACKGROUND commands get a registry entry (read_command_output reads it). Foreground
+			// one-shots keep their old behavior + don't accumulate — the model already gets their output.
+			const entry = bg ? { command: cmd, status: 'running', code: null, how: null, port: null, ready: false, ring: '', totalBytes: 0, lastReadOffset: 0, startedAt: Date.now() } : null;
+			if (entry && ctx.commandRuns) { ctx.commandRuns.set(runId, entry); }
+			const onChunk = (chunk, stream) => {
+				ctx.post({ type: 'termOutput', id: runId, chunk: chunk, stream: stream });
+				if (entry) {
+					entry.ring = (entry.ring + chunk).slice(-100000);   // bounded tail for read_command_output
+					entry.totalBytes += chunk.length;
+					if (!entry.port) { const p = sniffPort(chunk); if (p) { entry.port = p; } }
+					if (!entry.ready && looksReady(chunk)) { entry.ready = true; }
+				}
+			};
+			const onExit = (code, ms, how) => {
+				if (stops) { stops.delete(runId); }
+				if (entry) { entry.status = how === 'exit' ? 'exited' : how; entry.code = code; entry.how = how; }   // exited | stopped | timeout
+				ctx.post({ type: 'termExit', id: runId, code: code, ms: ms, how: how });
+			};
+			const onStart = (child, stop) => { if (stops) { stops.set(runId, stop); } };
+			if (bg) {
+				// Fire-and-forget: keep streaming + tracking, but return NOW so the agent loop isn't blocked.
+				// No timeout — a background server is meant to run long (Stop / New Chat reap it).
+				(async () => { try { await runCommand(root, cmd, onChunk, onExit, onStart, 0); } catch (e) { entry.status = 'error'; entry.how = 'error'; dbg('bg.error', { id: runId, msg: String((e && e.message) || e) }); } })();
+				return 'Started in the background as id "' + runId + '" — it keeps running while you continue. Use read_command_output with this id to watch its output; wait for a readiness/port line before testing against it. Do not start it again.';
+			}
+			return await runCommand(root, cmd, onChunk, onExit, onStart, ctx.commandTimeout);
+		}
+		if (tu.name === 'read_command_output') {
+			const runs = ctx.commandRuns;
+			const id = String(input.id || '');
+			const entry = runs && runs.get(id);
+			if (!entry) { return 'ERROR: no command with id "' + id + '" (it may never have started, or was cleared by New Chat). Start it with run_command background:true first.'; }
+			const lines = Math.min(400, Math.max(1, Number(input.lines) || 80));
+			const statusStr = entry.status === 'running'
+				? ('running' + (entry.port ? ' on :' + entry.port : entry.ready ? ' (ready)' : ''))
+				: entry.status === 'exited' ? ('exited ' + entry.code)
+					: entry.status;   // stopped | timeout | error
+			ctx.post({ type: 'agentTool', icon: 'terminal', text: 'read output of ' + id + ' [' + statusStr + ']' });
+			const head = '[' + statusStr + '] ' + entry.command;
+			if (!entry.ring) { return head + '\n(no output yet)'; }
+			const noNew = entry.totalBytes <= entry.lastReadOffset;
+			entry.lastReadOffset = entry.totalBytes;
+			const tail = entry.ring.split('\n').slice(-lines).join('\n');
+			return head + '\n' + (noNew ? '(no new output since your last read)\n' + tail : tail);
 		}
 		if (tu.name === 'ask_user') {
 			const questions = Array.isArray(input.questions) ? input.questions : [];

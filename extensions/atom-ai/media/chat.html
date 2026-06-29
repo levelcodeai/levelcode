@@ -1021,7 +1021,7 @@
         + '<div class="termline"><span class="tprompt">➜</span> <span class="tcwd">' + esc(m.cwd || '') + '</span> '
         + '<span class="tcmd">' + esc(m.command || '') + '</span></div>'
         + '<pre class="termout"></pre>'
-        + '<div class="termstatus running"><span class="tcaret"></span> running… '
+        + '<div class="termstatus running"><span class="tcaret"></span> ' + (m.background ? 'running in background… ' : 'running… ')
         + '<button class="termstop" title="Stop this command">' + codicon('stop-circle') + ' Stop</button></div>'
       + '</div>';
     log.appendChild(card); scrollIfStuck();
