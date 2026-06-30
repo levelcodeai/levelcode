@@ -37,8 +37,11 @@ extensions/atom-npp-pack/   Notepad++ power-editing pack (plain JS, no build ste
 extensions/atom-ai/         native Claude AI (chat, inline completion, providers, edit-with-diff, LM provider)
 extensions/atom-themes/     signature One Dark / One Light themes (JSON, default via configurationDefaults)
 extensions/atom-hackability/ user init script + Atom/NPP keymap presets + package generator & hot-reload dev loader
+extensions/atom-sync/       'atompp' auth provider that lights up the built-in Settings Sync (Atom++ Sync, S0)
+extensions/atom-updater/    notify-only update checker (polls the update feed; never auto-applies)
 patches/atom-core.patch     our core source edits, applied on bootstrap
-scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-dmg.sh, make-icon.sh
+scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-dmg.sh, make-icon.sh; atom (CLI launcher) + install-atom.sh
+tools/                      dependency-free reference servers: sync-server (/v1 Settings-Sync), update-server (/api/update feed)
 vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 ```
 
@@ -121,8 +124,12 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
   (`gatherAutoContext`), chat moved to the right side bar, typewriter streaming, `make-dmg.sh` packaging.
 - M3 so far: One Dark/Light themes (`atom-themes`); user init script + Atom/Notepad++ keymap presets +
   package generator with live hot-reload (`atom-hackability`). The Atom/NPP keymap also clears the old M1 leftover.
-- Not yet built: agentic multi-file tasks (M4); remaining M3 hackability — settings UI, theme studio,
-  VS Code settings import.
+- M4 agentic multi-file tasks: DONE. `agent.js` has the full tool loop — list_files/read_file/search,
+  update_plan, edit_file/write_file/**delete_file** (apply-then-review with Keep/Undo + per-turn checkpoint
+  restore via `reviewSession.js`), run_command(+background)/read_command_output, ask_user, use_skill — plus the
+  M5 auto-verify loop. `delete_file` also enables rename/move (write new path → delete old).
+- Atom++ Sync (S0) + notify-only updater (U0): see `extensions/atom-sync` / `extensions/atom-updater` + `tools/`.
+- Not yet built: remaining M3 hackability — settings UI, theme studio, VS Code settings import.
 
 ## Conventions
 

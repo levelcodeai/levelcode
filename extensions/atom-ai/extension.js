@@ -589,6 +589,7 @@ async function agentFlow(text) {
 			commandRuns: bgRuns,                // runId → background-process registry (read_command_output reads it)
 			commandTimeout: cfg.get('commandTimeout', 120000), // backstop before a command is force-killed (0 = off)
 			applyEdit: (req) => review.applyEdit(req), // file edits: apply-then-review
+			applyDelete: (req) => review.applyDelete(req), // file deletions: apply-then-review
 			verify: verifyCfg,                  // M5 auto-verify settings
 			touched: runTouched,                // agent.js adds each edited abs path here
 			getTouchedUris: () => [...runTouched].map((p) => vscode.Uri.file(p)),

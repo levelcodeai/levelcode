@@ -24,6 +24,7 @@ const SYSTEM_BASE = [
 	'- CRITICAL: never end your turn by merely describing an edit ("now let me refactor…"). If you intend to change a file, you MUST call edit_file or write_file in that SAME turn. Words are not edits.',
 	'- To change an EXISTING file, use edit_file with an exact, unique snippet (old_str) and its replacement (new_str). This is preferred — small and reliable. Read the file first so old_str matches exactly. Prefer SEVERAL small edit_file calls over one huge one (smaller edits are faster and easier to review).',
 	'- Use write_file ONLY to create a new file (or fully rewrite a short one); it needs the COMPLETE content. Do not rewrite large files — use edit_file repeatedly instead.',
+	'- Use delete_file to remove an existing file (e.g. during a refactor). To RENAME/move a file, write_file the new path then delete_file the old one. Deletions are reviewable (Keep/Undo) and restorable from the per-turn checkpoint.',
 	'- Your file edits are APPLIED IMMEDIATELY and the user reviews them afterward in the editor with Keep/Undo — do NOT wait for approval, and do NOT re-edit a file you just edited. Only run_command still needs approval; if the user skips a command, adapt or stop.',
 	'- Commands that do NOT exit on their own (dev servers, file watchers, tail -f) MUST be run with run_command background:true — it returns immediately so you keep working instead of hanging. After starting one, call read_command_output with the returned id to watch for a readiness/port line (e.g. "listening on :3000") before you test against it. Use a normal foreground run_command for things that finish (builds, installs, tests, git, curl). This pairs with verification: bring the app up in the background, confirm it serves, fix, repeat.',
 	'- Paths are relative to the workspace root.',
@@ -41,6 +42,7 @@ const TOOLS = [
 	{ name: 'update_plan', description: 'Declare or update your task checklist for a multi-step goal. Pass the FULL list each time, each item with a status. Call it once up front (all pending), then again to mark an item in_progress when you start it and done when finished. Skip for trivial single-step goals.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, status: { type: 'string', enum: ['pending', 'in_progress', 'done'] } }, required: ['title', 'status'] } } }, required: ['todos'] } },
 	{ name: 'edit_file', description: 'Make a targeted edit to an EXISTING file: replace an exact, unique snippet (old_str) with new_str. Applied immediately; the user reviews it with Keep/Undo. old_str must appear exactly once — include enough surrounding context to be unique.', input_schema: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' } }, required: ['path', 'old_str', 'new_str'] } },
 	{ name: 'write_file', description: 'Create a new file (or fully overwrite a short one) with the COMPLETE content. For edits to existing files, prefer edit_file. Applied immediately; the user reviews it with Keep/Undo.', input_schema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
+	{ name: 'delete_file', description: 'Delete an EXISTING workspace file (e.g. removing a file during a refactor). Applied immediately; the user reviews it with Keep/Undo, and the per-turn checkpoint can restore it. To RENAME or move a file: write_file the new path, then delete_file the old one.', input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
 	{ name: 'run_command', description: 'Run a shell command in the workspace root. Requires approval. Pass background:true for commands that do not exit on their own (servers, watchers) so the agent is not blocked — it returns immediately and you read progress later with read_command_output.', input_schema: { type: 'object', properties: { command: { type: 'string' }, explanation: { type: 'string' }, background: { type: 'boolean', description: 'true = start it and keep working without waiting (dev servers, watchers, tail -f). Returns immediately with an id; poll read_command_output for its output/status.' } }, required: ['command'] } },
 	{ name: 'read_command_output', description: 'Read recent output + status of a command started with run_command background:true. Returns a status header ([running on :3000] / [exited 0] / [stopped]) followed by the latest output lines. Poll this to wait for a server to become ready before testing against it.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'the id returned by a background run_command' }, lines: { type: 'number', description: 'max recent output lines to return (default 80, max 400)' } }, required: ['id'] } },
 	{ name: 'ask_user', description: 'Ask the user one or more multiple-choice questions when the goal genuinely depends on a decision only they can make (tech stack, scope, where to put files, must-have features). The user picks by CLICKING — do NOT write questions as prose. Ask ONCE up front with all your questions, then proceed with the answers and never re-ask. Prefer sensible defaults over asking; only ask when a wrong guess would waste real work.', input_schema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'object', properties: { header: { type: 'string', description: 'a 1-3 word tag for the question' }, question: { type: 'string' }, multiSelect: { type: 'boolean', description: 'true if several options can be picked at once' }, options: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] } } }, required: ['question', 'options'] } } }, required: ['questions'] } },
@@ -286,6 +288,17 @@ async function runTool(tu, ctx) {
 			if (ctx.touched) { ctx.touched.add(abs); }   // this run's edited files → verified afterward
 			return 'Applied edit to ' + input.path + ' (pending the user\'s Keep/Undo review).';
 		}
+		if (tu.name === 'delete_file') {
+			const abs = safeJoin(root, input.path || '');
+			if (!abs) { return 'ERROR: path is outside the workspace'; }
+			if (!fs.existsSync(abs)) { return 'ERROR: file not found: ' + input.path; }
+			try { if (fs.statSync(abs).isDirectory()) { return 'ERROR: ' + input.path + ' is a directory — delete_file removes a single file.'; } } catch { /* */ }
+			const ok = ctx.applyDelete ? await ctx.applyDelete({ path: input.path }) : false;
+			if (!ok) { return 'ERROR: could not delete ' + input.path + '.'; }
+			ctx.editCount = (ctx.editCount || 0) + 1;
+			if (ctx.touched) { ctx.touched.delete(abs); }   // it's gone — don't verify a deleted file
+			return 'Deleted ' + input.path + ' (pending the user\'s Keep/Undo review; the per-turn checkpoint can also restore it).';
+		}
 		if (tu.name === 'run_command') {
 			const cmd = String(input.command || '');
 			const bg = input.background === true;
@@ -467,6 +480,7 @@ async function runAgent(ctx) {
 				onToolStart: (name) => {
 					dbg('tool.start', { name });
 					const verb = name === 'edit_file' || name === 'write_file' ? 'preparing edit (' + name + ')…'
+						: name === 'delete_file' ? 'deleting a file…'
 						: name === 'run_command' ? 'preparing command…' : name === 'update_plan' ? 'planning…' : 'running ' + name + '…';
 					ctx.post({ type: 'agentStatus', text: verb });
 				}

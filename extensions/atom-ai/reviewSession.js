@@ -173,6 +173,45 @@ function registerReview(context, post, dbg, recordTouch) {
 		return true;
 	}
 
+	/** Delete a file (and save), registering it for review so Keep confirms / Undo recreates it.
+	 *  The pre-image is snapshotted (and handed to the per-turn checkpoint) so it is always recoverable. */
+	async function applyDelete(req) {
+		const root = workspaceRoot();
+		if (!root) { return false; }
+		const abs = path.resolve(root, req.path || '');
+		if (abs !== root && !abs.startsWith(root + path.sep)) { return false; }
+		if (!fs.existsSync(abs)) { return false; }
+		const uri = vscode.Uri.file(abs);
+		const key = uri.toString();
+		let snapshot;
+		if (pending.has(key)) { snapshot = pending.get(key).snapshot; }
+		else { try { snapshot = fs.readFileSync(abs, 'utf8').replace(/^﻿/, ''); } catch { return false; } }
+		// Checkpoint hook: the file EXISTED (created=false) → per-turn Restore recreates it from this snapshot.
+		if (recordTouch) { try { recordTouch(key, snapshot, false); } catch (e) { /* checkpoint capture must never break editing */ } }
+		const edit = new vscode.WorkspaceEdit();
+		edit.deleteFile(uri, { ignoreIfNotExists: true });
+		const prevExpected = expected.get(key);
+		expected.set(key, ''); // guard the change listener against our own delete
+		const ok = await vscode.workspace.applyEdit(edit);
+		dbg('review.delete', { path: req.path, ok });
+		if (!ok) {
+			if (pending.has(key)) { expected.set(key, prevExpected != null ? prevExpected : pending.get(key).appliedText); }
+			else { expected.delete(key); }
+			return false;
+		}
+		const existed = pending.has(key) ? pending.get(key).exists : true;
+		const diff = makeDiff(snapshot, '');
+		const { add, del } = countDiff(diff);
+		const fr = { uri, rel: vscode.workspace.asRelativePath(uri), exists: existed, snapshot, range: new vscode.Range(0, 0, 0, 0), add, del, appliedText: '', deleted: true };
+		pending.set(key, fr);
+		persist();
+		refreshLenses();
+		post({ type: 'editApplied', id: key, path: fr.rel, exists: existed, add, del, diff, deleted: true });
+		postState();
+		updateActiveUi();
+		return true;
+	}
+
 	/** Serialize pending reviews so Undo survives a window reload (snapshot is the only irreplaceable bit). */
 	function persist() {
 		const arr = [...pending.values()].map((fr) => ({ uri: fr.uri.toString(), rel: fr.rel, exists: fr.exists, snapshot: fr.snapshot }));
@@ -200,7 +239,13 @@ function registerReview(context, post, dbg, recordTouch) {
 		const fr = pending.get(key);
 		if (!fr) { return; }
 		const edit = new vscode.WorkspaceEdit();
-		if (fr.exists) {
+		const gone = !fs.existsSync(fr.uri.fsPath);
+		if (fr.exists && gone) {
+			// the agent DELETED this file → recreate it from the snapshot
+			edit.createFile(fr.uri, { ignoreIfExists: true });
+			edit.insert(fr.uri, new vscode.Position(0, 0), fr.snapshot);
+			expected.set(key, fr.snapshot);
+		} else if (fr.exists) {
 			const doc = await vscode.workspace.openTextDocument(fr.uri);
 			edit.replace(fr.uri, doc.validateRange(new vscode.Range(0, 0, doc.lineCount + 1, 0)), fr.snapshot);
 			expected.set(key, fr.snapshot);
@@ -337,7 +382,7 @@ function registerReview(context, post, dbg, recordTouch) {
 		postState();
 	}
 
-	return { applyEdit, keepFile, undoFile, keepAll, undoAll, finalizeAll, restoreOne, openDiff, resync, pendingCount: () => pending.size };
+	return { applyEdit, applyDelete, keepFile, undoFile, keepAll, undoAll, finalizeAll, restoreOne, openDiff, resync, pendingCount: () => pending.size };
 }
 
 module.exports = { registerReview };
