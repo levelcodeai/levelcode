@@ -297,6 +297,9 @@
   .editcard .abtns .secondary2 { background: transparent; color: var(--muted); }
   .editcard .abtns .secondary2:hover { color: var(--vscode-foreground); }
   .editcard .verdict { font-size: 12px; opacity: .85; }
+  .editcard.deletedcard { border-color: color-mix(in srgb, var(--vscode-gitDecoration-deletedResourceForeground, #e06c75) 42%, var(--border)); }
+  .editcard.deletedcard .ahead { color: var(--vscode-gitDecoration-deletedResourceForeground, #e06c75); }
+  .editcard.deletedcard .ahead code { color: var(--vscode-foreground); }
 
   /* ---- agent plan checklist ---- */
   /* context-window usage meter (appears >50%, warns >80%, critical >92%) */
@@ -366,6 +369,9 @@
   .autoctx .files { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
   #empty { margin: auto; max-width: 280px; text-align: center; opacity: .65; line-height: 1.55; padding: 20px; }
   #empty .big { font-size: 1.15em; opacity: .9; margin-bottom: 6px; }
+  #empty .starters { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 14px; }
+  #empty .starter { cursor: pointer; border: 1px solid var(--border); border-radius: 14px; padding: 4px 11px; font-size: 11.5px; background: var(--field-bg); color: var(--vscode-foreground); opacity: .95; }
+  #empty .starter:hover { border-color: var(--accent); opacity: 1; }
 
   /* ---- composer ---- */
   #composer {
@@ -545,8 +551,13 @@
   <div id="log">
     <div id="empty">
       <div class="big">Atom++ AI</div>
-      Ask about your code, or describe what to build.<br>
-      The open file is sent as context. Add a selection with <b>+</b> or ⌥⌘A.
+      Ask about your code, or describe what to build. The open file is sent as context; add a selection with <b>+</b> or ⌥⌘A.
+      <div class="starters">
+        <button class="starter" data-q="Explain what the current file does.">Explain this file</button>
+        <button class="starter" data-q="Find and fix the bug in my selection.">Fix a bug</button>
+        <button class="starter" data-q="Write tests for the current file.">Write tests</button>
+        <button class="starter" data-q="Refactor my selection for readability, keeping behavior identical.">Refactor</button>
+      </div>
     </div>
   </div>
   <button id="jumpLatest" title="Jump to latest" aria-label="Jump to latest">&#8595;</button>
@@ -737,6 +748,7 @@
     'question': { vb: '0 0 16 16', p: '<path d="M8 11C8.41421 11 8.75 11.3358 8.75 11.75C8.75 12.1642 8.41421 12.5 8 12.5C7.58579 12.5 7.25 12.1642 7.25 11.75C7.25 11.3358 7.58579 11 8 11Z"/><path d="M8 4C9.262 4 10.25 4.988 10.25 6.25C10.25 7.333 9.68352 7.89852 9.22852 8.35352C8.82052 8.76052 8.5 9.082 8.5 9.75C8.5 10.026 8.276 10.25 8 10.25C7.724 10.25 7.5 10.026 7.5 9.75C7.5 8.667 8.06648 8.10148 8.52148 7.64648C8.92948 7.23948 9.25 6.918 9.25 6.25C9.25 5.538 8.712 5 8 5C7.288 5 6.75 5.538 6.75 6.25C6.75 6.526 6.526 6.75 6.25 6.75C5.974 6.75 5.75 6.526 5.75 6.25C5.75 4.988 6.738 4 8 4Z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M8 1C11.86 1 15 4.14 15 8C15 11.86 11.86 15 8 15C4.14 15 1 11.86 1 8C1 4.14 4.14 1 8 1ZM8 2C4.691 2 2 4.691 2 8C2 11.309 4.691 14 8 14C11.309 14 14 11.309 14 8C14 4.691 11.309 2 8 2Z"/>' },
     'home': { vb: '0 0 16 16', p: '<path d="M7.31299 1.26164C7.69849 0.897163 8.30151 0.897163 8.68701 1.26164L13.5305 5.84098C13.8302 6.12431 14 6.51853 14 6.93094V12.5002C14 13.3286 13.3284 14.0002 12.5 14.0002H10.5C9.67157 14.0002 9 13.3286 9 12.5002V10.0002C9 9.72407 8.77614 9.50021 8.5 9.50021H7.5C7.22386 9.50021 7 9.72407 7 10.0002V12.5002C7 13.3286 6.32843 14.0002 5.5 14.0002H3.5C2.67157 14.0002 2 13.3286 2 12.5002V6.93094C2 6.51853 2.1698 6.12431 2.46948 5.84098L7.31299 1.26164ZM8 1.98828L3.15649 6.56762C3.0566 6.66207 3 6.79347 3 6.93094V12.5002C3 12.7763 3.22386 13.0002 3.5 13.0002H5.5C5.77614 13.0002 6 12.7763 6 12.5002V10.0002C6 9.17179 6.67157 8.50022 7.5 8.50022H8.5C9.32843 8.50022 10 9.17179 10 10.0002V12.5002C10 12.7763 10.2239 13.0002 10.5 13.0002H12.5C12.7761 13.0002 13 12.7763 13 12.5002V6.93094C13 6.79347 12.9434 6.66207 12.8435 6.56762L8 1.98828Z"/>' },
     'sparkle': { vb: '0 0 16 16', p: '<path d="M8 1 L9 7 L15 8 L9 9 L8 15 L7 9 L1 8 L7 7 Z"/>' },
+    'trash': { vb: '0 0 16 16', p: '<path d="M10 3h3v1h-1v9l-1 1H4l-1-1V4H2V3h3V2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zM9 2H6v1h3V2zM4 13h7V4H4v9zm2-8H5v7h1V5zm1 0h1v7H7V5zm2 0h1v7H9V5z"/>' },
   };
   function codicon(name, cls){ const i = IC[name]; if (!i) { return esc(name || ''); } return '<svg class="ci' + (cls ? ' ' + cls : '') + '" viewBox="' + i.vb + '" fill="currentColor" aria-hidden="true">' + i.p + '</svg>'; }
 
@@ -978,6 +990,12 @@
     agentBubble = null; agentRaw = '';
   }
   function clearEmpty(){ const e = document.getElementById('empty'); if (e) e.remove(); }
+  // Empty-state quick starters: clicking one drops a prompt into the composer (you then edit/send).
+  (function wireStarters(){
+    document.querySelectorAll('#empty .starter').forEach((b) => {
+      b.onclick = () => { const inp = document.getElementById('input'); if (!inp) { return; } inp.value = b.dataset.q || ''; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.focus(); };
+    });
+  })();
   function add(role, html){
     clearEmpty();
     const d = document.createElement('div'); d.className = 'msg ' + role;
@@ -1201,6 +1219,24 @@
     } else {
       const prev = card.querySelector('details.diffwrap'); if (prev) { wasOpen = prev.open; } // preserve user's collapse state
     }
+    if (m.deleted){
+      // A delete_file shows as its own card — not an all-red diff. Keep = confirm, Recreate = undo.
+      const dn = m.del || 0;
+      const hasDiff = (m.diff || []).length > 0;
+      card.classList.add('deletedcard');
+      card.innerHTML =
+        '<div class="ahead">' + codicon('trash') + ' Deleted <code>' + esc(m.path) + '</code> <span class="counts"><span class="d">-' + dn + '</span></span></div>' +
+        '<div class="diffempty">removed ' + dn + ' line' + (dn === 1 ? '' : 's') + '</div>' +
+        (hasDiff ? '<details class="diffwrap"><summary>what was removed</summary>' + diffHtml(m.diff) + '</details>' : '') +
+        '<div class="abtns">' +
+          '<button class="keep">Keep deletion</button>' +
+          '<button class="undo">Recreate</button>' +
+        '</div>';
+      card.querySelector('.keep').onclick = () => vscode.postMessage({ type: 'reviewKeepFile', id: m.id });
+      card.querySelector('.undo').onclick = () => vscode.postMessage({ type: 'reviewUndoFile', id: m.id });
+      scrollIfStuck();
+      return;
+    }
     const head = (m.exists ? codicon('edit') + ' Edited' : codicon('file') + ' Created') + ' <code>' + esc(m.path) + '</code> <span class="counts"><span class="a">+' + (m.add||0) + '</span> <span class="d">-' + (m.del||0) + '</span></span>';
     const hasDiff = (m.diff || []).length > 0;
     const diffPart = hasDiff
@@ -1220,9 +1256,12 @@
   }
   function resolveEditCard(m){
     const card = editCards[m.id]; if (!card) { return; }
-    const map = { kept: codicon('check') + ' Kept', undone: codicon('circle-slash') + ' Undid', 'kept-user-edited': codicon('edit') + ' Kept (you edited it)' };
+    const isDel = card.classList.contains('deletedcard');
+    const map = isDel
+      ? { kept: codicon('trash') + ' Deleted', undone: codicon('circle-slash') + ' Recreated' }
+      : { kept: codicon('check') + ' Kept', undone: codicon('circle-slash') + ' Undid', 'kept-user-edited': codicon('edit') + ' Kept (you edited it)' };
     const btns = card.querySelector('.abtns');
-    if (btns){ btns.innerHTML = '<span class="verdict">' + (map[m.verdict] || (codicon('check') + ' Kept')) + '</span>'; }
+    if (btns){ btns.innerHTML = '<span class="verdict">' + (map[m.verdict] || (isDel ? codicon('trash') + ' Deleted' : codicon('check') + ' Kept')) + '</span>'; }
     const det = card.querySelector('details.diffwrap'); if (det) { det.open = false; } // collapse so resolved cards don't stack tall
     card.classList.add('resolved');
     delete editCards[m.id];

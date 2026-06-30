@@ -22,6 +22,43 @@
 	],
 	"main": "./extension.js",
 	"contributes": {
+		"walkthroughs": [
+			{
+				"id": "welcome",
+				"title": "Welcome to Atom++",
+				"description": "Your AI-native, hackable, Notepad++-powered editor — set it up in a couple of minutes.",
+				"steps": [
+					{
+						"id": "ai",
+						"title": "Connect your AI",
+						"description": "Atom++ is powered by Claude. Bring your own Anthropic API key (or sign in to your Atom++ account), then open the chat.\n[Set Anthropic key](command:atompp.ai.setApiKey)\n[Sign in to Atom++](command:atompp.ai.account)\n[Open the chat](command:atompp.ai.focus)",
+						"media": { "markdown": "media/walkthrough/ai.md" },
+						"completionEvents": ["onCommand:atompp.ai.setApiKey", "onCommand:atompp.ai.account"]
+					},
+					{
+						"id": "look",
+						"title": "Make it yours",
+						"description": "Pick a theme and an editing keymap — Atom, Notepad++, or Sublime muscle memory are built in.\n[Choose a theme](command:workbench.action.selectTheme)\n[Apply a keymap preset](command:atompp.keymap.apply)",
+						"media": { "markdown": "media/walkthrough/look.md" },
+						"completionEvents": ["onCommand:atompp.keymap.apply"]
+					},
+					{
+						"id": "sync",
+						"title": "Sync across machines",
+						"description": "Sign in once and your settings, keybindings, theme, and skills follow you to every machine.\n[Set up Sync](command:atompp.sync.setUp)",
+						"media": { "markdown": "media/walkthrough/sync.md" },
+						"completionEvents": ["onCommand:atompp.sync.setUp"]
+					},
+					{
+						"id": "updates",
+						"title": "Stay up to date",
+						"description": "Atom++ checks for new releases and tells you when one is ready to download.\n[Check for updates](command:atompp.update.check)",
+						"media": { "markdown": "media/walkthrough/updates.md" },
+						"completionEvents": ["onCommand:atompp.update.check"]
+					}
+				]
+			}
+		],
 		"languageModelChatProviders": [
 			{ "vendor": "atompp", "displayName": "Atom++ (Claude)" }
 		],
@@ -36,6 +73,7 @@
 			]
 		},
 		"commands": [
+			{ "command": "atompp.customize", "title": "Customize…", "category": "Atom++" },
 			{ "command": "atompp.ai.focus", "title": "AI: Focus Chat", "category": "Atom++" },
 			{ "command": "atompp.ai.newChat", "title": "AI: New Chat", "category": "Atom++", "icon": "$(add)" },
 			{ "command": "atompp.ai.pickModel", "title": "AI: Select Model…", "category": "Atom++" },

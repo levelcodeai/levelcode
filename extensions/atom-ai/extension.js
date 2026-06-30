@@ -20,6 +20,7 @@ const { runAgent } = require('./agent');
 const { registerReview } = require('./reviewSession');
 const { formatDiagnosticLines, diagKey } = require('./verify');
 const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
+const { openCustomize } = require('./customize');
 
 const CLAUDE_MODELS = [
 	{ label: 'Claude Opus 4.8', id: 'claude-opus-4-8', detail: 'Most capable' },
@@ -876,6 +877,7 @@ function activate(context) {
 		}),
 		vscode.window.onDidChangeActiveTextEditor(() => postActiveFile()),
 		vscode.commands.registerCommand('atompp.ai.focus', () => vscode.commands.executeCommand('atomAi.chat.focus')),
+		vscode.commands.registerCommand('atompp.customize', () => openCustomize(context)),
 		vscode.commands.registerCommand('atompp.ai.newChat', newChat),
 		vscode.commands.registerCommand('atompp.ai.pickModel', pickModel),
 		vscode.commands.registerCommand('atompp.ai.addSelection', addSelection),
@@ -933,6 +935,12 @@ function activate(context) {
 	if (!context.globalState.get('atompp.ai.didAutoOpen')) {
 		context.globalState.update('atompp.ai.didAutoOpen', true);
 		setTimeout(() => { vscode.commands.executeCommand('atomAi.chat.focus'); }, 600);
+	}
+
+	// First-launch onboarding: open the Welcome walkthrough once.
+	if (!context.globalState.get('atompp.ai.didShowWelcome')) {
+		context.globalState.update('atompp.ai.didShowWelcome', true);
+		setTimeout(() => { vscode.commands.executeCommand('workbench.action.openWalkthrough', 'atompp.atom-ai#welcome', false).then(undefined, () => {}); }, 900);
 	}
 }
 
