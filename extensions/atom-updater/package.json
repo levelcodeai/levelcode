@@ -1,0 +1,42 @@
+{
+  "name": "atom-updater",
+  "displayName": "Atom++ Updater (notify-only)",
+  "description": "Periodically checks for new Atom++ releases and notifies you with a download link. Notify-only — never auto-applies, so it works on any build with no code-signing.",
+  "publisher": "atompp",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": { "vscode": "^1.96.0" },
+  "categories": ["Other"],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": { "supported": true }
+  },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "atompp.update.check", "title": "Check for Updates", "category": "Atom++" }
+    ],
+    "configuration": {
+      "title": "Atom++ Updater",
+      "properties": {
+        "atompp.update.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Periodically check for new Atom++ releases and notify with a download link (does not auto-install)."
+        },
+        "atompp.update.url": {
+          "type": "string",
+          "default": "",
+          "description": "Update feed base URL. Overrides product.json updateUrl. Leave blank to use product.json. For local testing, point at the reference update server (e.g. http://localhost:9696)."
+        },
+        "atompp.update.intervalHours": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "How often to check for updates, in hours."
+        }
+      }
+    }
+  }
+}

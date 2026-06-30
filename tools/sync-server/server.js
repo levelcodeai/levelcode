@@ -159,8 +159,9 @@ async function resourcePost(req, res, base, type) {
 const server = http.createServer(async (req, res) => {
 	if (LOG) {
 		res.on('finish', () => {
-			if ((req.url || '').startsWith('/v1')) {
-				console.log('[sync] ' + (req.method || 'GET') + ' ' + req.url + ' → ' + res.statusCode);
+			const u = req.url || '';
+			if (u !== '/' && u !== '/health') { // log everything (incl. misdirected /api/update → 404)
+				console.log('[sync] ' + (req.method || 'GET') + ' ' + u + ' → ' + res.statusCode);
 			}
 		});
 	}

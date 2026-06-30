@@ -1,0 +1,12 @@
+{
+  "darwin-arm64": {
+    "stable": {
+      "commit": "0000000000000000000000000000000000000000",
+      "productVersion": "0.2.2",
+      "url": "https://cdn.atompp.ai/rel/Atom++-0.2.0-arm64.zip",
+      "sha256hash": "",
+      "timestamp": 0,
+      "releaseNotesUrl": "https://atompp.ai/releases/0.2.0"
+    }
+  }
+}
