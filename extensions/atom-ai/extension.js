@@ -19,6 +19,7 @@ const { registerInlineComplete } = require('./inlineComplete');
 const { runAgent } = require('./agent');
 const { registerReview } = require('./reviewSession');
 const { formatDiagnosticLines, diagKey } = require('./verify');
+const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 
 const CLAUDE_MODELS = [
 	{ label: 'Claude Opus 4.8', id: 'claude-opus-4-8', detail: 'Most capable' },
@@ -565,6 +566,12 @@ async function agentFlow(text) {
 		includeWarnings: cfg.get('verify.includeWarnings', false)
 	};
 	const runTouched = new Set();   // abs paths edited this run (agent.js fills it via ctx.touched)
+	// M6.5 implicit skills: scan bundled SKILL.md once, expose a tiny menu()/getBody() resolver to the agent.
+	let skillsObj = null;
+	if (cfg.get('skills.enabled', true)) {
+		const skillIndex = loadSkills(ctx.extensionPath, dbg);
+		if (skillIndex.size) { skillsObj = { menu: () => skillsMenu(skillIndex), getBody: (name) => getSkillBody(skillIndex, name) }; }
+	}
 	const diagBaseline = verifyCfg.enabled ? snapshotDiagnostics() : new Map();
 	dbg('verify.config', { enabled: verifyCfg.enabled, hasCommand: !!verifyCfg.command, maxRounds: verifyCfg.maxRounds, includeWarnings: verifyCfg.includeWarnings });
 	try {
@@ -576,6 +583,7 @@ async function agentFlow(text) {
 			post, dbg,
 			approve: requestApproval,           // run_command only
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
+			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
 			contextLimit: cfg.get('contextWindow', 200000), // model context window → drives the usage meter
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
 			commandRuns: bgRuns,                // runId → background-process registry (read_command_output reads it)
@@ -734,6 +742,7 @@ class ChatViewProvider {
 				case 'retry': if (lastAgentGoal && !abort) { dbg('retry', { goalChars: lastAgentGoal.length }); await agentFlow(lastAgentGoal); } break;
 				case 'continueAgent': if (!abort) { const g = lastAgentGoal; dbg('continue', { transcriptMsgs: agentMessages.length }); await agentFlow('Continue from where you left off and finish the task. Pick up exactly where you stopped — do not restart or repeat work that is already done.'); lastAgentGoal = g; } break;
 				case 'restoreCheckpoint': dbg('restoreCheckpoint', { turnId: msg.turnId, running: !!abort }); await restoreCheckpoint(msg.turnId); break;
+				case 'listSkills': { const en = aiConfig().get('skills.enabled', true); const idx = en ? loadSkills(ctx.extensionPath, dbg) : new Map(); dbg('listSkills', { enabled: en, count: idx.size }); post({ type: 'skillsList', enabled: en, skills: skillsMenu(idx) }); break; }
 				case 'feedback': dbg('feedback', { value: msg.value }); break;
 				case 'openFile': await openWorkspaceFile(msg.path); break;
 				case 'reviewKeepFile': dbg('review.keep', { id: msg.id }); review.keepFile(msg.id, 'kept'); break;

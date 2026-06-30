@@ -16,7 +16,7 @@ const cp = require('child_process');
 const { streamClaudeAgentTurn } = require('./providers');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
 
-const SYSTEM = [
+const SYSTEM_BASE = [
 	"You are Atom++'s built-in autonomous coding agent. You accomplish the user's goal in their",
 	'workspace using the provided tools. Rules:',
 	'- Be DECISIVE and FAST. Read only the file you are changing (plus at most 1 other if truly needed), then ACT. Do NOT write long multi-point plans — at most ONE short sentence before each tool call.',
@@ -29,6 +29,7 @@ const SYSTEM = [
 	'- Paths are relative to the workspace root.',
 	'- For a multi-step goal, call update_plan FIRST with a short checklist (3-8 short items, all "pending"), then call it again to set an item "in_progress" when you start it and "done" when finished. Skip the plan for trivial single-step goals.',
 	'- If the goal truly depends on a decision only the user can make (tech stack, scope, where to create files, must-have features), call ask_user ONCE with concise multiple-choice questions (a short header + 2-4 concrete options each) INSTEAD of writing the questions as prose. Then act on their answers and do not ask again. Do NOT ask about things you can reasonably decide yourself — prefer a sensible default and proceed.',
+	'- You have SKILLS — short expert playbooks for common task types, listed under "Available skills" below with a name and a one-line description. When the user\'s goal clearly matches a skill\'s description (e.g. reviewing a diff, fixing one reported bug, writing tests), call use_skill with that exact name FIRST, before other tools, and follow the steps it returns. Pick at most one; if nothing clearly fits, just proceed normally. Do not mention skills to the user.',
 	'- When the goal is finished, end with a one-line summary starting with "Done:" and STOP (no more tools).',
 	'- After you finish, your work is verified automatically: editor diagnostics for the files you changed (plus a verify command, if the user configured one) are checked. If problems are found you will get them back as a follow-up message — fix the ones you introduced, then finish again with "Done:". If a reported problem is clearly pre-existing and unrelated to the goal, do not chase it: note it in one line and finish.'
 ].join('\n');
@@ -42,12 +43,21 @@ const TOOLS = [
 	{ name: 'write_file', description: 'Create a new file (or fully overwrite a short one) with the COMPLETE content. For edits to existing files, prefer edit_file. Applied immediately; the user reviews it with Keep/Undo.', input_schema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
 	{ name: 'run_command', description: 'Run a shell command in the workspace root. Requires approval. Pass background:true for commands that do not exit on their own (servers, watchers) so the agent is not blocked — it returns immediately and you read progress later with read_command_output.', input_schema: { type: 'object', properties: { command: { type: 'string' }, explanation: { type: 'string' }, background: { type: 'boolean', description: 'true = start it and keep working without waiting (dev servers, watchers, tail -f). Returns immediately with an id; poll read_command_output for its output/status.' } }, required: ['command'] } },
 	{ name: 'read_command_output', description: 'Read recent output + status of a command started with run_command background:true. Returns a status header ([running on :3000] / [exited 0] / [stopped]) followed by the latest output lines. Poll this to wait for a server to become ready before testing against it.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'the id returned by a background run_command' }, lines: { type: 'number', description: 'max recent output lines to return (default 80, max 400)' } }, required: ['id'] } },
-	{ name: 'ask_user', description: 'Ask the user one or more multiple-choice questions when the goal genuinely depends on a decision only they can make (tech stack, scope, where to put files, must-have features). The user picks by CLICKING — do NOT write questions as prose. Ask ONCE up front with all your questions, then proceed with the answers and never re-ask. Prefer sensible defaults over asking; only ask when a wrong guess would waste real work.', input_schema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'object', properties: { header: { type: 'string', description: 'a 1-3 word tag for the question' }, question: { type: 'string' }, multiSelect: { type: 'boolean', description: 'true if several options can be picked at once' }, options: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] } } }, required: ['question', 'options'] } } }, required: ['questions'] } }
+	{ name: 'ask_user', description: 'Ask the user one or more multiple-choice questions when the goal genuinely depends on a decision only they can make (tech stack, scope, where to put files, must-have features). The user picks by CLICKING — do NOT write questions as prose. Ask ONCE up front with all your questions, then proceed with the answers and never re-ask. Prefer sensible defaults over asking; only ask when a wrong guess would waste real work.', input_schema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'object', properties: { header: { type: 'string', description: 'a 1-3 word tag for the question' }, question: { type: 'string' }, multiSelect: { type: 'boolean', description: 'true if several options can be picked at once' }, options: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] } } }, required: ['question', 'options'] } } }, required: ['questions'] } },
+	{ name: 'use_skill', description: 'Load an expert playbook (SKILL.md) for a task type, chosen from the "Available skills" list in your system prompt. Returns the skill\'s step-by-step instructions as the tool result — then follow them. Read-only and instant (no approval). Call it once, early, when the goal matches a skill\'s description.', input_schema: { type: 'object', properties: { name: { type: 'string', description: 'the exact skill name from the Available skills list' } }, required: ['name'] } }
 ];
 
 // Rough token estimates (chars/4) for the static prompt segments, so the context popover can break
 // down "what's filling the window" — system + tools are sent on every request, the rest is messages.
-const SYSTEM_TOKENS_EST = Math.round(SYSTEM.length / 4);
+const SYSTEM_TOKENS_EST = Math.round(SYSTEM_BASE.length / 4);
+
+/** Append an "Available skills" name+description menu to the base prompt. Bodies NEVER go here —
+ *  progressive disclosure means only name+description are ever in the prompt (~100 words for a dozen). */
+function buildSystem(menu) {
+	if (!menu || !menu.length) { return SYSTEM_BASE; }
+	const list = menu.map((s) => '- ' + s.name + ': ' + s.description).join('\n');
+	return SYSTEM_BASE + '\n\nAvailable skills (call use_skill with the name):\n' + list;
+}
 const TOOLS_TOKENS_EST = Math.round(JSON.stringify(TOOLS).length / 4);
 
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -343,6 +353,17 @@ async function runTool(tu, ctx) {
 			if (res.notes) { lines.push('- Additional notes from the user: ' + res.notes); }
 			return 'The user answered your questions (these are their recorded decisions — honor them and do NOT ask again):\n' + lines.join('\n') + '\n\nProceed with the work using these answers.';
 		}
+		if (tu.name === 'use_skill') {
+			const name = String(input.name || '').trim();
+			if (!ctx.skills) { return 'ERROR: skills are not available in this session. Proceed without one.'; }
+			const body = ctx.skills.getBody(name);
+			if (body == null) {
+				const avail = ctx.skills.menu().map((s) => s.name).join(', ') || '(none)';
+				return 'ERROR: no skill named "' + name + '". Available skills: ' + avail + '. Pick one exactly, or proceed without a skill.';
+			}
+			ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🧩 using skill: ' + name });   // quiet chip — only on success (🧩 is the marker; 'sparkle' falls back cleanly)
+			return body;                                                                       // SKILL.md body → tool_result, steers the next turns
+		}
 		return 'ERROR: unknown tool ' + tu.name;
 	} catch (e) {
 		return 'ERROR: ' + ((e && e.message) || e);
@@ -362,6 +383,9 @@ async function runAgent(ctx) {
 	const root = workspaceRoot();
 	if (!root) { ctx.post({ type: 'agentError', message: 'Open a folder first — the agent works on your workspace.' }); ctx.post({ type: 'agentDone', reason: 'error' }); return; }
 	ctx.root = root;
+	// M6.5 implicit skills: build the system prompt ONCE per run — append the tiny name+description menu.
+	const system = ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE;
+	const systemTokensEst = Math.round(system.length / 4);
 
 	const dbg = ctx.dbg || (() => {});
 	const messages = ctx.messages;
@@ -437,7 +461,7 @@ async function runAgent(ctx) {
 			let streamed = false;
 			let textChars = 0;
 			const turn = await streamClaudeAgentTurn({
-				apiKey: ctx.apiKey, model: ctx.model, maxTokens: 8192, system: SYSTEM,
+				apiKey: ctx.apiKey, model: ctx.model, maxTokens: 8192, system: system,
 				messages, tools: TOOLS, signal: ctx.signal,
 				onText: (t) => { streamed = true; textChars += t.length; ctx.post({ type: 'agentDelta', text: t }); },
 				onToolStart: (name) => {
@@ -452,7 +476,7 @@ async function runAgent(ctx) {
 			// Report real context usage (input_tokens = how full the transcript is) so the UI can meter + warn.
 			if (turn.usage) {
 				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens });
-				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: SYSTEM_TOKENS_EST, tools: TOOLS_TOKENS_EST });
+				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: TOOLS_TOKENS_EST });
 			}
 
 			// Guard: never push an empty assistant message — Anthropic 400s on content:[] (e.g. a

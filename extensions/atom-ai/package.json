@@ -141,6 +141,11 @@
 					"minimum": 1,
 					"description": "Maximum tool-use steps the AI agent may take for one goal before stopping."
 				},
+				"atompp.ai.skills.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Let the agent self-select bundled skills (expert playbooks) for matching tasks like code review, bug fixes, and test writing. Each skill is a SKILL.md the agent loads on demand."
+				},
 				"atompp.ai.verify.enabled": {
 					"type": "boolean",
 					"default": true,
