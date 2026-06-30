@@ -3,7 +3,7 @@
 
   "nameShort": "Atom++",
   "nameLong": "Atom++",
-  "applicationName": "atom-plus-plus",
+  "applicationName": "atom",
   "serverApplicationName": "atom-plus-plus-server",
   "serverDataFolderName": ".atom-plus-plus-server",
   "dataFolderName": ".atom-plus-plus",
@@ -22,6 +22,17 @@
 
   "urlProtocol": "atom-plus-plus",
   "quality": "stable",
+
+  "_syncComment": "Atom++ Sync (the Obsidian analog). Reuses Code-OSS's built-in Settings Sync, pointed at our own server. The `atompp` auth provider is contributed by extensions/atom-sync. RELEASE NOTE: url is a DEV/localhost placeholder — point it at the managed Atom++ Cloud sync host before any release (see docs/atompp-sync-design.md §6).",
+  "configurationSync.store": {
+    "url": "http://localhost:9595",
+    "stableUrl": "http://localhost:9595",
+    "insidersUrl": "http://localhost:9595",
+    "canSwitch": false,
+    "authenticationProviders": {
+      "atompp": { "scopes": ["sync"] }
+    }
+  },
 
   "licenseName": "MIT",
   "licenseUrl": "https://github.com/systemu-net/atom-plus-plus/blob/main/LICENSE",

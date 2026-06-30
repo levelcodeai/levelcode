@@ -1,0 +1,37 @@
+{
+  "name": "atom-sync",
+  "displayName": "Atom++ Sync",
+  "description": "Sign in to Atom++ and sync your settings, keybindings, theme, snippets, and MCP config across machines — powered by the editor's built-in Settings Sync.",
+  "publisher": "atompp",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": { "vscode": "^1.96.0" },
+  "categories": ["Other"],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": { "supported": true }
+  },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "authentication": [
+      { "id": "atompp", "label": "Atom++ Account" }
+    ],
+    "commands": [
+      { "command": "atompp.sync.setUp", "title": "Set Up Sync (Sign In + Turn On)", "category": "Atom++ Sync" },
+      { "command": "atompp.sync.signIn", "title": "Sign In", "category": "Atom++ Sync" },
+      { "command": "atompp.sync.signOut", "title": "Sign Out", "category": "Atom++ Sync" },
+      { "command": "atompp.sync.status", "title": "Show Status", "category": "Atom++ Sync" }
+    ],
+    "configuration": {
+      "title": "Atom++ Sync",
+      "properties": {
+        "atompp.sync.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Atom++ Sync account indicator in the status bar."
+        }
+      }
+    }
+  }
+}
