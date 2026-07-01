@@ -1,32 +1,56 @@
 # Atom++
 
-The hackable, AI-native, Notepad++-powered code editor for macOS — a Code-OSS fork.
+**The AI-native, hackable, Notepad++-powered code editor for macOS — a Code-OSS fork.**
 
-> **Status: M0 (foundation).** This repo holds the Atom++ *branding overlay and build kit*, not a copy of the editor source. `scripts/bootstrap.sh` fetches Code-OSS at a pinned version and turns it into Atom++. The full vision and roadmap live in [`PLAN.md`](./PLAN.md).
+[atompp.ai](https://atompp.ai) · MIT-licensed · not affiliated with Microsoft
 
-## What this repo is
+Atom++ stands on the same battle-tested Monaco / Code-OSS core behind VS Code and bends it into a fast, private editor that's *yours*: a first-class AI layer that talks **directly** to whatever model provider you choose (your own key, or a local model — no middle-man backend), Notepad++ power-editing, and the old Atom "everything is hackable" soul.
 
-We don't vendor the VS Code source. Instead we keep a thin overlay that is applied on top of a clean Code-OSS checkout, so we can cleanly rebase onto new upstream releases. This repo contains:
+## Highlights
 
-- `branding/product.overlay.json` — the Atom++ identity (name, bundle id, URL protocol) and the **Open VSX** gallery wiring, deep-merged onto upstream `product.json`.
-- `scripts/` — `bootstrap.sh` (clone + brand + install), `run-dev.sh` (launch from source), `build-macos.sh` (produce `Atom++.app`), `apply-branding.mjs` (the merge logic).
-- `docs/` — the M0 runbook and exit-test checklist.
+**🤖 Native AI — bring your own key, any provider.**
+Chat with your codebase, inline tab-completion, select-and-edit as a reviewable diff, and an autonomous **agent** that plans, edits across files, runs commands, and verifies its own work (apply-then-review with Keep / Undo + per-turn checkpoints). One provider registry + one OpenAI-compatible adapter unlocks **hundreds of models**: Anthropic Claude (native), OpenAI, OpenRouter, Groq, Together, Fireworks, DeepSeek, xAI, Mistral, any OpenAI-compatible endpoint, and local **Ollama**. Requests go straight from your machine to the provider — **no Atom++ server in the middle** — and keys live in your OS keychain, never synced.
 
-## Quick start (on your Mac)
+**⚡ Notepad++ power-editing.**
+Keystroke macros (record / replay), column-mode quality-of-life, line operations (sort / dedup / case), one-click encoding & line-ending controls always visible in the status bar, a read-optimized big-file mode, duplicate-file, and Sublime-style hot exit.
+
+**🛠 Hackable — the Atom soul.**
+A user init script, live config, package authoring with hot-reload, keymap presets (Atom / Notepad++ / Sublime muscle memory), and signature One Dark / One Light themes.
+
+**🔄 Yours across machines.**
+Built-in Settings Sync, notify-only update checks, and one-click **import from VS Code / VSCodium / Cursor** (settings, keybindings, snippets).
+
+## What's in this repo
+
+Atom++ is a **clean overlay on top of Code-OSS**, not a vendored copy of the editor source — so it rebases cleanly onto new upstream releases. `scripts/bootstrap.sh` fetches Code-OSS at a pinned tag and turns it into Atom++. This repo holds:
+
+- `extensions/` — the first-party extensions (native AI, Notepad++ pack, themes, hackability, sync, updater), plain JS with no build step.
+- `branding/` — the Atom++ identity (`product.overlay.json`) + icons, deep-merged onto upstream `product.json`; the extension gallery wired to **Open VSX**.
+- `patches/` — the small set of core source patches (each tagged `// [Atom++]`).
+- `scripts/` — bootstrap / run-dev / build / dmg / icon.
+- `tools/` — dependency-free reference servers (Settings-Sync feed, update feed).
+- `PLAN.md`, `docs/`, `CLAUDE.md` — the vision, roadmap, and repo map.
+
+## Quick start (macOS)
 
 ```bash
-# Prereqs: Xcode Command Line Tools, Node 20+ (nvm recommended), Python 3.
-./scripts/bootstrap.sh        # clone Code-OSS @ pinned tag, apply Atom++ branding, npm ci
-./scripts/run-dev.sh          # sanity-check: launches Atom++ from source
+# Prereqs: Xcode Command Line Tools, Node (see vscode/.nvmrc — currently 24.x), Python 3.8+.
+./scripts/bootstrap.sh        # clone Code-OSS @ pinned tag, brand it, install extensions, npm ci
+./scripts/run-dev.sh          # launch Atom++ from source (fast iteration)
 ./scripts/build-macos.sh      # produce Atom++.app
+./scripts/make-dmg.sh         # wrap it into a distributable .dmg
 ```
 
-See [`docs/M0-RUNBOOK.md`](./docs/M0-RUNBOOK.md) for the full walkthrough and [`docs/EXIT-TEST.md`](./docs/EXIT-TEST.md) for how we know M0 is done.
+See [`CLAUDE.md`](./CLAUDE.md) for the full repo map + build details and [`PLAN.md`](./PLAN.md) for the roadmap.
 
-## Why a fork (and the rules)
+## Status
 
-Code-OSS is MIT-licensed and free to fork. Two hard constraints we honor from day one: the **Microsoft Extension Marketplace is off-limits** to non-MS products, so we use **Open VSX**; and **"Atom" is a trademark**, so the name here is a working codename until a final name + original logo are chosen. Details in `PLAN.md` §2.
+Actively built, macOS-first. Working today: the Notepad++ power-editing pack; the full native AI stack (chat, inline completion, edit-with-diff, the agent + auto-verify, and multi-provider BYOK); One Dark / One Light themes; the hackability layer; Settings Sync; and the update checker. Milestone detail and what's next live in [`PLAN.md`](./PLAN.md).
+
+## Why a fork
+
+Code-OSS is MIT-licensed and free to fork, modify, and ship. Atom++ honors the constraints every forker must: the **Microsoft Extension Marketplace is Microsoft-products-only**, so Atom++ points its gallery at **Open VSX** (the Eclipse-run open marketplace); and Atom++ ships its own name, icon, and identity. It is **not** produced by, endorsed by, or affiliated with Microsoft, and the upstream Code-OSS source is fetched at build time — never redistributed in this repository.
 
 ## License
 
-MIT — see [`LICENSE`](./LICENSE). Not affiliated with Microsoft.
+MIT — see [`LICENSE`](./LICENSE). A derivative of [Code-OSS](https://github.com/microsoft/vscode) (MIT, © Microsoft Corporation). Not affiliated with Microsoft.
