@@ -9,22 +9,41 @@
 'use strict';
 
 const vscode = require('vscode');
-
-const SECRET_KEY = 'atompp.ai.anthropicKey';
+const { getProvider, secretStorageKey, normId } = require('./providers/index');
+const { describeModel, supportsToolsForModel } = require('./providers/catalog');
 
 /** @type {vscode.WebviewPanel | undefined} */
 let panel;
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
+/** Active model id for a provider — per-provider settings for the two legacy ones, generic `model` otherwise. */
+function activeModelId(ai, providerId) {
+	const id = normId(providerId);
+	if (id === 'claude') { return ai.get('claude.model', 'claude-sonnet-4-6'); }
+	if (id === 'ollama') { return ai.get('ollama.model', 'llama3.1'); }
+	const m = ai.get('model', '');
+	if (m) { return m; }
+	const p = getProvider(id);
+	return (p && p.models && p.models[0]) ? p.models[0].id : '';
+}
+
 async function gatherStatus(context) {
 	const ai = vscode.workspace.getConfiguration('atompp.ai');
+	const providerId = normId(ai.get('provider', 'claude'));
+	const p = getProvider(providerId) || getProvider('claude');
+	const skey = secretStorageKey(providerId);
 	let keySet = false;
-	try { keySet = !!(await context.secrets.get(SECRET_KEY)); } catch { /* */ }
+	if (skey) { try { keySet = !!(await context.secrets.get(skey)); } catch { /* */ } }
+	const model = activeModelId(ai, providerId);
 	return {
+		providerLabel: p.label,
+		noKey: !!p.noKey,
 		keySet,
-		provider: ai.get('provider', 'claude'),
-		model: ai.get('claude.model', ''),
+		provider: providerId,
+		model,
+		modelCaps: describeModel(model),
+		agentReady: supportsToolsForModel(providerId, model),
 		completions: ai.get('completions.enabled', true),
 		theme: vscode.workspace.getConfiguration('workbench').get('colorTheme', ''),
 		syncEnabled: !!vscode.workspace.getConfiguration().get('configurationSync.keybindingsPerPlatform') || undefined,
@@ -46,18 +65,25 @@ function section(icon, title, body) {
 }
 
 function htmlFor(nonce, s) {
+	const keyValue = s.noKey ? 'not required' : (s.keySet ? 'connected' : 'not set');
+	const keyOk = s.noKey ? null : s.keySet;
+	const keyBtn = s.noKey ? 'API key not needed' : (s.keySet ? 'Update key' : 'Set ' + s.providerLabel + ' key');
 	const ai = section('🤖', 'AI',
-		row('Anthropic API key', s.keySet ? 'connected' : 'not set', s.keySet) +
-		row('Model', s.model || '(default)') +
+		row('Provider', s.providerLabel) +
+		row(s.providerLabel + ' API key', keyValue, keyOk) +
+		row('Model', (s.model || '(default)') + (s.modelCaps ? '  ·  ' + s.modelCaps : '')) +
+		row('Agent (tool use)', s.agentReady ? 'available' : 'chat only for this model', s.agentReady) +
 		row('Inline completions', s.completions ? 'on' : 'off', s.completions) +
-		'<div class="btns">' + btn(s.keySet ? 'Update key' : 'Set Anthropic key', 'atompp.ai.setApiKey', !s.keySet) +
-			btn('Sign in to Atom++', 'atompp.ai.account') + btn('Change model', 'atompp.ai.pickModel') +
+		'<div class="btns">' + btn('Change model / provider', 'atompp.ai.pickModel', true) +
+			btn(keyBtn, 'atompp.ai.setApiKey', !s.keySet && !s.noKey) +
+			btn('Sign in to Atom++', 'atompp.ai.account') +
 			btn('Open chat', 'atompp.ai.focus') + '</div>');
 
 	const look = section('🎨', 'Appearance & keys',
 		row('Theme', s.theme || '') +
 		'<div class="btns">' + btn('Choose theme', 'workbench.action.selectTheme') +
-			btn('Apply keymap preset', 'atompp.keymap.apply') + '</div>');
+			btn('Apply keymap preset', 'atompp.keymap.apply') +
+			btn('Import from VS Code', 'atompp.import.vscode') + '</div>');
 
 	const sync = section('🔄', 'Sync',
 		'<p class="muted">Carry your settings, keybindings, theme, MCP & skills across machines.</p>' +

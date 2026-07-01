@@ -31,7 +31,7 @@
 					{
 						"id": "ai",
 						"title": "Connect your AI",
-						"description": "Atom++ is powered by Claude. Bring your own Anthropic API key (or sign in to your Atom++ account), then open the chat.\n[Set Anthropic key](command:atompp.ai.setApiKey)\n[Sign in to Atom++](command:atompp.ai.account)\n[Open the chat](command:atompp.ai.focus)",
+						"description": "Atom++ speaks every major model provider in BYOK mode — Claude (the default, and what powers the agent), plus OpenAI, OpenRouter, Groq, Mistral, DeepSeek, local Ollama and more. Bring your own key (or sign in to your Atom++ account), then open the chat.\n[Set your API key](command:atompp.ai.setApiKey)\n[Pick a model / provider](command:atompp.ai.pickModel)\n[Sign in to Atom++](command:atompp.ai.account)\n[Open the chat](command:atompp.ai.focus)",
 						"media": { "markdown": "media/walkthrough/ai.md" },
 						"completionEvents": ["onCommand:atompp.ai.setApiKey", "onCommand:atompp.ai.account"]
 					},
@@ -74,6 +74,7 @@
 		},
 		"commands": [
 			{ "command": "atompp.customize", "title": "Customize…", "category": "Atom++" },
+			{ "command": "atompp.import.vscode", "title": "Import from VS Code…", "category": "Atom++" },
 			{ "command": "atompp.ai.focus", "title": "AI: Focus Chat", "category": "Atom++" },
 			{ "command": "atompp.ai.newChat", "title": "AI: New Chat", "category": "Atom++", "icon": "$(add)" },
 			{ "command": "atompp.ai.pickModel", "title": "AI: Select Model…", "category": "Atom++" },
@@ -82,9 +83,9 @@
 			{ "command": "atompp.ai.editSelection", "title": "AI: Edit Selection…", "category": "Atom++", "icon": "$(sparkle)" },
 			{ "command": "atompp.ai.applyEdit", "title": "Keep AI Edit", "category": "Atom++", "icon": "$(check)" },
 			{ "command": "atompp.ai.discardEdit", "title": "Discard AI Edit", "category": "Atom++", "icon": "$(close)" },
-			{ "command": "atompp.ai.setApiKey", "title": "AI: Set Anthropic API Key…", "category": "Atom++", "icon": "$(key)" },
+			{ "command": "atompp.ai.setApiKey", "title": "AI: Set API Key…", "category": "Atom++", "icon": "$(key)" },
 			{ "command": "atompp.ai.account", "title": "Account: Sign in to Atom++…", "category": "Atom++", "icon": "$(account)" },
-			{ "command": "atompp.ai.clearApiKey", "title": "AI: Clear Anthropic API Key", "category": "Atom++" },
+			{ "command": "atompp.ai.clearApiKey", "title": "AI: Clear API Key", "category": "Atom++" },
 			{ "command": "atompp.ai.toggleCompletions", "title": "AI: Toggle Inline Completions", "category": "Atom++" },
 			{ "command": "atompp.ai.review.keepActive", "title": "Keep Agent Edit", "category": "Atom++", "icon": "$(check)" },
 			{ "command": "atompp.ai.review.undoActive", "title": "Undo Agent Edit", "category": "Atom++", "icon": "$(discard)" }
@@ -122,10 +123,32 @@
 			"properties": {
 				"atompp.ai.provider": {
 					"type": "string",
-					"enum": ["claude", "ollama"],
-					"enumDescriptions": ["Anthropic Claude (bring your own API key)", "Local models via Ollama"],
+					"enum": ["claude", "openai", "openrouter", "groq", "together", "fireworks", "deepseek", "xai", "mistral", "ollama", "custom"],
+					"enumDescriptions": [
+						"Anthropic Claude (native API — also powers the agent)",
+						"OpenAI (GPT-4o, o-series)",
+						"OpenRouter (one key → hundreds of models across providers)",
+						"Groq (fast Llama/Mixtral inference)",
+						"Together AI",
+						"Fireworks AI",
+						"DeepSeek (V3 / R1)",
+						"xAI (Grok)",
+						"Mistral (incl. Codestral)",
+						"Local models via Ollama (no key)",
+						"Any OpenAI-compatible endpoint (set atompp.ai.baseURL) — vLLM, LM Studio, LiteLLM…"
+					],
 					"default": "claude",
-					"description": "Which AI provider the chat uses."
+					"markdownDescription": "Which AI provider chat, inline completion and edit use. Every provider except Anthropic speaks the OpenAI-compatible `/v1/chat/completions` protocol, so one key + one setting unlocks it. **Agent mode currently runs on Anthropic (Claude) only.** Pick a model with **Atom++: AI: Select Model…** — it sets the provider and model together."
+				},
+				"atompp.ai.model": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Active model id for the selected provider (used by every provider except Claude and Ollama, which keep their own `atompp.ai.claude.model` / `atompp.ai.ollama.model`). Usually set for you by **Atom++: AI: Select Model…**; you can also type any model id your provider serves (e.g. `gpt-4o`, `anthropic/claude-sonnet-4-6` on OpenRouter)."
+				},
+				"atompp.ai.baseURL": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Base URL for the **OpenAI-compatible (custom)** provider — must end in `/v1` (e.g. `http://localhost:8000/v1` for vLLM, `http://localhost:1234/v1` for LM Studio). Only used when `atompp.ai.provider` is `custom`. Prefer `https` (or explicit localhost) — your key is sent as a Bearer token to this host."
 				},
 				"atompp.ai.includeActiveFile": {
 					"type": "boolean",

@@ -105,7 +105,7 @@ function fullLineRange(editor) {
 	return new vscode.Range(sel.start.line, 0, endLine, editor.document.lineAt(endLine).text.length);
 }
 
-/** @param {{aiConfig:()=>any, getClaudeKey:()=>Promise<string|undefined>, streamClaude:Function, streamOllama:Function}} deps */
+/** @param {{aiConfig:()=>any, prepProviderRequest:(o?:any)=>Promise<any>, streamChat:Function}} deps */
 async function editSelection(deps) {
 	const ed = vscode.window.activeTextEditor;
 	if (!ed || ed.selection.isEmpty) {
@@ -134,21 +134,18 @@ async function editSelection(deps) {
 				const ac = new AbortController();
 				token.onCancellationRequested(() => ac.abort());
 				const onDelta = (d) => { result += d; };
-				const cfg = deps.aiConfig();
-				if (cfg.get('provider', 'claude') === 'claude') {
-					const key = await deps.getClaudeKey();
-					if (!key) { throw new Error('No Anthropic API key set.'); }
-					await deps.streamClaude({
-						apiKey: key, model: cfg.get('claude.model', 'claude-sonnet-4-6'),
-						maxTokens: cfg.get('claude.maxTokens', 4096), system: EDIT_SYSTEM,
-						messages: [{ role: 'user', content: userMsg }], signal: ac.signal, onDelta
-					});
-				} else {
-					await deps.streamOllama({
-						url: cfg.get('ollama.url', 'http://localhost:11434'), model: cfg.get('ollama.model', 'llama3.1'),
-						system: EDIT_SYSTEM, messages: [{ role: 'user', content: userMsg }], signal: ac.signal, onDelta
-					});
+				const req = await deps.prepProviderRequest({ prompt: true });
+				if (!req.ok) {
+					throw new Error(
+						req.reason === 'baseURL' ? 'Set a base URL for the custom OpenAI-compatible provider first (atompp.ai.baseURL).'
+						: req.reason === 'insecureBaseURL' ? 'Refusing to send your API key over plain http to a non-local host. Use an https (or localhost) base URL.'
+						: 'No API key set for ' + req.label + '.');
 				}
+				await deps.streamChat({
+					providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL,
+					model: req.model, maxTokens: req.maxTokens, system: EDIT_SYSTEM,
+					messages: [{ role: 'user', content: userMsg }], signal: ac.signal, onDelta
+				});
 			}
 		);
 	} catch (e) {

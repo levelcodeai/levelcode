@@ -13,7 +13,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
-const { streamClaudeAgentTurn } = require('./providers');
+const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
 
 const SYSTEM_BASE = [
@@ -387,10 +387,11 @@ async function runTool(tu, ctx) {
  * Run the agent loop until the model stops calling tools (or the step cap / abort).
  * `ctx.messages` is the persistent session transcript — already seeded with the new user goal —
  * and is appended to in place, so subsequent runs remember this one.
- * @param {{messages:any[], apiKey:string, model:string, maxSteps:number,
+ * @param {{messages:any[], providerId:string, apiKey:string, baseURL?:string, model:string, maxSteps:number,
  *          post:(m:any)=>void, approve:(req:any)=>Promise<boolean>,
  *          applyEdit:(req:any)=>Promise<boolean>, signal:AbortSignal}} ctx
- *   applyEdit applies file edits (apply-then-review); approve gates run_command only.
+ *   providerId/baseURL select the model provider (Anthropic native, or any OpenAI-shaped one via the
+ *   tool-use translation layer); applyEdit applies file edits (apply-then-review); approve gates run_command only.
  */
 async function runAgent(ctx) {
 	const root = workspaceRoot();
@@ -473,7 +474,8 @@ async function runAgent(ctx) {
 			dbg('turn.request', { step, transcriptMsgs: messages.length });
 			let streamed = false;
 			let textChars = 0;
-			const turn = await streamClaudeAgentTurn({
+			const turn = await providers.streamAgentTurn({
+				providerId: ctx.providerId, baseURL: ctx.baseURL,
 				apiKey: ctx.apiKey, model: ctx.model, maxTokens: 8192, system: system,
 				messages, tools: TOOLS, signal: ctx.signal,
 				onText: (t) => { streamed = true; textChars += t.length; ctx.post({ type: 'agentDelta', text: t }); },

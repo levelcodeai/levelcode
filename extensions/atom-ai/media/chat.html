@@ -1648,7 +1648,9 @@
       const label = m.provider === 'claude' ? prettyModel(m.model) : m.model;
       const mEl = document.getElementById('model');
       mEl.innerHTML = esc(label) + ' <span class="caret">▾</span>';
-      mEl.title = (m.provider === 'claude' ? 'Claude' : 'Ollama') + ' · ' + m.model + ' — click to change';
+      mEl.title = (m.providerLabel || (m.provider === 'claude' ? 'Claude' : m.provider)) + ' · ' + m.model + ' — click to change';
+      // Update the footer context-window meter to the newly-selected model's real window.
+      if (typeof m.contextLimit === 'number'){ renderContext({ limit: m.contextLimit }); }
     }
     else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
     else if (m.type === 'assistantDelta'){ pending += m.text; ensurePump(); }

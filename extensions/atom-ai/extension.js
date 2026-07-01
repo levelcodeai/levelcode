@@ -12,7 +12,8 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const cp = require('child_process');
-const { streamClaude, streamOllama, completeClaude, completeOllama, listOllamaModels } = require('./providers');
+const providers = require('./providers/index');
+const catalog = require('./providers/catalog');
 const { registerAiEdit } = require('./aiEdit');
 const { registerLmProvider } = require('./lmProvider');
 const { registerInlineComplete } = require('./inlineComplete');
@@ -21,14 +22,9 @@ const { registerReview } = require('./reviewSession');
 const { formatDiagnosticLines, diagKey } = require('./verify');
 const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
+const { importFromVscode } = require('./importVscode');
 
-const CLAUDE_MODELS = [
-	{ label: 'Claude Opus 4.8', id: 'claude-opus-4-8', detail: 'Most capable' },
-	{ label: 'Claude Sonnet 4.6', id: 'claude-sonnet-4-6', detail: 'Balanced (default)' },
-	{ label: 'Claude Haiku 4.5', id: 'claude-haiku-4-5-20251001', detail: 'Fastest' }
-];
-
-const SECRET_KEY = 'atompp.ai.anthropicKey';
+const SECRET_KEY = 'atompp.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
 const STOPWORDS = new Set(['the','and','for','with','that','this','how','does','what','where','when','why','from','into','your','you','are','was','were','will','can','could','should','would','about','have','has','its','it','the','file','code','function','please','show','tell','explain','using','use','used','there','their','then','than','they','them','some','any','all','not','but','get','set']);
 const SYSTEM_PROMPT =
@@ -62,16 +58,122 @@ function aiConfig() { return vscode.workspace.getConfiguration('atompp.ai'); }
 /** Inline debug trace — prints a 🐛 DEBUG line in the chat (gated by atompp.ai.debug). */
 function dbg(label, data) { if (aiConfig().get('debug', true)) { post({ type: 'debug', label, data: data != null ? data : null }); } }
 
-async function promptForKey() {
+/** The currently selected provider id (settings value; `claude` is the default/legacy Anthropic). */
+function currentProviderId() { return providers.normId(aiConfig().get('provider', 'claude')); }
+
+/** SecretStorage key for a provider (Anthropic keeps its legacy location; others namespaced; noKey → null). */
+function secretKeyFor(providerId) { return providers.secretStorageKey(providerId); }
+
+/** The active model id for a provider — per-provider settings for the two legacy ones, generic `model` otherwise. */
+function activeModel(cfg, providerId) {
+	const id = providers.normId(providerId);
+	if (id === 'claude') { return cfg.get('claude.model', 'claude-sonnet-4-6'); }
+	if (id === 'ollama') { return cfg.get('ollama.model', 'llama3.1'); }
+	const m = cfg.get('model', '');
+	if (m) { return m; }
+	const p = providers.getProvider(id);
+	return (p && p.models && p.models[0]) ? p.models[0].id : '';
+}
+
+/** The base URL for a provider — Ollama honors `ollama.url`, `custom` uses `atompp.ai.baseURL`, else the registry default. */
+function baseUrlFor(cfg, providerId) {
+	const id = providers.normId(providerId);
+	if (id === 'ollama') { return String(cfg.get('ollama.url', 'http://localhost:11434')).replace(/\/+$/, '') + '/v1'; }
+	if (id === 'custom') { return String(cfg.get('baseURL', '') || '').replace(/\/+$/, ''); }
+	const p = providers.getProvider(id);
+	return p ? p.baseURL : null;
+}
+
+/** Max output tokens for chat/edit (shared across providers; keeps the existing Claude setting name). */
+function maxOutputTokens(cfg) { return cfg.get('claude.maxTokens', 4096); }
+
+/** An explicitly-set `atompp.ai.contextWindow` (user override, e.g. the Claude 1M-token beta), or undefined. */
+function explicitContextWindow() {
+	const insp = aiConfig().inspect('contextWindow');
+	if (!insp) { return undefined; }
+	return insp.globalValue != null ? insp.globalValue
+		: insp.workspaceValue != null ? insp.workspaceValue
+		: insp.workspaceFolderValue != null ? insp.workspaceFolderValue
+		: undefined;
+}
+
+/** Effective context window (tokens): an explicit user override wins; otherwise the model's real window. */
+function contextLimitFor(providerId, model) {
+	const explicit = explicitContextWindow();
+	if (explicit != null) { return explicit; }
+	return catalog.contextWindowFor(providerId, model, 200000);
+}
+
+/** The active model's context window (tokens) — drives the chat context-usage meter. */
+function currentContextLimit() {
+	const cfg = aiConfig();
+	const pid = currentProviderId();
+	return contextLimitFor(pid, activeModel(cfg, pid));
+}
+
+/** Prompt for — and store — the API key for a provider. Provider-aware copy. `noKey`/unknown → undefined. */
+async function promptForKey(providerId) {
+	const id = (typeof providerId === 'string' && providerId) ? providerId : currentProviderId();
+	const p = providers.getProvider(id) || providers.getProvider('claude');
+	if (p.noKey) { vscode.window.showInformationMessage('Atom++ AI: ' + p.label + ' needs no API key.'); return undefined; }
+	const skey = secretKeyFor(p.id);
 	const key = await vscode.window.showInputBox({
-		title: 'Atom++ AI — Anthropic API Key',
-		prompt: 'Paste your Anthropic API key (from console.anthropic.com). Stored encrypted in your OS keychain.',
+		title: 'Atom++ AI — ' + p.label + ' API Key',
+		prompt: 'Paste your ' + p.label + ' API key. Stored encrypted in your OS keychain — it never leaves your machine except to ' + p.label + '.',
 		password: true,
 		ignoreFocusOut: true,
-		placeHolder: 'sk-ant-…'
+		placeHolder: p.kind === 'anthropic' ? 'sk-ant-…' : 'sk-…'
 	});
-	if (key) { await ctx.secrets.store(SECRET_KEY, key.trim()); }
+	if (key && skey) { await ctx.secrets.store(skey, key.trim()); }
 	return key ? key.trim() : undefined;
+}
+
+/** Look up a provider's key from SecretStorage; optionally prompt if missing.
+ *  Returns '' for a `noKey` provider (Ollama), or `undefined` if the key is missing/declined. */
+async function getProviderKey(providerId, opts) {
+	const skey = secretKeyFor(providerId);
+	if (!skey) { return ''; }   // noKey provider (e.g. Ollama)
+	let key = await ctx.secrets.get(skey);
+	if (!key && opts && opts.prompt) { key = await promptForKey(providerId); }
+	return key || undefined;
+}
+
+/** User-facing message for a failed prepProviderRequest (shared by chat + edit). */
+function providerErrorMessage(req) {
+	if (req.reason === 'baseURL') { return 'Set a base URL for the custom OpenAI-compatible provider first (atompp.ai.baseURL).'; }
+	if (req.reason === 'insecureBaseURL') { return 'Refusing to send your API key over plain http to a non-local host. Use an https base URL (or a localhost endpoint) for the custom provider.'; }
+	return 'No API key set for ' + req.label + '. Use the key button or “Atom++: AI: Set API Key”.';
+}
+
+/**
+ * Resolve everything needed to call the active provider: id, key, model, baseURL, maxTokens.
+ * Returns { ok:false, reason } when a required key/baseURL is missing (after optional prompting) or
+ * a custom endpoint would leak the key over plaintext — the caller renders providerErrorMessage().
+ * @returns {Promise<{ok:boolean, providerId?:string, apiKey?:string, model?:string, baseURL?:string, maxTokens?:number, label?:string, reason?:string}>}
+ */
+async function prepProviderRequest(opts) {
+	const cfg = aiConfig();
+	const providerId = currentProviderId();
+	const p = providers.getProvider(providerId) || providers.getProvider('claude');
+	const baseURL = baseUrlFor(cfg, providerId);
+	if (providerId === 'custom' && !baseURL) {
+		return { ok: false, providerId, label: p.label, reason: 'baseURL' };
+	}
+	let apiKey = '';
+	if (!p.noKey) {
+		apiKey = await getProviderKey(providerId, opts);
+		if (!apiKey) { return { ok: false, providerId, label: p.label, reason: 'key' }; }
+	}
+	if (providerId === 'custom' && apiKey && providers.isInsecureCustomUrl(baseURL)) {
+		return { ok: false, providerId, label: p.label, reason: 'insecureBaseURL' };
+	}
+	return {
+		ok: true, providerId, apiKey,
+		model: activeModel(cfg, providerId),
+		baseURL,
+		maxTokens: maxOutputTokens(cfg),
+		label: p.label
+	};
 }
 
 function captureSelection() {
@@ -538,14 +640,17 @@ let lastAgentGoal = null;   // remembered so the response bar's Retry can re-run
 async function agentFlow(text) {
 	if (text && text.trim()) { lastAgentGoal = text; }
 	const cfg = aiConfig();
-	if (cfg.get('provider', 'claude') !== 'claude') {
-		post({ type: 'agentError', message: 'Agent mode currently requires the Claude provider.' });
+	const providerId = currentProviderId();
+	const agentModel = activeModel(cfg, providerId);
+	if (!catalog.supportsToolsForModel(providerId, agentModel)) {
+		const p = providers.getProvider(providerId);
+		const who = agentModel ? '“' + agentModel + '”' : ((p && p.label) || 'This provider');
+		post({ type: 'agentError', message: 'Agent mode needs a tool-capable model. ' + who + ' isn’t set up for tool use in Atom++ — it still works for chat, inline completion and edits. Pick a tool-capable model (Claude, GPT-4o, or most OpenRouter / Groq / DeepSeek / Mistral models) via “Atom++: AI: Select Model…”.' });
 		post({ type: 'agentDone', reason: 'error' });
 		return;
 	}
-	let key = await ctx.secrets.get(SECRET_KEY);
-	if (!key) { key = await promptForKey(); }
-	if (!key) { post({ type: 'agentError', message: 'No Anthropic API key set.' }); post({ type: 'agentDone', reason: 'error' }); return; }
+	const req = await prepProviderRequest({ prompt: true });
+	if (!req.ok) { post({ type: 'agentError', message: providerErrorMessage(req) }); post({ type: 'agentDone', reason: 'error' }); return; }
 
 	post({ type: 'agentStart' });
 	abort = new AbortController();
@@ -557,7 +662,7 @@ async function agentFlow(text) {
 	post({ type: 'checkpointOpened', turnId: currentCheckpoint.turnId });
 	agentMessages.push(goalMsg);
 	trimAgentMemory();
-	dbg('agent.start', { model: cfg.get('claude.model', 'claude-sonnet-4-6'), maxSteps: cfg.get('agent.maxSteps', 25), transcriptMsgs: agentMessages.length, goalChars: text.length });
+	dbg('agent.start', { provider: req.providerId, model: req.model, maxSteps: cfg.get('agent.maxSteps', 25), transcriptMsgs: agentMessages.length, goalChars: text.length });
 	// Auto-verify: capture a pre-run diagnostics baseline (so we only flag NEW problems) and a fresh
 	// per-run set of edited files to verify afterward.
 	const verifyCfg = {
@@ -578,14 +683,16 @@ async function agentFlow(text) {
 	try {
 		await runAgent({
 			messages: agentMessages, // persists across runs → the agent remembers the session
-			apiKey: key,
-			model: cfg.get('claude.model', 'claude-sonnet-4-6'),
+			providerId: req.providerId,         // Anthropic native, or an OpenAI-shaped provider via translation (P2)
+			baseURL: req.baseURL,               // for the custom / Ollama endpoints
+			apiKey: req.apiKey,
+			model: req.model,
 			maxSteps: Math.max(1, cfg.get('agent.maxSteps', 25)),
 			post, dbg,
 			approve: requestApproval,           // run_command only
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
 			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
-			contextLimit: cfg.get('contextWindow', 200000), // model context window → drives the usage meter
+			contextLimit: contextLimitFor(req.providerId, req.model), // explicit override, else the model's real window → usage meter
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
 			commandRuns: bgRuns,                // runId → background-process registry (read_command_output reads it)
 			commandTimeout: cfg.get('commandTimeout', 120000), // backstop before a command is force-killed (0 = off)
@@ -609,8 +716,8 @@ async function handleSend(text) {
 	if (!text || !text.trim()) { return; }
 	if (agentMode) { await agentFlow(text); return; }
 	const cfg = aiConfig();
-	const provider = cfg.get('provider', 'claude');
-	dbg('chat.send', { provider, model: provider === 'claude' ? cfg.get('claude.model') : cfg.get('ollama.model'), chars: text.length, history: conversation.length });
+	const providerId = currentProviderId();
+	dbg('chat.send', { provider: providerId, model: activeModel(cfg, providerId), chars: text.length, history: conversation.length });
 
 	const blocks = [];
 
@@ -642,33 +749,17 @@ async function handleSend(text) {
 	const onDelta = (d) => { assistant += d; post({ type: 'assistantDelta', text: d }); };
 
 	try {
-		if (provider === 'claude') {
-			let key = await ctx.secrets.get(SECRET_KEY);
-			if (!key) { key = await promptForKey(); }
-			if (!key) {
-				conversation.pop();
-				post({ type: 'assistantError', message: 'No Anthropic API key set. Use the key button or “Atom++: AI: Set Anthropic API Key”.' });
-				return;
-			}
-			await streamClaude({
-				apiKey: key,
-				model: cfg.get('claude.model', 'claude-sonnet-4-6'),
-				maxTokens: cfg.get('claude.maxTokens', 4096),
-				system: SYSTEM_PROMPT,
-				messages: conversation,
-				signal: abort.signal,
-				onDelta
-			});
-		} else {
-			await streamOllama({
-				url: cfg.get('ollama.url', 'http://localhost:11434'),
-				model: cfg.get('ollama.model', 'llama3.1'),
-				system: SYSTEM_PROMPT,
-				messages: conversation,
-				signal: abort.signal,
-				onDelta
-			});
+		const req = await prepProviderRequest({ prompt: true });
+		if (!req.ok) {
+			conversation.pop();
+			post({ type: 'assistantError', message: providerErrorMessage(req) });
+			return;
 		}
+		await providers.streamChat({
+			providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL,
+			model: req.model, maxTokens: req.maxTokens, system: SYSTEM_PROMPT,
+			messages: conversation, signal: abort.signal, onDelta
+		});
 		conversation.push({ role: 'assistant', content: assistant });
 		post({ type: 'assistantDone' });
 	} catch (e) {
@@ -684,42 +775,102 @@ async function handleSend(text) {
 	}
 }
 
+/** Persist the model id under the right per-provider setting. */
+async function setModelSetting(cfg, providerId, id) {
+	const pid = providers.normId(providerId);
+	if (pid === 'claude') { return cfg.update('claude.model', id, vscode.ConfigurationTarget.Global); }
+	if (pid === 'ollama') { return cfg.update('ollama.model', id, vscode.ConfigurationTarget.Global); }
+	return cfg.update('model', id, vscode.ConfigurationTarget.Global);
+}
+
 async function pickModel() {
 	const cfg = aiConfig();
 	/** @type {any[]} */
-	const items = CLAUDE_MODELS.map((m) => ({ label: m.label, description: m.id, detail: m.detail, _id: m.id, _provider: 'claude' }));
-
-	const ollama = await listOllamaModels(cfg.get('ollama.url', 'http://localhost:11434'));
-	items.push({ label: 'Local (Ollama)', kind: vscode.QuickPickItemKind.Separator });
+	const items = [];
+	// Built-in models for every provider except Ollama (dynamic below) and custom (prompted below).
+	for (const p of providers.listProviders()) {
+		if (p.id === 'ollama' || p.id === 'custom') { continue; }
+		items.push({ label: p.label, kind: vscode.QuickPickItemKind.Separator });
+		for (const m of (p.models || [])) {
+			items.push({ label: m.label, description: m.id, detail: [m.detail, catalog.describeModel(m.id)].filter(Boolean).join(' · '), _provider: p.id, _id: m.id });
+		}
+	}
+	// Ollama — list installed models live.
+	items.push({ label: 'Ollama (local)', kind: vscode.QuickPickItemKind.Separator });
+	const ollama = await providers.listOllamaModels(cfg.get('ollama.url', 'http://localhost:11434'));
 	if (ollama.length) {
-		for (const name of ollama) { items.push({ label: name, description: 'Ollama', _id: name, _provider: 'ollama' }); }
+		for (const name of ollama) { items.push({ label: name, description: 'Ollama', _provider: 'ollama', _id: name }); }
 	} else {
 		const current = cfg.get('ollama.model', 'llama3.1');
-		items.push({ label: current, description: 'Ollama (start Ollama to list installed models)', _id: current, _provider: 'ollama' });
+		items.push({ label: current, description: 'Ollama (start Ollama to list installed models)', _provider: 'ollama', _id: current });
 	}
+	// Escape hatches: browse the current provider's full live catalog, a custom model id, or a full endpoint.
+	items.push({ label: 'Other', kind: vscode.QuickPickItemKind.Separator });
+	items.push({ label: '$(cloud-download) Browse all models (live)…', description: 'Fetch ' + (providers.getProvider(currentProviderId()) || {}).label + '’s full model list', _action: 'browse' });
+	items.push({ label: '$(edit) Enter a model ID…', description: 'For the current provider (' + (providers.getProvider(currentProviderId()) || {}).label + ')', _action: 'manualModel' });
+	items.push({ label: '$(globe) OpenAI-compatible endpoint…', description: 'Point Atom++ at any /v1 server (vLLM, LM Studio, LiteLLM…)', _action: 'customEndpoint' });
 
-	const curProvider = cfg.get('provider', 'claude');
-	const curModel = curProvider === 'claude' ? cfg.get('claude.model', 'claude-sonnet-4-6') : cfg.get('ollama.model', 'llama3.1');
+	const curId = currentProviderId();
+	const curModel = activeModel(cfg, curId);
 	const pick = await vscode.window.showQuickPick(items, {
-		placeHolder: `Select AI model (current: ${curModel})`,
+		placeHolder: `Select AI model (current: ${curModel} · ${(providers.getProvider(curId) || {}).label})`,
+		matchOnDescription: true
+	});
+	if (!pick) { return; }
+
+	if (pick._action === 'browse') { await browseProviderModels(cfg, curId); return; }
+	if (pick._action === 'manualModel') {
+		const id = await vscode.window.showInputBox({ title: 'Atom++ AI — Model ID', prompt: 'Model id for ' + (providers.getProvider(curId) || {}).label, ignoreFocusOut: true, value: curModel });
+		if (!id) { return; }
+		await setModelSetting(cfg, curId, id.trim());
+		sendConfigToWebview();
+		return;
+	}
+	if (pick._action === 'customEndpoint') {
+		const url = await vscode.window.showInputBox({ title: 'Atom++ AI — OpenAI-compatible base URL', prompt: 'Base URL ending in /v1 (e.g. http://localhost:8000/v1)', placeHolder: 'https://…/v1', ignoreFocusOut: true, value: cfg.get('baseURL', '') });
+		if (!url) { return; }
+		const model = await vscode.window.showInputBox({ title: 'Atom++ AI — Model ID', prompt: 'Model id served by that endpoint', ignoreFocusOut: true });
+		if (!model) { return; }
+		await cfg.update('baseURL', url.trim(), vscode.ConfigurationTarget.Global);
+		await cfg.update('provider', 'custom', vscode.ConfigurationTarget.Global);
+		await setModelSetting(cfg, 'custom', model.trim());
+		sendConfigToWebview();
+		return;
+	}
+	if (!pick._id) { return; }
+	await cfg.update('provider', pick._provider, vscode.ConfigurationTarget.Global);
+	await setModelSetting(cfg, pick._provider, pick._id);
+	sendConfigToWebview();
+}
+
+/** Live-fetch a provider's full model catalog and let the user pick from it (searchable, with caps). */
+async function browseProviderModels(cfg, providerId) {
+	const p = providers.getProvider(providerId) || providers.getProvider('claude');
+	const skey = secretKeyFor(providerId);
+	const apiKey = skey ? await ctx.secrets.get(skey) : undefined;   // silent — the list often needs no key (e.g. OpenRouter)
+	const baseURL = baseUrlFor(cfg, providerId);
+	const choices = await vscode.window.withProgress(
+		{ location: vscode.ProgressLocation.Notification, title: 'Atom++ AI: fetching ' + p.label + ' models…' },
+		() => catalog.getModelChoices(providerId, { dynamic: true, apiKey, baseURL, ollamaUrl: cfg.get('ollama.url', 'http://localhost:11434') })
+	);
+	if (!choices.length) { vscode.window.showInformationMessage('Atom++ AI: no models returned for ' + p.label + ' (offline, or the provider needs an API key set first).'); return; }
+	const items = choices.map((c) => ({ label: c.label, description: c.id, detail: c.detail, _id: c.id }));
+	const pick = await vscode.window.showQuickPick(items, {
+		placeHolder: 'Select a ' + p.label + ' model — ' + choices.length + ' available (type to filter)',
 		matchOnDescription: true
 	});
 	if (!pick || !pick._id) { return; }
-
-	await cfg.update('provider', pick._provider, vscode.ConfigurationTarget.Global);
-	if (pick._provider === 'claude') {
-		await cfg.update('claude.model', pick._id, vscode.ConfigurationTarget.Global);
-	} else {
-		await cfg.update('ollama.model', pick._id, vscode.ConfigurationTarget.Global);
-	}
+	await cfg.update('provider', providerId, vscode.ConfigurationTarget.Global);
+	await setModelSetting(cfg, providerId, pick._id);
 	sendConfigToWebview();
 }
 
 function sendConfigToWebview() {
 	const cfg = aiConfig();
-	const provider = cfg.get('provider', 'claude');
-	const model = provider === 'claude' ? cfg.get('claude.model', 'claude-sonnet-4-6') : cfg.get('ollama.model', 'llama3.1');
-	post({ type: 'config', provider, model });
+	const providerId = currentProviderId();
+	const p = providers.getProvider(providerId) || providers.getProvider('claude');
+	// Carry the model's context window so the footer meter updates the moment the model changes.
+	post({ type: 'config', provider: providerId, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit() });
 }
 
 class ChatViewProvider {
@@ -730,7 +881,7 @@ class ChatViewProvider {
 		view.webview.html = getHtml();
 		view.webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
-				case 'ready': sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: aiConfig().get('contextWindow', 200000) }); if (review) { review.resync(); } break;
+				case 'ready': sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'send': await handleSend(msg.text); break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
@@ -878,14 +1029,19 @@ function activate(context) {
 		vscode.window.onDidChangeActiveTextEditor(() => postActiveFile()),
 		vscode.commands.registerCommand('atompp.ai.focus', () => vscode.commands.executeCommand('atomAi.chat.focus')),
 		vscode.commands.registerCommand('atompp.customize', () => openCustomize(context)),
+		vscode.commands.registerCommand('atompp.import.vscode', () => importFromVscode(context)),
 		vscode.commands.registerCommand('atompp.ai.newChat', newChat),
 		vscode.commands.registerCommand('atompp.ai.pickModel', pickModel),
 		vscode.commands.registerCommand('atompp.ai.addSelection', addSelection),
 		vscode.commands.registerCommand('atompp.ai.addFileContext', addContext),
-		vscode.commands.registerCommand('atompp.ai.setApiKey', promptForKey),
+		vscode.commands.registerCommand('atompp.ai.setApiKey', () => promptForKey()),
 		vscode.commands.registerCommand('atompp.ai.clearApiKey', async () => {
-			await context.secrets.delete(SECRET_KEY);
-			vscode.window.showInformationMessage('Atom++ AI: Anthropic API key cleared.');
+			const id = currentProviderId();
+			const skey = secretKeyFor(id);
+			const label = (providers.getProvider(id) || {}).label || 'provider';
+			if (!skey) { vscode.window.showInformationMessage('Atom++ AI: ' + label + ' uses no API key.'); return; }
+			await context.secrets.delete(skey);
+			vscode.window.showInformationMessage('Atom++ AI: ' + label + ' API key cleared.');
 		}),
 		vscode.commands.registerCommand('atompp.ai.account', () => postAccount(true)),
 		vscode.window.registerUriHandler({ handleUri(uri) { if (uri.path === '/auth/callback') { handleAuthCallback(uri); } } }),
@@ -899,16 +1055,11 @@ function activate(context) {
 		})
 	);
 
-	// AI edit-with-diff (select code → instruct → review diff → apply)
+	// AI edit-with-diff (select code → instruct → review diff → apply) — provider-agnostic.
 	registerAiEdit(context, {
 		aiConfig,
-		getClaudeKey: async () => {
-			let key = await context.secrets.get(SECRET_KEY);
-			if (!key) { key = await promptForKey(); }
-			return key;
-		},
-		streamClaude,
-		streamOllama
+		prepProviderRequest,
+		streamChat: providers.streamChat
 	});
 
 	// Claude as a native Language Model provider (powers VS Code's built-in chat/edit UI).
@@ -921,12 +1072,13 @@ function activate(context) {
 	// Apply-then-review: agent edits land immediately and are reviewed with Keep/Undo (editor + panel).
 	review = registerReview(context, post, dbg, recordCheckpointTouch);
 
-	// Inline (ghost-text) tab-completion. Silent key lookup — it must never prompt mid-typing.
+	// Inline (ghost-text) tab-completion — provider-agnostic. Silent key lookup (prompt:false):
+	// it must never pop a key dialog mid-typing.
 	registerInlineComplete(context, {
 		aiConfig,
-		getKeySilent: () => context.secrets.get(SECRET_KEY),
-		completeClaude,
-		completeOllama
+		prepProviderRequest,
+		complete: providers.complete,
+		fastCompletionModel: catalog.fastCompletionModel
 	});
 
 	// AI-first: reveal the chat (in the secondary side bar) on first launch. We do this once

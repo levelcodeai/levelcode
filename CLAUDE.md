@@ -94,15 +94,40 @@ line operations (sort/dedup/case/…), column incrementing numbers, encoding/EOL
 big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol/bigFile.js.
 
 **M2 — native AI (`extensions/atom-ai/`, working):**
-- `providers.js` — streaming + non-streaming Anthropic Messages API + Ollama (direct, BYO key, no backend).
-  `streamClaude`/`streamOllama` for chat, `completeClaude`/`completeOllama` for inline completion.
+- `providers/` — **multi-provider BYOK (P1)**. A registry data table (`providers/index.js` `PROVIDERS` +
+  `getProvider`/`normId`/`secretStorageKey`/`isInsecureCustomUrl`) dispatches `streamChat()`/`complete()` on the
+  row's `kind`: **Anthropic** keeps its native adapter (`providers/anthropic.js` — prompt caching + full tool-use,
+  what the agent needs); **every other provider shares ONE OpenAI-compatible adapter** (`providers/openaiCompat.js` —
+  fetch + SSE `/v1/chat/completions`, param'd by `{baseURL,apiKey,headers}`): OpenAI, OpenRouter, Groq, Together,
+  Fireworks, DeepSeek, xAI, Mistral, Ollama-via-`/v1`, and a user-supplied `custom` endpoint. Adding a provider =
+  a new row, zero code. `providers.js` is now a thin **back-compat shim** (agent.js + lmProvider.js still import it).
+  Design: `docs/atompp-multiprovider-design.md`. Pure body-builder/SSE-parser/registry logic is unit-tested
+  (`test/providers.test.js`). **Chat, inline completion, edit AND the agent all route through the registry.**
+  - **P2 — the agent is multi-provider too.** `providers/translate.js` (pure, `test/translate.test.js`) is the
+    Anthropic↔OpenAI tool-use bridge; the agent's internal transcript stays **Anthropic-block-shaped for every
+    provider** and is translated only at the wire boundary (`openaiCompat.streamOpenAIAgentTurn`), so
+    `repairAgentMemory`, checkpoints, max_tokens handling and the verify loop are untouched. `providers.streamAgentTurn`
+    dispatches by kind; the agent is gated by `supportsTools(providerId)` (Ollama blocked — flaky tool support;
+    Claude/OpenAI/OpenRouter/Groq/DeepSeek/Mistral/xAI/custom allowed). `buildChatBody` emits `max_completion_tokens`
+    for o-series reasoning models; the agent turn requests `stream_options.include_usage` so the context meter works.
+  - **P4 — model catalog + per-model capabilities.** `providers/catalog.js` (pure logic + mappers unit-tested,
+    `test/catalog.test.js`): a static `CAPS` table + basename/family heuristics + a permissive `tools:true` default
+    give every model a real context window + tool/vision flags. `supportsToolsForModel` (provider gate + per-model
+    opt-out) drives the agent gate — so `deepseek-reasoner`/`o1-mini` are offered for chat but blocked from the agent;
+    `contextWindowFor` drives the context meter; `fastCompletionModel` gives ghost-text a snappy per-provider model.
+    `pickModel` shows caps inline and has a live "Browse all models" action (`getModelChoices({dynamic:true})` →
+    OpenRouter `/api/v1/models`, OpenAI-compatible `/v1/models`, Ollama `/api/tags`), all best-effort (offline → built-ins).
+  - Per-provider keys in SecretStorage (`atompp.ai.key.<provider>`; Anthropic keeps its legacy `atompp.ai.anthropicKey`).
+    Provider via `atompp.ai.provider`; model via `atompp.ai.claude.model`/`ollama.model`/generic `atompp.ai.model`;
+    custom base URL via `atompp.ai.baseURL`.
 - `extension.js` — webview chat panel **in the secondary (right) side bar** (`viewsContainers.secondarySidebar`),
   opens by default on first launch (`globalState` `didAutoOpen`), `Cmd+Alt+I` to focus. Model picker
   (Opus 4.8 / Sonnet 4.6 / Haiku 4.5 + Ollama). Context: auto-includes the open file
   (`atompp.ai.includeActiveFile`), **pin any workspace files** via a searchable picker (`addContext`,
   removable chips), and **automatic retrieval** (`gatherAutoContext`) — ripgrep content search + filename +
-  workspace symbols, scoped to the active sub-project, shown as a `🔎 Auto-context` line. Key in SecretStorage
-  (`atompp.ai.anthropicKey`). Settings under `atompp.ai.chat.*`.
+  workspace symbols, scoped to the active sub-project, shown as a `🔎 Auto-context` line. Provider-aware key +
+  model resolution (`prepProviderRequest`/`activeModel`/`baseUrlFor`); keys in SecretStorage per provider.
+  Settings under `atompp.ai.chat.*`.
 - `media/chat.html` — the chat UI: Codex-style composer (context chips, model/mode toolbar) and a
   `requestAnimationFrame` **typewriter** that reveals streamed text smoothly instead of dumping chunks.
 - `inlineComplete.js` — **inline tab-completion** (ghost text): `InlineCompletionItemProvider` over all files,

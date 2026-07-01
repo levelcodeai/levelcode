@@ -57,11 +57,11 @@ function clean(text) {
 /**
  * @param {vscode.ExtensionContext} context
  * @param {{ aiConfig: () => vscode.WorkspaceConfiguration,
- *           getKeySilent: () => Thenable<string|undefined>,
- *           completeClaude: Function, completeOllama: Function }} deps
+ *           prepProviderRequest: (o?:any) => Promise<any>,
+ *           complete: Function, fastCompletionModel: (providerId:string)=>(string|null) }} deps
  */
 function registerInlineComplete(context, deps) {
-	const { aiConfig, getKeySilent, completeClaude, completeOllama } = deps;
+	const { aiConfig, prepProviderRequest, complete, fastCompletionModel } = deps;
 
 	// --- status bar toggle ---------------------------------------------------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
@@ -103,7 +103,6 @@ function registerInlineComplete(context, deps) {
 			await sleep(debounce, token);
 			if (token.isCancellationRequested) { return null; }
 
-			const provider2 = cfg.get('provider', 'claude');
 			const { prefix, suffix } = buildContext(document, position);
 			if (!prefix.trim() && !suffix.trim()) { return null; }
 
@@ -117,26 +116,19 @@ function registerInlineComplete(context, deps) {
 
 			let text = '';
 			try {
-				if (provider2 === 'claude') {
-					const key = await getKeySilent();
-					if (!key || token.isCancellationRequested) { return null; }
-					text = await completeClaude({
-						apiKey: key,
-						model: cfg.get('completions.model', 'claude-haiku-4-5-20251001'),
-						maxTokens: MAX_TOKENS,
-						system: SYSTEM_PROMPT,
-						messages: [{ role: 'user', content: userContent }],
-						signal: ac.signal
-					});
-				} else {
-					text = await completeOllama({
-						url: cfg.get('ollama.url', 'http://localhost:11434'),
-						model: cfg.get('ollama.model', 'llama3.1'),
-						system: SYSTEM_PROMPT,
-						messages: [{ role: 'user', content: userContent }],
-						signal: ac.signal
-					});
-				}
+				// Silent (prompt:false): never pop a key dialog while the user is typing.
+				const req = await prepProviderRequest({ prompt: false });
+				if (!req.ok || token.isCancellationRequested) { return null; }
+				// Claude uses the configurable completions model; other providers use their curated fast
+				// model (gpt-4o-mini, llama-3.1-8b-instant, …) when one exists, else the active chat model.
+				const model = req.providerId === 'claude'
+					? cfg.get('completions.model', 'claude-haiku-4-5-20251001')
+					: (fastCompletionModel(req.providerId) || req.model);
+				text = await complete({
+					providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL,
+					model, maxTokens: MAX_TOKENS, system: SYSTEM_PROMPT,
+					messages: [{ role: 'user', content: userContent }], signal: ac.signal
+				});
 			} catch (e) {
 				// Network/abort/key errors are silent — inline completion must never nag.
 				return null;
