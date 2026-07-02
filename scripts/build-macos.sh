@@ -50,10 +50,19 @@ npm run gulp -- "$GULP_TARGET"
 APP_PARENT="$(cd "$VSCODE_DIR/.." && pwd)"
 BUILT_APP="$APP_PARENT/$OUT_DIR"
 
+# De-Microsoft: strip the proprietary Copilot/MS packages from the BUILT APP — NOT the source checkout,
+# so dev-mode typecheck (run-dev.sh → tsgo) still sees the real type declarations. Removes ~120 MB of
+# non-redistributable code from the shipped bundle. Idempotent + loud.
+echo "[build] Stripping bundled proprietary packages from the app (de-Microsoft) …"
+node "$SCRIPT_DIR/strip-proprietary.mjs" "$BUILT_APP/Atom++.app/Contents/Resources/app"
+
 # The .app inside is named from product.json nameLong -> "Atom++.app".
 echo "[build] Done."
 echo "[build] Output folder: $BUILT_APP"
 echo "[build] Look for Atom++.app inside it."
+echo "[build] Note: quit any already-running Atom++ before launching this app"
+echo "[build]       (macOS can forward launch to the existing process, so you might"
+echo "[build]       end up in an older instance with missing Atom++ AI commands)."
 echo
 echo "If macOS blocks the unsigned app, clear the quarantine flag:"
 echo "  xattr -dr com.apple.quarantine \"$BUILT_APP/Atom++.app\""

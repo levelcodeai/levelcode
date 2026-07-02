@@ -6,6 +6,14 @@
 
 Atom++ stands on the same battle-tested Monaco / Code-OSS core behind VS Code and bends it into a fast, private editor that's *yours*: a first-class AI layer that talks **directly** to whatever model provider you choose (your own key, or a local model — no middle-man backend), Notepad++ power-editing, and the old Atom "everything is hackable" soul.
 
+## Download
+
+Grab the latest **`Atom++-<arch>.dmg`** from **[Releases](https://github.com/atom-plus-plus/atompp/releases/latest)** (arm64 for Apple silicon, x64 for Intel), open it, and drag Atom++ to Applications.
+
+> Signed + notarized builds open with a plain double-click. If you're on an early unsigned build and macOS blocks first launch, right-click the app → **Open** (once), or run `xattr -dr com.apple.quarantine "/Applications/Atom++.app"`.
+
+Prefer to build it yourself? See [Quick start](#quick-start-macos).
+
 ## Highlights
 
 **🤖 Native AI — bring your own key, any provider.**

@@ -38,12 +38,29 @@ fi
 VOL_NAME="Atom++"
 DMG_OUT="$ROOT_DIR/Atom++-$ARCH.dmg"
 
-# 1. Ad-hoc sign the whole bundle (inside-out via --deep). Required for arm64 to run at all.
-echo "[make-dmg] Ad-hoc signing $APP …"
-codesign --remove-signature "$APP" 2>/dev/null || true
-codesign --force --deep --sign - "$APP"
-echo "[make-dmg] Verifying signature …"
-codesign --verify --deep --strict "$APP" && echo "[make-dmg]   signature OK"
+# 0. De-Microsoft: make sure no proprietary Copilot/MS code is in the app before we sign + ship it
+# (idempotent — a no-op if build-macos.sh already stripped it). Runs BEFORE signing so the signature
+# covers the stripped bundle.
+node "$SCRIPT_DIR/strip-proprietary.mjs" "$APP/Contents/Resources/app"
+
+# 1. Sign the bundle. Two modes:
+#    - Distributable: set CODESIGN_IDENTITY to your "Developer ID Application: …" identity (and
+#      NOTARY_PROFILE, or APPLE_ID/TEAM_ID/APP_SPECIFIC_PASSWORD) → real signing + Apple notarization,
+#      so the app opens with a plain double-click on any Mac.
+#    - Default: ad-hoc signing (arm64 refuses to launch unsigned binaries at all). Unnotarized —
+#      fine for personal/tester use, Gatekeeper warns on first launch.
+NOTARIZE=0
+if [ -n "${CODESIGN_IDENTITY:-}" ] && [ "${CODESIGN_IDENTITY}" != "-" ]; then
+  echo "[make-dmg] Developer ID signing (will notarize the .dmg after) …"
+  "$SCRIPT_DIR/notarize.sh" sign "$APP"
+  NOTARIZE=1
+else
+  echo "[make-dmg] Ad-hoc signing $APP (unnotarized — set CODESIGN_IDENTITY for a distributable build) …"
+  codesign --remove-signature "$APP" 2>/dev/null || true
+  codesign --force --deep --sign - "$APP"
+  echo "[make-dmg] Verifying signature …"
+  codesign --verify --deep --strict "$APP" && echo "[make-dmg]   signature OK"
+fi
 
 # 2. Stage a clean folder (app + drag-to-Applications shortcut).
 STAGE="$(mktemp -d)"
@@ -64,8 +81,17 @@ hdiutil create \
   -ov \
   "$DMG_OUT" >/dev/null
 
+# 4. Notarize + staple the .dmg (only when Developer ID signing was used).
+if [ "$NOTARIZE" = "1" ]; then
+  "$SCRIPT_DIR/notarize.sh" submit "$DMG_OUT"
+fi
+
 SIZE="$(du -sh "$DMG_OUT" | cut -f1)"
 echo "[make-dmg] Done."
 echo "[make-dmg]   Output: $DMG_OUT  ($SIZE)"
-echo "[make-dmg]   Upload this single file. On the other Mac: open the dmg, drag Atom++ to"
-echo "[make-dmg]   Applications, then right-click > Open the first time (it's unnotarized)."
+if [ "$NOTARIZE" = "1" ]; then
+  echo "[make-dmg]   Signed + notarized — upload it; users just open the dmg and drag to Applications."
+else
+  echo "[make-dmg]   Upload this single file. On the other Mac: open the dmg, drag Atom++ to"
+  echo "[make-dmg]   Applications, then right-click > Open the first time (it's unnotarized)."
+fi

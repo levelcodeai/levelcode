@@ -125,6 +125,9 @@ info "Installing dependencies (this is the slow part — several minutes)"
 info "Using Python: $("$PYTHON" --version 2>&1) at $(command -v "$PYTHON")"
 ( cd "$VSCODE_DIR" && npm ci --python="$PYTHON" )
 
+# NOTE: proprietary Copilot/MS packages are stripped from the BUILT APP by build-macos.sh — NOT here.
+# The source checkout keeps the real packages so dev-mode typecheck (run-dev.sh → tsgo) compiles.
+
 bold "Bootstrap complete."
 echo "Next:"
 echo "  ./scripts/run-dev.sh      # launch Atom++ from source to sanity-check"
