@@ -77,7 +77,8 @@ function htmlFor(nonce, s) {
 		'<div class="btns">' + btn('Change model / provider', 'atompp.ai.pickModel', true) +
 			btn(keyBtn, 'atompp.ai.setApiKey', !s.keySet && !s.noKey) +
 			btn('Sign in to Atom++', 'atompp.ai.account') +
-			btn('Open chat', 'atompp.ai.focus') + '</div>');
+			btn('Open chat', 'atompp.ai.focus') +
+			btn('Agent Sketch', 'atompp.ai.sketch') + '</div>');
 
 	const look = section('🎨', 'Appearance & keys',
 		row('Theme', s.theme || '') +

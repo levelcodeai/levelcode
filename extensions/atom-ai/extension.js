@@ -56,7 +56,7 @@ function post(msg) { if (activeWebview) { activeWebview.postMessage(msg); } }
 function aiConfig() { return vscode.workspace.getConfiguration('atompp.ai'); }
 
 /** Inline debug trace — prints a 🐛 DEBUG line in the chat (gated by atompp.ai.debug). */
-function dbg(label, data) { if (aiConfig().get('debug', true)) { post({ type: 'debug', label, data: data != null ? data : null }); } }
+function dbg(label, data) { if (aiConfig().get('debug', false)) { post({ type: 'debug', label, data: data != null ? data : null }); } }
 
 /** The currently selected provider id (settings value; `claude` is the default/legacy Anthropic). */
 function currentProviderId() { return providers.normId(aiConfig().get('provider', 'claude')); }
@@ -688,6 +688,7 @@ async function agentFlow(text) {
 			apiKey: req.apiKey,
 			model: req.model,
 			maxSteps: Math.max(1, cfg.get('agent.maxSteps', 25)),
+			maxTokens: Math.max(1024, cfg.get('agent.maxTokens', 8192)),   // per-turn output cap; continued across turns if hit
 			post, dbg,
 			approve: requestApproval,           // run_command only
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
@@ -714,6 +715,7 @@ async function agentFlow(text) {
 
 async function handleSend(text) {
 	if (!text || !text.trim()) { return; }
+	if (ctx) { ctx.globalState.update('atompp.ai.hasSentMessage', true); }   // user engaged → stop auto-revealing the panel on launch
 	if (agentMode) { await agentFlow(text); return; }
 	const cfg = aiConfig();
 	const providerId = currentProviderId();
@@ -1029,6 +1031,14 @@ function activate(context) {
 		vscode.window.onDidChangeActiveTextEditor(() => postActiveFile()),
 		vscode.commands.registerCommand('atompp.ai.focus', () => vscode.commands.executeCommand('atomAi.chat.focus')),
 		vscode.commands.registerCommand('atompp.customize', () => openCustomize(context)),
+		// Agent Sketch: the visual multi-agent flow canvas. Lazy require — only loads when opened.
+		vscode.commands.registerCommand('atompp.ai.sketch', () => {
+			try {
+				require('./sketch').openSketch(context, { prepProviderRequest, aiConfig, currentProviderId });
+			} catch (e) {
+				vscode.window.showErrorMessage('Agent Sketch failed to load: ' + ((e && e.message) || e));
+			}
+		}),
 		vscode.commands.registerCommand('atompp.import.vscode', () => importFromVscode(context)),
 		vscode.commands.registerCommand('atompp.ai.newChat', newChat),
 		vscode.commands.registerCommand('atompp.ai.pickModel', pickModel),
@@ -1081,12 +1091,19 @@ function activate(context) {
 		fastCompletionModel: catalog.fastCompletionModel
 	});
 
-	// AI-first: reveal the chat (in the secondary side bar) on first launch. We do this once
-	// and then defer to VS Code's own per-workspace layout persistence, so if the user later
-	// closes the panel we don't keep forcing it back open.
-	if (!context.globalState.get('atompp.ai.didAutoOpen')) {
-		context.globalState.update('atompp.ai.didAutoOpen', true);
-		setTimeout(() => { vscode.commands.executeCommand('atomAi.chat.focus'); }, 600);
+	// AI-first: reveal the chat (in the secondary side bar) on EVERY launch until the user has actually
+	// engaged (sent their first message). This makes sure new users always see it, instead of it only
+	// showing once. Once they've sent a message (handleSend sets the flag) we stop forcing it and defer
+	// to VS Code's own per-workspace layout persistence, so closing it stays closed.
+	// Fallback guard: if the webview never renders (provider error, missing resource) hasSentMessage
+	// is never set, which would otherwise force the panel open forever. Stop after a few launches.
+	const AUTO_REVEAL_MAX_LAUNCHES = 5;
+	if (!context.globalState.get('atompp.ai.hasSentMessage')) {
+		const launches = (Number(context.globalState.get('atompp.ai.autoRevealLaunches')) || 0) + 1;
+		context.globalState.update('atompp.ai.autoRevealLaunches', launches);
+		if (launches <= AUTO_REVEAL_MAX_LAUNCHES) {
+			setTimeout(() => { vscode.commands.executeCommand('atomAi.chat.focus'); }, 600);
+		}
 	}
 
 	// First-launch onboarding: open the Welcome walkthrough once.

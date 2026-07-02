@@ -1,0 +1,1772 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="__CSP__" />
+    <style>
+      :root {
+        --border: var(--vscode-widget-border, rgba(127, 127, 127, 0.3));
+        --panel: var(
+          --vscode-editorWidget-background,
+          rgba(127, 127, 127, 0.06)
+        );
+        --run-green: var(
+          --vscode-terminal-ansiBrightGreen,
+          var(--vscode-terminal-ansiGreen, #4edb7a)
+        );
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        font-family: var(--vscode-font-family);
+        color: var(--vscode-foreground);
+        font-size: 12.5px;
+        overflow: hidden;
+      }
+
+      #toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      #toolbar input[type="text"] {
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border, transparent);
+        border-radius: 5px;
+        padding: 4px 8px;
+      }
+      #name {
+        width: 130px;
+      }
+      #goal {
+        flex: 1;
+        min-width: 120px;
+      }
+      button {
+        cursor: pointer;
+        border: none;
+        border-radius: 5px;
+        padding: 5px 12px;
+        font-size: 12px;
+        background: var(
+          --vscode-button-secondaryBackground,
+          rgba(127, 127, 127, 0.22)
+        );
+        color: var(
+          --vscode-button-secondaryForeground,
+          var(--vscode-foreground)
+        );
+      }
+      button:hover {
+        background: var(
+          --vscode-button-secondaryHoverBackground,
+          rgba(127, 127, 127, 0.32)
+        );
+      }
+      button.primary {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      button.primary:hover {
+        background: var(--vscode-button-hoverBackground);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      select {
+        background: var(--vscode-dropdown-background);
+        color: var(--vscode-dropdown-foreground);
+        border: 1px solid var(--vscode-dropdown-border, transparent);
+        border-radius: 5px;
+        padding: 4px 6px;
+        max-width: 170px;
+      }
+
+      #main {
+        display: flex;
+        height: calc(100% - 78px);
+      }
+
+      /* palette */
+      #palette {
+        width: 212px;
+        overflow-y: auto;
+        border-right: 1px solid var(--border);
+        padding: 6px;
+      }
+      .pgroup > .phead {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        padding: 5px 6px;
+        font-weight: 600;
+        font-size: 11.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .pgroup > .phead .count {
+        margin-left: auto;
+        font-weight: 400;
+      }
+      .pitem {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 4px 8px;
+        margin: 1px 0;
+        border-radius: 6px;
+        cursor: grab;
+        border: 1px solid transparent;
+      }
+      .pitem:hover {
+        background: var(--panel);
+        border-color: var(--border);
+      }
+      .pitem .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 3px;
+        flex: none;
+      }
+      .pitem .nm {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .pgroup.closed .pitem {
+        display: none;
+      }
+
+      /* canvas */
+      #canvasWrap {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        background: radial-gradient(
+          circle,
+          color-mix(in srgb, var(--vscode-foreground) 12%, transparent) 1px,
+          transparent 1px
+        );
+        background-size: 22px 22px;
+      }
+      #world {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 12000px;
+        height: 8000px;
+        transform-origin: 0 0;
+      }
+      #edges {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 12000px;
+        height: 8000px;
+        pointer-events: none;
+        overflow: visible;
+      }
+      #edges path {
+        pointer-events: stroke;
+        cursor: pointer;
+      }
+      #hint {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--vscode-descriptionForeground);
+        pointer-events: none;
+        text-align: center;
+        line-height: 1.7;
+      }
+
+      .node {
+        position: absolute;
+        width: 172px;
+        background: var(--vscode-editor-background);
+        border: 1.5px solid var(--border);
+        border-radius: 9px;
+        padding: 7px 9px 6px;
+        cursor: grab;
+        user-select: none;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+      }
+      .node.sel {
+        border-color: var(--vscode-focusBorder);
+      }
+      /* Active node: a breathing outer glow (box-shadow is painted behind the card, so it never
+         overlaps the side ports) plus a shimmer under the header — no animated overlay on the body. */
+      .node.running {
+        border-color: var(--run-green);
+        animation: breathe 1.5s ease-in-out infinite;
+      }
+      @keyframes breathe {
+        0%,
+        100% {
+          box-shadow:
+            0 0 0 1px color-mix(in srgb, var(--run-green) 55%, transparent),
+            0 0 14px color-mix(in srgb, var(--run-green) 28%, transparent),
+            0 2px 10px rgba(0, 0, 0, 0.25);
+        }
+        50% {
+          box-shadow:
+            0 0 0 1.5px color-mix(in srgb, var(--run-green) 90%, transparent),
+            0 0 30px color-mix(in srgb, var(--run-green) 55%, transparent),
+            0 2px 10px rgba(0, 0, 0, 0.25);
+        }
+      }
+      .node .head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+        position: relative;
+      }
+      .node.running .head::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -3px;
+        height: 2px;
+        border-radius: 2px;
+        pointer-events: none;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--run-green),
+          transparent
+        );
+        background-size: 200% 100%;
+        animation: sweep 1.2s linear infinite;
+      }
+      @keyframes sweep {
+        to {
+          background-position: -200% 0;
+        }
+      }
+      .node .head .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 3px;
+        flex: none;
+      }
+      .node .head .nm {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .node .meta {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 4px;
+        color: var(--vscode-descriptionForeground);
+        font-size: 10.5px;
+      }
+      .node .model {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 110px;
+      }
+      .node .stats {
+        margin-top: 3px;
+        font-size: 10.5px;
+        color: var(--vscode-descriptionForeground);
+        font-variant-numeric: tabular-nums;
+        min-height: 13px;
+      }
+      .node .status {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--vscode-descriptionForeground);
+        flex: none;
+        margin-left: auto;
+      }
+      .node.running .status {
+        background: var(--run-green);
+        animation: pulse 1s infinite;
+      }
+      .node.done .status {
+        background: var(--vscode-charts-green, #3fb950);
+      }
+      .node.error .status {
+        background: var(--vscode-charts-red, #f14c4c);
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.35;
+        }
+      }
+      .port {
+        position: absolute;
+        top: 50%;
+        width: 11px;
+        height: 11px;
+        margin-top: -5.5px;
+        border-radius: 50%;
+        background: var(--vscode-editor-background);
+        border: 2px solid var(--vscode-descriptionForeground);
+        cursor: crosshair;
+        z-index: 6; /* always above the running glow/shimmer so the dots never flicker */
+      }
+      .port.in {
+        left: -6px;
+      }
+      .port.out {
+        right: -6px;
+      }
+      .port:hover {
+        border-color: var(--vscode-focusBorder);
+      }
+
+      /* inspector */
+      #inspector {
+        width: 250px;
+        border-left: 1px solid var(--border);
+        padding: 10px;
+        overflow-y: auto;
+        display: none;
+      }
+      #inspector.open {
+        display: block;
+      }
+      #inspector h3 {
+        margin: 0 0 2px;
+        font-size: 13px;
+      }
+      #inspector .desc {
+        color: var(--vscode-descriptionForeground);
+        margin: 0 0 10px;
+        line-height: 1.45;
+      }
+      #inspector label {
+        display: block;
+        margin: 8px 0 3px;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
+      #inspector textarea {
+        width: 100%;
+        height: 74px;
+        resize: vertical;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border, transparent);
+        border-radius: 5px;
+        padding: 5px 7px;
+        font-family: inherit;
+      }
+      #inspector select {
+        width: 100%;
+        max-width: none;
+      }
+      #inspector input#inspLabel {
+        width: 100%;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border, transparent);
+        border-radius: 5px;
+        padding: 5px 7px;
+        font-family: inherit;
+      }
+      .hint-note {
+        color: var(--vscode-descriptionForeground);
+        opacity: 0.8;
+      }
+      .node.stopped {
+        opacity: 0.6;
+      }
+      .node .stats.trunc {
+        color: var(--vscode-charts-yellow, #d7ba7d);
+      }
+      #inspOut {
+        margin-top: 8px;
+        max-height: 180px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        font-family: var(--vscode-editor-font-family, monospace);
+        font-size: 11px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px;
+        display: none;
+      }
+      #inspector .row {
+        display: flex;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      /* footer */
+      #footer {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 6px 12px;
+        border-top: 1px solid var(--border);
+        font-variant-numeric: tabular-nums;
+        color: var(--vscode-descriptionForeground);
+      }
+      #footer b {
+        color: var(--vscode-foreground);
+        font-weight: 600;
+      }
+      #whatif {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: auto;
+        max-width: 55%;
+      }
+      #whatifChips {
+        display: flex;
+        gap: 5px;
+        overflow-x: auto;
+      }
+      .wchip {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 4px;
+        white-space: nowrap;
+        padding: 2px 8px;
+        border-radius: 11px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        cursor: pointer;
+        font-size: 11px;
+      }
+      .wchip:hover {
+        border-color: var(--vscode-focusBorder);
+      }
+      .wchip.cur {
+        border-color: var(--vscode-focusBorder);
+        background: color-mix(
+          in srgb,
+          var(--vscode-focusBorder) 16%,
+          var(--panel)
+        );
+      }
+      .wchip .wc {
+        color: var(--vscode-foreground);
+        font-weight: 600;
+      }
+      #err {
+        color: var(--vscode-charts-red, #f14c4c);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 300px;
+      }
+
+      /* palette top: search + expand/collapse */
+      #palTop {
+        display: flex;
+        gap: 5px;
+        padding: 2px 2px 6px;
+        position: sticky;
+        top: 0;
+        background: var(--vscode-editor-background);
+        z-index: 2;
+      }
+      #palSearch {
+        flex: 1;
+        min-width: 0;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border, transparent);
+        border-radius: 5px;
+        padding: 4px 7px;
+        font-family: inherit;
+        font-size: 12px;
+      }
+      #palToggle {
+        padding: 4px 8px;
+        font-size: 12px;
+      }
+      .pgroup > .phead {
+        position: sticky;
+        top: 34px;
+        background: var(--vscode-editor-background);
+      }
+      .pitem .tier {
+        margin-left: auto;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        opacity: 0.6;
+        flex: none;
+      }
+      .pgroup.nohit,
+      .pitem.nohit {
+        display: none;
+      }
+
+      /* canvas overlays: zoom controls + board command bar */
+      #zoomctl {
+        position: absolute;
+        right: 12px;
+        bottom: 12px;
+        display: flex;
+        gap: 4px;
+        background: var(--vscode-editorWidget-background, var(--panel));
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 4px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+      }
+      #zoomctl button {
+        min-width: 28px;
+        padding: 4px 7px;
+        font-size: 13px;
+      }
+      #zoomPct {
+        min-width: 46px;
+        font-variant-numeric: tabular-nums;
+      }
+      #cmdbar {
+        position: absolute;
+        left: 50%;
+        bottom: 14px;
+        transform: translateX(-50%);
+        width: min(680px, 82%);
+        display: flex;
+        gap: 6px;
+        background: var(--vscode-editorWidget-background, var(--panel));
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 6px;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+      }
+      #cmdbar.busy {
+        opacity: 0.7;
+      }
+      #cmd {
+        flex: 1;
+        min-width: 0;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border, transparent);
+        border-radius: 6px;
+        padding: 6px 9px;
+        font-family: inherit;
+        font-size: 12.5px;
+      }
+      #cmdRun {
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <input id="name" type="text" value="untitled" title="Sketch name" />
+      <button id="run" class="primary">▶ Run</button>
+      <button id="stop" disabled>■ Stop</button>
+      <input
+        id="goal"
+        type="text"
+        placeholder="Goal of this flow — every agent sees it (e.g. “Build and test a rate limiter”)"
+      />
+      <button id="save">Save</button>
+      <select
+        id="tplSel"
+        title="Load a ready-made template (or drag one from the palette)"
+      >
+        <option value="">Templates…</option>
+      </select>
+      <select id="loadSel" title="Load a saved sketch">
+        <option value="">Load…</option>
+      </select>
+      <button id="clear" title="Clear the canvas">Clear</button>
+    </div>
+    <div id="main">
+      <div id="palette">
+        <div id="palTop">
+          <input id="palSearch" type="text" placeholder="Filter agents…" />
+          <button id="palToggle" title="Expand / collapse all groups">⊟</button>
+        </div>
+        <div id="agents"></div>
+      </div>
+      <div id="canvasWrap">
+        <div id="world">
+          <svg id="edges"></svg>
+        </div>
+        <div id="hint">
+          Drag agents from the palette onto the canvas.<br />Drag from a node’s
+          right port to another node to chain them.<br />▶ Run executes the flow
+          — parallel where possible — and meters tokens + cost per agent.
+        </div>
+        <div id="zoomctl">
+          <button id="zoomOut" title="Zoom out">−</button>
+          <button id="zoomPct" title="Reset zoom (⌘0)">100%</button>
+          <button id="zoomIn" title="Zoom in">+</button>
+          <button id="zoomFit" title="Fit all nodes">⤢</button>
+          <button id="tidy" title="Auto-arrange left→right by dependency">⇄ Tidy</button>
+        </div>
+        <div id="cmdbar">
+          <input
+            id="cmd"
+            type="text"
+            placeholder="Ask the board…  e.g. “add a security-auditor after coder”, “set every agent to Opus 4.8”, “tidy the layout”"
+          />
+          <button id="cmdRun" class="primary">Ask ✦</button>
+        </div>
+      </div>
+      <div id="inspector">
+        <h3 id="inspName"></h3>
+        <p class="desc" id="inspDesc"></p>
+        <label>Label (rename this node)</label>
+        <input id="inspLabel" type="text" placeholder="node label" />
+        <label>Task for this agent in the flow (optional)</label>
+        <textarea
+          id="inspTask"
+          placeholder="e.g. Focus on the API layer only"
+        ></textarea>
+        <label>Model <span class="hint-note">(runs on the active provider)</span></label>
+        <select id="inspModel">
+          <option value="">Tier default</option>
+        </select>
+        <div id="inspOut"></div>
+        <div class="row">
+          <button id="inspCopy" style="display: none">Copy output</button>
+          <button id="inspDelete">Delete node</button>
+        </div>
+      </div>
+    </div>
+    <div id="footer">
+      <span>agents <b id="tNodes">0</b></span>
+      <span>tokens <b id="tTok">0 in / 0 out</b></span>
+      <span
+        >cost <b id="tCost">—</b>
+        <span
+          title="Estimated from list prices; your provider bills you directly (BYOK)."
+          >est.</span
+        ></span
+      >
+      <span id="err"></span>
+      <div
+        id="whatif"
+        title="What this exact flow would cost on other models — reprices the recorded token counts. Approximate (models tokenize differently). Click a chip to switch every agent to that model."
+      >
+        <span>what-if →</span>
+        <div id="whatifChips"></div>
+      </div>
+    </div>
+
+    <script nonce="__NONCE__">
+      const vs = acquireVsCodeApi();
+      const $ = (id) => document.getElementById(id);
+      // Escape any string that reaches innerHTML. Node labels, model ids and saved-sketch names
+      // come from on-disk JSON (hand-editable), so treat them as untrusted markup.
+      const esc = (s) =>
+        String(s == null ? "" : s).replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+
+      // group colors (stable, theme-friendly)
+      const GROUP_COLORS = {
+        core: "#e5c07b",
+        orchestration: "#c678dd",
+        coding: "#61afef",
+        testing: "#98c379",
+        review: "#56b6c2",
+        architecture: "#d19a66",
+        security: "#e06c75",
+        docs: "#abb2bf",
+        github: "#7f8c98",
+        consensus: "#b48ead",
+        performance: "#e5a56b",
+        data: "#61c8af",
+        specialized: "#9aa5ce",
+      };
+
+      let CAT = { groups: [], agents: [], byId: new Map() };
+      let MODELS = [];
+      let PRICES = {}; // id -> {inM,outM} | null, resolved by the extension (no drift)
+      let TEMPLATES = [];
+
+      // sketch state
+      let nodes = [],
+        edges = [],
+        seq = 0;
+      let selId = null,
+        running = false,
+        cmdBusy = false;
+      let usageByNode = {}; // nodeId -> {input, output, model}
+      let outputsByNode = {}; // nodeId -> text (after run)
+      let truncByNode = {}; // nodeId -> true when the node hit the per-node token cap
+      let turnsByNode = {}; // nodeId -> how many turns it took (auto-continuation)
+      let ACTIVE_TIERS = null; // {fast,balanced,powerful} model ids for the active provider
+      let pan = { x: 40, y: 20 };
+      let zoom = 1;
+      const clampZoom = (z) => Math.max(0.2, Math.min(2.5, z));
+
+      // ---------- pricing (resolved by the extension → no client-side matching to drift) ----------
+      function priceOf(id) {
+        return (id && PRICES[id]) || null;
+      }
+      function costOf(model, inTok, outTok) {
+        const p = priceOf(model);
+        return p ? (inTok * p.inM + outTok * p.outM) / 1e6 : null;
+      }
+      function fmtUsd(n) {
+        if (n == null) return "n/a";
+        if (n === 0) return "$0";
+        if (n < 0.01) return "$" + n.toFixed(4);
+        if (n < 1) return "$" + n.toFixed(3);
+        return "$" + n.toFixed(2);
+      }
+      function fmtTok(n) {
+        return n >= 1000
+          ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k"
+          : String(n);
+      }
+
+      // ---------- palette ----------
+      function centerWorld() {
+        const r = wrap.getBoundingClientRect();
+        return toWorld(r.left + r.width / 2, r.top + r.height / 2);
+      }
+      function buildPalette() {
+        const root = $("agents");
+        root.innerHTML = "";
+        for (const g of CAT.groups) {
+          const agents = CAT.agents.filter((a) => a.group === g.id);
+          if (!agents.length) continue;
+          const div = document.createElement("div");
+          div.className =
+            "pgroup" +
+            (["core", "coding", "testing", "review"].includes(g.id)
+              ? ""
+              : " closed");
+          const head = document.createElement("div");
+          head.className = "phead";
+          head.innerHTML =
+            '<span class="dot" style="background:' +
+            (GROUP_COLORS[g.id] || "#888") +
+            ';width:8px;height:8px;border-radius:3px"></span>' +
+            esc(g.label) +
+            '<span class="count">' +
+            agents.length +
+            "</span>";
+          head.onclick = () => div.classList.toggle("closed");
+          div.appendChild(head);
+          for (const a of agents) {
+            const it = document.createElement("div");
+            it.className = "pitem";
+            it.title = a.description;
+            it.draggable = true;
+            it.dataset.hay = (a.id + " " + a.description).toLowerCase();
+            it.innerHTML =
+              '<span class="dot" style="background:' +
+              (GROUP_COLORS[g.id] || "#888") +
+              '"></span><span class="nm">' +
+              esc(a.id) +
+              '</span><span class="tier" title="' +
+              esc(a.tier) +
+              ' tier">' +
+              esc((a.tier || "")[0] || "") +
+              "</span>";
+            it.onclick = () => {
+              const c = centerWorld();
+              addNode(
+                a.id,
+                c.x - 86 + 26 * (nodes.length % 4),
+                c.y - 24 + 26 * (nodes.length % 4),
+              );
+            };
+            it.ondragstart = (e) => e.dataTransfer.setData("text/agent", a.id);
+            div.appendChild(it);
+          }
+          root.appendChild(div);
+        }
+      }
+      function filterPalette(q) {
+        q = (q || "").trim().toLowerCase();
+        for (const grp of $("agents").children) {
+          let hits = 0;
+          for (const it of grp.querySelectorAll(".pitem")) {
+            const hit = !q || it.dataset.hay.indexOf(q) >= 0;
+            it.classList.toggle("nohit", !hit);
+            if (hit) hits++;
+          }
+          grp.classList.toggle("nohit", hits === 0);
+          if (q) grp.classList.remove("closed"); // auto-expand matches while searching
+        }
+      }
+      $("palSearch").oninput = () => filterPalette($("palSearch").value);
+      let palAllOpen = false;
+      $("palToggle").onclick = () => {
+        palAllOpen = !palAllOpen;
+        for (const grp of $("agents").children)
+          grp.classList.toggle("closed", !palAllOpen);
+        $("palToggle").textContent = palAllOpen ? "⊟" : "⊞";
+      };
+
+      // ---------- canvas ----------
+      const world = $("world"),
+        wrap = $("canvasWrap"),
+        svg = $("edges");
+      // transform = translate(pan) · scale(zoom): a world point (x,y) → screen = pan + zoom*(x,y).
+      function applyTransform() {
+        world.style.transform =
+          "translate(" + pan.x + "px," + pan.y + "px) scale(" + zoom + ")";
+        $("zoomPct").textContent = Math.round(zoom * 100) + "%";
+      }
+      // screen (client) coords → world coords
+      function toWorld(clientX, clientY) {
+        const r = wrap.getBoundingClientRect();
+        return {
+          x: (clientX - r.left - pan.x) / zoom,
+          y: (clientY - r.top - pan.y) / zoom,
+        };
+      }
+      // zoom keeping the world point under the cursor fixed on screen
+      function zoomAt(clientX, clientY, factor) {
+        const r = wrap.getBoundingClientRect();
+        const sx = clientX - r.left,
+          sy = clientY - r.top;
+        const wx = (sx - pan.x) / zoom,
+          wy = (sy - pan.y) / zoom;
+        zoom = clampZoom(zoom * factor);
+        pan.x = sx - wx * zoom;
+        pan.y = sy - wy * zoom;
+        applyTransform();
+      }
+      function resetZoom() {
+        // Frame the content rather than snapping to a fixed origin (which could strand the view
+        // off-screen after panning). Empty canvas → back to the default corner.
+        if (nodes.length) {
+          fitView();
+        } else {
+          zoom = 1;
+          pan = { x: 40, y: 20 };
+          applyTransform();
+        }
+      }
+      // fit all nodes into the viewport
+      function fitView() {
+        if (!nodes.length) {
+          pan = { x: 40, y: 20 };
+          zoom = 1;
+          applyTransform();
+          return;
+        }
+        const NW = 172,
+          NH = 74;
+        let minX = Infinity,
+          minY = Infinity,
+          maxX = -Infinity,
+          maxY = -Infinity;
+        for (const n of nodes) {
+          minX = Math.min(minX, n.x);
+          minY = Math.min(minY, n.y);
+          maxX = Math.max(maxX, n.x + NW);
+          maxY = Math.max(maxY, n.y + NH);
+        }
+        const r = wrap.getBoundingClientRect();
+        const pad = 60;
+        const zx = (r.width - pad * 2) / Math.max(1, maxX - minX);
+        const zy = (r.height - pad * 2) / Math.max(1, maxY - minY);
+        zoom = clampZoom(Math.min(zx, zy, 1.3));
+        pan.x = pad - minX * zoom + (r.width - pad * 2 - (maxX - minX) * zoom) / 2;
+        pan.y = pad - minY * zoom + (r.height - pad * 2 - (maxY - minY) * zoom) / 2;
+        applyTransform();
+      }
+      applyTransform();
+
+      wrap.ondragover = (e) => e.preventDefault();
+      wrap.ondrop = (e) => {
+        const agentId = e.dataTransfer.getData("text/agent");
+        if (!agentId) return;
+        const w = toWorld(e.clientX, e.clientY);
+        addNode(agentId, w.x - 86, w.y - 24);
+      };
+      // wheel to zoom (no modifier needed — the canvas doesn't scroll)
+      wrap.addEventListener(
+        "wheel",
+        (e) => {
+          e.preventDefault();
+          zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+        },
+        { passive: false },
+      );
+      $("zoomIn").onclick = () => {
+        const r = wrap.getBoundingClientRect();
+        zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.2);
+      };
+      $("zoomOut").onclick = () => {
+        const r = wrap.getBoundingClientRect();
+        zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.2);
+      };
+      $("zoomPct").onclick = resetZoom;
+      $("zoomFit").onclick = fitView;
+      $("tidy").onclick = () => {
+        autoLayout();
+      };
+
+      function addNode(agentId, x, y) {
+        const a = CAT.byId.get(agentId);
+        if (!a) return null;
+        const id = "n" + ++seq;
+        nodes.push({
+          id,
+          agentId,
+          label: agentId,
+          instructions: "",
+          model: "",
+          x: Math.max(4, x),
+          y: Math.max(4, y),
+        });
+        render();
+        select(id);
+        return id;
+      }
+      function removeNode(id) {
+        nodes = nodes.filter((n) => n.id !== id);
+        edges = edges.filter((e) => e.from !== id && e.to !== id);
+        delete usageByNode[id];
+        delete outputsByNode[id];
+        if (selId === id) select(null);
+        render();
+      }
+
+      function portPos(n, out) {
+        return { x: n.x + (out ? 172 + 0 : 0), y: n.y + 30 };
+      }
+      function edgePath(a, b) {
+        const dx = Math.max(40, Math.abs(b.x - a.x) / 2);
+        return (
+          "M" +
+          a.x +
+          "," +
+          a.y +
+          " C" +
+          (a.x + dx) +
+          "," +
+          a.y +
+          " " +
+          (b.x - dx) +
+          "," +
+          b.y +
+          " " +
+          b.x +
+          "," +
+          b.y
+        );
+      }
+
+      let drag = null; // {kind:'node'|'pan'|'wire', ...}
+      function render() {
+        $("hint").style.display = nodes.length ? "none" : "flex";
+        // nodes
+        for (const el of world.querySelectorAll(".node")) el.remove();
+        const byId = new Map(nodes.map((n) => [n.id, n]));
+        for (const n of nodes) {
+          const a = CAT.byId.get(n.agentId) || {
+            group: "specialized",
+            tier: "balanced",
+            description: "",
+          };
+          const el = document.createElement("div");
+          el.className =
+            "node" +
+            (n.id === selId ? " sel" : "") +
+            (n._status ? " " + n._status : "");
+          el.style.left = n.x + "px";
+          el.style.top = n.y + "px";
+          el.dataset.id = n.id;
+          const u = usageByNode[n.id];
+          const model =
+            n.model || n._model || "tier: " + (a.tier || "balanced");
+          const trunc = truncByNode[n.id];
+          const nt = turnsByNode[n.id] || 0;
+          el.innerHTML =
+            '<div class="head"><span class="dot" style="background:' +
+            (GROUP_COLORS[a.group] || "#888") +
+            '"></span><span class="nm">' +
+            esc(n.label) +
+            '</span><span class="status"></span></div>' +
+            '<div class="meta"><span class="model">' +
+            esc(model) +
+            "</span></div>" +
+            '<div class="stats' +
+            (trunc ? " trunc" : "") +
+            '">' +
+            (u
+              ? fmtTok(u.input) +
+                " in / " +
+                fmtTok(u.output) +
+                " out · " +
+                fmtUsd(costOf(u.model, u.input, u.output)) +
+                (nt > 1 ? " · ⟳" + nt : "") +
+                (trunc ? " ⚠ truncated" : "")
+              : "") +
+            "</div>" +
+            '<div class="port in"></div><div class="port out"></div>';
+          el.onmousedown = (e) => {
+            if (e.target.classList.contains("port")) return;
+            select(n.id);
+            const w = toWorld(e.clientX, e.clientY);
+            drag = { kind: "node", id: n.id, dx: w.x - n.x, dy: w.y - n.y };
+            e.stopPropagation();
+          };
+          el.querySelector(".port.out").onmousedown = (e) => {
+            drag = { kind: "wire", from: n.id, x: e.clientX, y: e.clientY };
+            e.stopPropagation();
+            e.preventDefault();
+          };
+          el.querySelector(".port.in").onmouseup = () => {
+            if (drag && drag.kind === "wire" && drag.from !== n.id) {
+              tryConnect(drag.from, n.id);
+            }
+          };
+          el.onmouseup = () => {
+            if (drag && drag.kind === "wire" && drag.from !== n.id) {
+              tryConnect(drag.from, n.id);
+            }
+          };
+          world.appendChild(el);
+        }
+        // edges
+        svg.innerHTML = "";
+        for (const e of edges) {
+          const a = byId.get(e.from),
+            b = byId.get(e.to);
+          if (!a || !b) continue;
+          const p = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "path",
+          );
+          p.setAttribute("d", edgePath(portPos(a, true), portPos(b, false)));
+          p.setAttribute("fill", "none");
+          p.setAttribute(
+            "stroke",
+            "color-mix(in srgb, var(--vscode-foreground) 42%, transparent)",
+          );
+          p.setAttribute("stroke-width", "2");
+          p.style.cursor = "pointer";
+          p.onclick = () => {
+            edges = edges.filter((x) => x !== e);
+            render();
+          };
+          p.append(
+            document.createElementNS("http://www.w3.org/2000/svg", "title"),
+          );
+          p.firstChild.textContent =
+            e.from + " → " + e.to + " (click to remove)";
+          svg.appendChild(p);
+        }
+        // temp wire
+        if (drag && drag.kind === "wire") {
+          const from = byId.get(drag.from);
+          const w = toWorld(drag.x, drag.y);
+          const p = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "path",
+          );
+          p.setAttribute(
+            "d",
+            edgePath(portPos(from, true), { x: w.x, y: w.y }),
+          );
+          p.setAttribute("fill", "none");
+          p.setAttribute("stroke", "var(--vscode-focusBorder)");
+          p.setAttribute("stroke-dasharray", "5 4");
+          p.setAttribute("stroke-width", "2");
+          svg.appendChild(p);
+        }
+        $("tNodes").textContent = nodes.length;
+        refreshTotals();
+      }
+
+      function tryConnect(from, to) {
+        if (edges.some((e) => e.from === from && e.to === to)) return;
+        edges.push({ from, to });
+        // reject if it created a cycle: simple DFS
+        if (hasCycle()) {
+          edges.pop();
+          flashErr(
+            "That connection would create a cycle — handoffs must go forward.",
+          );
+        }
+        render();
+      }
+      function hasCycle() {
+        const adj = {};
+        nodes.forEach((n) => (adj[n.id] = []));
+        edges.forEach((e) => adj[e.from].push(e.to));
+        const state = {};
+        const dfs = (u) => {
+          state[u] = 1;
+          for (const v of adj[u]) {
+            if (state[v] === 1) return true;
+            if (!state[v] && dfs(v)) return true;
+          }
+          state[u] = 2;
+          return false;
+        };
+        return nodes.some((n) => !state[n.id] && dfs(n.id));
+      }
+
+      wrap.onmousedown = (e) => {
+        if (e.target === wrap || e.target === world || e.target === svg) {
+          select(null);
+          drag = {
+            kind: "pan",
+            x: e.clientX,
+            y: e.clientY,
+            px: pan.x,
+            py: pan.y,
+          };
+        }
+      };
+      window.onmousemove = (e) => {
+        if (!drag) return;
+        if (drag.kind === "node") {
+          const n = nodes.find((n) => n.id === drag.id);
+          if (n) {
+            const w = toWorld(e.clientX, e.clientY);
+            n.x = w.x - drag.dx;
+            n.y = w.y - drag.dy;
+            render();
+          }
+        } else if (drag.kind === "pan") {
+          pan.x = drag.px + (e.clientX - drag.x);
+          pan.y = drag.py + (e.clientY - drag.y);
+          applyTransform();
+        } else if (drag.kind === "wire") {
+          drag.x = e.clientX;
+          drag.y = e.clientY;
+          render();
+        }
+      };
+      window.onmouseup = () => {
+        if (drag && drag.kind === "wire") {
+          drag = null;
+          render();
+        } else drag = null;
+      };
+      window.onkeydown = (e) => {
+        const tag = document.activeElement && document.activeElement.tagName;
+        const typing = tag === "INPUT" || tag === "TEXTAREA";
+        if ((e.metaKey || e.ctrlKey) && !typing) {
+          if (e.key === "0") {
+            e.preventDefault();
+            resetZoom();
+            return;
+          }
+          if (e.key === "=" || e.key === "+" || e.key === "-") {
+            e.preventDefault();
+            const r = wrap.getBoundingClientRect();
+            zoomAt(r.left + r.width / 2, r.top + r.height / 2, e.key === "-" ? 1 / 1.2 : 1.2);
+            return;
+          }
+        }
+        if (
+          (e.key === "Delete" || e.key === "Backspace") &&
+          selId &&
+          !running &&
+          !typing &&
+          tag !== "SELECT"
+        ) {
+          removeNode(selId);
+        }
+      };
+
+      // ---------- inspector ----------
+      function select(id) {
+        selId = id;
+        const insp = $("inspector");
+        if (!id) {
+          insp.classList.remove("open");
+          render();
+          return;
+        }
+        const n = nodes.find((n) => n.id === id);
+        if (!n) return;
+        const a = CAT.byId.get(n.agentId) || { description: "" };
+        insp.classList.add("open");
+        $("inspName").textContent = n.label;
+        $("inspDesc").textContent = a.description;
+        $("inspLabel").value = n.label || "";
+        $("inspTask").value = n.instructions || "";
+        $("inspModel").value = n.model || "";
+        const out = outputsByNode[id];
+        $("inspOut").style.display = out ? "block" : "none";
+        $("inspOut").textContent = out || "";
+        $("inspCopy").style.display = out ? "inline-block" : "none";
+        render();
+      }
+      $("inspLabel").oninput = () => {
+        const n = nodes.find((n) => n.id === selId);
+        if (n) {
+          n.label = $("inspLabel").value;
+          $("inspName").textContent = n.label;
+          render();
+        }
+      };
+      $("inspTask").oninput = () => {
+        const n = nodes.find((n) => n.id === selId);
+        if (n) n.instructions = $("inspTask").value;
+      };
+      $("inspModel").onchange = () => {
+        const n = nodes.find((n) => n.id === selId);
+        if (n) {
+          n.model = $("inspModel").value;
+          render();
+        }
+      };
+      $("inspDelete").onclick = () => {
+        if (selId) removeNode(selId);
+      };
+      $("inspCopy").onclick = () => {
+        vs.postMessage({
+          type: "copyOutput",
+          text: outputsByNode[selId] || "",
+        });
+      };
+
+      // ---------- totals + what-if ----------
+      function refreshTotals() {
+        let ti = 0,
+          to = 0,
+          cost = 0,
+          unknown = false;
+        for (const id in usageByNode) {
+          const u = usageByNode[id];
+          ti += u.input;
+          to += u.output;
+          const c = costOf(u.model, u.input, u.output);
+          if (c == null) unknown = true;
+          else cost += c;
+        }
+        $("tTok").textContent = fmtTok(ti) + " in / " + fmtTok(to) + " out";
+        $("tCost").textContent = Object.keys(usageByNode).length
+          ? fmtUsd(cost) + (unknown ? " +?" : "")
+          : "—";
+        renderWhatif();
+      }
+      function shortModel(id) {
+        const m = MODELS.find((x) => x.id === id);
+        return m ? m.label.split(" · ")[0] : id;
+      }
+      // What-if: what THIS flow (its recorded token counts) would cost on each candidate model —
+      // the active provider's fast/balanced/powerful tiers plus any model actually used. Click a
+      // chip to switch every agent to that model (then re-run to see the real numbers).
+      function renderWhatif() {
+        const box = $("whatifChips");
+        if (!Object.keys(usageByNode).length) {
+          box.innerHTML =
+            '<span class="hint-note">run the flow to compare model costs</span>';
+          return;
+        }
+        const cand = new Set();
+        if (ACTIVE_TIERS)
+          ["fast", "balanced", "powerful"].forEach(
+            (t) => ACTIVE_TIERS[t] && cand.add(ACTIVE_TIERS[t]),
+          );
+        for (const id in usageByNode) cand.add(usageByNode[id].model);
+        const used = new Set(Object.values(usageByNode).map((u) => u.model));
+        const uniform = used.size === 1 ? [...used][0] : null;
+        const rows = [...cand]
+          .map((model) => {
+            let sum = 0,
+              unknown = false;
+            for (const id in usageByNode) {
+              const u = usageByNode[id];
+              const c = costOf(model, u.input, u.output);
+              if (c == null) unknown = true;
+              else sum += c;
+            }
+            return { model, cost: unknown ? null : sum };
+          })
+          .sort((a, b) => (a.cost == null ? 1e12 : a.cost) - (b.cost == null ? 1e12 : b.cost));
+        box.innerHTML = rows
+          .map(
+            (r) =>
+              '<span class="wchip' +
+              (r.model === uniform ? " cur" : "") +
+              '" data-model="' +
+              esc(r.model) +
+              '" title="Set every agent to ' +
+              esc(shortModel(r.model)) +
+              '">' +
+              esc(shortModel(r.model)) +
+              ' <b class="wc">' +
+              (r.cost == null ? "n/a" : fmtUsd(r.cost)) +
+              "</b></span>",
+          )
+          .join("");
+        for (const chip of box.querySelectorAll(".wchip")) {
+          chip.onclick = () => {
+            if (!running) setAllModels(chip.dataset.model);
+          };
+        }
+      }
+      function setAllModels(model) {
+        nodes.forEach((n) => (n.model = model));
+        flashErr("All agents set to " + shortModel(model) + " — re-run to update costs.");
+        render();
+      }
+
+      // ---------- run / stop / save / load ----------
+      function serialize() {
+        return {
+          name: $("name").value.trim() || "untitled",
+          goal: $("goal").value,
+          nodes: nodes.map((n) => ({
+            id: n.id,
+            agentId: n.agentId,
+            label: n.label,
+            instructions: n.instructions,
+            model: n.model,
+            x: Math.round(n.x),
+            y: Math.round(n.y),
+          })),
+          edges: edges.map((e) => ({ from: e.from, to: e.to })),
+        };
+      }
+      function setRunning(on) {
+        running = on;
+        $("run").disabled = on;
+        $("stop").disabled = !on;
+        // Loading a sketch / template or clearing mid-run would graft the run's statuses onto a
+        // different graph (node ids collide), so gate those while a run is in flight.
+        $("loadSel").disabled = on;
+        $("tplSel").disabled = on;
+        $("clear").disabled = on;
+        $("cmd").disabled = on;
+        $("cmdRun").disabled = on;
+      }
+      $("run").onclick = () => {
+        if (running || cmdBusy) return; // don't start while a board command is still resolving
+        flashErr("");
+        setRunning(true); // disable immediately; the extension confirms with runStart
+        vs.postMessage({ type: "run", sketch: serialize() });
+      };
+      $("stop").onclick = () => vs.postMessage({ type: "stop" });
+      $("save").onclick = () =>
+        vs.postMessage({ type: "save", sketch: serialize() });
+      $("loadSel").onchange = () => {
+        const v = $("loadSel").value;
+        $("loadSel").value = "";
+        if (v && !running) vs.postMessage({ type: "load", name: v });
+      };
+      $("tplSel").onchange = () => {
+        const v = $("tplSel").value;
+        $("tplSel").value = "";
+        if (v && !running) vs.postMessage({ type: "loadTemplate", id: v });
+      };
+      $("clear").onclick = () => {
+        if (running) return;
+        nodes = [];
+        edges = [];
+        usageByNode = {};
+        outputsByNode = {};
+        truncByNode = {};
+        turnsByNode = {};
+        select(null);
+        render();
+      };
+
+      function flashErr(msg) {
+        $("err").textContent = msg || "";
+      }
+
+      // Loaded sketches come from on-disk JSON (hand-editable) or templates — coerce to a safe,
+      // renderable shape so a malformed/hostile file can't break the canvas, collide node ids, or
+      // inject a prototype-polluting key. Drops unknown-agent nodes and dangling/self/dup edges.
+      function sanitizeSketch(s) {
+        s = s && typeof s === "object" ? s : {};
+        const str = (v, d) => (typeof v === "string" ? v : d || "");
+        const num = (v) => (typeof v === "number" && isFinite(v) ? v : 0);
+        const nodes = [];
+        const ids = new Set();
+        for (const n of Array.isArray(s.nodes) ? s.nodes : []) {
+          if (!n || typeof n !== "object") continue;
+          const id = String(n.id == null ? "" : n.id);
+          if (!id || id.indexOf("__") === 0 || ids.has(id)) continue; // empty / __proto__ / dup
+          if (!CAT.byId.has(n.agentId)) continue; // unknown agent
+          ids.add(id);
+          nodes.push({
+            id,
+            agentId: String(n.agentId),
+            label: str(n.label, String(n.agentId)),
+            instructions: str(n.instructions, ""),
+            model: str(n.model, ""),
+            x: Math.max(4, num(n.x)),
+            y: Math.max(4, num(n.y)),
+          });
+        }
+        const edges = [];
+        const seen = new Set();
+        for (const e of Array.isArray(s.edges) ? s.edges : []) {
+          if (!e || typeof e !== "object") continue;
+          const from = String(e.from == null ? "" : e.from);
+          const to = String(e.to == null ? "" : e.to);
+          if (!ids.has(from) || !ids.has(to) || from === to) continue;
+          const k = from + "→" + to;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          edges.push({ from, to });
+        }
+        return {
+          name: str(s.name, "untitled"),
+          goal: str(s.goal, ""),
+          nodes,
+          edges,
+        };
+      }
+
+      // ---------- auto-layout (Tidy button + "layout" op) ----------
+      function topoLevelsClient() {
+        const indeg = {},
+          adj = {};
+        nodes.forEach((n) => {
+          indeg[n.id] = 0;
+          adj[n.id] = [];
+        });
+        edges.forEach((e) => {
+          if (adj[e.from]) {
+            adj[e.from].push(e.to);
+            indeg[e.to] = (indeg[e.to] || 0) + 1;
+          }
+        });
+        let frontier = nodes.filter((n) => !indeg[n.id]).map((n) => n.id);
+        const levels = [],
+          done = new Set();
+        while (frontier.length) {
+          levels.push(frontier);
+          const next = [];
+          for (const id of frontier) {
+            done.add(id);
+            for (const k of adj[id]) if (--indeg[k] === 0) next.push(k);
+          }
+          frontier = next;
+        }
+        const left = nodes.filter((n) => !done.has(n.id)).map((n) => n.id);
+        if (left.length) levels.push(left); // cycle leftovers (shouldn't happen)
+        return levels;
+      }
+      function autoLayout() {
+        const COLW = 230,
+          ROWH = 118,
+          X0 = 60,
+          Y0 = 60;
+        topoLevelsClient().forEach((lvl, ci) => {
+          lvl.forEach((id, ri) => {
+            const n = nodes.find((x) => x.id === id);
+            if (n) {
+              n.x = X0 + ci * COLW;
+              n.y = Y0 + ri * ROWH;
+            }
+          });
+        });
+        render();
+        fitView();
+      }
+
+      // ---------- board command (natural language → graph ops) ----------
+      function resolveNode(ref) {
+        ref = String(ref == null ? "" : ref);
+        const low = ref.toLowerCase();
+        return (
+          nodes.find((x) => x.id === ref) ||
+          nodes.find((x) => (x.label || "").toLowerCase() === low) ||
+          nodes.find((x) => x.agentId === ref) ||
+          null
+        );
+      }
+      function applyOps(ops) {
+        let changed = 0;
+        const notes = [];
+        for (const op of ops || []) {
+          if (!op || typeof op !== "object") continue;
+          try {
+            switch (op.type) {
+              case "add": {
+                if (!CAT.byId.has(op.agent)) {
+                  notes.push("unknown agent " + op.agent);
+                  break;
+                }
+                const c = centerWorld();
+                const id = addNode(
+                  op.agent,
+                  c.x - 86 + 20 * (nodes.length % 5),
+                  c.y - 24 + 20 * (nodes.length % 5),
+                );
+                const n = nodes.find((x) => x.id === id);
+                if (n) {
+                  if (op.label) n.label = String(op.label);
+                  if (op.task) n.instructions = String(op.task);
+                }
+                const a = op.after && resolveNode(op.after);
+                if (a && n) tryConnect(a.id, n.id);
+                changed++;
+                break;
+              }
+              case "connect": {
+                const a = resolveNode(op.from),
+                  b = resolveNode(op.to);
+                if (a && b) {
+                  tryConnect(a.id, b.id);
+                  changed++;
+                }
+                break;
+              }
+              case "disconnect": {
+                const a = resolveNode(op.from),
+                  b = resolveNode(op.to);
+                if (a && b) {
+                  edges = edges.filter((e) => !(e.from === a.id && e.to === b.id));
+                  changed++;
+                }
+                break;
+              }
+              case "remove": {
+                const a = resolveNode(op.node);
+                if (a) {
+                  removeNode(a.id);
+                  changed++;
+                }
+                break;
+              }
+              case "setModel": {
+                const model = String(op.model || "");
+                if (!model) break;
+                if (op.scope === "all") {
+                  nodes.forEach((n) => (n.model = model));
+                } else {
+                  const byAgent = nodes.filter((n) => n.agentId === op.scope);
+                  if (byAgent.length) byAgent.forEach((n) => (n.model = model));
+                  else {
+                    const a = resolveNode(op.scope);
+                    if (a) a.model = model;
+                  }
+                }
+                changed++;
+                break;
+              }
+              case "setTask": {
+                const a = resolveNode(op.node);
+                if (a) {
+                  a.instructions = String(op.task || "");
+                  changed++;
+                }
+                break;
+              }
+              case "setGoal":
+                $("goal").value = String(op.goal || "");
+                changed++;
+                break;
+              case "layout":
+                autoLayout();
+                changed++;
+                break;
+            }
+          } catch (_) {
+            /* skip bad op */
+          }
+        }
+        if (selId) select(selId);
+        render();
+        flashErr(
+          changed
+            ? "Applied " +
+                changed +
+                " change" +
+                (changed > 1 ? "s" : "") +
+                (notes.length ? " (" + notes.join("; ") + ")" : "")
+            : "No changes" + (notes.length ? ": " + notes.join("; ") : "."),
+        );
+      }
+      function runCommand() {
+        const text = $("cmd").value.trim();
+        if (!text || running || cmdBusy) return;
+        cmdBusy = true;
+        $("cmdbar").classList.add("busy");
+        $("cmdRun").disabled = true;
+        flashErr("Thinking…");
+        vs.postMessage({ type: "command", text, sketch: serialize() });
+      }
+      function endCommand() {
+        cmdBusy = false;
+        $("cmdbar").classList.remove("busy");
+        $("cmdRun").disabled = false;
+      }
+      $("cmdRun").onclick = runCommand;
+      $("cmd").onkeydown = (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          runCommand();
+        }
+      };
+
+      // ---------- messages from the extension ----------
+      window.addEventListener("message", (ev) => {
+        const m = ev.data;
+        switch (m.type) {
+          case "init": {
+            CAT.groups = m.groups;
+            CAT.agents = m.agents;
+            CAT.byId = new Map(m.agents.map((a) => [a.id, a]));
+            MODELS = m.models;
+            PRICES = m.prices || {};
+            ACTIVE_TIERS = m.activeTiers || null;
+            TEMPLATES = m.templates || [];
+            buildPalette();
+            const opts = MODELS.map(
+              (x) =>
+                '<option value="' +
+                esc(x.id) +
+                '">' +
+                esc(x.label) +
+                (x.priced ? "" : " (unpriced)") +
+                "</option>",
+            ).join("");
+            $("inspModel").innerHTML =
+              '<option value="">Tier default</option>' + opts;
+            $("loadSel").innerHTML =
+              '<option value="">Load…</option>' +
+              (m.sketches || [])
+                .map((s) => "<option>" + esc(s) + "</option>")
+                .join("");
+            $("tplSel").innerHTML =
+              '<option value="">Templates…</option>' +
+              TEMPLATES.map(
+                (t) =>
+                  '<option value="' + esc(t.id) + '">' + esc(t.name) + "</option>",
+              ).join("");
+            render();
+            break;
+          }
+          case "runStart":
+            // Reset here (not on the click) so a rejected run — e.g. no API key — leaves the
+            // previous results on screen instead of wiping them.
+            usageByNode = {};
+            outputsByNode = {};
+            truncByNode = {};
+            turnsByNode = {};
+            nodes.forEach((n) => {
+              n._status = "";
+              n._model = "";
+            });
+            setRunning(true);
+            render();
+            break;
+          case "nodeStatus": {
+            const n = nodes.find((n) => n.id === m.id);
+            if (n) {
+              n._status = m.status;
+              if (m.model) n._model = m.model;
+              if (m.status === "error")
+                flashErr(n.label + ": " + (m.message || "failed"));
+            }
+            if (m.turns) turnsByNode[m.id] = m.turns;
+            if (m.note) flashErr((n ? n.label + ": " : "") + m.note);
+            render();
+            break;
+          }
+          case "nodeDelta":
+            break; // streaming preview per node — SK2 (live text in inspector)
+          case "nodeDone": {
+            const n = nodes.find((n) => n.id === m.id);
+            if (n) n._status = "done";
+            usageByNode[m.id] = m.usage;
+            outputsByNode[m.id] = m.preview || "";
+            if (m.truncated) truncByNode[m.id] = true;
+            if (m.turns) turnsByNode[m.id] = m.turns;
+            if (selId === m.id) select(m.id);
+            render();
+            break;
+          }
+          case "runTotals":
+            usageByNode = m.usageByNode || usageByNode;
+            refreshTotals();
+            break;
+          case "runDone": {
+            setRunning(false);
+            usageByNode = m.usageByNode || usageByNode;
+            outputsByNode = m.outputs || outputsByNode;
+            if (m.aborted) flashErr("Stopped.");
+            if (selId) select(selId);
+            render();
+            break;
+          }
+          case "runError":
+            setRunning(false);
+            flashErr(m.message);
+            break;
+          case "uiError":
+            // A save/load/clipboard/command failure — NOT a run outcome, so don't touch run state.
+            endCommand();
+            flashErr(m.message);
+            break;
+          case "commandResult":
+            endCommand();
+            $("cmd").value = "";
+            // A run may have started while the command was in flight — don't mutate a graph the
+            // runner is actively walking (mirrors the load/clear/template gating).
+            if (running) {
+              flashErr("Board command ignored — a run is in progress.");
+              break;
+            }
+            applyOps(m.ops);
+            break;
+          case "saved":
+            $("loadSel").innerHTML =
+              '<option value="">Load…</option>' +
+              (m.sketches || [])
+                .map((s) => "<option>" + esc(s) + "</option>")
+                .join("");
+            break;
+          case "sketchLoaded": {
+            const s = sanitizeSketch(m.sketch);
+            $("name").value = s.name;
+            $("goal").value = s.goal;
+            nodes = s.nodes;
+            edges = s.edges;
+            seq = nodes.reduce(
+              (mx, n) =>
+                Math.max(mx, parseInt(String(n.id).replace(/\D/g, "")) || 0),
+              0,
+            );
+            usageByNode = {};
+            outputsByNode = {};
+            truncByNode = {};
+            turnsByNode = {};
+            select(null);
+            render();
+            fitView();
+            break;
+          }
+        }
+      });
+
+      vs.postMessage({ type: "ready" });
+    </script>
+  </body>
+</html>
