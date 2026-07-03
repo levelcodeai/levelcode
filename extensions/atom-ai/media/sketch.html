@@ -527,10 +527,25 @@
       }
 
       /* canvas overlays: zoom controls + board command bar */
-      #zoomctl {
+      /* Bottom control row: command bar (grows) on the left, zoom cluster on the right — a flex
+         layout so they never overlap at any panel width. pointer-events pass through the gap. */
+      #canvasControls {
         position: absolute;
+        left: 12px;
         right: 12px;
         bottom: 12px;
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        pointer-events: none;
+        z-index: 20;
+      }
+      #canvasControls > * {
+        pointer-events: auto;
+      }
+      #zoomctl {
+        flex: none;
+        margin-left: auto; /* pin to the far right; the gap grows between it and the command bar */
         display: flex;
         gap: 4px;
         background: var(--vscode-editorWidget-background, var(--panel));
@@ -549,11 +564,9 @@
         font-variant-numeric: tabular-nums;
       }
       #cmdbar {
-        position: absolute;
-        left: 50%;
-        bottom: 14px;
-        transform: translateX(-50%);
-        width: min(680px, 82%);
+        flex: 1 1 auto;
+        min-width: 0;
+        max-width: 680px;
         display: flex;
         gap: 6px;
         background: var(--vscode-editorWidget-background, var(--panel));
@@ -821,20 +834,23 @@
           right port to another node to chain them.<br />▶ Run executes the flow
           — parallel where possible — and meters tokens + cost per agent.
         </div>
-        <div id="zoomctl">
-          <button id="zoomOut" title="Zoom out">−</button>
-          <button id="zoomPct" title="Reset zoom (⌘0)">100%</button>
-          <button id="zoomIn" title="Zoom in">+</button>
-          <button id="zoomFit" title="Fit all nodes">⤢</button>
-          <button id="tidy" title="Auto-arrange left→right by dependency">⇄ Tidy</button>
-        </div>
-        <div id="cmdbar">
-          <input
-            id="cmd"
-            type="text"
-            placeholder="Ask the board…  e.g. “add a security-auditor after coder”, “set every agent to Opus 4.8”, “tidy the layout”"
-          />
-          <button id="cmdRun" class="primary">Ask ✦</button>
+        <!-- One bottom row so the command bar and zoom controls can never overlap. -->
+        <div id="canvasControls">
+          <div id="cmdbar">
+            <input
+              id="cmd"
+              type="text"
+              placeholder="Ask the board…  e.g. “add a security-auditor after coder”, “set every agent to Opus 4.8”, “tidy the layout”"
+            />
+            <button id="cmdRun" class="primary">Ask ✦</button>
+          </div>
+          <div id="zoomctl">
+            <button id="zoomOut" title="Zoom out">−</button>
+            <button id="zoomPct" title="Reset zoom (⌘0)">100%</button>
+            <button id="zoomIn" title="Zoom in">+</button>
+            <button id="zoomFit" title="Fit all nodes">⤢</button>
+            <button id="tidy" title="Auto-arrange left→right by dependency">⇄ Tidy</button>
+          </div>
         </div>
       </div>
       <div id="inspector">
