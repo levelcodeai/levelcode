@@ -105,9 +105,41 @@ see the new version. Keep the feed version in lockstep with the tag.
 | Gatekeeper still warns after notarizing | Forgot to **staple**, or stapled the app but not the dmg. |
 | Chat won't open / shortcut dead in a build | `atompp.ai.focus` is `Ctrl+Cmd+I` (moved off the `Cmd+Alt+I` DevTools collision); the chat also auto-reveals until the first message is sent. |
 
-## 7. CI (optional)
+## 7. CI build — hybrid model (`.github/workflows/release.yml`)
 
-On a `macos` runner: base64-encode the `.p12` Developer ID export + store it (plus cert password,
-`APPLE_ID`, `TEAM_ID`, `APP_SPECIFIC_PASSWORD`) as repo secrets; import the cert into a temp keychain at
-job start, then run `build-macos.sh` → `make-dmg.sh` with `APPLE_ID`/`TEAM_ID`/`APP_SPECIFIC_PASSWORD`
-set (make-dmg.sh uses those when `NOTARY_PROFILE` is absent).
+**CI builds both arches; you sign locally.** Your Developer ID cert never touches GitHub. CI exists to
+solve the awkward part — building the **Intel (x64)** dmg, which you can't easily do on an Apple-silicon
+Mac — by building each arch on its **native** runner (`macos-14` = arm64, `macos-13` = x64). It produces
+**unsigned** `.app` bundles; you do the fast, sensitive sign + notarize + staple on your machine.
+
+The whole release becomes:
+
+```sh
+# 1. Kick off CI (builds both arches, ~30–60 min/arch; free on public repos, 10× minutes while private)
+git tag v0.1.0 && git push --tags
+#    → workflow builds → creates a DRAFT release with UNSIGNED-Atom++-<arch>.app.zip attached
+
+# 2. Sign + notarize LOCALLY (needs the one-time setup from §1)
+gh release download v0.1.0 --pattern 'UNSIGNED-*.app.zip'
+for A in arm64 x64; do
+  rm -rf "VSCode-darwin-$A" && ditto -x -k "UNSIGNED-Atom++-$A.app.zip" "VSCode-darwin-$A"
+  CODESIGN_IDENTITY="Developer ID Application: SERGII DEMIANCHUK (AJ27Y4Z2HS)" \
+    NOTARY_PROFILE=atompp-notary ./scripts/make-dmg.sh "$A"     # → Atom++-$A.dmg (signed+notarized+stapled)
+done
+
+# 3. Verify (§3), then attach the dmgs, drop the unsigned zips, and publish
+gh release upload v0.1.0 Atom++-arm64.dmg Atom++-x64.dmg
+gh release delete-asset v0.1.0 UNSIGNED-Atom++-arm64.app.zip UNSIGNED-Atom++-x64.app.zip
+gh release edit v0.1.0 --draft=false --notes-file RELEASE-NOTES.md
+```
+
+Notes:
+- **No secrets required** — the workflow is credential-free by design (that's the whole point of hybrid).
+- The dmg names (`Atom++-arm64.dmg` / `Atom++-x64.dmg`) are exactly what the download funnel at
+  `atompp.ai/download/<arch>` expects — don't rename them.
+- `releases/latest` only resolves once this is a **published, non-prerelease** release with both dmgs.
+- **Fully-automated alternative** (signing in CI) if you ever want zero local steps: base64 the `.p12`
+  Developer ID export + store it and an App Store Connect API key as secrets behind a *protected
+  Environment*, import into a temp keychain at job start, and run `make-dmg.sh` with `CODESIGN_IDENTITY`
+  set. Standard (VSCodium does this) but puts your signing identity in the cloud — the hybrid flow above
+  deliberately doesn't.

@@ -1,0 +1,104 @@
+name: Build release apps
+
+# Hybrid release model (see docs/RELEASING.md): CI does the heavy, awkward part — building BOTH
+# macOS arches on their NATIVE runners (you can't easily build x64 on an Apple-silicon Mac) — with
+# NO signing secrets. It produces unsigned .app bundles and attaches them to a DRAFT release. You
+# then sign + notarize + staple LOCALLY (your Developer ID cert never leaves your machine), attach
+# the notarized dmgs, delete the UNSIGNED-*.app.zip assets, and publish.
+
+on:
+  push:
+    tags: ["v*"] # e.g. git tag v0.1.0 && git push --tags
+  workflow_dispatch:
+    inputs:
+      vscode_tag:
+        description: "Override the pinned VS Code tag (blank = scripts/bootstrap.sh default)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # create/update the draft release
+
+jobs:
+  # Cheap gate: run the extension unit tests before spending ~1h of macOS build minutes.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Extension unit tests
+        run: |
+          cd extensions/atom-ai
+          for t in test/*.test.js; do node "$t"; done
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14, arch: arm64 } # Apple Silicon (native)
+          - { runner: macos-13, arch: x64 } # Intel (native)
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24" # bootstrap.sh checks the .nvmrc major; 24.x satisfies the 1.126 pin
+      - name: Cache npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ matrix.arch }}-${{ hashFiles('scripts/bootstrap.sh') }}
+          restore-keys: npm-${{ matrix.arch }}-
+      - name: Bootstrap Code-OSS + branding + deps
+        run: ./scripts/bootstrap.sh
+        env:
+          VSCODE_TAG: ${{ github.event.inputs.vscode_tag }}
+      - name: Build Atom++.app (${{ matrix.arch }}, proprietary stripped)
+        run: ./scripts/build-macos.sh ${{ matrix.arch }}
+      - name: Zip the unsigned app
+        run: ditto -c -k --sequesterRsrc --keepParent "VSCode-darwin-${{ matrix.arch }}/Atom++.app" "UNSIGNED-Atom++-${{ matrix.arch }}.app.zip"
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UNSIGNED-Atom++-${{ matrix.arch }}
+          path: UNSIGNED-Atom++-${{ matrix.arch }}.app.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  draft-release:
+    name: Draft release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: apps
+          merge-multiple: true
+      - name: Create / refresh the draft release with the UNSIGNED apps
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: Atom++ ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: apps/*.zip
+          fail_on_unmatched_files: true
+          body: |
+            **Draft — not for release as-is.** The attached `UNSIGNED-Atom++-<arch>.app.zip`
+            files are CI build artifacts with **no Developer ID signature or notarization**.
+
+            To finish the release **locally** (your signing cert never touches CI):
+
+            1. `gh release download ${{ github.ref_name }} --pattern 'UNSIGNED-*.app.zip'`
+            2. For each arch — unzip into `VSCode-darwin-<arch>/`, then
+               `CODESIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=atompp-notary ./scripts/make-dmg.sh <arch>`
+               (signs → dmg → notarizes → staples → `Atom++-<arch>.dmg`).
+            3. `gh release upload ${{ github.ref_name }} Atom++-arm64.dmg Atom++-x64.dmg`
+            4. **Delete the `UNSIGNED-*.app.zip` assets**, add real notes, and publish.
+
+            Full runbook: `docs/RELEASING.md`.
