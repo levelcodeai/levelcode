@@ -406,6 +406,13 @@ async function runAgent(ctx) {
 	let step = 0;
 	let reason = 'done';
 	let nudges = 0;
+	// Bound worst-case token spend across max_tokens continuation turns. Each continuation is another
+	// full API call whose input grows with the (never-truncated) transcript, so an adversarial or
+	// runaway model that keeps hitting the cap could otherwise rack up unbounded, user-billed calls.
+	// Budget = a generous multiple of the per-turn cap; once exceeded we stop continuing and hand back.
+	const perTurnMax = Math.max(1024, Math.min(32768, ctx.maxTokens || 8192));
+	const OUTPUT_TOKEN_BUDGET = perTurnMax * 8;
+	let cumulativeOutputTokens = 0;
 
 	// --- M5 auto-verify loop ------------------------------------------------
 	// When the model wants to finish AND it edited files this run, check its work before handing back:
@@ -476,7 +483,7 @@ async function runAgent(ctx) {
 			let textChars = 0;
 			const turn = await providers.streamAgentTurn({
 				providerId: ctx.providerId, baseURL: ctx.baseURL,
-				apiKey: ctx.apiKey, model: ctx.model, maxTokens: 8192, system: system,
+				apiKey: ctx.apiKey, model: ctx.model, maxTokens: perTurnMax, system: system,
 				messages, tools: TOOLS, signal: ctx.signal,
 				onText: (t) => { streamed = true; textChars += t.length; ctx.post({ type: 'agentDelta', text: t }); },
 				onToolStart: (name) => {
@@ -491,7 +498,8 @@ async function runAgent(ctx) {
 			dbg('turn.response', { step, stop: turn.stop_reason, blocks: turn.content.length, textChars, tools: turn.content.filter((c) => c.type === 'tool_use').map((c) => c.name + (turn.malformed && turn.malformed.has(c.id) ? '!malformed' : '')) });
 			// Report real context usage (input_tokens = how full the transcript is) so the UI can meter + warn.
 			if (turn.usage) {
-				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens });
+				cumulativeOutputTokens += (turn.usage.output_tokens || 0);
+				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens, cumulativeOutput: cumulativeOutputTokens });
 				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: TOOLS_TOKENS_EST });
 			}
 
@@ -539,9 +547,29 @@ async function runAgent(ctx) {
 			// No tool calls this turn.
 			const text = turn.content.filter((c) => c.type === 'text').map((c) => c.text).join('');
 			if (turn.stop_reason === 'max_tokens') {
-				ctx.post({ type: 'agentTool', icon: 'warning', text: 'response was cut off — switching to smaller edits' });
-				messages.push({ role: 'user', content: 'Your last response was cut off (too long). Use edit_file for small, targeted changes instead of rewriting whole files. Continue.' });
-				if (nudges++ < 3) { continue; }
+				// The turn was pure prose cut off at the token cap. Ask the model to CONTINUE exactly where it
+				// left off (not switch strategies) so the full answer streams out across turns instead of being
+				// truncated. The already-streamed text stays; the continuation is appended seamlessly.
+				// Guard: bail out of the continuation loop once cumulative output blows the budget, so a
+				// model that keeps hitting the cap can't run up unbounded, user-billed API calls.
+				if (cumulativeOutputTokens >= OUTPUT_TOKEN_BUDGET) {
+					dbg('continue.budgetExceeded', { cumulativeOutput: cumulativeOutputTokens, budget: OUTPUT_TOKEN_BUDGET });
+					ctx.post({ type: 'agentTool', icon: 'warning', text: 'response length budget reached — stopping to avoid runaway token spend' });
+					reason = 'limit'; break;
+				}
+				ctx.post({ type: 'agentTool', icon: 'warning', text: 'response was long — continuing…' });
+				if (nudges++ < 6) {
+					// Two distinct continuation prompts. When the prior turn was building toward a file we let
+					// the model switch to a write tool; otherwise it's plain prose and we must NOT suggest tools
+					// (a tool hint mid-explanation can trigger an unexpected/out-of-scope file write, and it also
+					// widens a prompt-injection path if the cut-off text came from injected workspace content).
+					const buildingFile = /```|\b(create|write|save|add)\b[^.\n]{0,40}\bfile\b|\bfile\b[^.\n]{0,40}\b(create|write|save|add)\b/i.test(text);
+					const grounding = 'You are a coding assistant. Continue your previous response where it was cut off. Do not repeat content already written.';
+					messages.push({ role: 'user', content: buildingFile
+						? grounding + ' If you were about to produce a file, stop pasting its contents into the chat and instead call edit_file or write_file to actually apply it.'
+						: grounding });
+					continue;
+				}
 				reason = 'limit'; break;
 			}
 			if (/(^|\n)\s*done\s*:/i.test(text) || /\bdone\.?\s*$/i.test(text.trim())) {
