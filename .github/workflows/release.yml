@@ -43,6 +43,11 @@ jobs:
           - { runner: macos-14, arch: arm64 } # Apple Silicon (native)
           - { runner: macos-13, arch: x64 } # Intel (native)
     runs-on: ${{ matrix.runner }}
+    # Authenticate npm postinstall downloads (notably @vscode/ripgrep, which fetches a prebuilt binary
+    # from GitHub releases). Without a token they use GitHub's 60/hr ANONYMOUS limit and 403 on busy
+    # release days; GITHUB_TOKEN raises that to 5000/hr. Read-only default token — no extra perms needed.
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
