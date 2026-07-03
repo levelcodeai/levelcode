@@ -8,7 +8,7 @@ Atom++ stands on the same battle-tested Monaco / Code-OSS core behind VS Code an
 
 ## Download
 
-Grab the latest **`Atom++-<arch>.dmg`** from **[Releases](https://github.com/atom-plus-plus/atompp/releases/latest)** (arm64 for Apple silicon, x64 for Intel), open it, and drag Atom++ to Applications.
+Get the latest **`.dmg`** from **[atompp.ai/download](https://atompp.ai/download)** — Apple Silicon or Intel — open it, and drag Atom++ to Applications. (Direct links: [Apple Silicon](https://atompp.ai/download/arm64) · [Intel](https://atompp.ai/download/x64) · [all releases](https://github.com/atom-plus-plus/atompp/releases/latest).)
 
 > Signed + notarized builds open with a plain double-click. If you're on an early unsigned build and macOS blocks first launch, right-click the app → **Open** (once), or run `xattr -dr com.apple.quarantine "/Applications/Atom++.app"`.
 

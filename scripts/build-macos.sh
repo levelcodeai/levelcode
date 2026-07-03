@@ -14,12 +14,21 @@ VSCODE_DIR="$ROOT_DIR/vscode"
 
 [ -d "$VSCODE_DIR" ] || { echo "Run ./scripts/bootstrap.sh first."; exit 1; }
 
-# Detect arch -> gulp target.
-ARCH="$(uname -m)"
+# Target arch -> gulp target. First arg (arm64|x64) overrides the host arch so you can produce the
+# Intel build too — best run on a native x64 machine / CI runner (cross-building x64 from Apple
+# silicon needs the x64 toolchain installed). Defaults to the host arch.
+HOST_ARCH="$(uname -m)"
+ARCH="${1:-$HOST_ARCH}"
 case "$ARCH" in
-  arm64)  GULP_TARGET="vscode-darwin-arm64"; OUT_DIR="VSCode-darwin-arm64"; EXPECT_NODE_ARCH="arm64" ;;
-  x86_64) GULP_TARGET="vscode-darwin-x64";   OUT_DIR="VSCode-darwin-x64";   EXPECT_NODE_ARCH="x64"  ;;
-  *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+  arm64|aarch64)    ARCH="arm64"; GULP_TARGET="vscode-darwin-arm64"; OUT_DIR="VSCode-darwin-arm64" ;;
+  x64|x86_64|amd64) ARCH="x64";   GULP_TARGET="vscode-darwin-x64";   OUT_DIR="VSCode-darwin-x64"  ;;
+  *) echo "Unsupported target arch: $ARCH (use arm64 or x64)"; exit 1 ;;
+esac
+# The Rosetta guard below is a HOST check (node must run native), independent of the build target.
+case "$HOST_ARCH" in
+  arm64)  EXPECT_NODE_ARCH="arm64" ;;
+  x86_64) EXPECT_NODE_ARCH="x64"  ;;
+  *) echo "Unsupported host arch: $HOST_ARCH"; exit 1 ;;
 esac
 
 cd "$VSCODE_DIR"
@@ -28,7 +37,7 @@ cd "$VSCODE_DIR"
 # (Run from inside the checkout; tolerate a missing glob under `set -e -o pipefail`.)
 NODE_ARCH="$(node -p 'process.arch')"
 if [ "$NODE_ARCH" != "$EXPECT_NODE_ARCH" ]; then
-  echo "[build] ERROR: host is $ARCH but Node arch is '$NODE_ARCH' (Rosetta mismatch)."
+  echo "[build] ERROR: host is $HOST_ARCH but Node arch is '$NODE_ARCH' (Rosetta mismatch)."
   echo "[build] Use a native arm64 Node and reinstall deps, then retry. See docs/M0-RUNBOOK.md."
   exit 1
 fi

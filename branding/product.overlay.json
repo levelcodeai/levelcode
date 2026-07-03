@@ -35,8 +35,13 @@
   },
 
   "licenseName": "MIT",
-  "licenseUrl": "https://github.com/systemu-net/atom-plus-plus/blob/main/LICENSE",
-  "reportIssueUrl": "https://github.com/systemu-net/atom-plus-plus/issues/new",
+  "licenseUrl": "https://github.com/atom-plus-plus/atompp/blob/main/LICENSE",
+  "reportIssueUrl": "https://github.com/atom-plus-plus/atompp/issues/new",
+
+  "_downloadComment": "Download + update funnel through atompp.ai (see site/app/download/[arch]/route.ts). downloadUrl is where the notify-only updater's Download button sends the user; releaseNotesUrl backs its 'Release Notes' button. updateUrl is the feed base — the updater GETs {updateUrl}/api/update/{target}/{quality}/{commit}; until that endpoint is live it returns 404 and the updater silently treats it as 'up to date' (notify-only, non-fatal). RELEASE NOTE: atompp.ai must resolve to the deployed site before these links work.",
+  "downloadUrl": "https://atompp.ai/download",
+  "releaseNotesUrl": "https://github.com/atom-plus-plus/atompp/releases/latest",
+  "updateUrl": "https://atompp.ai",
 
   "enableTelemetry": false,
   "telemetryOptOutUrl": "",

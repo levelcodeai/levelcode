@@ -22,11 +22,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-ARCH="$(uname -m)"
+# Target arch: first arg (arm64|x64) overrides the host arch (match build-macos.sh). Arch is
+# normalized to arm64|x64 so the output is Atom++-arm64.dmg / Atom++-x64.dmg — the EXACT filenames
+# the download funnel (atompp.ai/download/<arch>) and the site link to. Do not emit "x86_64" here.
+ARCH="${1:-$(uname -m)}"
 case "$ARCH" in
-  arm64)  OUT_DIR="VSCode-darwin-arm64" ;;
-  x86_64) OUT_DIR="VSCode-darwin-x64"  ;;
-  *) echo "[make-dmg] Unsupported arch: $ARCH"; exit 1 ;;
+  arm64|aarch64)    ARCH="arm64"; OUT_DIR="VSCode-darwin-arm64" ;;
+  x64|x86_64|amd64) ARCH="x64";   OUT_DIR="VSCode-darwin-x64"  ;;
+  *) echo "[make-dmg] Unsupported arch: $ARCH (use arm64 or x64)"; exit 1 ;;
 esac
 
 APP="$OUT_DIR/Atom++.app"
