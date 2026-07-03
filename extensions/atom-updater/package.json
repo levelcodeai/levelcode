@@ -5,17 +5,29 @@
   "publisher": "atompp",
   "version": "0.1.0",
   "license": "MIT",
-  "engines": { "vscode": "^1.96.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
   "capabilities": {
     "virtualWorkspaces": true,
-    "untrustedWorkspaces": { "supported": true }
+    "untrustedWorkspaces": {
+      "supported": true
+    }
   },
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
-      { "command": "atompp.update.check", "title": "Check for Updates", "category": "Atom++" }
+      {
+        "command": "atompp.update.check",
+        "title": "Check for Updates",
+        "category": "Atom++"
+      }
     ],
     "configuration": {
       "title": "Atom++ Updater",

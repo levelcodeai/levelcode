@@ -5,23 +5,50 @@
   "publisher": "atompp",
   "version": "0.1.0",
   "license": "MIT",
-  "engines": { "vscode": "^1.96.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
   "capabilities": {
     "virtualWorkspaces": true,
-    "untrustedWorkspaces": { "supported": true }
+    "untrustedWorkspaces": {
+      "supported": true
+    }
   },
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "contributes": {
     "authentication": [
-      { "id": "atompp", "label": "Atom++ Account" }
+      {
+        "id": "atompp",
+        "label": "Atom++ Account"
+      }
     ],
     "commands": [
-      { "command": "atompp.sync.setUp", "title": "Set Up Sync (Sign In + Turn On)", "category": "Atom++ Sync" },
-      { "command": "atompp.sync.signIn", "title": "Sign In", "category": "Atom++ Sync" },
-      { "command": "atompp.sync.signOut", "title": "Sign Out", "category": "Atom++ Sync" },
-      { "command": "atompp.sync.status", "title": "Show Status", "category": "Atom++ Sync" }
+      {
+        "command": "atompp.sync.setUp",
+        "title": "Set Up Sync (Sign In + Turn On)",
+        "category": "Atom++ Sync"
+      },
+      {
+        "command": "atompp.sync.signIn",
+        "title": "Sign In",
+        "category": "Atom++ Sync"
+      },
+      {
+        "command": "atompp.sync.signOut",
+        "title": "Sign Out",
+        "category": "Atom++ Sync"
+      },
+      {
+        "command": "atompp.sync.status",
+        "title": "Show Status",
+        "category": "Atom++ Sync"
+      }
     ],
     "configuration": {
       "title": "Atom++ Sync",
