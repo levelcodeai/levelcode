@@ -41,10 +41,10 @@ fi
 VOL_NAME="Atom++"
 DMG_OUT="$ROOT_DIR/Atom++-$ARCH.dmg"
 
-# 0. De-Microsoft: make sure no proprietary Copilot/MS code is in the app before we sign + ship it
-# (idempotent — a no-op if build-macos.sh already stripped it). Runs BEFORE signing so the signature
-# covers the stripped bundle.
+# 0. De-Microsoft + hide not-yet-ready features (Atom++ Sync) before we sign + ship it (idempotent —
+# no-ops if build-macos.sh already did it). Runs BEFORE signing so the signature covers the result.
 node "$SCRIPT_DIR/strip-proprietary.mjs" "$APP/Contents/Resources/app"
+node "$SCRIPT_DIR/strip-unreleased.mjs" "$APP/Contents/Resources/app"
 
 # 1. Sign the bundle. Two modes:
 #    - Distributable: set CODESIGN_IDENTITY to your "Developer ID Application: …" identity (and

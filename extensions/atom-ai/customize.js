@@ -47,6 +47,9 @@ async function gatherStatus(context) {
 		completions: ai.get('completions.enabled', true),
 		theme: vscode.workspace.getConfiguration('workbench').get('colorTheme', ''),
 		syncEnabled: !!vscode.workspace.getConfiguration().get('configurationSync.keybindingsPerPlatform') || undefined,
+		// Sync is stripped from public builds until the managed host ships (strip-unreleased.mjs), so
+		// only show its section when the atom-sync extension is actually present (its command exists).
+		syncAvailable: (await vscode.commands.getCommands(true)).includes('atompp.sync.setUp'),
 		updates: vscode.workspace.getConfiguration('atompp.update').get('enabled', true)
 	};
 }
@@ -86,9 +89,9 @@ function htmlFor(nonce, s) {
 			btn('Apply keymap preset', 'atompp.keymap.apply') +
 			btn('Import from VS Code', 'atompp.import.vscode') + '</div>');
 
-	const sync = section('🔄', 'Sync',
+	const sync = s.syncAvailable ? section('🔄', 'Sync',
 		'<p class="muted">Carry your settings, keybindings, theme, MCP & skills across machines.</p>' +
-		'<div class="btns">' + btn('Set up Sync', 'atompp.sync.setUp') + btn('Sync status', 'atompp.sync.status') + '</div>');
+		'<div class="btns">' + btn('Set up Sync', 'atompp.sync.setUp') + btn('Sync status', 'atompp.sync.status') + '</div>') : '';
 
 	const upd = section('⬆️', 'Updates',
 		row('Auto-check', s.updates ? 'on' : 'off', s.updates) +

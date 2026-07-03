@@ -65,6 +65,11 @@ BUILT_APP="$APP_PARENT/$OUT_DIR"
 echo "[build] Stripping bundled proprietary packages from the app (de-Microsoft) …"
 node "$SCRIPT_DIR/strip-proprietary.mjs" "$BUILT_APP/Atom++.app/Contents/Resources/app"
 
+# Hide not-yet-ready features from the public build (Atom++ Sync — its managed host isn't deployed).
+# Source keeps it for dev + the future Pro release; only the shipped .app loses the surfaces.
+echo "[build] Hiding not-yet-ready features from the app (Atom++ Sync) …"
+node "$SCRIPT_DIR/strip-unreleased.mjs" "$BUILT_APP/Atom++.app/Contents/Resources/app"
+
 # The .app inside is named from product.json nameLong -> "Atom++.app".
 echo "[build] Done."
 echo "[build] Output folder: $BUILT_APP"

@@ -23,7 +23,7 @@
   "urlProtocol": "atom-plus-plus",
   "quality": "stable",
 
-  "_syncComment": "Atom++ Sync (the Obsidian analog). Reuses Code-OSS's built-in Settings Sync, pointed at our own server. The `atompp` auth provider is contributed by extensions/atom-sync. RELEASE NOTE: url is a DEV/localhost placeholder — point it at the managed Atom++ Cloud sync host before any release (see docs/atompp-sync-design.md §6).",
+  "_syncComment": "Atom++ Sync (the Obsidian analog). Reuses Code-OSS's built-in Settings Sync, pointed at our own server. The `atompp` auth provider is contributed by extensions/atom-sync. The localhost url below is a DEV placeholder and is FINE to keep: scripts/strip-unreleased.mjs removes atom-sync + this configurationSync.store + the Welcome 'Sync' step from the PUBLIC build, so Sync is dev-only until the managed Atom++ Cloud host ships (docs/atompp-sync-design.md §6 / S2). When it ships, drop strip-unreleased's sync entries and point this url at the managed host.",
   "configurationSync.store": {
     "url": "http://localhost:9595",
     "stableUrl": "http://localhost:9595",
