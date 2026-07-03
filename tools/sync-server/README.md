@@ -1,14 +1,13 @@
 # Atom++ reference Settings Sync server
 
 A tiny, **dependency-free** implementation of the Code-OSS user-data-sync REST contract — the
-same protocol the editor's built-in **Settings Sync** speaks. See
-[`docs/atompp-sync-design.md`](../../docs/atompp-sync-design.md) for the full design.
+same protocol the editor's built-in **Settings Sync** speaks.
 
 It exists to:
 - **develop/test** Atom++ Sync end-to-end with no cloud backend, and
 - **self-host the free sync tier** (bring your own storage).
 
-Atom++ Cloud (thin.ly) implements the same contract for managed **Pro** sync.
+Atom++ Cloud implements the same contract for managed sync.
 
 ## Run
 
@@ -43,4 +42,4 @@ node tools/sync-server/test.js     # round-trips the REST contract (manifest, ET
 - **Opaque bodies:** the server never parses settings, so client-side **E2E encryption** can be
   added later with zero server changes.
 - **Dev only:** HTTP on localhost, file-backed storage under `tools/sync-server/.data` (gitignored).
-  Not hardened for production — thin.ly is the managed implementation.
+  Not hardened for production — Atom++ Cloud is the managed implementation.

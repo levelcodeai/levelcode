@@ -10,7 +10,7 @@
  *
  *  The "latest build" per (target, quality) is read from a releases file (RELEASES_FILE, default
  *  ./releases.json). Use it to dev/test the updater, to self-host an update feed, and as the spec
- *  thin.ly implements for managed releases. See docs/atompp-update-flow.md.
+ *  Atom++ Cloud implements for managed releases.
  *
  *  Run:  PORT=9696 RELEASES_FILE=./releases.json node server.js
  *--------------------------------------------------------------------------------------------*/

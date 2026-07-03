@@ -1,8 +1,7 @@
 # Atom++ reference update-feed server
 
 A tiny, **dependency-free** implementation of the Code-OSS update-feed contract that both the
-built-in updater and the **notify-only `atom-updater` extension** speak. See
-[`docs/atompp-update-flow.md`](../../docs/atompp-update-flow.md).
+built-in updater and the **notify-only `atom-updater` extension** speak.
 
 ```
 GET /api/update/{target}/{quality}/{commit}
@@ -50,5 +49,5 @@ node tools/update-server/test.js     # 5 contract round-trips
 
 - **Notify-only:** the `atom-updater` extension only links to the download — it never installs.
   Native auto-apply needs Developer-ID signing (the built-in Squirrel updater); this works on any build.
-- **Dev only:** HTTP on localhost. Atom++ Cloud (thin.ly) is the managed implementation; staged
-  rollout / channels live there (design §U1, §U3).
+- **Dev only:** HTTP on localhost. Atom++ Cloud is the managed implementation; staged
+  rollout / channels live there.

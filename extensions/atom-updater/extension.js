@@ -5,7 +5,7 @@
  *  build is advertised, shows a notification with a Download link. It NEVER downloads or applies
  *  anything itself, so it works on any build (including ad-hoc-signed) with no code-signing —
  *  unlike the editor's built-in Squirrel updater. When Developer-ID signing lands, the built-in
- *  updater can take over and this becomes a fallback. See docs/atompp-update-flow.md (U0).
+ *  updater can take over and this becomes a fallback.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';

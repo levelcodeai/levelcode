@@ -130,7 +130,7 @@ function loadSketch(name) {
 // The working canvas + the LAST RUN'S RESULTS (per-node outputs, tokens, cost) live only in the
 // webview's memory; a folder reopen would otherwise wipe them. We mirror the whole session to
 // .atompp/.session.json on every meaningful change and restore it when the panel reopens. This is
-// app-internal state (like a draft), NOT a portable deliverable — see docs/atompp-agent-runs-persistence.md.
+// app-internal state (like a draft), NOT a portable deliverable.
 function atompHome() {
   const f = vscode.workspace.workspaceFolders;
   return f && f.length ? path.join(f[0].uri.fsPath, ".atompp") : null;

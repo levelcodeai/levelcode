@@ -4,7 +4,6 @@
  *  Speaks the same update-feed contract as the editor's built-in updater
  *  (GET {updateUrl}/api/update/{target}/{quality}/{commit}), but only NOTIFIES — it never
  *  auto-applies, so it works on any build (incl. ad-hoc-signed) with no code-signing.
- *  See docs/atompp-update-flow.md (U0).
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';

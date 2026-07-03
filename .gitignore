@@ -20,6 +20,19 @@
 /diff.patch
 /skills-lock.json
 
+# Internal build plan + private Atom++ Cloud design docs — roadmap, monetization, pricing, competitive
+# positioning, and private-infra architecture. Kept OUT of the public repo and scrubbed from history
+# via git filter-repo (see docs/PRE-PUBLIC-CHECKLIST.md §1). Working copies stay on disk, untracked,
+# for internal use. NOTE: gitignore only stops FUTURE tracking — the history scrub is what removes
+# these from past commits.
+/PLAN.md
+/docs/atompp-cloud-PRD.md
+/docs/atompp-cloud-PRD.pdf
+/docs/atompp-agent-runs-persistence.md
+/docs/atompp-sync-design.md
+/docs/atompp-update-flow.md
+/docs/atompp-update-flow.pdf
+
 # Node / OS noise
 node_modules/
 .DS_Store

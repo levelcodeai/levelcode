@@ -7,7 +7,7 @@
  *  the configured sync server using its own battle-tested engine — we add no sync logic here.
  *
  *  Sign-in is a DEV flow for now (mints a local token); the real loopback+PKCE flow against
- *  Atom++ Cloud (PRD §6.2.3) drops into createSession() later. See docs/atompp-sync-design.md.
+ *  Atom++ Cloud drops into createSession() later.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';

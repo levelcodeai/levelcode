@@ -5,7 +5,7 @@
  *  (the same protocol the editor's built-in Settings Sync speaks). Use it to:
  *    • develop/test Atom++ Sync end-to-end with no cloud backend, and
  *    • self-host the FREE sync tier (BYO storage).
- *  Atom++ Cloud (thin.ly) implements the same contract for managed Pro sync.
+ *  Atom++ Cloud implements the same contract for managed sync.
  *
  *  Storage is file-backed and isolated per bearer token (account). Bodies are opaque text —
  *  the server never parses settings, so client-side E2E encryption is trivial to add later.

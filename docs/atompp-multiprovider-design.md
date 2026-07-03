@@ -169,5 +169,5 @@ The agent runs on OpenAI-shaped providers via the boundary translation, but thre
 ## 7. Notes & security
 - **Keys stay in SecretStorage (OS keychain)**, per provider, and are **never** synced (consistent with the Sync design).
 - **The `custom` OpenAI-compatible base URL is user-supplied** — validate it's `https` (or explicit localhost) before use; don't send keys to an arbitrary `http` host silently.
-- **BYOK-primary alignment** (see [`atompp-cloud-PRD.md`](atompp-cloud-PRD.md) §8.0): multi-provider is exactly the BYOK-primary story — the user brings *any* provider's key. A future managed gateway would reuse the same registry + adapters server-side.
+- **BYOK-primary alignment**: multi-provider is exactly the BYOK-primary story — the user brings *any* provider's key. A future managed gateway would reuse the same registry + adapters server-side.
 - **No new npm dependencies / no build step** — every adapter is plain-JS `fetch` + the existing `readLines()`.
