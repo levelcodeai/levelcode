@@ -206,26 +206,58 @@
       .node.sel {
         border-color: var(--vscode-focusBorder);
       }
-      /* Active node: a breathing outer glow (box-shadow is painted behind the card, so it never
-         overlaps the side ports) plus a shimmer under the header — no animated overlay on the body. */
+      /* Active node: green "marching ants" — a dashed stroke that actually travels around the
+         rounded card (SVG stroke-dashoffset), plus a RUNNING badge. The ants are an inset SVG at
+         z-index 1; the connector ports sit at z-index 6, so the dots never get overdrawn/flicker. */
       .node.running {
-        border-color: var(--run-green);
-        animation: breathe 1.5s ease-in-out infinite;
+        border-color: color-mix(in srgb, var(--run-green) 45%, var(--border));
       }
-      @keyframes breathe {
-        0%,
-        100% {
-          box-shadow:
-            0 0 0 1px color-mix(in srgb, var(--run-green) 55%, transparent),
-            0 0 14px color-mix(in srgb, var(--run-green) 28%, transparent),
-            0 2px 10px rgba(0, 0, 0, 0.25);
+      .node .ants {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        overflow: visible;
+        display: none;
+        z-index: 1;
+      }
+      .node.running .ants {
+        display: block;
+      }
+      .node .ants rect {
+        x: 1.5px;
+        y: 1.5px;
+        width: calc(100% - 3px);
+        height: calc(100% - 3px);
+        rx: 8px;
+        ry: 8px;
+        fill: none;
+        stroke: var(--run-green);
+        stroke-width: 2;
+        stroke-dasharray: 6 5;
+        stroke-linecap: round;
+        animation: march 0.55s linear infinite;
+      }
+      @keyframes march {
+        to {
+          stroke-dashoffset: -22;
         }
-        50% {
-          box-shadow:
-            0 0 0 1.5px color-mix(in srgb, var(--run-green) 90%, transparent),
-            0 0 30px color-mix(in srgb, var(--run-green) 55%, transparent),
-            0 2px 10px rgba(0, 0, 0, 0.25);
-        }
+      }
+      .run-badge {
+        display: none;
+        margin-left: auto;
+        font-family: var(--vscode-editor-font-family, monospace);
+        font-size: 9.5px;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        color: var(--run-green);
+      }
+      .node.running .run-badge {
+        display: inline;
+      }
+      .node.running .status {
+        display: none;
       }
       .node .head {
         display: flex;
@@ -233,29 +265,6 @@
         gap: 6px;
         font-weight: 600;
         position: relative;
-      }
-      .node.running .head::after {
-        content: "";
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: -3px;
-        height: 2px;
-        border-radius: 2px;
-        pointer-events: none;
-        background: linear-gradient(
-          90deg,
-          transparent,
-          var(--run-green),
-          transparent
-        );
-        background-size: 200% 100%;
-        animation: sweep 1.2s linear infinite;
-      }
-      @keyframes sweep {
-        to {
-          background-position: -200% 0;
-        }
       }
       .node .head .dot {
         width: 9px;
@@ -570,6 +579,201 @@
       #cmdRun {
         white-space: nowrap;
       }
+
+      /* footer status pill — professional, icon + message, colored by kind */
+      #status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        max-width: 340px;
+        padding: 2px 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #status:empty {
+        display: none;
+      }
+      #status .st-ic {
+        flex: none;
+        width: 15px;
+        height: 15px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        font-size: 10px;
+        font-weight: 700;
+        color: #fff;
+        background: var(--vscode-descriptionForeground);
+      }
+      #status .st-tx {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #status.success .st-ic {
+        background: var(--vscode-charts-green, #3fb950);
+      }
+      #status.error .st-ic {
+        background: var(--vscode-charts-red, #f14c4c);
+      }
+      #status.warn .st-ic {
+        background: var(--vscode-charts-yellow, #d7ba7d);
+        color: #000;
+      }
+      #status.run .st-ic {
+        background: var(--run-green);
+      }
+      #status.info .st-ic {
+        background: var(--vscode-charts-blue, #6cb6ff);
+      }
+      #histBtn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 9px;
+        font-variant-numeric: tabular-nums;
+      }
+      #histBtn .hist-ic {
+        font-size: 12px;
+      }
+
+      /* activity timeline panel */
+      #historyPanel {
+        position: absolute;
+        right: 12px;
+        bottom: 40px;
+        width: 360px;
+        max-height: 320px;
+        display: flex;
+        flex-direction: column;
+        background: var(--vscode-editorWidget-background, var(--panel));
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.34);
+        overflow: hidden;
+        z-index: 40;
+      }
+      #historyPanel[hidden] {
+        display: none;
+      }
+      .hp-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 9px 11px;
+        border-bottom: 1px solid var(--border);
+      }
+      .hp-title {
+        font-weight: 600;
+      }
+      .hp-sub {
+        color: var(--vscode-descriptionForeground);
+        font-size: 10.5px;
+      }
+      .hp-head #histClose {
+        margin-left: auto;
+        padding: 2px 7px;
+        background: transparent;
+      }
+      #historyList {
+        overflow-y: auto;
+        padding: 4px 0;
+      }
+      .hrow {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 4px 11px;
+        font-size: 11.5px;
+        line-height: 1.4;
+      }
+      .hrow:hover {
+        background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+      }
+      .hrow .ht {
+        flex: none;
+        color: var(--vscode-descriptionForeground);
+        font-variant-numeric: tabular-nums;
+        font-size: 10.5px;
+      }
+      .hrow .hic {
+        flex: none;
+        width: 6px;
+        height: 6px;
+        margin-top: 5px;
+        border-radius: 50%;
+        background: var(--vscode-descriptionForeground);
+      }
+      .hrow.success .hic {
+        background: var(--vscode-charts-green, #3fb950);
+      }
+      .hrow.error .hic {
+        background: var(--vscode-charts-red, #f14c4c);
+      }
+      .hrow.warn .hic {
+        background: var(--vscode-charts-yellow, #d7ba7d);
+      }
+      .hrow.run .hic {
+        background: var(--run-green);
+      }
+      .hrow.info .hic {
+        background: var(--vscode-charts-blue, #6cb6ff);
+      }
+      .hrow .htx {
+        flex: 1;
+      }
+      .hempty {
+        padding: 14px 12px;
+        color: var(--vscode-descriptionForeground);
+        text-align: center;
+      }
+
+      /* calm confirm modal */
+      #modal {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.34);
+        backdrop-filter: blur(1.5px);
+      }
+      #modal[hidden] {
+        display: none;
+      }
+      .modal-card {
+        width: min(420px, 88%);
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px 22px 16px;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
+      }
+      .modal-card h3 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+      .modal-card p {
+        margin: 0 0 18px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.5;
+        font-size: 13px;
+      }
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      #modalOk.danger {
+        background: var(--vscode-charts-red, #f14c4c);
+        color: #fff;
+      }
+      #modalOk.danger:hover {
+        filter: brightness(1.08);
+      }
     </style>
   </head>
   <body>
@@ -658,13 +862,38 @@
           >est.</span
         ></span
       >
-      <span id="err"></span>
+      <div id="status" role="status" aria-live="polite"></div>
+      <button id="histBtn" title="Activity — the last 100 updates">
+        <span class="hist-ic">◷</span><span id="histCount">0</span>
+      </button>
       <div
         id="whatif"
         title="What this exact flow would cost on other models — reprices the recorded token counts. Approximate (models tokenize differently). Click a chip to switch every agent to that model."
       >
         <span>what-if →</span>
         <div id="whatifChips"></div>
+      </div>
+    </div>
+
+    <!-- Activity timeline: read-only, last 100 updates, newest first -->
+    <div id="historyPanel" hidden>
+      <div class="hp-head">
+        <span class="hp-title">Activity</span>
+        <span class="hp-sub">last 100 updates · read-only</span>
+        <button id="histClose" title="Close">✕</button>
+      </div>
+      <div id="historyList"></div>
+    </div>
+
+    <!-- Calm confirm dialog (used by Clear) -->
+    <div id="modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <h3 id="modalTitle"></h3>
+        <p id="modalBody"></p>
+        <div class="modal-actions">
+          <button id="modalCancel">Cancel</button>
+          <button id="modalOk" class="primary">Confirm</button>
+        </div>
       </div>
     </div>
 
@@ -1005,11 +1234,12 @@
           const trunc = truncByNode[n.id];
           const nt = turnsByNode[n.id] || 0;
           el.innerHTML =
+            '<svg class="ants" xmlns="http://www.w3.org/2000/svg"><rect></rect></svg>' +
             '<div class="head"><span class="dot" style="background:' +
             (GROUP_COLORS[a.group] || "#888") +
             '"></span><span class="nm">' +
             esc(n.label) +
-            '</span><span class="status"></span></div>' +
+            '</span><span class="run-badge">RUNNING</span><span class="status"></span></div>' +
             '<div class="meta"><span class="model">' +
             esc(model) +
             "</span></div>" +
@@ -1108,8 +1338,9 @@
         // reject if it created a cycle: simple DFS
         if (hasCycle()) {
           edges.pop();
-          flashErr(
+          notify(
             "That connection would create a cycle — handoffs must go forward.",
+            "warn",
           );
         }
         render();
@@ -1170,6 +1401,18 @@
         } else drag = null;
       };
       window.onkeydown = (e) => {
+        // The confirm modal traps keys while open (Esc cancels); the history panel closes on Esc.
+        if (!$("modal").hidden) {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            closeModal(false);
+          }
+          return;
+        }
+        if (e.key === "Escape" && historyOpen) {
+          toggleHistory(false);
+          return;
+        }
         const tag = document.activeElement && document.activeElement.tagName;
         const typing = tag === "INPUT" || tag === "TEXTAREA";
         if ((e.metaKey || e.ctrlKey) && !typing) {
@@ -1328,7 +1571,10 @@
       }
       function setAllModels(model) {
         nodes.forEach((n) => (n.model = model));
-        flashErr("All agents set to " + shortModel(model) + " — re-run to update costs.");
+        notify(
+          "Switched every agent to " + shortModel(model) + " — re-run to update costs",
+          "success",
+        );
         render();
       }
 
@@ -1363,7 +1609,7 @@
       }
       $("run").onclick = () => {
         if (running || cmdBusy) return; // don't start while a board command is still resolving
-        flashErr("");
+        setStatus("", "");
         setRunning(true); // disable immediately; the extension confirms with runStart
         vs.postMessage({ type: "run", sketch: serialize() });
       };
@@ -1380,8 +1626,31 @@
         $("tplSel").value = "";
         if (v && !running) vs.postMessage({ type: "loadTemplate", id: v });
       };
-      $("clear").onclick = () => {
+      $("clear").onclick = async () => {
         if (running) return;
+        if (!nodes.length) {
+          notify("Nothing to clear — the canvas is already empty.", "info");
+          return;
+        }
+        const n = nodes.length;
+        const ok = await confirmModal({
+          title: "Clear this sketch?",
+          body:
+            "This removes all " +
+            n +
+            " agent" +
+            (n === 1 ? "" : "s") +
+            " and their connections and starts from a blank canvas. This can’t be undone — save the sketch first if you might want it back.",
+          okLabel: "Clear sketch",
+          danger: true,
+        });
+        if (!ok) return;
+        // Re-check after the await: a run could have started while the dialog was open (runStart
+        // is processed regardless of modal state). Don't wipe the graph out from under the runner.
+        if (running) {
+          notify("Can’t clear — a run started while the dialog was open.", "warn");
+          return;
+        }
         nodes = [];
         edges = [];
         usageByNode = {};
@@ -1390,11 +1659,103 @@
         turnsByNode = {};
         select(null);
         render();
+        notify("Sketch cleared.", "info");
       };
 
-      function flashErr(msg) {
-        $("err").textContent = msg || "";
+      // ---------- notifications + activity timeline (read-only, last 100) ----------
+      const MAX_HISTORY = 100;
+      const history = [];
+      let historyOpen = false;
+      const KIND_ICON = {
+        info: "i",
+        success: "✓",
+        warn: "!",
+        error: "✕",
+        run: "▸",
+      };
+      function nowStr() {
+        return new Date().toLocaleTimeString([], { hour12: false });
       }
+      // Footer pill only (no timeline entry) — for transient/system text like "Thinking…".
+      function setStatus(text, kind) {
+        const el = $("status");
+        el.className = kind || "";
+        el.innerHTML = text
+          ? '<span class="st-ic">' +
+            (KIND_ICON[kind] || "•") +
+            '</span><span class="st-tx">' +
+            esc(text) +
+            "</span>"
+          : "";
+      }
+      function pushHistory(text, kind) {
+        history.push({ t: nowStr(), text: text, kind: kind || "info" });
+        if (history.length > MAX_HISTORY) history.shift();
+        $("histCount").textContent = history.length;
+        if (historyOpen) renderHistory();
+      }
+      // Footer pill + timeline entry — for real events worth looking back on.
+      function notify(text, kind) {
+        setStatus(text, kind || "info");
+        if (text) pushHistory(text, kind || "info");
+      }
+      function renderHistory() {
+        $("historyList").innerHTML = history.length
+          ? history
+              .slice()
+              .reverse() // newest first
+              .map(
+                (h) =>
+                  '<div class="hrow ' +
+                  esc(h.kind) +
+                  '"><span class="ht">' +
+                  esc(h.t) +
+                  '</span><span class="hic"></span><span class="htx">' +
+                  esc(h.text) +
+                  "</span></div>",
+              )
+              .join("")
+          : '<div class="hempty">No activity yet.</div>';
+      }
+      function toggleHistory(open) {
+        historyOpen = open == null ? !historyOpen : open;
+        $("historyPanel").hidden = !historyOpen;
+        if (historyOpen) renderHistory();
+      }
+      $("histBtn").onclick = () => toggleHistory();
+      $("histClose").onclick = () => toggleHistory(false);
+      // Back-compat wrapper: remaining flashErr(...) sites are error / clear cases.
+      function flashErr(msg) {
+        if (!msg) setStatus("", "");
+        else notify(msg, "error");
+      }
+
+      // ---------- calm confirm dialog (returns a Promise<boolean>) ----------
+      let modalResolve = null;
+      function confirmModal(opts) {
+        $("modalTitle").textContent = opts.title || "Are you sure?";
+        $("modalBody").textContent = opts.body || "";
+        const ok = $("modalOk");
+        ok.textContent = opts.okLabel || "Confirm";
+        ok.className = "primary" + (opts.danger ? " danger" : "");
+        $("modal").hidden = false;
+        // Focus Cancel on destructive dialogs so a stray Enter can't confirm the dangerous action.
+        setTimeout(() => (opts.danger ? $("modalCancel") : ok).focus(), 0);
+        return new Promise((res) => {
+          modalResolve = res;
+        });
+      }
+      function closeModal(val) {
+        $("modal").hidden = true;
+        const r = modalResolve;
+        modalResolve = null;
+        if (r) r(val);
+      }
+      $("modalCancel").onclick = () => closeModal(false);
+      $("modalOk").onclick = () => closeModal(true);
+      $("modal").onclick = (e) => {
+        if (e.target === $("modal")) closeModal(false); // click the backdrop = cancel
+      };
 
       // Loaded sketches come from on-disk JSON (hand-editable) or templates — coerce to a safe,
       // renderable shape so a malformed/hostile file can't break the canvas, collide node ids, or
@@ -1593,7 +1954,7 @@
         }
         if (selId) select(selId);
         render();
-        flashErr(
+        notify(
           changed
             ? "Applied " +
                 changed +
@@ -1601,6 +1962,7 @@
                 (changed > 1 ? "s" : "") +
                 (notes.length ? " (" + notes.join("; ") + ")" : "")
             : "No changes" + (notes.length ? ": " + notes.join("; ") : "."),
+          changed ? "success" : "info",
         );
       }
       function runCommand() {
@@ -1609,7 +1971,7 @@
         cmdBusy = true;
         $("cmdbar").classList.add("busy");
         $("cmdRun").disabled = true;
-        flashErr("Thinking…");
+        setStatus("Thinking…", "info");
         vs.postMessage({ type: "command", text, sketch: serialize() });
       }
       function endCommand() {
@@ -1675,6 +2037,13 @@
               n._model = "";
             });
             setRunning(true);
+            notify(
+              "Run started — " +
+                nodes.length +
+                " agent" +
+                (nodes.length === 1 ? "" : "s"),
+              "run",
+            );
             render();
             break;
           case "nodeStatus": {
@@ -1686,7 +2055,7 @@
                 flashErr(n.label + ": " + (m.message || "failed"));
             }
             if (m.turns) turnsByNode[m.id] = m.turns;
-            if (m.note) flashErr((n ? n.label + ": " : "") + m.note);
+            if (m.note) notify((n ? n.label + ": " : "") + m.note, "warn");
             render();
             break;
           }
@@ -1711,7 +2080,34 @@
             setRunning(false);
             usageByNode = m.usageByNode || usageByNode;
             outputsByNode = m.outputs || outputsByNode;
-            if (m.aborted) flashErr("Stopped.");
+            if (m.aborted) {
+              notify("Run stopped.", "warn");
+            } else if (m.failed) {
+              notify("Run stopped on an error.", "error");
+            } else {
+              let ti = 0,
+                to = 0,
+                cost = 0,
+                unk = false;
+              for (const id in usageByNode) {
+                const u = usageByNode[id];
+                ti += u.input;
+                to += u.output;
+                const c = costOf(u.model, u.input, u.output);
+                if (c == null) unk = true;
+                else cost += c;
+              }
+              notify(
+                "Run finished — " +
+                  fmtTok(ti) +
+                  " in / " +
+                  fmtTok(to) +
+                  " out · " +
+                  fmtUsd(cost) +
+                  (unk ? " +?" : ""),
+                "success",
+              );
+            }
             if (selId) select(selId);
             render();
             break;
@@ -1731,7 +2127,7 @@
             // A run may have started while the command was in flight — don't mutate a graph the
             // runner is actively walking (mirrors the load/clear/template gating).
             if (running) {
-              flashErr("Board command ignored — a run is in progress.");
+              notify("Board command ignored — a run is in progress.", "warn");
               break;
             }
             applyOps(m.ops);
@@ -1742,6 +2138,10 @@
               (m.sketches || [])
                 .map((s) => "<option>" + esc(s) + "</option>")
                 .join("");
+            notify(
+              "Saved" + (m.name ? ' “' + m.name + '”' : " sketch") + ".",
+              "success",
+            );
             break;
           case "sketchLoaded": {
             const s = sanitizeSketch(m.sketch);
@@ -1761,6 +2161,10 @@
             select(null);
             render();
             fitView();
+            notify(
+              "Loaded" + (s.name ? ' “' + s.name + '”' : " sketch") + ".",
+              "info",
+            );
             break;
           }
         }
