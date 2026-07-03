@@ -16,6 +16,10 @@
 # Unsigned app artifacts pulled from the release CI and signed locally (see docs/RELEASING.md §7)
 /UNSIGNED-*.app.zip
 
+# Scratch: a working-tree diff dropped here to exercise the review-swarm patch loader; tooling lockfile
+/diff.patch
+/skills-lock.json
+
 # Node / OS noise
 node_modules/
 .DS_Store

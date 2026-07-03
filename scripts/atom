@@ -33,6 +33,9 @@ if [ -z "$APP" ]; then
 fi
 
 # Use the app's bundled CLI bin (named after applicationName: 'atom', or 'code' on pre-rename builds).
+# NB: do NOT pass --disable-workspace-trust here. Workspace trust is a security boundary that
+# gates auto-execution of tasks.json, workspace settings overrides (terminal.integrated.env.* →
+# LD_PRELOAD/DYLD_INSERT_LIBRARIES), and recommended-extension installs. Never ship it disabled.
 for bin in "$APP/Contents/Resources/app/bin/atom" "$APP/Contents/Resources/app/bin/code"; do
 	if [ -x "$bin" ]; then exec "$bin" "$@"; fi
 done
