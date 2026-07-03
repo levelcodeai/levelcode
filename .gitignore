@@ -10,6 +10,12 @@
 # Distributable disk images (produced by scripts/make-dmg.sh)
 /*.dmg
 
+# Agent Sketch runtime state — per-workspace (autosaved session, sketches, exported runs); not source
+/.atompp/
+
+# Unsigned app artifacts pulled from the release CI and signed locally (see docs/RELEASING.md §7)
+/UNSIGNED-*.app.zip
+
 # Node / OS noise
 node_modules/
 .DS_Store

@@ -126,6 +126,128 @@ function loadSketch(name) {
   return JSON.parse(raw);
 }
 
+// ---- session autosave: never lose a paid run on reload ---------------------------------------
+// The working canvas + the LAST RUN'S RESULTS (per-node outputs, tokens, cost) live only in the
+// webview's memory; a folder reopen would otherwise wipe them. We mirror the whole session to
+// .atompp/.session.json on every meaningful change and restore it when the panel reopens. This is
+// app-internal state (like a draft), NOT a portable deliverable — see docs/atompp-agent-runs-persistence.md.
+function atompHome() {
+  const f = vscode.workspace.workspaceFolders;
+  return f && f.length ? path.join(f[0].uri.fsPath, ".atompp") : null;
+}
+function sessionFile() {
+  const home = atompHome();
+  return home ? path.join(home, ".session.json") : null;
+}
+/** Atomically persist the current session blob. No-op when no folder is open. */
+function writeSession(session) {
+  const file = sessionFile();
+  if (!file) {
+    return;
+  }
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = file + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(session));
+    fs.renameSync(tmp, file); // atomic swap so a crash mid-write can't corrupt the session
+  } catch {
+    /* best-effort; persistence must never break a run */
+  }
+}
+function readSession() {
+  const file = sessionFile();
+  if (!file) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Render a run as a human-readable Markdown deliverable and open it. On-demand only (share/export). */
+function exportRunMarkdown(session) {
+  const home = atompHome();
+  if (!home) {
+    throw new Error("Open a folder to export a run.");
+  }
+  const nodes = (session && session.nodes) || [];
+  const results = (session && session.results) || {};
+  const outputs = results.outputs || {};
+  const usage = results.usage || {};
+  const stamp = new Date();
+  const lines = [];
+  lines.push("# " + (session.name || "Agent Sketch run"));
+  lines.push("");
+  if (session.goal) {
+    lines.push("**Goal:** " + session.goal);
+    lines.push("");
+  }
+  lines.push("_Exported " + stamp.toLocaleString() + " from Atom++ Agent Sketch._");
+  lines.push("");
+  let ti = 0,
+    to = 0,
+    cost = 0,
+    unpriced = false;
+  for (const n of nodes) {
+    const u = usage[n.id];
+    if (u) {
+      ti += u.input || 0;
+      to += u.output || 0;
+      const c = pricing.costOf(u.model, u.input, u.output);
+      if (c == null) {
+        unpriced = true;
+      } else {
+        cost += c;
+      }
+    }
+  }
+  lines.push(
+    "**Totals:** " +
+      ti +
+      " input / " +
+      to +
+      " output tokens · est. $" +
+      cost.toFixed(cost < 1 ? 4 : 2) +
+      (unpriced ? " +unpriced" : ""),
+  );
+  lines.push("");
+  lines.push("---");
+  for (const n of nodes) {
+    const u = usage[n.id] || {};
+    const c = pricing.costOf(u.model, u.input, u.output);
+    lines.push("");
+    lines.push("## " + (n.label || n.agentId));
+    const meta = [];
+    if (u.model) {
+      meta.push("`" + u.model + "`");
+    }
+    if (u.input != null) {
+      meta.push((u.input || 0) + " in / " + (u.output || 0) + " out");
+    }
+    if (c != null) {
+      meta.push("est. $" + c.toFixed(c < 1 ? 4 : 2));
+    }
+    if (meta.length) {
+      lines.push("_" + meta.join(" · ") + "_");
+      lines.push("");
+    }
+    lines.push((outputs[n.id] || "_(no output)_").trim());
+  }
+  const dir = path.join(home, "runs");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(
+    dir,
+    safeName(session.name) +
+      "-" +
+      stamp.toISOString().replace(/[:.]/g, "-").slice(0, 19) +
+      ".md",
+  );
+  fs.writeFileSync(file, lines.join("\n") + "\n");
+  return file;
+}
+
 // ---- system prompt for a sketch node ---------------------------------------------------------
 function nodeSystem(node) {
   const a = AGENT_BY_ID.get(node.agentId);
@@ -470,8 +592,8 @@ async function runSketch(o) {
                 truncated,
                 turns: r.turns,
                 cost: pricing.costOf(model, usage.input, usage.output),
-                preview: stored.slice(0, 400),
-              });
+                output: stored, // FULL text (not a preview) so mid-run autosave persists complete
+              });                //   results — an interrupted run must never restore truncated output
             } catch (e) {
               // A user Stop surfaces here as an abort — that's not a node failure. Only real
               // errors mark the node red and halt scheduling of further levels.
@@ -665,6 +787,179 @@ async function boardCommand(o) {
   post({ type: "commandResult", ops });
 }
 
+// ---- generate a WHOLE flow from a plain-English description ------------------------------------
+const GENERATE_SYSTEM =
+  "You DESIGN a complete agentic workflow as a DAG for Atom++ Agent Sketch, from a plain-English " +
+  "description. Return ONLY JSON:\n" +
+  '{"goal":"<one sentence>","nodes":[{"agent":"<catalog id>","label":"<short unique>","task":"<what THIS agent does in the flow, concretely>"}],"edges":[["<from label>","<to label>"]]}\n\n' +
+  "Rules:\n" +
+  "- Use ONLY agent ids from the provided catalog; pick the closest role. For real-world actions use " +
+  "the CONNECTOR agents (telegram-publisher, email-sender, slack-publisher, webhook-caller, file-writer). " +
+  "If the flow is periodic/scheduled or event-driven, START with a TRIGGER (scheduler, webhook-trigger) " +
+  "as the root that feeds the rest.\n" +
+  "- It MUST be a DAG (acyclic), read left→right by dependency. Parallel work = several nodes in one " +
+  "stage that all feed a downstream node (e.g. 5 news-collectors → 1 editor).\n" +
+  "- Every node gets a concrete `task`. Node labels MUST be UNIQUE — if several nodes share a role, " +
+  "number them (news-1, news-2, …). edges reference these EXACT unique labels (or a node's 1-based index).\n" +
+  "- Model the user's intent faithfully (collectors → editor → copywriter → approver → publisher, etc.).\n" +
+  'Return {"goal":"","nodes":[],"edges":[]} only if the request is truly empty.';
+
+/** Extract the flow object from a model reply (tolerates code fences / prose). */
+function parseFlow(raw) {
+  let s = String(raw || "").trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) {
+    s = fence[1].trim();
+  }
+  const a = s.indexOf("{"),
+    b = s.lastIndexOf("}");
+  if (a < 0 || b < 0) {
+    return null;
+  }
+  try {
+    return JSON.parse(s.slice(a, b + 1));
+  } catch {
+    return null;
+  }
+}
+
+/** Turn a model flow-spec into a loadable sketch: assign ids, keep only real agents, resolve edges. */
+function normalizeFlowSpec(spec, prompt) {
+  const rawNodes = Array.isArray(spec.nodes) ? spec.nodes : [];
+  const nodes = [];
+  const usedLabels = new Set();
+  const rawToId = new Map(); // the model's OWN label → id; first-declared wins on collisions
+  const idByPos = []; // idByPos[originalIndex] = id | null, so numeric-index edges stay aligned
+  let seq = 0;
+  rawNodes.forEach((n, i) => {
+    if (!n || !AGENT_BY_ID.has(n.agent)) {
+      idByPos[i] = null;
+      return; // must be a real catalog agent
+    }
+    // Unique canvas label (for display). Edge resolution uses the model's RAW label, NOT this.
+    let label = String(n.label || n.agent).slice(0, 40) || n.agent;
+    let base = label,
+      k = 2;
+    while (usedLabels.has(label)) {
+      label = base + " " + k++;
+    }
+    usedLabels.add(label);
+    const id = "n" + ++seq;
+    idByPos[i] = id;
+    // Resolve edges only by what the MODEL wrote. First-declared wins so a later duplicate can't
+    // clobber an earlier node's wiring; never register the auto-dedup label the model never saw
+    // (it can spuriously collide with another node's model-chosen label).
+    const raw = String(n.label == null ? "" : n.label).trim();
+    if (raw && !rawToId.has(raw)) {
+      rawToId.set(raw, id);
+    }
+    nodes.push({
+      id,
+      agentId: n.agent,
+      label,
+      instructions: String(n.task || ""),
+      model: "",
+      x: 0,
+      y: 0,
+    });
+  });
+  // Accept a label, a 1-based node index, or a numeric string index.
+  const resolve = (ref) => {
+    if (ref == null) {
+      return null;
+    }
+    if (typeof ref === "number" && Number.isInteger(ref)) {
+      return idByPos[ref - 1] || null;
+    }
+    const s = String(ref).trim();
+    if (/^\d+$/.test(s)) {
+      const byIdx = idByPos[parseInt(s, 10) - 1];
+      if (byIdx) {
+        return byIdx;
+      }
+    }
+    return rawToId.get(s) || null;
+  };
+  const edges = [];
+  const seen = new Set();
+  for (const e of Array.isArray(spec.edges) ? spec.edges : []) {
+    let from, to;
+    if (Array.isArray(e)) {
+      from = e[0];
+      to = e[1];
+    } else if (e && typeof e === "object") {
+      from = e.from;
+      to = e.to;
+    } else {
+      continue;
+    }
+    const fi = resolve(from),
+      ti = resolve(to);
+    if (!fi || !ti || fi === ti) {
+      continue;
+    }
+    const key = fi + "→" + ti;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    edges.push({ from: fi, to: ti });
+  }
+  return {
+    name: String(spec.goal || prompt).slice(0, 50) || "generated",
+    goal: String(spec.goal || prompt),
+    nodes,
+    edges,
+  };
+}
+
+/** Ask the active model to design a whole flow from a description; posts a loadable sketch. */
+async function generateFlow(o) {
+  const { text, deps } = o;
+  const req = await deps.prepProviderRequest({ prompt: true });
+  if (!req.ok) {
+    post({
+      type: "uiError",
+      message:
+        req.reason === "key"
+          ? "No API key set for " + req.label + "."
+          : "Provider not ready.",
+    });
+    return;
+  }
+  const user =
+    "Catalog agents (id — role):\n" +
+    AGENTS.map((a) => a.id + " — " + a.description).join("\n") +
+    "\n\nDesign a flow for:\n" +
+    text +
+    "\n\nReturn ONLY the JSON object.";
+  let raw = "";
+  try {
+    raw = await providers.complete({
+      providerId: req.providerId,
+      baseURL: req.baseURL,
+      apiKey: req.apiKey,
+      model: req.model,
+      maxTokens: 3000,
+      system: GENERATE_SYSTEM,
+      messages: [{ role: "user", content: user }],
+    });
+  } catch (e) {
+    post({ type: "uiError", message: "Flow generation failed: " + String((e && e.message) || e) });
+    return;
+  }
+  const spec = parseFlow(raw);
+  const sketch = spec ? normalizeFlowSpec(spec, text) : null;
+  if (!sketch || !sketch.nodes.length) {
+    post({
+      type: "uiError",
+      message: "Couldn't design a flow from that — try adding a bit more detail.",
+    });
+    return;
+  }
+  post({ type: "generatedFlow", sketch });
+}
+
 /** {fast,balanced,powerful} model ids for the current provider — candidates for the what-if panel. */
 function activeTierModels(providerId) {
   return MODEL_TIERS[providers.normId(providerId)] || null;
@@ -709,7 +1004,23 @@ function openSketch(context, deps) {
             activeTiers: deps.currentProviderId
               ? activeTierModels(deps.currentProviderId())
               : null,
+            session: readSession(), // restore the canvas + last run on reopen
           });
+          break;
+        }
+        case "persist":
+          // Autosave the whole session (graph + last-run results) so a folder reopen restores it.
+          writeSession(m.session);
+          break;
+        case "exportMarkdown": {
+          try {
+            const file = exportRunMarkdown(m.session);
+            const doc = await vscode.workspace.openTextDocument(file);
+            await vscode.window.showTextDocument(doc);
+            post({ type: "exported", rel: vscode.workspace.asRelativePath(file) });
+          } catch (e) {
+            post({ type: "uiError", message: String((e && e.message) || e) });
+          }
           break;
         }
         case "run":
@@ -722,6 +1033,13 @@ function openSketch(context, deps) {
             break;
           }
           await boardCommand({ text: m.text, sketch: m.sketch, deps });
+          break;
+        case "generate":
+          if (runAbort) {
+            post({ type: "uiError", message: "Can't build a flow while a run is in progress." });
+            break;
+          }
+          await generateFlow({ text: m.text, deps });
           break;
         case "stop":
           if (runAbort) {

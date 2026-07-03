@@ -787,6 +787,12 @@
         placeholder="Goal of this flow — every agent sees it (e.g. “Build and test a rate limiter”)"
       />
       <button id="save">Save</button>
+      <button
+        id="export"
+        title="Export this run as a Markdown document you can share"
+      >
+        Export
+      </button>
       <select
         id="tplSel"
         title="Load a ready-made template (or drag one from the palette)"
@@ -929,6 +935,8 @@
         consensus: "#b48ead",
         performance: "#e5a56b",
         data: "#61c8af",
+        content: "#d99ae0",
+        connectors: "#e0b062",
         specialized: "#9aa5ce",
       };
 
@@ -949,6 +957,8 @@
       let truncByNode = {}; // nodeId -> true when the node hit the per-node token cap
       let turnsByNode = {}; // nodeId -> how many turns it took (auto-continuation)
       let ACTIVE_TIERS = null; // {fast,balanced,powerful} model ids for the active provider
+      let persistTimer = null;
+      let persistReady = false; // gate autosave until the initial session restore is done
       let pan = { x: 40, y: 20 };
       let zoom = 1;
       const clampZoom = (z) => Math.max(0.2, Math.min(2.5, z));
@@ -1329,7 +1339,11 @@
           svg.appendChild(p);
         }
         $("tNodes").textContent = nodes.length;
+        $("cmd").placeholder = nodes.length
+          ? "Ask the board…  e.g. “add a security-auditor after coder”, “set every agent to Opus 4.8”"
+          : "Describe a flow to build…  e.g. “5 agents collect AI news, a copywriter composes a post, publish to Telegram”";
         refreshTotals();
+        schedulePersist(); // every mutation flows through render(); debounced so drags coalesce
       }
 
       function tryConnect(from, to) {
@@ -1616,6 +1630,13 @@
       $("stop").onclick = () => vs.postMessage({ type: "stop" });
       $("save").onclick = () =>
         vs.postMessage({ type: "save", sketch: serialize() });
+      // name/goal don't go through render(), so persist them directly.
+      $("name").oninput = schedulePersist;
+      $("goal").oninput = schedulePersist;
+      $("export").onclick = () => {
+        if (!Object.keys(usageByNode).length && !nodes.length) return;
+        vs.postMessage({ type: "exportMarkdown", session: fullSession() });
+      };
       $("loadSel").onchange = () => {
         const v = $("loadSel").value;
         $("loadSel").value = "";
@@ -1659,6 +1680,7 @@
         turnsByNode = {};
         select(null);
         render();
+        persistNow(); // overwrite the saved session so a reopen doesn't restore the cleared graph
         notify("Sketch cleared.", "info");
       };
 
@@ -1757,11 +1779,76 @@
         if (e.target === $("modal")) closeModal(false); // click the backdrop = cancel
       };
 
+      // ---------- session autosave (never lose a paid run on reload) ----------
+      // Bundle the canvas + the last run's results and mirror it to disk (.atompp/.session.json,
+      // written by the extension). This is app-internal restore state, not a deliverable.
+      function fullSession() {
+        const s = serialize(); // { name, goal, nodes, edges }
+        return {
+          name: s.name,
+          goal: s.goal,
+          nodes: s.nodes,
+          edges: s.edges,
+          results: {
+            outputs: outputsByNode,
+            usage: usageByNode,
+            turns: turnsByNode,
+            trunc: truncByNode,
+          },
+        };
+      }
+      function schedulePersist() {
+        if (!persistReady) return;
+        if (persistTimer) clearTimeout(persistTimer);
+        persistTimer = setTimeout(() => {
+          persistTimer = null;
+          vs.postMessage({ type: "persist", session: fullSession() });
+        }, 800); // debounce drags/typing into one write
+      }
+      function persistNow() {
+        if (!persistReady) return;
+        if (persistTimer) {
+          clearTimeout(persistTimer);
+          persistTimer = null;
+        }
+        vs.postMessage({ type: "persist", session: fullSession() });
+      }
+      // Restore the canvas + last-run meters from a saved session (on reopen). Results are kept
+      // only for surviving node ids so a hand-edited/renamed graph can't graft stale outputs.
+      function restoreSession(sess) {
+        const s = sanitizeSketch(sess, { keepUnknown: true }); // never drop the user's own run
+        if (!s.nodes.length) return false;
+        $("name").value = s.name;
+        $("goal").value = s.goal;
+        nodes = s.nodes;
+        edges = s.edges;
+        seq = nodes.reduce(
+          (mx, n) =>
+            Math.max(mx, parseInt(String(n.id).replace(/\D/g, "")) || 0),
+          0,
+        );
+        const ids = new Set(nodes.map((n) => n.id));
+        const pick = (o) =>
+          Object.fromEntries(
+            Object.entries(o || {}).filter(([k]) => ids.has(k)),
+          );
+        const r = sess.results || {};
+        usageByNode = pick(r.usage);
+        outputsByNode = pick(r.outputs);
+        turnsByNode = pick(r.turns);
+        truncByNode = pick(r.trunc);
+        select(null);
+        render();
+        fitView();
+        return true;
+      }
+
       // Loaded sketches come from on-disk JSON (hand-editable) or templates — coerce to a safe,
       // renderable shape so a malformed/hostile file can't break the canvas, collide node ids, or
       // inject a prototype-polluting key. Drops unknown-agent nodes and dangling/self/dup edges.
-      function sanitizeSketch(s) {
+      function sanitizeSketch(s, opts) {
         s = s && typeof s === "object" ? s : {};
+        const keepUnknown = !!(opts && opts.keepUnknown);
         const str = (v, d) => (typeof v === "string" ? v : d || "");
         const num = (v) => (typeof v === "number" && isFinite(v) ? v : 0);
         const nodes = [];
@@ -1770,7 +1857,10 @@
           if (!n || typeof n !== "object") continue;
           const id = String(n.id == null ? "" : n.id);
           if (!id || id.indexOf("__") === 0 || ids.has(id)) continue; // empty / __proto__ / dup
-          if (!CAT.byId.has(n.agentId)) continue; // unknown agent
+          // Restoring the user's own session keeps unknown-agent nodes (an extension update may have
+          // renamed/removed an agent id) so a catalog change can't wipe a paid run — render() falls
+          // back to generic styling. Loading templates/files still drops unknown agents.
+          if (!keepUnknown && !CAT.byId.has(n.agentId)) continue;
           ids.add(id);
           nodes.push({
             id,
@@ -1971,8 +2061,14 @@
         cmdBusy = true;
         $("cmdbar").classList.add("busy");
         $("cmdRun").disabled = true;
-        setStatus("Thinking…", "info");
-        vs.postMessage({ type: "command", text, sketch: serialize() });
+        // Empty canvas → BUILD a whole flow from the prompt; populated canvas → EDIT it with ops.
+        if (nodes.length) {
+          setStatus("Thinking…", "info");
+          vs.postMessage({ type: "command", text, sketch: serialize() });
+        } else {
+          setStatus("Designing your flow…", "info");
+          vs.postMessage({ type: "generate", text });
+        }
       }
       function endCommand() {
         cmdBusy = false;
@@ -2022,7 +2118,17 @@
                 (t) =>
                   '<option value="' + esc(t.id) + '">' + esc(t.name) + "</option>",
               ).join("");
-            render();
+            // Restore the canvas + last run's results so a folder reopen doesn't lose work.
+            let restored = false;
+            if (m.session) restored = restoreSession(m.session);
+            if (!restored) render();
+            persistReady = true; // arm autosave only after restore, so it can't clobber the save
+            if (restored)
+              notify(
+                "Restored your last session" +
+                  (Object.keys(usageByNode).length ? " (with run results)" : ""),
+                "info",
+              );
             break;
           }
           case "runStart":
@@ -2065,7 +2171,7 @@
             const n = nodes.find((n) => n.id === m.id);
             if (n) n._status = "done";
             usageByNode[m.id] = m.usage;
-            outputsByNode[m.id] = m.preview || "";
+            outputsByNode[m.id] = m.output || ""; // full text; feeds autosave + the inspector
             if (m.truncated) truncByNode[m.id] = true;
             if (m.turns) turnsByNode[m.id] = m.turns;
             if (selId === m.id) select(m.id);
@@ -2110,11 +2216,15 @@
             }
             if (selId) select(selId);
             render();
+            persistNow(); // the run's results are the expensive data — save them immediately
             break;
           }
           case "runError":
             setRunning(false);
             flashErr(m.message);
+            break;
+          case "exported":
+            notify("Exported run → " + (m.rel || "Markdown"), "success");
             break;
           case "uiError":
             // A save/load/clipboard/command failure — NOT a run outcome, so don't touch run state.
@@ -2132,6 +2242,40 @@
             }
             applyOps(m.ops);
             break;
+          case "generatedFlow": {
+            endCommand();
+            $("cmd").value = "";
+            if (running) {
+              notify("Flow ignored — a run is in progress.", "warn");
+              break;
+            }
+            const g = sanitizeSketch(m.sketch);
+            if (!g.nodes.length) {
+              notify("The generated flow was empty — try more detail.", "warn");
+              break;
+            }
+            $("name").value = g.name;
+            $("goal").value = g.goal;
+            nodes = g.nodes;
+            edges = g.edges;
+            seq = nodes.reduce(
+              (mx, n) =>
+                Math.max(mx, parseInt(String(n.id).replace(/\D/g, "")) || 0),
+              0,
+            );
+            usageByNode = {};
+            outputsByNode = {};
+            truncByNode = {};
+            turnsByNode = {};
+            select(null);
+            autoLayout(); // the generated nodes have no positions — arrange + fit
+            persistNow();
+            notify(
+              "Built a " + nodes.length + "-agent flow from your prompt.",
+              "success",
+            );
+            break;
+          }
           case "saved":
             $("loadSel").innerHTML =
               '<option value="">Load…</option>' +

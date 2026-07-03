@@ -27,7 +27,34 @@ const AGENT_GROUPS = [
 	{ id: 'consensus', label: 'Consensus & Distributed', icon: 'organization' },
 	{ id: 'performance', label: 'Performance', icon: 'dashboard' },
 	{ id: 'data', label: 'Data & ML', icon: 'graph' },
+	{ id: 'content', label: 'Content & Editorial', icon: 'edit' },
+	{ id: 'connectors', label: 'Connectors & Triggers', icon: 'broadcast' },
 	{ id: 'specialized', label: 'Specialized', icon: 'tools' }
+];
+
+// Content/editorial + connector/trigger archetypes (Atom++ additions, not from ruflo). Connectors
+// ACT ON THE WORLD (post to Telegram/Slack, send email, call webhooks) and triggers fire flows on a
+// schedule. In an SK1 sketch run every node is TEXT-ONLY: a connector produces the exact
+// message/payload it WOULD send and a trigger produces the run context it WOULD fire with — live
+// side effects + credentials + permission gating + cron scheduling arrive in SK2/SK3 (see
+// docs/atompp-agent-sketch-design.md). Descriptions say so, so the flow reads honestly today.
+const EXTRA_AGENTS = [
+	// content & editorial
+	{ id: 'news-collector', group: 'content', tier: 'balanced', description: 'Collects and summarizes recent news and updates on a given topic from the web (research + dedupe + cite sources); one instance per beat/source.' },
+	{ id: 'press-editor', group: 'content', tier: 'powerful', description: 'Head-of-press-release editor: triages incoming items for newsworthiness, sets the angle and priority, and briefs the writers.' },
+	{ id: 'copywriter', group: 'content', tier: 'balanced', description: 'Professional copywriter: verifies facts against sources, tightens prose, and composes a single publish-ready post in the target voice.' },
+	{ id: 'editor-in-chief', group: 'content', tier: 'powerful', description: 'Final editorial gate: fact-checks, enforces style and legal/compliance, and approves or sends back the post.' },
+	{ id: 'social-writer', group: 'content', tier: 'fast', description: 'Adapts an approved post into platform-native copy (length, hashtags, tone) for a specific channel.' },
+	{ id: 'translator', group: 'content', tier: 'fast', description: 'Translates and localizes a post into a target language while preserving meaning and tone.' },
+	// connectors (SK2 executable — SK1 emits the payload it would send)
+	{ id: 'telegram-publisher', group: 'connectors', tier: 'fast', description: 'Publishes a message to a Telegram channel/chat via a bot. SK1: outputs the exact Markdown message it would post; SK2: posts for real using a stored bot token, with per-flow send permission.' },
+	{ id: 'email-sender', group: 'connectors', tier: 'fast', description: 'Sends an email (to/subject/body). SK1: outputs the exact email it would send; SK2: sends via stored SMTP/provider credentials, gated by an explicit send confirmation.' },
+	{ id: 'slack-publisher', group: 'connectors', tier: 'fast', description: 'Posts a message to a Slack channel via webhook/bot. SK1: outputs the payload; SK2: posts with a stored token + permission.' },
+	{ id: 'webhook-caller', group: 'connectors', tier: 'fast', description: 'Calls an outbound HTTP webhook with a JSON payload built from upstream output. SK1: outputs the request it would make; SK2: performs it, gated by an allowlist + confirmation.' },
+	{ id: 'file-writer', group: 'connectors', tier: 'fast', description: 'Writes the flow’s result to a workspace file. SK1: outputs the file path + contents it would write; SK2: writes it through the same Keep/Undo review the chat agent uses.' },
+	// triggers
+	{ id: 'scheduler', group: 'connectors', tier: 'fast', description: 'Periodic trigger (cron): the ROOT of a scheduled flow. SK1: outputs the run context it would fire with (e.g. “collect news since the last run at <time>”); SK3: actually runs the downstream flow on a cron cadence, Managed-Agents-style.' },
+	{ id: 'webhook-trigger', group: 'connectors', tier: 'fast', description: 'Event trigger: the ROOT of a flow fired by an inbound webhook (a push, a form submit). SK1: describes the event payload; SK3: runs the flow on real inbound events.' }
 ];
 
 /** @type {Array<{id:string, group:string, tier:'fast'|'balanced'|'powerful', description:string}>} */
@@ -141,6 +168,7 @@ function normalizeDesc(d) {
 	const lastSpace = d.lastIndexOf(' ');
 	return (lastSpace > 0 ? d.slice(0, lastSpace) : d).replace(/[,;:]+$/, '') + '…'; // drop the partial final word
 }
+AGENTS.push(...EXTRA_AGENTS); // content/editorial + connector/trigger archetypes (see above)
 for (const a of AGENTS) { a.description = normalizeDesc(a.description); }
 
 /** Quick lookup by agent id. */
