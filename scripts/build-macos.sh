@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build Atom++.app for macOS from the branded Code-OSS checkout.
-# Produces an unsigned .app in ../VSCode-darwin-<arch>/ (renamed to Atom++.app).
+# Build LevelCode.app for macOS from the branded Code-OSS checkout.
+# Produces an unsigned .app in ../VSCode-darwin-<arch>/ (renamed to LevelCode.app).
 #
 # Signing/notarization is intentionally a separate, later step (needs an Apple
 # Developer ID). An unsigned build runs locally fine for M0's exit test —
@@ -63,20 +63,20 @@ BUILT_APP="$APP_PARENT/$OUT_DIR"
 # so dev-mode typecheck (run-dev.sh → tsgo) still sees the real type declarations. Removes ~120 MB of
 # non-redistributable code from the shipped bundle. Idempotent + loud.
 echo "[build] Stripping bundled proprietary packages from the app (de-Microsoft) …"
-node "$SCRIPT_DIR/strip-proprietary.mjs" "$BUILT_APP/Atom++.app/Contents/Resources/app"
+node "$SCRIPT_DIR/strip-proprietary.mjs" "$BUILT_APP/LevelCode.app/Contents/Resources/app"
 
-# Hide not-yet-ready features from the public build (Atom++ Sync — its managed host isn't deployed).
+# Hide not-yet-ready features from the public build (LevelCode Sync — its managed host isn't deployed).
 # Source keeps it for dev + the future Pro release; only the shipped .app loses the surfaces.
-echo "[build] Hiding not-yet-ready features from the app (Atom++ Sync) …"
-node "$SCRIPT_DIR/strip-unreleased.mjs" "$BUILT_APP/Atom++.app/Contents/Resources/app"
+echo "[build] Hiding not-yet-ready features from the app (LevelCode Sync) …"
+node "$SCRIPT_DIR/strip-unreleased.mjs" "$BUILT_APP/LevelCode.app/Contents/Resources/app"
 
-# The .app inside is named from product.json nameLong -> "Atom++.app".
+# The .app inside is named from product.json nameLong -> "LevelCode.app".
 echo "[build] Done."
 echo "[build] Output folder: $BUILT_APP"
-echo "[build] Look for Atom++.app inside it."
-echo "[build] Note: quit any already-running Atom++ before launching this app"
+echo "[build] Look for LevelCode.app inside it."
+echo "[build] Note: quit any already-running LevelCode before launching this app"
 echo "[build]       (macOS can forward launch to the existing process, so you might"
-echo "[build]       end up in an older instance with missing Atom++ AI commands)."
+echo "[build]       end up in an older instance with missing LevelCode AI commands)."
 echo
 echo "If macOS blocks the unsigned app, clear the quarantine flag:"
-echo "  xattr -dr com.apple.quarantine \"$BUILT_APP/Atom++.app\""
+echo "  xattr -dr com.apple.quarantine \"$BUILT_APP/LevelCode.app\""

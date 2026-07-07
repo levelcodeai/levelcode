@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Atom++ M0 bootstrap — clone a pinned Code-OSS, apply Atom++ branding, install deps.
+# LevelCode M0 bootstrap — clone a pinned Code-OSS, apply LevelCode branding, install deps.
 # Safe to re-run. Run this on your Mac (the build that produces a .app must be native).
 #
 # Usage:
@@ -25,7 +25,7 @@ info() { printf "\033[36m[bootstrap]\033[0m %s\n" "$*"; }
 err()  { printf "\033[31m[bootstrap] %s\033[0m\n" "$*" >&2; }
 
 # --- preflight --------------------------------------------------------------
-bold "Atom++ bootstrap — Code-OSS @ ${VSCODE_TAG}"
+bold "LevelCode bootstrap — Code-OSS @ ${VSCODE_TAG}"
 
 command -v git  >/dev/null || { err "git not found"; exit 1; }
 command -v node >/dev/null || { err "node not found — install Node 24 (nvm/nodenv recommended)"; exit 1; }
@@ -106,14 +106,14 @@ if [ -f "$VSCODE_DIR/.nvmrc" ]; then
 fi
 
 # --- apply branding + extensions --------------------------------------------
-info "Applying Atom++ branding overlay + installing extensions"
+info "Applying LevelCode branding overlay + installing extensions"
 node "$SCRIPT_DIR/apply-branding.mjs" "$VSCODE_DIR"
 
 # --- apply core source patches ----------------------------------------------
-# A fresh checkout is pristine; these patches re-apply our [Atom++] core edits.
-if [ -f "$ROOT_DIR/patches/atom-core.patch" ]; then
-  info "Applying Atom++ core patches"
-  if ! git -C "$VSCODE_DIR" apply --3way "$ROOT_DIR/patches/atom-core.patch"; then
+# A fresh checkout is pristine; these patches re-apply our [LevelCode] core edits.
+if [ -f "$ROOT_DIR/patches/levelcode-core.patch" ]; then
+  info "Applying LevelCode core patches"
+  if ! git -C "$VSCODE_DIR" apply --3way "$ROOT_DIR/patches/levelcode-core.patch"; then
     err "Core patch failed to apply (upstream likely changed these files on tag ${VSCODE_TAG})."
     err "Re-create it after resolving — see docs/CORE-PATCHES.md."
     exit 1
@@ -130,5 +130,5 @@ info "Using Python: $("$PYTHON" --version 2>&1) at $(command -v "$PYTHON")"
 
 bold "Bootstrap complete."
 echo "Next:"
-echo "  ./scripts/run-dev.sh      # launch Atom++ from source to sanity-check"
-echo "  ./scripts/build-macos.sh  # produce Atom++.app"
+echo "  ./scripts/run-dev.sh      # launch LevelCode from source to sanity-check"
+echo "  ./scripts/build-macos.sh  # produce LevelCode.app"

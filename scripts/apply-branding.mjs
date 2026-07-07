@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Atom++ branding applier.
+ * LevelCode branding applier.
  *
  * Deep-merges branding/product.overlay.json onto the checked-out vscode/product.json.
  * We MERGE (not replace) so we stay compatible as upstream adds keys across rebases.
@@ -78,20 +78,20 @@ if (!existsSync(vanillaBackup)) {
 const merged = deepMerge(product, overlay);
 writeFileSync(productPath, JSON.stringify(merged, null, "\t") + "\n", "utf8");
 
-// Apply the Atom++ app icon, if we have one, so rebuilds/rebootstraps keep it.
-const icnsSrc = join(repoRoot, "branding", "icons", "atom-plus-plus.icns");
+// Apply the LevelCode app icon, if we have one, so rebuilds/rebootstraps keep it.
+const icnsSrc = join(repoRoot, "branding", "icons", "levelcode.icns");
 const icnsDst = join(vscodeDir, "resources", "darwin", "code.icns");
 if (existsSync(icnsSrc) && existsSync(dirname(icnsDst))) {
   copyFileSync(icnsSrc, icnsDst);
   console.log(`[apply-branding] Installed app icon -> ${icnsDst}`);
 }
-const pngSrc = join(repoRoot, "branding", "icons", "atom-plus-plus-1024.png");
+const pngSrc = join(repoRoot, "branding", "icons", "levelcode-1024.png");
 const pngDst = join(vscodeDir, "resources", "linux", "code.png");
 if (existsSync(pngSrc) && existsSync(dirname(pngDst))) {
   copyFileSync(pngSrc, pngDst);
 }
 
-// Install our bundled Atom++ extensions into the checkout. The canonical, version-controlled
+// Install our bundled LevelCode extensions into the checkout. The canonical, version-controlled
 // source lives in this repo's extensions/ folder; the copies inside vscode/ are generated.
 const extSrcRoot = join(repoRoot, "extensions");
 if (existsSync(extSrcRoot)) {
@@ -105,7 +105,7 @@ if (existsSync(extSrcRoot)) {
   }
 }
 
-console.log(`[apply-branding] Atom++ branding applied to ${productPath}`);
+console.log(`[apply-branding] LevelCode branding applied to ${productPath}`);
 console.log(`[apply-branding]   nameLong        = ${merged.nameLong}`);
 console.log(`[apply-branding]   applicationName = ${merged.applicationName}`);
 console.log(`[apply-branding]   gallery         = ${merged.extensionsGallery?.serviceUrl}`);
