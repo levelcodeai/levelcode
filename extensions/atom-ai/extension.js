@@ -228,7 +228,12 @@ async function fetchCloudRoster() {
 		const res = await fetch(api + '/api/levelcode/v1/account/models', { headers: { authorization: 'Bearer ' + token } });
 		if (!res.ok) { dbg('cloud.roster', { ok: false, status: res.status }); return null; }
 		const data = await res.json().catch(() => null);
-		if (data && Array.isArray(data.models)) { cloudRoster = data.models; }
+		if (data && Array.isArray(data.models)) {
+			cloudRoster = data.models;
+			// The roster carries each model's short label — refresh the footer chip so it shows
+			// "Opus 4.8" instead of the raw id it fell back to before the roster finished loading.
+			sendConfigToWebview();
+		}
 		return data;
 	} catch (e) { dbg('cloud.roster', { error: String((e && e.message) || e) }); return null; }
 }
