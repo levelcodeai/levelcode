@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI (M2, feature 2: inline tab-completion)
+ *  LevelCode — AI (M2, feature 2: inline tab-completion)
  *
  *  Ghost-text completions as you type, accepted with Tab. Uses VS Code's stable
  *  InlineCompletionItemProvider API (no core patches). Requests go directly to the
@@ -15,7 +15,7 @@ const SUFFIX_MAX = 1000; // chars of context after the cursor
 const MAX_TOKENS = 160;  // keep completions short & snappy
 
 const SYSTEM_PROMPT =
-	'You are a code completion engine inside the Atom++ editor. You are given the code ' +
+	'You are a code completion engine inside the LevelCode editor. You are given the code ' +
 	'before the cursor and the code after it, with the insertion point marked <CURSOR>. ' +
 	'Reply with ONLY the raw code that should be inserted at <CURSOR> to continue the code ' +
 	'naturally. Do NOT repeat code that already exists before or after the cursor. Do NOT ' +
@@ -65,28 +65,28 @@ function registerInlineComplete(context, deps) {
 
 	// --- status bar toggle ---------------------------------------------------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
-	status.command = 'atompp.ai.toggleCompletions';
+	status.command = 'levelcode.ai.toggleCompletions';
 	function refreshStatus() {
 		const on = aiConfig().get('completions.enabled', true);
 		status.text = on ? '$(sparkle) AI' : '$(circle-slash) AI';
 		status.tooltip = on
-			? 'Atom++ AI inline completions: ON (click to disable)'
-			: 'Atom++ AI inline completions: OFF (click to enable)';
+			? 'LevelCode AI inline completions: ON (click to disable)'
+			: 'LevelCode AI inline completions: OFF (click to enable)';
 		status.show();
 	}
 	refreshStatus();
 
 	context.subscriptions.push(
 		status,
-		vscode.commands.registerCommand('atompp.ai.toggleCompletions', async () => {
+		vscode.commands.registerCommand('levelcode.ai.toggleCompletions', async () => {
 			const cfg = aiConfig();
 			const next = !cfg.get('completions.enabled', true);
 			await cfg.update('completions.enabled', next, vscode.ConfigurationTarget.Global);
 			refreshStatus();
-			vscode.window.setStatusBarMessage('Atom++ AI completions ' + (next ? 'enabled' : 'disabled'), 2000);
+			vscode.window.setStatusBarMessage('LevelCode AI completions ' + (next ? 'enabled' : 'disabled'), 2000);
 		}),
 		vscode.workspace.onDidChangeConfiguration((e) => {
-			if (e.affectsConfiguration('atompp.ai.completions')) { refreshStatus(); }
+			if (e.affectsConfiguration('levelcode.ai.completions')) { refreshStatus(); }
 		})
 	);
 

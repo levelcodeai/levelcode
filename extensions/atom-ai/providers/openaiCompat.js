@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI · the universal OpenAI-compatible adapter
+ *  LevelCode — AI · the universal OpenAI-compatible adapter
  *
  *  ONE fetch-based /v1/chat/completions streamer, parameterized by { baseURL, apiKey, headers }.
  *  This single file unlocks the long tail of providers — OpenAI, OpenRouter (one key → hundreds

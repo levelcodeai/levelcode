@@ -1,10 +1,10 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Agent Sketch · the agent catalog  [SK1]
+ *  LevelCode — Agent Sketch · the agent catalog  [SK1]
  *
  *  96 specialized agent archetypes for the visual agent-orchestration canvas, organized into
  *  user-facing palette groups. Derived from the agent library of ruflo (https://github.com/ruvnet/ruflo,
- *  MIT © 2024-2026 ruvnet) — names + one-line roles only; each node runs on Atom++'s OWN agent loop
- *  (extensions/atom-ai/agent.js + providers/), BYO-key, direct to the provider.
+ *  MIT © 2024-2026 ruvnet) — names + one-line roles only; each node runs on LevelCode's OWN agent loop
+ *  (extensions/levelcode-ai/agent.js + providers/), BYO-key, direct to the provider.
  *
  *  `tier` drives the node's default model (fast | balanced | powerful) — resolved against the active
  *  provider via sketch.js MODEL_TIERS. A node's model can be overridden per-node in the canvas, which
@@ -32,12 +32,12 @@ const AGENT_GROUPS = [
 	{ id: 'specialized', label: 'Specialized', icon: 'tools' }
 ];
 
-// Content/editorial + connector/trigger archetypes (Atom++ additions, not from ruflo). Connectors
+// Content/editorial + connector/trigger archetypes (LevelCode additions, not from ruflo). Connectors
 // ACT ON THE WORLD (post to Telegram/Slack, send email, call webhooks) and triggers fire flows on a
 // schedule. In an SK1 sketch run every node is TEXT-ONLY: a connector produces the exact
 // message/payload it WOULD send and a trigger produces the run context it WOULD fire with — live
 // side effects + credentials + permission gating + cron scheduling arrive in SK2/SK3 (see
-// docs/atompp-agent-sketch-design.md). Descriptions say so, so the flow reads honestly today.
+// docs/levelcode-agent-sketch-design.md). Descriptions say so, so the flow reads honestly today.
 const EXTRA_AGENTS = [
 	// content & editorial
 	{ id: 'news-collector', group: 'content', tier: 'balanced', description: 'Collects and summarizes recent news and updates on a given topic from the web (research + dedupe + cite sources); one instance per beat/source.' },

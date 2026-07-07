@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI (M2: edit selection → reviewable diff)
+ *  LevelCode — AI (M2: edit selection → reviewable diff)
  *
  *  Select code → describe a change → the model rewrites it → review a side-by-side diff →
  *  ✓ Keep / ✗ Discard from the diff editor's toolbar. The proposed text is served through a
@@ -12,8 +12,8 @@
 const vscode = require('vscode');
 const path = require('path');
 
-const SCHEME = 'atompp-ai';
-const CTX_DIFF_ACTIVE = 'atompp.ai.diffActive';
+const SCHEME = 'levelcode-ai';
+const CTX_DIFF_ACTIVE = 'levelcode.ai.diffActive';
 
 /** @type {Map<string,string>} virtual-doc uri -> content */
 const contents = new Map();
@@ -85,7 +85,7 @@ async function applyEdit() {
 	cleanup(propUri);
 	await closeDiffTab(propUri);
 	updateDiffContext();
-	vscode.window.setStatusBarMessage('$(check) Atom++ AI: edit applied', 2000);
+	vscode.window.setStatusBarMessage('$(check) LevelCode AI: edit applied', 2000);
 }
 
 async function discardEdit() {
@@ -94,7 +94,7 @@ async function discardEdit() {
 	cleanup(propUri);
 	await closeDiffTab(propUri);
 	updateDiffContext();
-	vscode.window.setStatusBarMessage('Atom++ AI: edit discarded', 1500);
+	vscode.window.setStatusBarMessage('LevelCode AI: edit discarded', 1500);
 }
 
 /** Whole-line range covering the selection. */
@@ -109,11 +109,11 @@ function fullLineRange(editor) {
 async function editSelection(deps) {
 	const ed = vscode.window.activeTextEditor;
 	if (!ed || ed.selection.isEmpty) {
-		vscode.window.showInformationMessage('Atom++ AI: select the code you want to edit first.');
+		vscode.window.showInformationMessage('LevelCode AI: select the code you want to edit first.');
 		return;
 	}
 	const instruction = await vscode.window.showInputBox({
-		title: 'Atom++ AI — Edit selection',
+		title: 'LevelCode AI — Edit selection',
 		prompt: 'Describe the change',
 		placeHolder: 'e.g. add error handling and a JSDoc comment',
 		ignoreFocusOut: true
@@ -129,7 +129,7 @@ async function editSelection(deps) {
 	let result = '';
 	try {
 		await vscode.window.withProgress(
-			{ location: vscode.ProgressLocation.Notification, title: 'Atom++ AI is editing…', cancellable: true },
+			{ location: vscode.ProgressLocation.Notification, title: 'LevelCode AI is editing…', cancellable: true },
 			async (_progress, token) => {
 				const ac = new AbortController();
 				token.onCancellationRequested(() => ac.abort());
@@ -137,7 +137,7 @@ async function editSelection(deps) {
 				const req = await deps.prepProviderRequest({ prompt: true });
 				if (!req.ok) {
 					throw new Error(
-						req.reason === 'baseURL' ? 'Set a base URL for the custom OpenAI-compatible provider first (atompp.ai.baseURL).'
+						req.reason === 'baseURL' ? 'Set a base URL for the custom OpenAI-compatible provider first (levelcode.ai.baseURL).'
 						: req.reason === 'insecureBaseURL' ? 'Refusing to send your API key over plain http to a non-local host. Use an https (or localhost) base URL.'
 						: 'No API key set for ' + req.label + '.');
 				}
@@ -149,12 +149,12 @@ async function editSelection(deps) {
 			}
 		);
 	} catch (e) {
-		vscode.window.showErrorMessage('Atom++ AI edit failed: ' + String((e && e.message) || e));
+		vscode.window.showErrorMessage('LevelCode AI edit failed: ' + String((e && e.message) || e));
 		return;
 	}
 
 	const proposed = stripFences(result);
-	if (!proposed.trim()) { vscode.window.showWarningMessage('Atom++ AI: no edit was produced.'); return; }
+	if (!proposed.trim()) { vscode.window.showWarningMessage('LevelCode AI: no edit was produced.'); return; }
 
 	const ext = path.extname(doc.uri.fsPath) || '.txt';
 	const n = ++counter;
@@ -165,7 +165,7 @@ async function editSelection(deps) {
 	pending.set(propUri.toString(), { docUri: doc.uri, range, newText: proposed, origUri });
 
 	await vscode.commands.executeCommand('vscode.diff', origUri, propUri,
-		'Atom++ AI: proposed edit — use ✓ Keep / ✗ Discard above', { preview: true });
+		'LevelCode AI: proposed edit — use ✓ Keep / ✗ Discard above', { preview: true });
 	updateDiffContext();
 }
 
@@ -173,9 +173,9 @@ async function editSelection(deps) {
 function registerAiEdit(context, deps) {
 	registerProvider(context);
 	context.subscriptions.push(
-		vscode.commands.registerCommand('atompp.ai.editSelection', () => editSelection(deps)),
-		vscode.commands.registerCommand('atompp.ai.applyEdit', applyEdit),
-		vscode.commands.registerCommand('atompp.ai.discardEdit', discardEdit),
+		vscode.commands.registerCommand('levelcode.ai.editSelection', () => editSelection(deps)),
+		vscode.commands.registerCommand('levelcode.ai.applyEdit', applyEdit),
+		vscode.commands.registerCommand('levelcode.ai.discardEdit', discardEdit),
 		vscode.window.tabGroups.onDidChangeTabGroups(updateDiffContext),
 		vscode.window.tabGroups.onDidChangeTabs((e) => {
 			for (const tab of e.closed) {

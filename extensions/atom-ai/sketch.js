@@ -1,9 +1,9 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Agent Sketch  [SK1: the visual agent-orchestration canvas]
+ *  LevelCode — Agent Sketch  [SK1: the visual agent-orchestration canvas]
  *
  *  Sketch an agentic flow on a canvas: drop specialized agents (sketch/agentCatalog.js — 96
  *  ruflo-derived archetypes), wire them into a DAG, hit Run. Each node executes ONE turn on
- *  Atom++'s own multi-provider layer (providers.streamAgentTurn with no tools — text in/out),
+ *  LevelCode's own multi-provider layer (providers.streamAgentTurn with no tools — text in/out),
  *  BYO-key, direct to the provider. Levels run in parallel, chains in sequence (sketch/graph.js).
  *
  *  The monitoring story (why this exists): every node reports REAL token usage (from the P2
@@ -11,7 +11,7 @@
  *  what-if selector re-prices the whole flow on a different model without re-running it.
  *
  *  SK1 scope: single-turn nodes, no file/command tools inside sketch runs (the chat agent keeps
- *  that); persistence in workspace .atompp/sketches/*.json. Tool-using sketch nodes = SK2.
+ *  that); persistence in workspace .levelcode/sketches/*.json. Tool-using sketch nodes = SK2.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 "use strict";
@@ -82,13 +82,13 @@ function post(msg) {
   }
 }
 
-// ---- persistence: workspace .atompp/sketches/<name>.json -------------------------------------
+// ---- persistence: workspace .levelcode/sketches/<name>.json -------------------------------------
 function sketchesDir() {
   const f = vscode.workspace.workspaceFolders;
   if (!f || !f.length) {
     return null;
   }
-  return path.join(f[0].uri.fsPath, ".atompp", "sketches");
+  return path.join(f[0].uri.fsPath, ".levelcode", "sketches");
 }
 function safeName(name) {
   return (
@@ -101,7 +101,7 @@ function saveSketch(sketch) {
   const dir = sketchesDir();
   if (!dir) {
     throw new Error(
-      "Open a folder to save sketches (they live in .atompp/sketches/).",
+      "Open a folder to save sketches (they live in .levelcode/sketches/).",
     );
   }
   fs.mkdirSync(dir, { recursive: true });
@@ -129,14 +129,14 @@ function loadSketch(name) {
 // ---- session autosave: never lose a paid run on reload ---------------------------------------
 // The working canvas + the LAST RUN'S RESULTS (per-node outputs, tokens, cost) live only in the
 // webview's memory; a folder reopen would otherwise wipe them. We mirror the whole session to
-// .atompp/.session.json on every meaningful change and restore it when the panel reopens. This is
+// .levelcode/.session.json on every meaningful change and restore it when the panel reopens. This is
 // app-internal state (like a draft), NOT a portable deliverable.
-function atompHome() {
+function levelcodeHome() {
   const f = vscode.workspace.workspaceFolders;
-  return f && f.length ? path.join(f[0].uri.fsPath, ".atompp") : null;
+  return f && f.length ? path.join(f[0].uri.fsPath, ".levelcode") : null;
 }
 function sessionFile() {
-  const home = atompHome();
+  const home = levelcodeHome();
   return home ? path.join(home, ".session.json") : null;
 }
 /** Atomically persist the current session blob. No-op when no folder is open. */
@@ -168,7 +168,7 @@ function readSession() {
 
 /** Render a run as a human-readable Markdown deliverable and open it. On-demand only (share/export). */
 function exportRunMarkdown(session) {
-  const home = atompHome();
+  const home = levelcodeHome();
   if (!home) {
     throw new Error("Open a folder to export a run.");
   }
@@ -184,7 +184,7 @@ function exportRunMarkdown(session) {
     lines.push("**Goal:** " + session.goal);
     lines.push("");
   }
-  lines.push("_Exported " + stamp.toLocaleString() + " from Atom++ Agent Sketch._");
+  lines.push("_Exported " + stamp.toLocaleString() + " from LevelCode Agent Sketch._");
   lines.push("");
   let ti = 0,
     to = 0,
@@ -255,7 +255,7 @@ function nodeSystem(node) {
   return (
     'You are the "' +
     (node.label || node.agentId) +
-    '" agent inside a multi-agent flow sketched in the Atom++ editor. ' +
+    '" agent inside a multi-agent flow sketched in the LevelCode editor. ' +
     "Your role: " +
     role +
     ". " +
@@ -687,7 +687,7 @@ function resolvedPrices() {
 
 // ---- board command: natural language → deterministic graph ops --------------------------------
 const COMMAND_SYSTEM =
-  "You are the board copilot for Atom++ Agent Sketch — a visual multi-agent flow (a DAG of agent " +
+  "You are the board copilot for LevelCode Agent Sketch — a visual multi-agent flow (a DAG of agent " +
   "nodes). The user types an instruction to change the flow; you return ONLY a JSON object " +
   '{"ops":[...]} listing the edits to apply. No prose, no code fence.\n\n' +
   "Op types (reference nodes by their label or id):\n" +
@@ -789,7 +789,7 @@ async function boardCommand(o) {
 
 // ---- generate a WHOLE flow from a plain-English description ------------------------------------
 const GENERATE_SYSTEM =
-  "You DESIGN a complete agentic workflow as a DAG for Atom++ Agent Sketch, from a plain-English " +
+  "You DESIGN a complete agentic workflow as a DAG for LevelCode Agent Sketch, from a plain-English " +
   "description. Return ONLY JSON:\n" +
   '{"goal":"<one sentence>","nodes":[{"agent":"<catalog id>","label":"<short unique>","task":"<what THIS agent does in the flow, concretely>"}],"edges":[["<from label>","<to label>"]]}\n\n' +
   "Rules:\n" +
@@ -976,7 +976,7 @@ function openSketch(context, deps) {
     return;
   }
   panel = vscode.window.createWebviewPanel(
-    "atompp.sketch",
+    "levelcode.sketch",
     "Agent Sketch",
     vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true },
@@ -1054,7 +1054,7 @@ function openSketch(context, deps) {
             sketches: listSketches(),
           });
           vscode.window.setStatusBarMessage(
-            "Atom++: sketch saved → " + vscode.workspace.asRelativePath(file),
+            "LevelCode: sketch saved → " + vscode.workspace.asRelativePath(file),
             3000,
           );
           break;

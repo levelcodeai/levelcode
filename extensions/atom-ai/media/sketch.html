@@ -1796,7 +1796,7 @@
       };
 
       // ---------- session autosave (never lose a paid run on reload) ----------
-      // Bundle the canvas + the last run's results and mirror it to disk (.atompp/.session.json,
+      // Bundle the canvas + the last run's results and mirror it to disk (.levelcode/.session.json,
       // written by the extension). This is app-internal restore state, not a deliverable.
       function fullSession() {
         const s = serialize(); // { name, goal, nodes, edges }

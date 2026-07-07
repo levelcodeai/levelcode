@@ -81,11 +81,11 @@ test('getProvider: openai-kind rows share the adapter (kind==="openai")', () => 
 
 // --- registry: secretStorageKey (legacy Anthropic vs namespaced vs none) ---
 test('secretStorageKey: Anthropic keeps its LEGACY location; others namespaced; noKey → null', () => {
-	assert.strictEqual(reg.secretStorageKey('claude'), 'atompp.ai.anthropicKey');
-	assert.strictEqual(reg.secretStorageKey('anthropic'), 'atompp.ai.anthropicKey');
-	assert.strictEqual(reg.secretStorageKey('openai'), 'atompp.ai.key.openai');
-	assert.strictEqual(reg.secretStorageKey('openrouter'), 'atompp.ai.key.openrouter');
-	assert.strictEqual(reg.secretStorageKey('custom'), 'atompp.ai.key.custom');
+	assert.strictEqual(reg.secretStorageKey('claude'), 'levelcode.ai.anthropicKey');
+	assert.strictEqual(reg.secretStorageKey('anthropic'), 'levelcode.ai.anthropicKey');
+	assert.strictEqual(reg.secretStorageKey('openai'), 'levelcode.ai.key.openai');
+	assert.strictEqual(reg.secretStorageKey('openrouter'), 'levelcode.ai.key.openrouter');
+	assert.strictEqual(reg.secretStorageKey('custom'), 'levelcode.ai.key.custom');
 	assert.strictEqual(reg.secretStorageKey('ollama'), null);   // noKey
 	assert.strictEqual(reg.secretStorageKey('nope'), null);
 });

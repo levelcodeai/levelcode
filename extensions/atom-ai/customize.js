@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Customize
+ *  LevelCode — Customize
  *
  *  One product surface for everything: AI key/model, appearance + keymap, sync, updates, and
  *  power-editing/hackability. A self-contained webview whose buttons run the same commands the
@@ -29,7 +29,7 @@ function activeModelId(ai, providerId) {
 }
 
 async function gatherStatus(context) {
-	const ai = vscode.workspace.getConfiguration('atompp.ai');
+	const ai = vscode.workspace.getConfiguration('levelcode.ai');
 	const providerId = normId(ai.get('provider', 'claude'));
 	const p = getProvider(providerId) || getProvider('claude');
 	const skey = secretStorageKey(providerId);
@@ -48,9 +48,9 @@ async function gatherStatus(context) {
 		theme: vscode.workspace.getConfiguration('workbench').get('colorTheme', ''),
 		syncEnabled: !!vscode.workspace.getConfiguration().get('configurationSync.keybindingsPerPlatform') || undefined,
 		// Sync is stripped from public builds until the managed host ships (strip-unreleased.mjs), so
-		// only show its section when the atom-sync extension is actually present (its command exists).
-		syncAvailable: (await vscode.commands.getCommands(true)).includes('atompp.sync.setUp'),
-		updates: vscode.workspace.getConfiguration('atompp.update').get('enabled', true)
+		// only show its section when the sync feature is present (its command exists).
+		syncAvailable: (await vscode.commands.getCommands(true)).includes('levelcode.sync.setUp'),
+		updates: vscode.workspace.getConfiguration('levelcode.update').get('enabled', true)
 	};
 }
 
@@ -77,29 +77,29 @@ function htmlFor(nonce, s) {
 		row('Model', (s.model || '(default)') + (s.modelCaps ? '  ·  ' + s.modelCaps : '')) +
 		row('Agent (tool use)', s.agentReady ? 'available' : 'chat only for this model', s.agentReady) +
 		row('Inline completions', s.completions ? 'on' : 'off', s.completions) +
-		'<div class="btns">' + btn('Change model / provider', 'atompp.ai.pickModel', true) +
-			btn(keyBtn, 'atompp.ai.setApiKey', !s.keySet && !s.noKey) +
-			btn('Sign in to Atom++', 'atompp.ai.account') +
-			btn('Open chat', 'atompp.ai.focus') +
-			btn('Agent Sketch', 'atompp.ai.sketch') + '</div>');
+		'<div class="btns">' + btn('Change model / provider', 'levelcode.ai.pickModel', true) +
+			btn(keyBtn, 'levelcode.ai.setApiKey', !s.keySet && !s.noKey) +
+			btn('Sign in to LevelCode', 'levelcode.ai.account') +
+			btn('Open chat', 'levelcode.ai.focus') +
+			btn('Agent Sketch', 'levelcode.ai.sketch') + '</div>');
 
 	const look = section('🎨', 'Appearance & keys',
 		row('Theme', s.theme || '') +
 		'<div class="btns">' + btn('Choose theme', 'workbench.action.selectTheme') +
-			btn('Apply keymap preset', 'atompp.keymap.apply') +
-			btn('Import from VS Code', 'atompp.import.vscode') + '</div>');
+			btn('Apply keymap preset', 'levelcode.keymap.apply') +
+			btn('Import from VS Code', 'levelcode.import.vscode') + '</div>');
 
 	const sync = s.syncAvailable ? section('🔄', 'Sync',
 		'<p class="muted">Carry your settings, keybindings, theme, MCP & skills across machines.</p>' +
-		'<div class="btns">' + btn('Set up Sync', 'atompp.sync.setUp') + btn('Sync status', 'atompp.sync.status') + '</div>') : '';
+		'<div class="btns">' + btn('Set up Sync', 'levelcode.sync.setUp') + btn('Sync status', 'levelcode.sync.status') + '</div>') : '';
 
 	const upd = section('⬆️', 'Updates',
 		row('Auto-check', s.updates ? 'on' : 'off', s.updates) +
-		'<div class="btns">' + btn('Check for updates', 'atompp.update.check') + '</div>');
+		'<div class="btns">' + btn('Check for updates', 'levelcode.update.check') + '</div>');
 
 	const hack = section('🛠️', 'Hackability',
 		'<p class="muted">Make it yours — a user init script and your own packages, hot-reloaded.</p>' +
-		'<div class="btns">' + btn('Open init script', 'atompp.init.edit') + btn('Generate a package', 'atompp.package.generate') + '</div>');
+		'<div class="btns">' + btn('Open init script', 'levelcode.init.edit') + btn('Generate a package', 'levelcode.package.generate') + '</div>');
 
 	return '<!doctype html><html><head><meta charset="utf-8">' +
 		'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'nonce-' + nonce + '\';">' +
@@ -121,7 +121,7 @@ function htmlFor(nonce, s) {
 		'.b.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground);}' +
 		'.b.primary:hover{background:var(--vscode-button-hoverBackground);}' +
 		'</style></head><body>' +
-		'<h1>Customize Atom++</h1><p class="sub">Everything in one place. Buttons run the matching command.</p>' +
+		'<h1>Customize LevelCode</h1><p class="sub">Everything in one place. Buttons run the matching command.</p>' +
 		ai + look + sync + upd + hack +
 		'<script nonce="' + nonce + '">const v=acquireVsCodeApi();' +
 		'document.querySelectorAll(".b").forEach(b=>b.onclick=()=>v.postMessage({type:"run",command:b.dataset.cmd}));' +
@@ -130,13 +130,13 @@ function htmlFor(nonce, s) {
 
 async function openCustomize(context) {
 	if (panel) { panel.reveal(); return; }
-	panel = vscode.window.createWebviewPanel('atompp.customize', 'Customize Atom++', vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+	panel = vscode.window.createWebviewPanel('levelcode.customize', 'Customize LevelCode', vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
 	panel.onDidDispose(() => { panel = undefined; });
 	const nonce = String(Date.now()) + Math.random().toString(36).slice(2);
 	const render = async () => { if (panel) { panel.webview.html = htmlFor(nonce, await gatherStatus(context)); } };
 	panel.webview.onDidReceiveMessage(async (m) => {
 		if (m && m.type === 'run' && m.command) {
-			try { await vscode.commands.executeCommand(m.command); } catch (e) { vscode.window.showErrorMessage('Atom++: ' + ((e && e.message) || e)); }
+			try { await vscode.commands.executeCommand(m.command); } catch (e) { vscode.window.showErrorMessage('LevelCode: ' + ((e && e.message) || e)); }
 			setTimeout(render, 500); // refresh status after the action
 		}
 	});

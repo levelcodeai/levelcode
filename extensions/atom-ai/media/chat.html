@@ -115,7 +115,7 @@
   pre code { background: none; padding: 0; }
   code { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: .92em; }
   :not(pre) > code { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.16)); padding: 1px 5px; border-radius: 4px; }
-  /* Lightweight syntax highlighting — matched to the Atom++ One Dark palette (One Light via body.vscode-light). */
+  /* Lightweight syntax highlighting — matched to the LevelCode One Dark palette (One Light via body.vscode-light). */
   .tok-cm { color: #5c6370; font-style: italic; }
   .tok-str { color: #98c379; }
   .tok-num { color: #d19a66; }
@@ -166,8 +166,10 @@
   .agentbar .abicon svg { width: 15px; height: 15px; display: block; }
   .agentbar .abicon:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.16)); }
   .agentbar .abicon.ok { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
-  .agentbar .abicon.up.active { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
-  .agentbar .abicon.down.active { color: var(--vscode-errorForeground, #f14c4c); }
+  .agentbar .abicon.up.active { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); background: rgba(115, 201, 145, 0.18); }
+  .agentbar .abicon.down.active { color: var(--vscode-errorForeground, #f14c4c); background: rgba(241, 76, 76, 0.18); }
+  .agentbar .abicon.up.active:hover { background: rgba(115, 201, 145, 0.26); }
+  .agentbar .abicon.down.active:hover { background: rgba(241, 76, 76, 0.26); }
   .agentbar-meta { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
   .agentbar-meta .abhint { opacity: .85; margin-right: 3px; }
   .agentbar-meta .abmodel { cursor: pointer; }
@@ -462,13 +464,20 @@
     display: flex; align-items: center; gap: 10px;
     padding: 5px 14px 8px; font-size: 11px; color: var(--muted);
   }
-  #atomLogo { width: 22px; height: 22px; flex: 0 0 auto; }
-  .miniatom { width: 22px; height: 22px; flex: 0 0 auto; }
+  #lcLogo { width: 22px; height: 22px; flex: 0 0 auto; color: var(--accent); }
   /* inline codicons sized to the surrounding text */
   .ci { width: 1em; height: 1em; display: inline-block; vertical-align: -0.13em; flex: 0 0 auto; }
-  .orbit { stroke: var(--vscode-foreground); opacity: .55; }
-  .arc { stroke: var(--accent); }
-  .electron { stroke: var(--accent); fill: var(--accent); }
+  /* LevelCode "level-up" working indicator — three ascending chevrons pulsing bottom→top in sequence */
+  .lc-spin { width: 22px; height: 22px; flex: 0 0 auto; color: var(--accent); }
+  .lc-spin path { fill: none; stroke: currentColor; stroke-width: 11; stroke-linecap: round; stroke-linejoin: round; }
+  .lc-spin .c1 { animation: lcPulse 1.15s ease-in-out infinite; }
+  .lc-spin .c2 { animation: lcPulse 1.15s ease-in-out .14s infinite; }
+  .lc-spin .c3 { animation: lcPulse 1.15s ease-in-out .28s infinite; }
+  @keyframes lcPulse { 0%, 55%, 100% { opacity: .25; } 26% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .lc-spin .c1, .lc-spin .c2, .lc-spin .c3 { animation: none; }
+    .lc-spin .c1 { opacity: .5; } .lc-spin .c2 { opacity: .78; } .lc-spin .c3 { opacity: 1; }
+  }
   #status .item { display: inline-flex; align-items: center; gap: 4px; }
   /* ---- context-window donut chip + breakdown popover ---- */
   #ctxStat { font-variant-numeric: tabular-nums; cursor: pointer; gap: 5px; border-radius: 6px; padding: 1px 5px; margin: 0 -2px; transition: background .12s; }
@@ -545,12 +554,107 @@
   .acctbody .note.priv { background: var(--field-bg); border: 1px solid var(--border); color: var(--muted); }
   .acctbody .link { color: var(--accent); cursor: pointer; text-decoration: none; }
   .acctbody .link:hover { text-decoration: underline; }
+
+  /* ── LevelCode sign-in modal — calm, soft, THEME-FOLLOWING (matches the Manage-account card) ────
+     Scoped to .acctcard.lc-modal. Uses the editor theme tokens (--vscode-*, --border, --muted, --field-bg)
+     so it adapts light/dark exactly like the signed-in card, with a gentle lavender (--accent) as the
+     single accent. */
+  .acctcard.lc-modal {
+    max-width: 384px; padding: 34px 30px 24px; border-radius: 14px;
+    background: var(--vscode-editorWidget-background, #21252b); color: var(--vscode-foreground);
+    border: 1px solid var(--border); box-shadow: 0 14px 44px rgba(0,0,0,.30);
+    overflow: hidden; animation: lcPop .4s cubic-bezier(.2,.9,.25,1.2) both;
+  }
+  @keyframes lcPop { from { opacity: 0; transform: translateY(12px) scale(.97); } }
+  .acctcard.lc-modal .ovclose {
+    top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 8px; color: var(--muted);
+    font-size: 14px; display: grid; place-items: center;
+  }
+  .acctcard.lc-modal .ovclose:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); color: var(--vscode-foreground); }
+  .acctcard.lc-modal .ovclose:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Brand mark in the same soft-lavender medallion as the account avatar (monochrome --accent). */
+  .lc-mark {
+    width: 58px; height: 58px; margin: 4px auto 16px; border-radius: 50%; display: grid; place-items: center;
+    border: 2px solid var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent);
+  }
+  .lc-mark svg { display: block; width: 30px; height: 30px; }
+
+  .acctcard.lc-modal h1 {
+    margin: 0; font-size: 21px; font-weight: 700; text-align: center; letter-spacing: -.01em;
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; color: var(--vscode-foreground);
+  }
+  .lc-sub { margin: 8px auto 22px; max-width: 300px; text-align: center; font-size: 13px; line-height: 1.6; color: var(--muted); }
+
+  .lc-btn {
+    display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; box-sizing: border-box;
+    border-radius: 10px; border: 1px solid var(--border); font-size: 13.5px; font-weight: 600; cursor: pointer;
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; color: var(--vscode-foreground);
+    background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.16));
+    transition: background .16s ease, border-color .16s ease, transform .16s ease, filter .16s ease;
+  }
+  .lc-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.28)); }
+  .lc-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .lc-btn:active { transform: scale(.99); }
+  .lc-btn svg { width: 17px; height: 17px; flex: none; }
+  .lc-btn-primary {
+    margin-bottom: 12px; border-color: transparent; color: var(--vscode-button-foreground, #fff); background: var(--accent);
+    box-shadow: 0 2px 10px -3px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .lc-btn-primary:hover { background: var(--accent); filter: brightness(1.07); }
+  .lc-arrow { font-size: 15px; opacity: .9; transition: transform .18s; }
+  .lc-btn-primary:hover .lc-arrow { transform: translateX(3px); }
+
+  .lc-or {
+    display: flex; align-items: center; gap: 12px; margin: 2px 0 12px; color: var(--muted);
+    font-family: var(--vscode-editor-font-family, monospace); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  }
+  .lc-or::before, .lc-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+  .lc-oauth-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+  .lc-oauth-row .lc-btn { height: 40px; font-size: 12.5px; }
+
+  .lc-perks {
+    display: grid; gap: 11px; padding: 15px 14px; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--field-bg); margin-bottom: 15px; text-align: left;
+  }
+  .lc-perk { display: flex; gap: 11px; align-items: flex-start; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+  .lc-perk b { color: var(--vscode-foreground); font-weight: 600; }
+  .lc-perk .lc-ic {
+    flex: none; width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; margin-top: 1px;
+    background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); font-size: 11px;
+  }
+  .lc-perk .lc-ic .ci { width: 13px; height: 13px; }
+
+  .lc-byok {
+    display: flex; gap: 8px; align-items: center; justify-content: center; font-size: 11px; color: var(--muted);
+    margin-bottom: 14px; flex-wrap: wrap; text-align: center;
+  }
+  .lc-byok .lc-dot { width: 5px; height: 5px; border-radius: 50%; background: #3fb950; flex: none; }
+  .lc-byok code { font-family: var(--vscode-editor-font-family, monospace); font-size: 10.5px; color: var(--muted); background: var(--field-bg); border: 1px solid var(--border); padding: 1px 5px; border-radius: 5px; }
+
+  .lc-note {
+    font-size: 11px; line-height: 1.5; margin: 0 0 14px; padding: 9px 11px; border-radius: 8px; text-align: left;
+    background: color-mix(in srgb, #e0a030 12%, var(--field-bg)); border: 1px solid color-mix(in srgb, #e0a030 34%, transparent); color: var(--vscode-foreground);
+  }
+  .lc-note code { font-family: var(--vscode-editor-font-family, monospace); font-size: 10.5px; background: var(--field-bg); padding: 1px 5px; border-radius: 4px; }
+
+  .lc-legal { padding-top: 14px; border-top: 1px solid var(--border); text-align: center; font-size: 11px; line-height: 1.7; color: var(--muted); }
+  .lc-legal a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 2px; cursor: pointer; }
+  .lc-legal a:hover { color: var(--vscode-foreground); }
+  .lc-legal a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+  .lc-trust { margin-top: 5px; font-family: var(--vscode-editor-font-family, monospace); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .acctcard.lc-modal { animation: none; }
+    .lc-btn:hover, .lc-btn-primary:hover, .lc-btn-primary:hover .lc-arrow { transform: none; }
+  }
 </style>
 </head>
 <body>
   <div id="log">
     <div id="empty">
-      <div class="big">Atom++ AI</div>
+      <div class="big">LevelCode AI</div>
       Ask about your code, or describe what to build. The open file is sent as context; add a selection with <b>+</b> or ⌥⌘A.
       <div class="starters">
         <button class="starter" data-q="Explain what the current file does.">Explain this file</button>
@@ -588,37 +692,26 @@
           <span class="mono">&lt;/&gt;</span> <span id="modeLabel">Agent</span>
         </span>
         <span class="pill" id="model" title="Click to change model">Auto <span class="caret">▾</span></span>
-        <button class="tbtn" id="settings" title="Atom++ AI settings">&#9776;</button>
+        <button class="tbtn" id="settings" title="LevelCode AI settings">&#9776;</button>
       </div>
       <button id="send" title="Send (Enter)">&#8629;</button>
     </div>
   </div>
 
   <div id="status">
-    <svg id="atomLogo" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-label="Atom++">
-      <defs>
-        <path id="orb" d="M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z"/>
-        <path id="orbHalf" d="M 100,28 A 36,72 0 0,1 100,172"/>
-      </defs>
-      <g>
-        <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0 100 100" to="360 100 100" dur="14s" repeatCount="indefinite"/>
-        <g transform="rotate(0 100 100)"><use href="#orb" class="orbit" fill="none" stroke-width="9" stroke-linecap="round"/><use href="#orbHalf" class="arc" fill="none" stroke-width="9" stroke-linecap="round"/></g>
-        <g transform="rotate(60 100 100)"><use href="#orb" class="orbit" fill="none" stroke-width="9" stroke-linecap="round"/><use href="#orbHalf" class="arc" fill="none" stroke-width="9" stroke-linecap="round"/></g>
-        <g transform="rotate(120 100 100)"><use href="#orb" class="orbit" fill="none" stroke-width="9" stroke-linecap="round"/><use href="#orbHalf" class="arc" fill="none" stroke-width="9" stroke-linecap="round"/></g>
-        <g transform="rotate(0 100 100)"><circle class="electron" r="7" stroke-width="2.5"><animateMotion dur="3s" repeatCount="indefinite" path="M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z"/></circle></g>
-        <g transform="rotate(60 100 100)"><circle class="electron" r="7" stroke-width="2.5"><animateMotion dur="3s" begin="-1s" repeatCount="indefinite" path="M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z"/></circle></g>
-        <g transform="rotate(120 100 100)"><circle class="electron" r="7" stroke-width="2.5"><animateMotion dur="3s" begin="-2s" repeatCount="indefinite" path="M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z"/></circle></g>
-      </g>
-      <circle class="orbit" cx="100" cy="100" r="15" fill="none" stroke-width="8"><animate attributeName="r" values="15;16.5;15" dur="1.8s" repeatCount="indefinite"/></circle>
+    <svg id="lcLogo" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-label="LevelCode" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M29,92 L60,70 L91,92" opacity=".5"/>
+      <path d="M29,71 L60,49 L91,71" opacity=".78"/>
+      <path d="M29,50 L60,28 L91,50"/>
     </svg>
-    <span class="item" id="st-local" title="Requests go directly from your machine to the provider — no Atom++ backend."><svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7.31299 1.26164C7.69849 0.897163 8.30151 0.897163 8.68701 1.26164L13.5305 5.84098C13.8302 6.12431 14 6.51853 14 6.93094V12.5002C14 13.3286 13.3284 14.0002 12.5 14.0002H10.5C9.67157 14.0002 9 13.3286 9 12.5002V10.0002C9 9.72407 8.77614 9.50021 8.5 9.50021H7.5C7.22386 9.50021 7 9.72407 7 10.0002V12.5002C7 13.3286 6.32843 14.0002 5.5 14.0002H3.5C2.67157 14.0002 2 13.3286 2 12.5002V6.93094C2 6.51853 2.1698 6.12431 2.46948 5.84098L7.31299 1.26164ZM8 1.98828L3.15649 6.56762C3.0566 6.66207 3 6.79347 3 6.93094V12.5002C3 12.7763 3.22386 13.0002 3.5 13.0002H5.5C5.77614 13.0002 6 12.7763 6 12.5002V10.0002C6 9.17179 6.67157 8.50022 7.5 8.50022H8.5C9.32843 8.50022 10 9.17179 10 10.0002V12.5002C10 12.7763 10.2239 13.0002 10.5 13.0002H12.5C12.7761 13.0002 13 12.7763 13 12.5002V6.93094C13 6.79347 12.9434 6.66207 12.8435 6.56762L8 1.98828Z"/></svg> Local</span>
+    <span class="item" id="st-local" title="Requests go directly from your machine to the provider — no LevelCode backend."><svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7.31299 1.26164C7.69849 0.897163 8.30151 0.897163 8.68701 1.26164L13.5305 5.84098C13.8302 6.12431 14 6.51853 14 6.93094V12.5002C14 13.3286 13.3284 14.0002 12.5 14.0002H10.5C9.67157 14.0002 9 13.3286 9 12.5002V10.0002C9 9.72407 8.77614 9.50021 8.5 9.50021H7.5C7.22386 9.50021 7 9.72407 7 10.0002V12.5002C7 13.3286 6.32843 14.0002 5.5 14.0002H3.5C2.67157 14.0002 2 13.3286 2 12.5002V6.93094C2 6.51853 2.1698 6.12431 2.46948 5.84098L7.31299 1.26164ZM8 1.98828L3.15649 6.56762C3.0566 6.66207 3 6.79347 3 6.93094V12.5002C3 12.7763 3.22386 13.0002 3.5 13.0002H5.5C5.77614 13.0002 6 12.7763 6 12.5002V10.0002C6 9.17179 6.67157 8.50022 7.5 8.50022H8.5C9.32843 8.50022 10 9.17179 10 10.0002V12.5002C10 12.7763 10.2239 13.0002 10.5 13.0002H12.5C12.7761 13.0002 13 12.7763 13 12.5002V6.93094C13 6.79347 12.9434 6.66207 12.8435 6.56762L8 1.98828Z"/></svg> Local</span>
     <span class="item" id="st-key" title="Bring your own API key, stored in your OS keychain."><svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.25 7.25C9.25 7.76258 8.94148 8.2031 8.5 8.39599V9.50358C8.5 9.77973 8.27614 10.0036 8 10.0036C7.72386 10.0036 7.5 9.77973 7.5 9.50358V8.39599C7.05852 8.2031 6.75 7.76258 6.75 7.25C6.75 6.55964 7.30964 6 8 6C8.69036 6 9.25 6.55964 9.25 7.25ZM7.14309 2.04175C6.78097 2.2883 6.21583 2.61563 5.42482 2.91681C4.6399 3.21566 3.90375 3.36204 3.36353 3.43333C3.09405 3.46889 2.87509 3.48554 2.72547 3.49331C2.6507 3.49719 2.5934 3.49885 2.55593 3.49954L2.50489 3.50003C2.37157 3.49872 2.24323 3.55072 2.14842 3.64449C2.05344 3.73841 2 3.86643 2 4V6.75508C2 9.40779 3.4013 11.8632 5.68525 13.2124L7.74707 14.4305C7.90399 14.5232 8.09891 14.5232 8.2558 14.4304L10.3162 13.2126C12.5993 11.8632 14 9.40823 14 6.7561V4C14 3.86598 13.9462 3.73757 13.8507 3.64358C13.7552 3.54964 13.626 3.49794 13.4921 3.50007L13.4421 3.49981C13.4048 3.49928 13.3478 3.49787 13.2735 3.49426C13.1246 3.48705 12.9066 3.47109 12.6384 3.43602C12.1006 3.36573 11.3679 3.21959 10.5869 2.91771C9.79733 2.61248 9.22913 2.28442 8.86335 2.03774C8.68039 1.91435 8.54795 1.81124 8.46371 1.74141C8.4256 1.70981 8.38768 1.6777 8.35191 1.64343C8.2576 1.55073 8.13037 1.49913 7.99807 1.50001C7.86585 1.50089 7.73916 1.55434 7.64611 1.64819L7.53744 1.74536C7.45475 1.81517 7.32423 1.91842 7.14309 2.04175ZM3 6.75508V4.47725C3.14066 4.46608 3.30705 4.44945 3.49436 4.42473C4.09055 4.34605 4.90577 4.18447 5.78065 3.85136C6.64943 3.52057 7.28362 3.15585 7.70588 2.86835C7.82102 2.78996 7.92034 2.71735 8.00434 2.65277C8.08878 2.71677 8.18861 2.78886 8.30421 2.86682C8.72757 3.15233 9.362 3.51631 10.2264 3.85045C11.0994 4.18794 11.9134 4.34976 12.5088 4.42759C12.6947 4.45189 12.86 4.46809 13 4.47888V6.7561C13 9.05461 11.7861 11.1822 9.80736 12.3518L8.00133 13.4192L6.19388 12.3515C4.21446 11.1821 3 9.0541 3 6.75508Z"/></svg> Direct · BYO key</span>
     <span class="item" id="ctxStat" role="button" tabindex="0" title="Context-window usage — click for the breakdown">
       <svg class="ctxring" viewBox="0 0 36 36" aria-hidden="true"><circle class="ctxring-track" cx="18" cy="18" r="14"/><circle class="ctxring-fill" cx="18" cy="18" r="14" transform="rotate(-90 18 18)" stroke-dasharray="87.96" stroke-dashoffset="87.96"/></svg>
       <span class="ctxpct">200k</span>
     </span>
     <span class="grow"></span>
-    <button id="acctBtn" class="acct" title="Atom++ account" aria-label="Atom++ account">
+    <button id="acctBtn" class="acct" title="LevelCode account" aria-label="LevelCode account">
       <span class="acctavatar" id="acctAvatar">
         <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
           <circle cx="12" cy="8.6" r="3.3" fill="none" stroke="currentColor" stroke-width="1.7"/>
@@ -633,9 +726,9 @@
     <div class="ctxcard" id="ctxCard"></div>
   </div>
 
-  <!-- Atom++ account / sign-in panel (overlay inside the chat webview) -->
+  <!-- LevelCode account / sign-in panel (overlay inside the chat webview) -->
   <div id="acctOverlay" class="overlay" style="display:none">
-    <div class="acctcard">
+    <div class="acctcard" role="dialog" aria-modal="true" aria-labelledby="lcTitle">
       <button class="ovclose" id="acctClose" title="Close" aria-label="Close">&#10005;</button>
       <div class="acctbody" id="acctBody"></div>
     </div>
@@ -720,15 +813,12 @@
   let agentStatusEl = null;
   let agentBubble = null;  // current streaming agent text bubble
   let agentRaw = '';
-  // The Atom animation, used as the universal "working" indicator (replaces the spinner + "thinking…").
-  const ORB = 'M 100,28 A 36,72 0 0,1 100,172 A 36,72 0 0,1 100,28 Z';
-  function atomOrbit(deg){ return '<g transform="rotate(' + deg + ' 100 100)"><path class="orbit" d="' + ORB + '" fill="none" stroke-width="9" stroke-linecap="round"/><path class="arc" d="M 100,28 A 36,72 0 0,1 100,172" fill="none" stroke-width="9" stroke-linecap="round"/></g>'; }
-  function atomElectron(deg, begin){ return '<g transform="rotate(' + deg + ' 100 100)"><circle class="electron" r="7" stroke-width="2.5"><animateMotion dur="3s"' + (begin ? ' begin="' + begin + '"' : '') + ' repeatCount="indefinite" path="' + ORB + '"/></circle></g>'; }
-  const ATOM_SVG = '<svg class="miniatom" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><g>'
-    + '<animateTransform attributeName="transform" type="rotate" from="0 100 100" to="360 100 100" dur="14s" repeatCount="indefinite"/>'
-    + atomOrbit(0) + atomOrbit(60) + atomOrbit(120)
-    + atomElectron(0, '') + atomElectron(60, '-1s') + atomElectron(120, '-2s')
-    + '</g><circle class="orbit" cx="100" cy="100" r="15" fill="none" stroke-width="8"><animate attributeName="r" values="15;16.5;15" dur="1.8s" repeatCount="indefinite"/></circle></svg>';
+  // LevelCode "level-up" working indicator — three ascending chevrons pulsing bottom→top in sequence
+  // (the pulse wave + stagger live in CSS: .lc-spin .c1/.c2/.c3 + @keyframes lcPulse). Replaces the atom.
+  const LC_SPIN_SVG = '<svg class="lc-spin" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+    + '<path class="c1" d="M29,92 L60,70 L91,92"/>'
+    + '<path class="c2" d="M29,71 L60,49 L91,71"/>'
+    + '<path class="c3" d="M29,50 L60,28 L91,50"/></svg>';
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
   // Inline VS Code codicons (MIT, @vscode/codicons) — replaces UI emojis, CSP/font-free.
@@ -749,6 +839,7 @@
     'home': { vb: '0 0 16 16', p: '<path d="M7.31299 1.26164C7.69849 0.897163 8.30151 0.897163 8.68701 1.26164L13.5305 5.84098C13.8302 6.12431 14 6.51853 14 6.93094V12.5002C14 13.3286 13.3284 14.0002 12.5 14.0002H10.5C9.67157 14.0002 9 13.3286 9 12.5002V10.0002C9 9.72407 8.77614 9.50021 8.5 9.50021H7.5C7.22386 9.50021 7 9.72407 7 10.0002V12.5002C7 13.3286 6.32843 14.0002 5.5 14.0002H3.5C2.67157 14.0002 2 13.3286 2 12.5002V6.93094C2 6.51853 2.1698 6.12431 2.46948 5.84098L7.31299 1.26164ZM8 1.98828L3.15649 6.56762C3.0566 6.66207 3 6.79347 3 6.93094V12.5002C3 12.7763 3.22386 13.0002 3.5 13.0002H5.5C5.77614 13.0002 6 12.7763 6 12.5002V10.0002C6 9.17179 6.67157 8.50022 7.5 8.50022H8.5C9.32843 8.50022 10 9.17179 10 10.0002V12.5002C10 12.7763 10.2239 13.0002 10.5 13.0002H12.5C12.7761 13.0002 13 12.7763 13 12.5002V6.93094C13 6.79347 12.9434 6.66207 12.8435 6.56762L8 1.98828Z"/>' },
     'sparkle': { vb: '0 0 16 16', p: '<path d="M8 1 L9 7 L15 8 L9 9 L8 15 L7 9 L1 8 L7 7 Z"/>' },
     'trash': { vb: '0 0 16 16', p: '<path d="M10 3h3v1h-1v9l-1 1H4l-1-1V4H2V3h3V2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zM9 2H6v1h3V2zM4 13h7V4H4v9zm2-8H5v7h1V5zm1 0h1v7H7V5zm2 0h1v7H9V5z"/>' },
+    'sync': { vb: '0 0 16 16', p: '<path d="M2.006 8.267 0.78 9.5 0 8.73l2.09-2.07.76.01 2.09 2.12-.76.76-1.167-1.18a5 5 0 0 0 9.4 1.983l.813.597A6 6 0 0 1 2.006 8.267Zm11.99-.518L15.22 6.51 16 7.29l-2.09 2.07-.76-.01-2.09-2.12.76-.76 1.167 1.18a5 5 0 0 0-9.4-1.983l-.813-.597A6 6 0 0 1 13.996 7.75Z"/>' },
   };
   function codicon(name, cls){ const i = IC[name]; if (!i) { return esc(name || ''); } return '<svg class="ci' + (cls ? ' ' + cls : '') + '" viewBox="' + i.vb + '" fill="currentColor" aria-hidden="true">' + i.p + '</svg>'; }
 
@@ -952,7 +1043,23 @@
     const live = document.createElement('div'); bodyEl.appendChild(live);
     return { body: bodyEl, live: live, committedLen: 0 };
   }
+  // Reasoning models (e.g. Kimi K2.7 Code) emit their chain-of-thought inline in the
+  // content stream. Hide it in three shapes: (1) completed <think>…</think> pairs;
+  // (2) a DANGLING </think> — some models start reasoning implicitly with no opening
+  // tag and only emit the closer, so everything up to & incl. it is reasoning;
+  // (3) a still-open <think>… mid-stream — hide from the opening tag onward. Runs on
+  // the accumulated text, so tags split across chunks resolve cleanly.
+  function stripThink(text){
+    if (!text || (text.indexOf('<think') === -1 && text.indexOf('</think') === -1)) return text;
+    let out = text.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '');   // (1)
+    const close = out.match(/<\/think\s*>/i);                          // (2)
+    if (close) out = out.slice(close.index + close[0].length);
+    const open = out.search(/<think\b[^>]*>/i);                        // (3)
+    if (open !== -1) out = out.slice(0, open);
+    return out.replace(/^\s+/, '');
+  }
   function streamFeed(s, fullText){
+    fullText = stripThink(fullText);
     const stable = lastStableIndex(fullText);
     if (stable > s.committedLen){
       const seg = document.createElement('div');
@@ -970,8 +1077,10 @@
     if (!s || !s.body) { return; }
     const msg = s.body.parentElement;            // the .msg.assistant wrapper
     if (!msg || msg.querySelector('.msgcopy')) { return; }   // already finalized
-    const text = (raw || '').trim();
+    const clean = stripThink(raw || '');
+    const text = clean.trim();
     if (!text) { return; }
+    raw = clean;   // Copy gives the clean answer, not the model's <think> reasoning.
     const bar = document.createElement('div'); bar.className = 'msgactions';
     const btn = document.createElement('button'); btn.className = 'msgcopy'; btn.type = 'button';
     btn.title = 'Copy this response'; btn.innerHTML = codicon('copy') + ' Copy';
@@ -999,7 +1108,7 @@
   function add(role, html){
     clearEmpty();
     const d = document.createElement('div'); d.className = 'msg ' + role;
-    d.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'Atom++ AI') + '</div><div class="body">' + html + '</div>';
+    d.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'LevelCode AI') + '</div><div class="body">' + html + '</div>';
     log.appendChild(d); scrollIfStuck(); return d.querySelector('.body');
   }
   function addAutoCtx(names){
@@ -1028,7 +1137,7 @@
     clearStatus();
     const d = document.createElement('div'); d.className = 'agentstatus';
     const t = (!text || text === 'thinking…') ? 'Thinking…' : text;   // shimmering label while the agent works
-    d.innerHTML = ATOM_SVG + '<span class="shimmer">' + esc(t) + '</span>';
+    d.innerHTML = LC_SPIN_SVG + '<span class="shimmer">' + esc(t) + '</span>';
     log.appendChild(d); agentStatusEl = d; scrollIfStuck();
   }
   function applyMode(agent){
@@ -1058,7 +1167,7 @@
         + '<span class="tcmd">' + esc(m.command) + '</span><span class="tcaret"></span></div>'
         + (m.explanation ? '<div class="termwhy"># ' + esc(m.explanation) + '</div>' : '')
       + '</div>'
-      + '<div class="termfoot"><span class="termask">⌘ Atom++ wants to run this in your terminal</span>'
+      + '<div class="termfoot"><span class="termask">⌘ LevelCode wants to run this in your terminal</span>'
         + '<span class="tspacer"></span>'
         + '<button class="approve" title="Run the command (⏎)">▶ Run</button>'
         + '<button class="skip" title="Don’t run it">Skip</button></div>';
@@ -1423,6 +1532,9 @@
   // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · credits.
   function addAgentDone(reason, edits, credits, maxSteps){
     const bar = document.createElement('div'); bar.className = 'agentbar';
+    // Stamp the model that produced THIS turn, so a later reaction is attributed to it
+    // (not whatever the plan is entitled to at click time — models can change mid-session).
+    bar.dataset.model = lastModelId || '';
     const actions = document.createElement('div'); actions.className = 'agentbar-actions';
     const mk = (cls, title, svg) => { const b = document.createElement('button'); b.className = 'abicon ' + cls; b.title = title; b.setAttribute('aria-label', title); b.innerHTML = svg; return b; };
     const retry = mk('retry', 'Retry', ICON_RETRY);
@@ -1459,8 +1571,19 @@
       try { clearTimeout(copy._t); } catch(e){}
       copy._t = setTimeout(() => { copy.classList.remove('ok'); copy.title = 'Copy response'; }, 1200);
     };
-    up.onclick = () => { vscode.postMessage({ type: 'feedback', value: 'up' }); up.classList.toggle('active'); down.classList.remove('active'); };
-    down.onclick = () => { vscode.postMessage({ type: 'feedback', value: 'down' }); down.classList.toggle('active'); up.classList.remove('active'); };
+    // Cursor-style reaction: 👍/👎 are mutually exclusive; clicking the active one clears it
+    // (local only). A newly-SET reaction is reported once — the extension records it against
+    // the metered gateway (per-model signal); BYOK stays local/private.
+    function setReaction(kind){
+      const btn = kind === 'up' ? up : down;
+      const wasActive = btn.classList.contains('active');
+      up.classList.remove('active'); down.classList.remove('active');
+      if (wasActive){ return; }            // toggled off → nothing to report
+      btn.classList.add('active');
+      vscode.postMessage({ type: 'feedback', value: kind, model: bar.dataset.model || '' });
+    }
+    up.onclick = () => setReaction('up');
+    down.onclick = () => setReaction('down');
     const mm = meta.querySelector('.abmodel'); if (mm) { mm.onclick = () => vscode.postMessage({ type: 'pickModel' }); }
   }
 
@@ -1511,59 +1634,165 @@
   document.getElementById('mode').onclick = () => vscode.postMessage({ type: 'setMode', agent: !agentMode });
   document.getElementById('settings').onclick = () => vscode.postMessage({ type: 'openSettings' });
 
-  // ---- Atom++ account / sign-in ----
+  // ---- LevelCode account / sign-in ----
   let account = { signedIn: false };
+  let lastProvider = '';   // latest provider id from the 'config' message (drives the routing footer)
+  let lastModelId = '';    // latest model id (stamped onto each turn's reaction bar for accurate feedback)
   const acctBtn = document.getElementById('acctBtn');
   const acctAvatar = document.getElementById('acctAvatar');
   const acctOverlay = document.getElementById('acctOverlay');
   const acctBody = document.getElementById('acctBody');
   const PERSON_SVG = acctAvatar.innerHTML;   // keep the default glyph to restore on sign-out
+  const acctCard = acctOverlay.querySelector('.acctcard');
+  // LevelCode "level-up" mark — three ascending chevrons, monochrome in the theme accent (currentColor),
+  // rising opacity for depth. Calm/soft to match the account avatar's lavender medallion.
+  const LC_MARK_SVG =
+    '<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="M29,92 L60,70 L91,92" opacity=".5"/><path d="M29,71 L60,49 L91,71" opacity=".78"/>'
+    + '<path d="M29,50 L60,28 L91,50"/></svg>';
+  const LC_GH_SVG =
+    '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>';
+  const LC_GOOGLE_SVG =
+    '<svg viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.9 11.42 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>';
   function initials(name){
     const p = String(name || '').trim().split(/\s+/).filter(Boolean);
     return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase();
   }
-  function openAccount(){ acctOverlay.style.display = 'flex'; }
-  function closeAccount(){ acctOverlay.style.display = 'none'; }
+  let acctLastFocus = null;
+  function openAccount(){
+    acctLastFocus = document.activeElement;
+    acctOverlay.style.display = 'flex';
+    // Focus the primary action (or close) so keyboard/AT users land inside the dialog.
+    const first = acctBody.querySelector('[data-act="signin"], [data-act="manage"], .abtn, .lc-btn') || document.getElementById('acctClose');
+    if (first && first.focus) { try { first.focus(); } catch(e){} }
+  }
+  function closeAccount(){
+    acctOverlay.style.display = 'none';
+    if (acctLastFocus && acctLastFocus.focus) { try { acctLastFocus.focus(); } catch(e){} }  // restore focus to the opener
+    acctLastFocus = null;
+  }
+  // Mode-aware privacy note: BYOK = keys never touch the cloud; gateway = metered plan through LevelCode.
+  function privacyNote(gateway){
+    return gateway
+      ? '<div class="note priv">Gateway mode: AI runs through your <b>metered LevelCode plan</b> — no provider key needed. Requests are proxied by the account server. Switch to BYOK any time in settings (<code>levelcode.ai.providerMode</code>).</div>'
+      : '<div class="note priv">BYOK mode: the account only syncs settings/skills. AI requests stay <b>direct from your machine to your provider</b> — your keys never touch the cloud.</div>';
+  }
   function renderAccount(state){
     account = state || { signedIn: false };
+    const gateway = account.mode === 'gateway';
     if (account.signedIn){
+      acctCard.classList.remove('lc-modal'); // signed-in keeps the plain themed card
       acctAvatar.textContent = initials(account.name || account.email);
       acctAvatar.classList.add('signed');
+      // Gateway: show the active plan (and credits when the server reports them). BYOK: plan is display-only.
+      const paidPlan = !!(account.plan && account.plan.trim().toLowerCase() !== 'free');
+      const planLine = gateway
+        ? '<p class="meta">Plan: <b>' + esc(account.plan || 'Free') + '</b> · '
+            + esc(paidPlan ? 'Kimi K2.7 Code' : 'gpt-oss-120b')
+            + (account.credits != null ? ' · ' + esc(String(account.credits)) + ' credit' + (Number(account.credits) === 1 ? '' : 's') + ' left' : '')
+            + '</p>'
+        : '<p class="meta">' + esc(account.email || '') + (account.plan ? ' · ' + esc(account.plan) : '') + '</p>';
+      // Free-tier Upgrade CTA (gateway only): unlock the flagship Kimi K2.7 Code.
+      const upgradeBtn = (gateway && !paidPlan)
+        ? '<button class="abtn primary" data-act="upgrade">🚀 Upgrade to Pro — unlock Kimi K2.7 Code</button>'
+        : '';
       acctBody.innerHTML =
         '<div class="bigavatar">' + esc(initials(account.name || account.email)) + '</div>'
-        + '<h2>' + esc(account.name || 'Signed in') + '</h2>'
-        + '<p class="meta">' + esc(account.email || '') + (account.plan ? ' · ' + esc(account.plan) : '') + '</p>'
+        + '<h2 id="lcTitle">' + esc(account.name || 'Signed in') + '</h2>'
+        + planLine
+        + upgradeBtn
         + '<button class="abtn" data-act="manage">Manage account</button>'
         + '<button class="abtn" data-act="signout">Sign out</button>'
-        + '<div class="synced">' + codicon('check') + ' Synced: settings · skills · keymaps</div>';
+        + '<div class="synced">' + codicon('check') + ' Synced: settings · skills · keymaps</div>'
+        + privacyNote(gateway);
     } else {
+      acctCard.classList.add('lc-modal'); // signed-out → the calm LevelCode sign-in modal
       acctAvatar.innerHTML = PERSON_SVG;
       acctAvatar.classList.remove('signed');
       const warn = account.status === 'unconfigured'
-        ? '<div class="note warn">Atom++ Cloud isn’t live yet — this is the client UI; the backend (accounts + sync) is on the roadmap (M9). Point <code>atompp.cloud.endpoint</code> at a server to connect.</div>'
+        ? '<div class="lc-note">LevelCode Cloud isn’t reachable — set <code>levelcode.cloud.endpoint</code> to your account server to connect. BYOK still works fully offline.</div>'
         : '';
       acctBody.innerHTML =
-        '<div class="bigavatar">' + PERSON_SVG + '</div>'
-        + '<h2>Sign in to Atom++</h2>'
-        + '<p class="sub">Sync your settings, skills, and keymaps across devices.</p>'
-        + '<button class="abtn primary" data-act="signin">Sign in with browser</button>'
-        + '<div class="arow"><button class="abtn" data-act="github">GitHub</button><button class="abtn" data-act="google">Google</button></div>'
-        + '<a class="link" data-act="create">Create an account</a>'
+        '<div class="lc-mark">' + LC_MARK_SVG + '</div>'
+        + '<h1 id="lcTitle">Level up your editor</h1>'
+        + '<p class="lc-sub">One account — your settings, skills, keymaps and metered AI plan, on every machine.</p>'
+        + '<button class="lc-btn lc-btn-primary" data-act="signin">Sign in with browser <span class="lc-arrow" aria-hidden="true">→</span></button>'
+        + '<div class="lc-or">or continue with</div>'
+        + '<div class="lc-oauth-row">'
+        +   '<button class="lc-btn lc-btn-oauth" data-act="github">' + LC_GH_SVG + ' GitHub</button>'
+        +   '<button class="lc-btn lc-btn-oauth" data-act="google">' + LC_GOOGLE_SVG + ' Google</button>'
+        + '</div>'
+        + '<div class="lc-perks">'
+        +   '<div class="lc-perk"><span class="lc-ic" aria-hidden="true">' + codicon('sync') + '</span><span><b>Everything syncs.</b> Settings, skills and keymaps follow you to any machine.</span></div>'
+        +   '<div class="lc-perk"><span class="lc-ic" aria-hidden="true">' + codicon('sparkle') + '</span><span><b>AI without keys.</b> Your plan runs through the gateway — pick a model and go.</span></div>'
+        +   '<div class="lc-perk"><span class="lc-ic" aria-hidden="true">' + codicon('shield') + '</span><span><b>BYOK stays free.</b> Your own key runs direct and private — no account required, ever.</span></div>'
+        + '</div>'
+        + '<p class="lc-byok"><span class="lc-dot" aria-hidden="true"></span> Switch modes any time — <code>levelcode.ai.providerMode</code></p>'
         + warn
-        + '<div class="note priv">Privacy: the account only syncs settings/skills. AI requests stay <b>direct from your machine to your provider</b> — your keys never touch the cloud.</div>';
+        + '<div class="lc-legal">By continuing you agree to the <a data-act="terms" role="link" tabindex="0">Terms</a> &amp; <a data-act="privacy" role="link" tabindex="0">Privacy&nbsp;Policy</a>.'
+        +   '<div class="lc-trust">MIT · no telemetry · local-first</div></div>';
+    }
+    renderRouting();
+  }
+
+  // Footer routing indicator: st-local = WHERE requests go, st-key = the key/plan.
+  // Driven by the latest 'config' (provider) + 'account' (signedIn, mode, plan).
+  function setStatusItem(id, label, title){
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.lastChild) el.lastChild.textContent = ' ' + label;   // keep the leading SVG icon
+    if (title) el.title = title;
+  }
+  function renderRouting(){
+    const gateway = account.signedIn && account.mode === 'gateway';
+    if (gateway){
+      setStatusItem('st-local', 'LevelCode Cloud', 'Requests run through your metered LevelCode Cloud plan (gateway).');
+      setStatusItem('st-key', 'Gateway' + (account.plan ? ' · ' + account.plan : ''), 'Metered gateway — no provider key needed.');
+    } else if (lastProvider === 'ollama'){
+      setStatusItem('st-local', 'Local', 'Requests go to a local model on your machine (Ollama) — no key, no backend.');
+      setStatusItem('st-key', 'Direct · no key', 'Local model — no API key needed.');
+    } else {
+      setStatusItem('st-local', 'Direct', 'Requests go directly from your machine to your provider — no LevelCode backend.');
+      setStatusItem('st-key', 'BYO key', 'Bring your own API key, stored in your OS keychain.');
     }
   }
   acctBtn.onclick = openAccount;
   document.getElementById('acctClose').onclick = closeAccount;
   acctOverlay.onclick = (e) => { if (e.target === acctOverlay) closeAccount(); };
-  acctBody.addEventListener('click', (e) => {
-    const el = e.target.closest('[data-act]'); if (!el) return;
-    const act = el.dataset.act;
+  // The dialog's focusable controls, in DOM order (close button first, then the body's buttons/links).
+  function acctFocusables(){
+    return Array.from(acctCard.querySelectorAll('a[data-act], button, [tabindex]:not([tabindex="-1"])'))
+      .filter((el) => !el.disabled && el.offsetParent !== null);
+  }
+  // While the dialog is open: Esc closes it, and Tab is trapped inside it (aria-modal focus containment).
+  document.addEventListener('keydown', (e) => {
+    if (acctOverlay.style.display === 'none') return;
+    if (e.key === 'Escape') { e.preventDefault(); closeAccount(); return; }
+    if (e.key !== 'Tab') return;
+    const f = acctFocusables(); if (!f.length) return;
+    const first = f[0], last = f[f.length - 1], active = document.activeElement;
+    if (!acctCard.contains(active)) { e.preventDefault(); first.focus(); }        // focus strayed out → pull back
+    else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); } // wrap to end
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); } // wrap to start
+  });
+  function acctDispatch(act){
     if (act === 'signout') { vscode.postMessage({ type: 'accountSignOut' }); }
+    else if (act === 'upgrade') { vscode.postMessage({ type: 'accountUpgrade' }); }
     else if (act === 'manage') { vscode.postMessage({ type: 'accountManage' }); }
     else if (act === 'github' || act === 'google') { vscode.postMessage({ type: 'accountSignIn', provider: act }); }
     else if (act === 'create') { vscode.postMessage({ type: 'accountSignIn', create: true }); }
+    else if (act === 'terms' || act === 'privacy') { vscode.postMessage({ type: 'openExternal', target: act }); }
     else { vscode.postMessage({ type: 'accountSignIn' }); }
+  }
+  acctBody.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-act]'); if (!el) return;
+    acctDispatch(el.dataset.act);
+  });
+  // Keyboard activation for the anchor-role legal links (Enter/Space).
+  acctBody.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const el = e.target.closest('a[data-act]'); if (!el) return;
+    e.preventDefault(); acctDispatch(el.dataset.act);
   });
   renderAccount({ signedIn: false });
 
@@ -1630,9 +1859,9 @@
   function renderSkillsList(m){
     clearEmpty(); clearStatus(); agentBubble = null;
     const d = document.createElement('div'); d.className = 'msg assistant';
-    let inner = '<div class="role">Atom++ AI</div><div class="body">';
+    let inner = '<div class="role">LevelCode AI</div><div class="body">';
     if (m.enabled === false){
-      inner += 'Skills are turned <b>off</b>. Enable <code>atompp.ai.skills.enabled</code> in settings to let the agent use them.';
+      inner += 'Skills are turned <b>off</b>. Enable <code>levelcode.ai.skills.enabled</code> in settings to let the agent use them.';
     } else if (!m.skills || !m.skills.length){
       inner += 'No skills are installed yet. Skills live in the extension’s <code>skills/</code> folder (one <code>SKILL.md</code> per skill).';
     } else {
@@ -1651,6 +1880,9 @@
       mEl.title = (m.providerLabel || (m.provider === 'claude' ? 'Claude' : m.provider)) + ' · ' + m.model + ' — click to change';
       // Update the footer context-window meter to the newly-selected model's real window.
       if (typeof m.contextLimit === 'number'){ renderContext({ limit: m.contextLimit }); }
+      lastProvider = m.provider || '';
+      lastModelId = m.modelId || m.model || '';   // gateway sends modelId (the real id); BYOK model IS the id
+      renderRouting();
     }
     else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
     else if (m.type === 'assistantDelta'){ pending += m.text; ensurePump(); }

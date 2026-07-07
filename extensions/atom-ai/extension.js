@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI (M2, feature 1: Chat with Claude)
+ *  LevelCode — AI (M2, feature 1: Chat with Claude)
  *
  *  A native chat side panel. Requests go directly from the editor to the provider
- *  (Anthropic or local Ollama) — there is no Atom++ server in the middle. The Anthropic
+ *  (Anthropic or local Ollama) — there is no LevelCode server in the middle. The Anthropic
  *  API key is stored in VS Code SecretStorage (encrypted by the OS keychain).
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
@@ -12,8 +12,10 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const cp = require('child_process');
+const crypto = require('crypto');
 const providers = require('./providers/index');
 const catalog = require('./providers/catalog');
+const { resolveGateway } = require('./providers/gateway');
 const { registerAiEdit } = require('./aiEdit');
 const { registerLmProvider } = require('./lmProvider');
 const { registerInlineComplete } = require('./inlineComplete');
@@ -24,11 +26,11 @@ const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
 
-const SECRET_KEY = 'atompp.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
+const SECRET_KEY = 'levelcode.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
 const STOPWORDS = new Set(['the','and','for','with','that','this','how','does','what','where','when','why','from','into','your','you','are','was','were','will','can','could','should','would','about','have','has','its','it','the','file','code','function','please','show','tell','explain','using','use','used','there','their','then','than','they','them','some','any','all','not','but','get','set']);
 const SYSTEM_PROMPT =
-	'You are Atom++\'s built-in AI assistant, helping the user write and understand code inside their editor. ' +
+	'You are LevelCode\'s built-in AI assistant, helping the user write and understand code inside their editor. ' +
 	'Be concise and practical. Use Markdown and fenced code blocks. When given a code selection as context, focus your answer on it.';
 
 /** @type {vscode.ExtensionContext} */
@@ -43,6 +45,9 @@ let pendingContext = null;
 let contextFiles = [];
 /** @type {AbortController | null} */
 let abort = null;
+/** Cached "signed in to LevelCode Cloud" flag — the gateway only routes when signed in, so the footer/
+ *  model chip must gate on this too (kept in sync by currentAccount / storeSession / accountSignOut). */
+let cloudSignedIn = false;
 /** Agent mode: sending runs the autonomous tool loop instead of plain chat. */
 let agentMode = true;
 /** Apply-then-review session (Keep/Undo for applied agent edits). Set in activate(). */
@@ -53,9 +58,9 @@ let agentMessages = [];
 
 function post(msg) { if (activeWebview) { activeWebview.postMessage(msg); } }
 
-function aiConfig() { return vscode.workspace.getConfiguration('atompp.ai'); }
+function aiConfig() { return vscode.workspace.getConfiguration('levelcode.ai'); }
 
-/** Inline debug trace — prints a 🐛 DEBUG line in the chat (gated by atompp.ai.debug). */
+/** Inline debug trace — prints a 🐛 DEBUG line in the chat (gated by levelcode.ai.debug). */
 function dbg(label, data) { if (aiConfig().get('debug', false)) { post({ type: 'debug', label, data: data != null ? data : null }); } }
 
 /** The currently selected provider id (settings value; `claude` is the default/legacy Anthropic). */
@@ -75,7 +80,7 @@ function activeModel(cfg, providerId) {
 	return (p && p.models && p.models[0]) ? p.models[0].id : '';
 }
 
-/** The base URL for a provider — Ollama honors `ollama.url`, `custom` uses `atompp.ai.baseURL`, else the registry default. */
+/** The base URL for a provider — Ollama honors `ollama.url`, `custom` uses `levelcode.ai.baseURL`, else the registry default. */
 function baseUrlFor(cfg, providerId) {
 	const id = providers.normId(providerId);
 	if (id === 'ollama') { return String(cfg.get('ollama.url', 'http://localhost:11434')).replace(/\/+$/, '') + '/v1'; }
@@ -87,7 +92,7 @@ function baseUrlFor(cfg, providerId) {
 /** Max output tokens for chat/edit (shared across providers; keeps the existing Claude setting name). */
 function maxOutputTokens(cfg) { return cfg.get('claude.maxTokens', 4096); }
 
-/** An explicitly-set `atompp.ai.contextWindow` (user override, e.g. the Claude 1M-token beta), or undefined. */
+/** An explicitly-set `levelcode.ai.contextWindow` (user override, e.g. the Claude 1M-token beta), or undefined. */
 function explicitContextWindow() {
 	const insp = aiConfig().inspect('contextWindow');
 	if (!insp) { return undefined; }
@@ -107,6 +112,9 @@ function contextLimitFor(providerId, model) {
 /** The active model's context window (tokens) — drives the chat context-usage meter. */
 function currentContextLimit() {
 	const cfg = aiConfig();
+	if (providerMode() === 'gateway' && cloudSignedIn) {
+		return contextLimitFor('openai', capsModel(gatewayModel())); // Auto → flagship window (widest it could route to)
+	}
 	const pid = currentProviderId();
 	return contextLimitFor(pid, activeModel(cfg, pid));
 }
@@ -115,10 +123,10 @@ function currentContextLimit() {
 async function promptForKey(providerId) {
 	const id = (typeof providerId === 'string' && providerId) ? providerId : currentProviderId();
 	const p = providers.getProvider(id) || providers.getProvider('claude');
-	if (p.noKey) { vscode.window.showInformationMessage('Atom++ AI: ' + p.label + ' needs no API key.'); return undefined; }
+	if (p.noKey) { vscode.window.showInformationMessage('LevelCode AI: ' + p.label + ' needs no API key.'); return undefined; }
 	const skey = secretKeyFor(p.id);
 	const key = await vscode.window.showInputBox({
-		title: 'Atom++ AI — ' + p.label + ' API Key',
+		title: 'LevelCode AI — ' + p.label + ' API Key',
 		prompt: 'Paste your ' + p.label + ' API key. Stored encrypted in your OS keychain — it never leaves your machine except to ' + p.label + '.',
 		password: true,
 		ignoreFocusOut: true,
@@ -140,9 +148,151 @@ async function getProviderKey(providerId, opts) {
 
 /** User-facing message for a failed prepProviderRequest (shared by chat + edit). */
 function providerErrorMessage(req) {
-	if (req.reason === 'baseURL') { return 'Set a base URL for the custom OpenAI-compatible provider first (atompp.ai.baseURL).'; }
+	if (req.reason === 'baseURL') { return 'Set a base URL for the custom OpenAI-compatible provider first (levelcode.ai.baseURL).'; }
 	if (req.reason === 'insecureBaseURL') { return 'Refusing to send your API key over plain http to a non-local host. Use an https base URL (or a localhost endpoint) for the custom provider.'; }
-	return 'No API key set for ' + req.label + '. Use the key button or “Atom++: AI: Set API Key”.';
+	if (req.reason === 'insecureGateway') { return 'Refusing to send your LevelCode Cloud token over plain http. Set "levelcode.cloud.endpoint" to an https URL to use gateway mode.'; }
+	return 'No API key set for ' + req.label + '. Use the key button or “LevelCode: AI: Set API Key”.';
+}
+
+/** The configured provider routing mode ('byok' default | 'gateway'). NOTE: the key is
+ *  `levelcode.ai.providerMode`, NOT `provider.mode` — the latter collides with the scalar
+ *  `levelcode.ai.provider` (VS Code navigates into the string → always undefined). */
+function providerMode() { return aiConfig().get('providerMode', 'byok'); }
+
+// ── LevelCode Cloud gateway model entitlement (mirrors backend LevelCode.gateway_model) ──────────
+// The free plan runs the cheap open-weights engine; a paid plan runs the flagship. The BACKEND
+// is the source of truth — it forces the model per the user's wallet — so these are the CLIENT
+// reflection: they drive which model the picker/footer show and let the free tier surface an
+// "Upgrade" CTA. Selecting a model here never overrides the server's plan-based decision.
+const GATEWAY_FREE_MODEL = 'openai/gpt-oss-120b';
+const GATEWAY_FREE_LABEL = 'gpt-oss-120b';
+const GATEWAY_PRO_MODEL = 'moonshotai/kimi-k2.7-code';
+const GATEWAY_PRO_LABEL = 'Kimi K2.7 Code';
+// "Auto" pseudo-model: the gateway routes each turn to the cheapest engine that fits (trivial →
+// open-weights, standard/agent → flagship). The backend does the routing; the client just requests it.
+const GATEWAY_AUTO_MODEL = 'auto';
+const GATEWAY_AUTO_LABEL = 'Auto';
+
+/** True for a paid LevelCode Cloud plan — anything managed that isn't the free tier. */
+function isPaidCloudPlan(plan) {
+	const p = String(plan || '').trim().toLowerCase();
+	return p !== '' && p !== 'free';
+}
+
+/** The stored LevelCode Cloud plan name (from the cached profile); '' when signed out/unknown. */
+function cloudPlanName() {
+	const p = (ctx && ctx.globalState.get(ACCOUNT_PROFILE_KEY)) || {};
+	return p.plan || '';
+}
+
+/** The active gateway model. Free plan → the open-weights engine (only option). Paid plan → the
+ *  user's chosen engine (`levelcode.ai.cloudModel`: flagship OR open-weights), defaulting to the
+ *  flagship. The backend re-checks entitlement, so this can never over-reach the plan. */
+function gatewayModel() {
+	if (!isPaidCloudPlan(cloudPlanName())) { return GATEWAY_FREE_MODEL; } // free can't pick the flagship
+	// Paid: the user's chosen roster model (the picker only offers LIVE ones), else the flagship.
+	// The backend re-checks entitlement + price-confirmation, so this can never over-reach the plan.
+	return aiConfig().get('cloudModel', '') || GATEWAY_PRO_MODEL;
+}
+
+/** The model id to use for CAPABILITY lookups (context window, tool support). "Auto" is a routing
+ *  pseudo-model resolved per-turn on the server, so for caps we use the flagship — the widest window
+ *  it could route to (avoids under-reporting the context meter). Any real id passes through. */
+function capsModel(id) {
+	return id === GATEWAY_AUTO_MODEL ? GATEWAY_PRO_MODEL : id;
+}
+
+/** The plan model roster from the last GET /account/models fetch — powers the picker + footer labels. */
+let cloudRoster = [];
+
+/** Friendly label for a gateway model id (footer chip). Prefers the fetched roster; falls back to the
+ *  built-in flagship/free labels, then the raw id. */
+function gatewayModelLabel(id) {
+	if (id === GATEWAY_AUTO_MODEL) { return GATEWAY_AUTO_LABEL; }
+	const m = cloudRoster.find((x) => x.id === id);
+	if (m) { return m.label; }
+	if (id === GATEWAY_PRO_MODEL) { return GATEWAY_PRO_LABEL; }
+	if (id === GATEWAY_FREE_MODEL) { return GATEWAY_FREE_LABEL; }
+	return id;
+}
+
+/** Fetch the plan's model roster (entitled models + credits + ≈ turns-left). Caches it for the
+ *  footer/picker. Best-effort; returns null when signed out / offline / not gateway. */
+async function fetchCloudRoster() {
+	if (providerMode() !== 'gateway' || !cloudSignedIn || !ctx) { return null; }
+	const token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
+	if (!token) { return null; }
+	const api = cloudApiUrl();
+	if (!/^https:\/\//i.test(api) && !/^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(api)) { return null; }
+	try {
+		const res = await fetch(api + '/api/levelcode/v1/account/models', { headers: { authorization: 'Bearer ' + token } });
+		if (!res.ok) { dbg('cloud.roster', { ok: false, status: res.status }); return null; }
+		const data = await res.json().catch(() => null);
+		if (data && Array.isArray(data.models)) { cloudRoster = data.models; }
+		return data;
+	} catch (e) { dbg('cloud.roster', { error: String((e && e.message) || e) }); return null; }
+}
+
+/**
+ * Report a 👍/👎 reaction to LevelCode Cloud as a per-model quality signal — but ONLY on the
+ * metered gateway when signed in. BYOK stays fully private: the reaction is a local toggle
+ * and nothing leaves the machine. Best-effort + fire-and-forget (feedback is low-stakes).
+ */
+async function recordFeedback(rating, turnModel) {
+	if (rating !== 'up' && rating !== 'down') { return; }
+	if (providerMode() !== 'gateway' || !cloudSignedIn) { return; }   // BYOK / signed out → local only
+	const token = ctx ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
+	if (!token) { return; }
+	const api = cloudApiUrl();
+	if (!/^https:\/\//i.test(api) && !/^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(api)) { return; }
+	// The model the RATED turn actually ran on (stamped by the webview), falling back to the
+	// current entitlement — so a mid-session plan change can't misattribute the vote.
+	const model = (typeof turnModel === 'string' && turnModel) ? turnModel : gatewayModel();
+	try {
+		await fetch(api + '/api/levelcode/v1/feedback', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+			body: JSON.stringify({ rating, model })
+		});
+		dbg('feedback.post', { rating, model });
+	} catch (e) { dbg('feedback.post', { error: String((e && e.message) || e) }); }
+}
+
+/** True when an error thrown by a provider adapter is an auth failure (HTTP 401) — used to trigger
+ *  a single gateway-token refresh + retry. The openai adapter throws `<label> API 401: <body>`. */
+function isAuthError(e) { return /\bAPI 401\b|\b401\b.*unauthor/i.test(String((e && e.message) || e)); }
+
+/**
+ * Refresh the LevelCode Cloud access token in gateway mode: POST the stored refresh token to
+ * {apiUrl}/api/levelcode/v1/auth/refresh (the Rails backend), store the new access token, return true.
+ * No-op (returns false) when not applicable (byok, signed out, no refresh token, or non-https apiUrl).
+ */
+async function refreshCloudToken() {
+	if (!ctx) { return false; }
+	const endpoint = cloudApiUrl();
+	if (!/^https:\/\//i.test(endpoint) && !/^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(endpoint)) { return false; }
+	const refresh = await ctx.secrets.get(ACCOUNT_REFRESH_KEY);
+	if (!refresh) { return false; }
+	try {
+		const res = await fetch(endpoint + '/api/levelcode/v1/auth/refresh', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ refresh })
+		});
+		if (!res.ok) { dbg('cloud.refresh', { ok: false, status: res.status }); return false; }
+		const data = await res.json().catch(() => null);
+		const access = data && (data.access || data.token);
+		if (!access) { return false; }
+		await ctx.secrets.store(ACCOUNT_TOKEN_KEY, access);
+		dbg('cloud.refresh', { ok: true });
+		return true;
+	} catch (e) { dbg('cloud.refresh', { error: String((e && e.message) || e) }); return false; }
+}
+
+/** Gateway-mode token refresh (the streaming 401 retry path). Delegates to refreshCloudToken. */
+async function refreshGatewayToken() {
+	if (providerMode() !== 'gateway') { return false; }
+	return refreshCloudToken();
 }
 
 /**
@@ -153,6 +303,24 @@ function providerErrorMessage(req) {
  */
 async function prepProviderRequest(opts) {
 	const cfg = aiConfig();
+	// Gateway mode: when signed in (a cloud token is present) and mode==='gateway', route AI through the
+	// LevelCode Cloud metered gateway (an openai-kind endpoint) instead of the user's own provider/key. Falls
+	// back to the BYOK path below when signed out or in byok mode — the default is untouched.
+	const token = ctx ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
+	const gw = resolveGateway({ mode: providerMode(), endpoint: cloudApiUrl(), token: token || '' });
+	if (gw.use) {
+		if (!gw.ok) { return { ok: false, providerId: 'openai', label: 'LevelCode Cloud', reason: gw.reason }; }
+		return {
+			ok: true, providerId: gw.providerId, apiKey: gw.apiKey,
+			// Plan-scoped model (free → gpt-oss-120b, paid → Kimi K2.7 Code). The backend
+			// re-forces this per the wallet, so we send the entitled model, not the BYOK one.
+			model: gatewayModel(),
+			baseURL: gw.baseURL,
+			maxTokens: maxOutputTokens(cfg),
+			label: 'LevelCode Cloud',
+			gateway: true
+		};
+	}
 	const providerId = currentProviderId();
 	const p = providers.getProvider(providerId) || providers.getProvider('claude');
 	const baseURL = baseUrlFor(cfg, providerId);
@@ -191,9 +359,9 @@ function captureSelection() {
 
 function addSelection() {
 	const sel = captureSelection();
-	if (!sel) { vscode.window.showInformationMessage('Atom++ AI: select some code first.'); return; }
+	if (!sel) { vscode.window.showInformationMessage('LevelCode AI: select some code first.'); return; }
 	pendingContext = sel.block;
-	vscode.commands.executeCommand('atomAi.chat.focus');
+	vscode.commands.executeCommand('levelcodeAi.chat.focus');
 	post({ type: 'context', label: sel.label });
 }
 
@@ -218,7 +386,7 @@ async function addContext() {
 	for (const u of uris) {
 		items.push({ label: '$(file) ' + path.basename(u.fsPath), description: vscode.workspace.asRelativePath(u), _kind: 'file', _uri: u });
 	}
-	if (!items.length) { vscode.window.showInformationMessage('Atom++ AI: no workspace files to add.'); return; }
+	if (!items.length) { vscode.window.showInformationMessage('LevelCode AI: no workspace files to add.'); return; }
 
 	const picks = await vscode.window.showQuickPick(items, {
 		canPickMany: true,
@@ -238,7 +406,7 @@ async function addContext() {
 			}
 		}
 	}
-	vscode.commands.executeCommand('atomAi.chat.focus');
+	vscode.commands.executeCommand('levelcodeAi.chat.focus');
 	postContextFiles();
 }
 
@@ -645,7 +813,7 @@ async function agentFlow(text) {
 	if (!catalog.supportsToolsForModel(providerId, agentModel)) {
 		const p = providers.getProvider(providerId);
 		const who = agentModel ? '“' + agentModel + '”' : ((p && p.label) || 'This provider');
-		post({ type: 'agentError', message: 'Agent mode needs a tool-capable model. ' + who + ' isn’t set up for tool use in Atom++ — it still works for chat, inline completion and edits. Pick a tool-capable model (Claude, GPT-4o, or most OpenRouter / Groq / DeepSeek / Mistral models) via “Atom++: AI: Select Model…”.' });
+		post({ type: 'agentError', message: 'Agent mode needs a tool-capable model. ' + who + ' isn’t set up for tool use in LevelCode — it still works for chat, inline completion and edits. Pick a tool-capable model (Claude, GPT-4o, or most OpenRouter / Groq / DeepSeek / Mistral models) via “LevelCode: AI: Select Model…”.' });
 		post({ type: 'agentDone', reason: 'error' });
 		return;
 	}
@@ -693,7 +861,7 @@ async function agentFlow(text) {
 			approve: requestApproval,           // run_command only
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
 			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
-			contextLimit: contextLimitFor(req.providerId, req.model), // explicit override, else the model's real window → usage meter
+			contextLimit: contextLimitFor(req.providerId, capsModel(req.model)), // Auto → flagship window; the model SENT stays req.model
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
 			commandRuns: bgRuns,                // runId → background-process registry (read_command_output reads it)
 			commandTimeout: cfg.get('commandTimeout', 120000), // backstop before a command is force-killed (0 = off)
@@ -715,7 +883,7 @@ async function agentFlow(text) {
 
 async function handleSend(text) {
 	if (!text || !text.trim()) { return; }
-	if (ctx) { ctx.globalState.update('atompp.ai.hasSentMessage', true); }   // user engaged → stop auto-revealing the panel on launch
+	if (ctx) { ctx.globalState.update('levelcode.ai.hasSentMessage', true); }   // user engaged → stop auto-revealing the panel on launch
 	if (agentMode) { await agentFlow(text); return; }
 	const cfg = aiConfig();
 	const providerId = currentProviderId();
@@ -757,11 +925,20 @@ async function handleSend(text) {
 			post({ type: 'assistantError', message: providerErrorMessage(req) });
 			return;
 		}
-		await providers.streamChat({
-			providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL,
-			model: req.model, maxTokens: req.maxTokens, system: SYSTEM_PROMPT,
+		const doStream = (r) => providers.streamChat({
+			providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL,
+			model: r.model, maxTokens: r.maxTokens, system: SYSTEM_PROMPT,
 			messages: conversation, signal: abort.signal, onDelta
 		});
+		try {
+			await doStream(req);
+		} catch (e) {
+			// Gateway token expired mid-request → refresh once and retry (only if nothing streamed yet).
+			if (req.gateway && !assistant && isAuthError(e) && !(abort && abort.signal.aborted) && await refreshGatewayToken()) {
+				const req2 = await prepProviderRequest({ prompt: true });
+				if (req2.ok) { await doStream(req2); } else { throw e; }
+			} else { throw e; }
+		}
 		conversation.push({ role: 'assistant', content: assistant });
 		post({ type: 'assistantDone' });
 	} catch (e) {
@@ -785,8 +962,101 @@ async function setModelSetting(cfg, providerId, id) {
 	return cfg.update('model', id, vscode.ConfigurationTarget.Global);
 }
 
+/** Open the LevelCode Cloud pricing / upgrade page in the browser (free-tier Upgrade CTA). */
+async function openUpgrade() {
+	const base = cloudEndpoint() || 'https://levelcode.ai';
+	dbg('account.upgrade', { base });
+	await vscode.env.openExternal(vscode.Uri.parse(base + '/ai/pricing'));
+}
+
+/** Open a LevelCode legal page (Terms / Privacy) from the sign-in modal. Targets are a fixed
+ *  allow-list — never a URL from the webview — so this can't be turned into an open-redirect. */
+async function openLegal(target) {
+	const path = target === 'privacy' ? '/privacy' : target === 'terms' ? '/terms' : null;
+	if (!path) { return; }
+	await vscode.env.openExternal(vscode.Uri.parse('https://levelcode.ai' + path));
+}
+
+/** Human "≈ turns left" formatting (e.g. 8044 → "8k", 375 → "375"). */
+function fmtTurns(n) {
+	n = Number(n) || 0;
+	return n >= 1000 ? (Math.round(n / 100) / 10) + 'k' : String(n);
+}
+
+/**
+ * The LevelCode Cloud model menu (gateway mode, signed in). Fetches the plan's roster from the backend
+ * (GET /account/models): LIVE models (confirmed price) are selectable with their credit multiplier +
+ * ≈ turns-left on the remaining budget; STAGED models (frontier, assumption-priced) are shown 🔒 as
+ * "coming soon"; the free tier surfaces an Upgrade CTA. The backend re-checks entitlement, so a
+ * client selection can never over-reach the plan.
+ */
+async function pickCloudModel() {
+	const roster = await fetchCloudRoster();
+	const plan = (roster && roster.plan) || cloudPlanName() || 'Free';
+	const paid = isPaidCloudPlan(plan);
+	const models = (roster && Array.isArray(roster.models)) ? roster.models : [];
+	const active = gatewayModel();
+	const credits = roster && roster.credits_remaining_micros != null
+		? ' · $' + (roster.credits_remaining_micros / 1e6).toFixed(2) + ' credits left' : '';
+
+	/** @type {any[]} */
+	const items = [{ label: 'LevelCode Cloud · ' + plan, kind: vscode.QuickPickItemKind.Separator }];
+	// Auto (paid only): the gateway picks the cheapest engine per turn — free margin for the user.
+	if (paid) {
+		items.push({
+			label: (active === GATEWAY_AUTO_MODEL ? '$(check) ' : '') + '$(sparkle) ' + GATEWAY_AUTO_LABEL,
+			description: GATEWAY_AUTO_MODEL,
+			detail: 'Routes each turn to the best-value engine · saves credits',
+			_cloud: GATEWAY_AUTO_MODEL
+		});
+	}
+	if (models.length) {
+		for (const m of models) {
+			const ctxK = Math.round((m.context || 0) / 1000) + 'K ctx';
+			if (m.live) {
+				const turns = (m.turns_left != null) ? ' · ≈' + fmtTurns(m.turns_left) + ' turns left' : '';
+				items.push({
+					label: (m.id === active ? '$(check) ' : '') + m.label,
+					description: m.id,
+					detail: m.multiplier + '× credits · ' + ctxK + turns,
+					_cloud: m.id
+				});
+			} else {
+				items.push({ label: '$(lock) ' + m.label, description: m.id, detail: m.multiplier + '× credits · ' + ctxK + ' · coming soon', _soon: true });
+			}
+		}
+	} else {
+		// Offline / roster unavailable — minimal fallback so the menu still works.
+		items.push({ label: (active === GATEWAY_FREE_MODEL ? '$(check) ' : '') + GATEWAY_FREE_LABEL, description: GATEWAY_FREE_MODEL, _cloud: GATEWAY_FREE_MODEL });
+		if (paid) { items.push({ label: (active === GATEWAY_PRO_MODEL ? '$(check) ' : '') + GATEWAY_PRO_LABEL, description: GATEWAY_PRO_MODEL, _cloud: GATEWAY_PRO_MODEL }); }
+	}
+	if (!paid) {
+		items.push({ label: '$(rocket) Upgrade to Pro', description: 'Kimi K2.7 Code + the full model roster', _upgrade: true });
+	}
+	items.push({ label: 'Other', kind: vscode.QuickPickItemKind.Separator });
+	items.push({ label: '$(key) Use my own key (BYOK)…', description: 'Turn off the metered gateway in settings', _action: 'byokSettings' });
+
+	const pick = await vscode.window.showQuickPick(items, {
+		placeHolder: 'LevelCode Cloud model · Plan: ' + plan + credits,
+		matchOnDescription: true
+	});
+	if (!pick) { return; }
+	if (pick._upgrade) { await openUpgrade(); return; }
+	if (pick._soon) { vscode.window.showInformationMessage('LevelCode Cloud: ' + (pick.description || 'that model') + ' is coming soon — pricing is being finalized.'); return; }
+	if (pick._action === 'byokSettings') { vscode.commands.executeCommand('workbench.action.openSettings', 'levelcode.ai.providerMode'); return; }
+	if (pick._cloud) {
+		await aiConfig().update('cloudModel', pick._cloud, vscode.ConfigurationTarget.Global);
+		sendConfigToWebview();
+	}
+}
+
 async function pickModel() {
 	const cfg = aiConfig();
+	// Gateway mode + signed in → a plan-scoped LevelCode Cloud menu (free engine + flagship, the latter
+	// locked on the free tier). Signed out / BYOK falls through to the full provider list below.
+	if (providerMode() === 'gateway' && ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)) {
+		return pickCloudModel();
+	}
 	/** @type {any[]} */
 	const items = [];
 	// Built-in models for every provider except Ollama (dynamic below) and custom (prompted below).
@@ -810,7 +1080,7 @@ async function pickModel() {
 	items.push({ label: 'Other', kind: vscode.QuickPickItemKind.Separator });
 	items.push({ label: '$(cloud-download) Browse all models (live)…', description: 'Fetch ' + (providers.getProvider(currentProviderId()) || {}).label + '’s full model list', _action: 'browse' });
 	items.push({ label: '$(edit) Enter a model ID…', description: 'For the current provider (' + (providers.getProvider(currentProviderId()) || {}).label + ')', _action: 'manualModel' });
-	items.push({ label: '$(globe) OpenAI-compatible endpoint…', description: 'Point Atom++ at any /v1 server (vLLM, LM Studio, LiteLLM…)', _action: 'customEndpoint' });
+	items.push({ label: '$(globe) OpenAI-compatible endpoint…', description: 'Point LevelCode at any /v1 server (vLLM, LM Studio, LiteLLM…)', _action: 'customEndpoint' });
 
 	const curId = currentProviderId();
 	const curModel = activeModel(cfg, curId);
@@ -822,16 +1092,16 @@ async function pickModel() {
 
 	if (pick._action === 'browse') { await browseProviderModels(cfg, curId); return; }
 	if (pick._action === 'manualModel') {
-		const id = await vscode.window.showInputBox({ title: 'Atom++ AI — Model ID', prompt: 'Model id for ' + (providers.getProvider(curId) || {}).label, ignoreFocusOut: true, value: curModel });
+		const id = await vscode.window.showInputBox({ title: 'LevelCode AI — Model ID', prompt: 'Model id for ' + (providers.getProvider(curId) || {}).label, ignoreFocusOut: true, value: curModel });
 		if (!id) { return; }
 		await setModelSetting(cfg, curId, id.trim());
 		sendConfigToWebview();
 		return;
 	}
 	if (pick._action === 'customEndpoint') {
-		const url = await vscode.window.showInputBox({ title: 'Atom++ AI — OpenAI-compatible base URL', prompt: 'Base URL ending in /v1 (e.g. http://localhost:8000/v1)', placeHolder: 'https://…/v1', ignoreFocusOut: true, value: cfg.get('baseURL', '') });
+		const url = await vscode.window.showInputBox({ title: 'LevelCode AI — OpenAI-compatible base URL', prompt: 'Base URL ending in /v1 (e.g. http://localhost:8000/v1)', placeHolder: 'https://…/v1', ignoreFocusOut: true, value: cfg.get('baseURL', '') });
 		if (!url) { return; }
-		const model = await vscode.window.showInputBox({ title: 'Atom++ AI — Model ID', prompt: 'Model id served by that endpoint', ignoreFocusOut: true });
+		const model = await vscode.window.showInputBox({ title: 'LevelCode AI — Model ID', prompt: 'Model id served by that endpoint', ignoreFocusOut: true });
 		if (!model) { return; }
 		await cfg.update('baseURL', url.trim(), vscode.ConfigurationTarget.Global);
 		await cfg.update('provider', 'custom', vscode.ConfigurationTarget.Global);
@@ -852,10 +1122,10 @@ async function browseProviderModels(cfg, providerId) {
 	const apiKey = skey ? await ctx.secrets.get(skey) : undefined;   // silent — the list often needs no key (e.g. OpenRouter)
 	const baseURL = baseUrlFor(cfg, providerId);
 	const choices = await vscode.window.withProgress(
-		{ location: vscode.ProgressLocation.Notification, title: 'Atom++ AI: fetching ' + p.label + ' models…' },
+		{ location: vscode.ProgressLocation.Notification, title: 'LevelCode AI: fetching ' + p.label + ' models…' },
 		() => catalog.getModelChoices(providerId, { dynamic: true, apiKey, baseURL, ollamaUrl: cfg.get('ollama.url', 'http://localhost:11434') })
 	);
-	if (!choices.length) { vscode.window.showInformationMessage('Atom++ AI: no models returned for ' + p.label + ' (offline, or the provider needs an API key set first).'); return; }
+	if (!choices.length) { vscode.window.showInformationMessage('LevelCode AI: no models returned for ' + p.label + ' (offline, or the provider needs an API key set first).'); return; }
 	const items = choices.map((c) => ({ label: c.label, description: c.id, detail: c.detail, _id: c.id }));
 	const pick = await vscode.window.showQuickPick(items, {
 		placeHolder: 'Select a ' + p.label + ' model — ' + choices.length + ' available (type to filter)',
@@ -869,6 +1139,18 @@ async function browseProviderModels(cfg, providerId) {
 
 function sendConfigToWebview() {
 	const cfg = aiConfig();
+	// Gateway mode (signed in — the gateway only routes when authenticated): the footer reflects the
+	// LevelCode Cloud plan model (free → gpt-oss, paid → Kimi), not the BYOK provider — with a `paid` flag
+	// so the webview can show the free-tier Upgrade CTA.
+	if (providerMode() === 'gateway' && cloudSignedIn) {
+		const model = gatewayModel();
+		post({
+			type: 'config', provider: 'gateway', model: gatewayModelLabel(model), modelId: model,
+			providerLabel: 'LevelCode Cloud', contextLimit: contextLimitFor('openai', capsModel(model)),
+			gateway: true, plan: cloudPlanName() || 'Free', paid: isPaidCloudPlan(cloudPlanName())
+		});
+		return;
+	}
 	const providerId = currentProviderId();
 	const p = providers.getProvider(providerId) || providers.getProvider('claude');
 	// Carry the model's context window so the footer meter updates the moment the model changes.
@@ -883,7 +1165,7 @@ class ChatViewProvider {
 		view.webview.html = getHtml();
 		view.webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
-				case 'ready': sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } break;
+				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'send': await handleSend(msg.text); break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
@@ -893,12 +1175,14 @@ class ChatViewProvider {
 				case 'accountSignIn': await accountSignIn(msg.provider, msg.create); break;
 				case 'accountSignOut': await accountSignOut(); break;
 				case 'accountManage': await accountManage(); break;
+				case 'accountUpgrade': await openUpgrade(); break;
+				case 'openExternal': await openLegal(msg.target); break;
 				case 'copy': try { await vscode.env.clipboard.writeText(String(msg.text || '')); } catch (e) { /* clipboard unavailable */ } break;
 				case 'retry': if (lastAgentGoal && !abort) { dbg('retry', { goalChars: lastAgentGoal.length }); await agentFlow(lastAgentGoal); } break;
 				case 'continueAgent': if (!abort) { const g = lastAgentGoal; dbg('continue', { transcriptMsgs: agentMessages.length }); await agentFlow('Continue from where you left off and finish the task. Pick up exactly where you stopped — do not restart or repeat work that is already done.'); lastAgentGoal = g; } break;
 				case 'restoreCheckpoint': dbg('restoreCheckpoint', { turnId: msg.turnId, running: !!abort }); await restoreCheckpoint(msg.turnId); break;
 				case 'listSkills': { const en = aiConfig().get('skills.enabled', true); const idx = en ? loadSkills(ctx.extensionPath, dbg) : new Map(); dbg('listSkills', { enabled: en, count: idx.size }); post({ type: 'skillsList', enabled: en, skills: skillsMenu(idx) }); break; }
-				case 'feedback': dbg('feedback', { value: msg.value }); break;
+				case 'feedback': dbg('feedback', { value: msg.value, model: msg.model }); await recordFeedback(msg.value, msg.model); break;
 				case 'openFile': await openWorkspaceFile(msg.path); break;
 				case 'reviewKeepFile': dbg('review.keep', { id: msg.id }); review.keepFile(msg.id, 'kept'); break;
 				case 'reviewUndoFile': dbg('review.undo', { id: msg.id }); await review.undoFile(msg.id); break;
@@ -911,7 +1195,7 @@ class ChatViewProvider {
 				case 'newChat': newChat(); break;
 				case 'setKey': await promptForKey(); break;
 				case 'pickModel': await pickModel(); break;
-				case 'openSettings': vscode.commands.executeCommand('workbench.action.openSettings', '@ext:atompp.atom-ai'); break;
+				case 'openSettings': vscode.commands.executeCommand('workbench.action.openSettings', '@ext:levelcode.levelcode-ai'); break;
 			}
 		});
 	}
@@ -928,63 +1212,206 @@ function getHtml() {
 	return html.replace(/__CSP__/g, csp).replace(/__NONCE__/g, nonce);
 }
 
-// ---- Atom++ Cloud account (sign-in + sync) -------------------------------------------------
+// ---- LevelCode Cloud account (sign-in + sync) -------------------------------------------------
 // IMPORTANT: this is a SEPARATE, optional layer. The AI path stays BYO-key / no-backend — the
 // account only syncs settings/skills/profile, never proxies AI or sees your provider keys.
-// It is gated on a configured `atompp.cloud.endpoint`; with none set, sign-in is honestly inert.
-const ACCOUNT_TOKEN_KEY = 'atompp.cloud.token';     // session token → SecretStorage
-const ACCOUNT_PROFILE_KEY = 'atompp.cloud.profile'; // {name,email,plan} → globalState
-function cloudEndpoint() { return String(vscode.workspace.getConfiguration('atompp.cloud').get('endpoint', '') || '').replace(/\/+$/, ''); }
+// It is gated on a configured `levelcode.cloud.endpoint`; with none set, sign-in is honestly inert.
+const ACCOUNT_TOKEN_KEY = 'levelcode.cloud.token';       // access token → SecretStorage
+const ACCOUNT_REFRESH_KEY = 'levelcode.cloud.refresh';   // refresh token → SecretStorage (gateway silent renewal)
+const ACCOUNT_VERIFIER_KEY = 'levelcode.cloud.verifier'; // PKCE code_verifier → SecretStorage (per sign-in)
+const ACCOUNT_PROFILE_KEY = 'levelcode.cloud.profile';   // {name,email,plan} → globalState
+
+/** base64url without padding — the encoding PKCE (RFC 7636) uses for both verifier and challenge. */
+function b64url(buf) { return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+/** A fresh PKCE pair: a high-entropy verifier and its S256 challenge (SHA-256 → base64url). */
+function pkcePair() {
+	const verifier = b64url(crypto.randomBytes(32));
+	const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
+	return { verifier, challenge };
+}
+// The LevelCode Cloud host (Rails on Elastic Beanstalk) — ONE host serves browser sign-in + dashboard + the
+// metered gateway (dev: ngrok, prod: levelcode.ai). levelcode.ai is a separate Vercel marketing site, NOT this.
+function cloudEndpoint() { return String(vscode.workspace.getConfiguration('levelcode.cloud').get('endpoint', '') || '').replace(/\/+$/, ''); }
+// The LevelCode Cloud BACKEND API (Rails) — the metered gateway + token exchange/refresh. ONE host serves the
+// whole LevelCode Cloud (sign-in pages + dashboard + API); `apiUrl` defaults to the website host and is only an
+// override for the advanced case of splitting web vs API onto different hosts.
+function cloudApiUrl() {
+	const u = String(vscode.workspace.getConfiguration('levelcode.cloud').get('apiUrl', '') || '').replace(/\/+$/, '');
+	return u || cloudEndpoint();
+}
 async function currentAccount() {
+	const mode = providerMode();   // 'byok' | 'gateway' — drives the mode-aware privacy note + plan line
 	const token = ctx ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
+	cloudSignedIn = !!token;   // keep the footer/model gate in sync with the real session
 	if (token) {
 		const p = (ctx && ctx.globalState.get(ACCOUNT_PROFILE_KEY)) || {};
-		return { signedIn: true, name: p.name || p.email || 'Atom++ user', email: p.email || '', plan: p.plan || '' };
+		return { signedIn: true, mode, name: p.name || p.email || 'LevelCode user', email: p.email || '', plan: p.plan || '' };
 	}
-	return { signedIn: false, status: cloudEndpoint() ? 'signedout' : 'unconfigured' };
+	return { signedIn: false, mode, status: cloudEndpoint() ? 'signedout' : 'unconfigured' };
 }
+/**
+ * Best-effort refresh of the cached profile (esp. `plan`) from the backend, so the free-tier lock /
+ * Upgrade CTA and the footer model stay accurate after the user upgrades on the web. No-op when
+ * signed out, unconfigured, or the API host isn't https (localhost http is allowed for dev). The
+ * editor access token carries `account:read`, so GET /account/profile is authorized.
+ */
+async function refreshCloudProfile() {
+	if (!ctx) { return; }
+	const token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
+	if (!token) { return; }
+	const api = cloudApiUrl();
+	if (!(/^https:\/\//i.test(api) || /^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(api))) { return; }
+	try {
+		const res = await fetch(api + '/api/levelcode/v1/account/profile', { headers: { authorization: 'Bearer ' + token } });
+		if (!res.ok) { dbg('account.refreshProfile', { ok: false, status: res.status }); return; }
+		const data = await res.json().catch(() => null);
+		if (!data) { return; }
+		const prev = (ctx.globalState.get(ACCOUNT_PROFILE_KEY)) || {};
+		await ctx.globalState.update(ACCOUNT_PROFILE_KEY, {
+			name: data.name || prev.name || '', email: data.email || prev.email || '', plan: data.plan || prev.plan || ''
+		});
+		dbg('account.refreshProfile', { ok: true, plan: data.plan });
+	} catch (e) { dbg('account.refreshProfile', { error: String((e && e.message) || e) }); }
+}
+
 async function postAccount(open) {
+	await refreshCloudProfile();   // keep plan/lock fresh (no-op signed out/offline)
 	const a = await currentAccount();
 	post(Object.assign({ type: 'account', open: !!open }, a));
+	// The plan may have changed the gateway model / free-tier CTA — resync the footer.
+	if (providerMode() === 'gateway') {
+		fetchCloudRoster();   // best-effort: populate the roster cache for footer labels (fire-and-forget)
+		sendConfigToWebview();
+	}
 }
+// Deep-link from the browser "IDE ↗" button (levelcode://levelcode.levelcode-ai/launch — NO credential
+// in the URL). Focus the chat; if not signed in, run the editor's normal PKCE sign-in. The already-
+// authenticated browser completes it silently (LoginPage auto-mints a PKCE-BOUND code), so there's no
+// second login and no interceptable code ever travels through the custom scheme.
+async function handleLaunch() {
+	dbg('account.launch', {});
+	vscode.commands.executeCommand('levelcodeAi.chat.focus');
+	const token = ctx ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
+	if (!token) { await accountSignIn(); }
+}
+
 async function accountSignIn(provider, create) {
 	const endpoint = cloudEndpoint();
 	if (!endpoint) {
 		dbg('account.signin', { unconfigured: true });
 		await postAccount(true);
-		vscode.window.showInformationMessage('Atom++ Cloud isn’t connected yet. Set "atompp.cloud.endpoint" to your account server to sign in. (Accounts + sync are on the roadmap — M9.)');
+		vscode.window.showInformationMessage('LevelCode Cloud isn’t connected yet. Set "levelcode.cloud.endpoint" to your account server to sign in. (Accounts + sync are on the roadmap — M9.)');
 		return;
 	}
 	// Canonical editor OAuth callback: open the server's auth page with a redirect back to us.
-	const cb = await vscode.env.asExternalUri(vscode.Uri.parse(`${vscode.env.uriScheme}://atompp.atom-ai/auth/callback`));
-	const path = create ? 'signup' : (provider ? 'oauth/' + encodeURIComponent(provider) : 'login');
-	const url = `${endpoint}/auth/${path}?redirect_uri=${encodeURIComponent(cb.toString())}`;
+	const cb = await vscode.env.asExternalUri(vscode.Uri.parse(`${vscode.env.uriScheme}://levelcode.levelcode-ai/auth/callback`));
+	// Provider sign-in hits the Rails host's OAuth start route (/ai/auth/oauth/<provider>); the browser
+	// + "create" buttons both land on the account app's login page (/ai/login), which offers email + provider
+	// options and threads redirect_uri + the PKCE challenge onward.
+	const sub = provider ? ('ai/auth/oauth/' + encodeURIComponent(provider)) : 'ai/login';
+	// PKCE (S256): stash a fresh verifier; send only the challenge. The hardened flow returns a one-time
+	// `code` we exchange with the verifier. Servers on the legacy flow ignore the challenge and return a token.
+	const { verifier, challenge } = pkcePair();
+	if (ctx) { await ctx.secrets.store(ACCOUNT_VERIFIER_KEY, verifier); }
+	const url = `${endpoint}/${sub}?redirect_uri=${encodeURIComponent(cb.toString())}`
+		+ `&code_challenge=${encodeURIComponent(challenge)}&code_challenge_method=S256`;
 	dbg('account.signin', { provider: provider || 'browser', create: !!create });
 	await vscode.env.openExternal(vscode.Uri.parse(url));
 }
 async function accountSignOut() {
-	if (ctx) { await ctx.secrets.delete(ACCOUNT_TOKEN_KEY); await ctx.globalState.update(ACCOUNT_PROFILE_KEY, undefined); }
+	cloudSignedIn = false;
+	if (ctx) {
+		await ctx.secrets.delete(ACCOUNT_TOKEN_KEY);
+		await ctx.secrets.delete(ACCOUNT_REFRESH_KEY);
+		await ctx.globalState.update(ACCOUNT_PROFILE_KEY, undefined);
+	}
 	dbg('account.signout');
 	await postAccount();
 }
 async function accountManage() {
 	const endpoint = cloudEndpoint();
-	if (endpoint) { await vscode.env.openExternal(vscode.Uri.parse(endpoint + '/account')); }
-	else { await postAccount(true); }
+	if (!endpoint) { await postAccount(true); return; }
+	// Hand the editor session to the browser so "Manage account" lands authenticated on
+	// /ai/account WITHOUT a second sign-in. Falls back to opening the page directly (which
+	// prompts a browser login) if the handoff can't be minted (signed out / offline).
+	const url = await webHandoffUrl();
+	await vscode.env.openExternal(vscode.Uri.parse(url || (endpoint + '/ai/account')));
 }
-// The browser redirects to atom-plus-plus://atompp.atom-ai/auth/callback?token=…&name=…&email=…
+
+/**
+ * Mint a one-time browser sign-in URL from the editor session (POST /auth/web_handoff):
+ * the returned URL redeems into a Devise web session and lands on /ai/account, so the
+ * browser is already authenticated. Returns null (caller falls back to the plain page)
+ * when signed out, offline, or the host isn't https/localhost. One silent refresh+retry
+ * on 401 so a lapsed access token doesn't force a re-login.
+ */
+async function webHandoffUrl() {
+	if (!ctx) { return null; }
+	let token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
+	if (!token) { return null; }
+	const api = cloudApiUrl();
+	if (!/^https:\/\//i.test(api) && !/^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(api)) { return null; }
+	const mint = (bearer) => fetch(api + '/api/levelcode/v1/auth/web_handoff', {
+		method: 'POST', headers: { authorization: 'Bearer ' + bearer }
+	});
+	try {
+		let res = await mint(token);
+		if (res.status === 401 && await refreshCloudToken()) {
+			token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
+			res = await mint(token);
+		}
+		if (!res.ok) { dbg('account.handoff', { ok: false, status: res.status }); return null; }
+		const data = await res.json().catch(() => null);
+		return (data && data.url) || null;
+	} catch (e) { dbg('account.handoff', { error: String((e && e.message) || e) }); return null; }
+}
+/** Persist an editor session: access token (required), optional refresh token, and display profile. */
+async function storeSession(access, refresh, profile) {
+	if (!ctx || !access) { return; }
+	cloudSignedIn = true;
+	await ctx.secrets.store(ACCOUNT_TOKEN_KEY, access);
+	if (refresh) { await ctx.secrets.store(ACCOUNT_REFRESH_KEY, refresh); }
+	await ctx.globalState.update(ACCOUNT_PROFILE_KEY, {
+		name: (profile && profile.name) || '', email: (profile && profile.email) || '', plan: (profile && profile.plan) || ''
+	});
+}
+
+// The browser redirects to levelcode://levelcode.levelcode-ai/auth/callback with either:
+//   ?code=<one_time>            (hardened PKCE flow — we exchange it for {access,refresh,profile})   [default]
+//   ?token=…&refresh=…&name=…&email=…&plan=…   (legacy flow — used as fallback)
 async function handleAuthCallback(uri) {
 	try {
 		const q = new URLSearchParams(uri.query || '');
+		const code = q.get('code');
+		// Preferred: PKCE code → exchange for tokens using the verifier we stashed at sign-in.
+		if (code) {
+			const endpoint = cloudApiUrl(); // token exchange is a BACKEND (Rails) call, not the website
+			const verifier = ctx ? await ctx.secrets.get(ACCOUNT_VERIFIER_KEY) : null;
+			try {
+				const res = await fetch(endpoint + '/api/levelcode/v1/auth/exchange', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ code, verifier: verifier || '' })
+				});
+				if (!res.ok) { throw new Error('exchange ' + res.status); }
+				const data = await res.json();
+				if (!data || !data.access) { throw new Error('exchange: no access token'); }
+				await storeSession(data.access, data.refresh, data.profile);
+			} finally {
+				if (ctx) { await ctx.secrets.delete(ACCOUNT_VERIFIER_KEY); }   // single-use
+			}
+			dbg('account.callback', { ok: true, flow: 'code' });
+			await postAccount(true);
+			vscode.window.showInformationMessage('Signed in to LevelCode.');
+			return;
+		}
+		// Fallback: legacy token-in-query flow.
 		const token = q.get('token');
 		if (!token) { return; }
-		if (ctx) {
-			await ctx.secrets.store(ACCOUNT_TOKEN_KEY, token);
-			await ctx.globalState.update(ACCOUNT_PROFILE_KEY, { name: q.get('name') || '', email: q.get('email') || '', plan: q.get('plan') || '' });
-		}
-		dbg('account.callback', { ok: true });
+		await storeSession(token, q.get('refresh'), { name: q.get('name') || '', email: q.get('email') || '', plan: q.get('plan') || '' });
+		dbg('account.callback', { ok: true, flow: 'token' });
 		await postAccount(true);
-		vscode.window.showInformationMessage('Signed in to Atom++.');
+		vscode.window.showInformationMessage('Signed in to LevelCode.');
 	} catch (e) { dbg('account.callback', { error: String((e && e.message) || e) }); }
 }
 
@@ -1014,7 +1441,7 @@ async function openWorkspaceFile(rel) {
 		}
 		if (!uri) { const found = await vscode.workspace.findFiles('**/' + rel.split('/').pop(), '**/node_modules/**', 1); if (found.length) { uri = found[0]; } }
 	}
-	if (!uri) { vscode.window.showWarningMessage('Atom++: could not locate ' + rel); return; }
+	if (!uri) { vscode.window.showWarningMessage('LevelCode: could not locate ' + rel); return; }
 	try {
 		await vscode.commands.executeCommand('revealInExplorer', uri);   // reveal in the (nested) Explorer tree
 		await vscode.window.showTextDocument(uri, { preview: false });   // open in the main editor
@@ -1025,43 +1452,46 @@ async function openWorkspaceFile(rel) {
 function activate(context) {
 	ctx = context;
 	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider('atomAi.chat', new ChatViewProvider(), {
+		vscode.window.registerWebviewViewProvider('levelcodeAi.chat', new ChatViewProvider(), {
 			webviewOptions: { retainContextWhenHidden: true }
 		}),
 		vscode.window.onDidChangeActiveTextEditor(() => postActiveFile()),
-		vscode.commands.registerCommand('atompp.ai.focus', () => vscode.commands.executeCommand('atomAi.chat.focus')),
-		vscode.commands.registerCommand('atompp.customize', () => openCustomize(context)),
+		vscode.commands.registerCommand('levelcode.ai.focus', () => vscode.commands.executeCommand('levelcodeAi.chat.focus')),
+		vscode.commands.registerCommand('levelcode.customize', () => openCustomize(context)),
 		// Agent Sketch: the visual multi-agent flow canvas. Lazy require — only loads when opened.
-		vscode.commands.registerCommand('atompp.ai.sketch', () => {
+		vscode.commands.registerCommand('levelcode.ai.sketch', () => {
 			try {
 				require('./sketch').openSketch(context, { prepProviderRequest, aiConfig, currentProviderId });
 			} catch (e) {
 				vscode.window.showErrorMessage('Agent Sketch failed to load: ' + ((e && e.message) || e));
 			}
 		}),
-		vscode.commands.registerCommand('atompp.import.vscode', () => importFromVscode(context)),
-		vscode.commands.registerCommand('atompp.ai.newChat', newChat),
-		vscode.commands.registerCommand('atompp.ai.pickModel', pickModel),
-		vscode.commands.registerCommand('atompp.ai.addSelection', addSelection),
-		vscode.commands.registerCommand('atompp.ai.addFileContext', addContext),
-		vscode.commands.registerCommand('atompp.ai.setApiKey', () => promptForKey()),
-		vscode.commands.registerCommand('atompp.ai.clearApiKey', async () => {
+		vscode.commands.registerCommand('levelcode.import.vscode', () => importFromVscode(context)),
+		vscode.commands.registerCommand('levelcode.ai.newChat', newChat),
+		vscode.commands.registerCommand('levelcode.ai.pickModel', pickModel),
+		vscode.commands.registerCommand('levelcode.ai.addSelection', addSelection),
+		vscode.commands.registerCommand('levelcode.ai.addFileContext', addContext),
+		vscode.commands.registerCommand('levelcode.ai.setApiKey', () => promptForKey()),
+		vscode.commands.registerCommand('levelcode.ai.clearApiKey', async () => {
 			const id = currentProviderId();
 			const skey = secretKeyFor(id);
 			const label = (providers.getProvider(id) || {}).label || 'provider';
-			if (!skey) { vscode.window.showInformationMessage('Atom++ AI: ' + label + ' uses no API key.'); return; }
+			if (!skey) { vscode.window.showInformationMessage('LevelCode AI: ' + label + ' uses no API key.'); return; }
 			await context.secrets.delete(skey);
-			vscode.window.showInformationMessage('Atom++ AI: ' + label + ' API key cleared.');
+			vscode.window.showInformationMessage('LevelCode AI: ' + label + ' API key cleared.');
 		}),
-		vscode.commands.registerCommand('atompp.ai.account', () => postAccount(true)),
-		vscode.window.registerUriHandler({ handleUri(uri) { if (uri.path === '/auth/callback') { handleAuthCallback(uri); } } }),
+		vscode.commands.registerCommand('levelcode.ai.account', () => postAccount(true)),
+		vscode.window.registerUriHandler({ handleUri(uri) {
+			if (uri.path === '/auth/callback') { handleAuthCallback(uri); }
+			else if (uri.path === '/launch') { handleLaunch(); }
+		} }),
 		vscode.workspace.onDidCreateFiles(scheduleFileIndex),
 		vscode.workspace.onDidDeleteFiles(scheduleFileIndex),
 		vscode.workspace.onDidRenameFiles(scheduleFileIndex),
 		vscode.workspace.onDidChangeWorkspaceFolders(scheduleFileIndex),
 		vscode.workspace.onDidChangeConfiguration((e) => {
-			if (e.affectsConfiguration('atompp.ai')) { sendConfigToWebview(); }
-			if (e.affectsConfiguration('atompp.cloud')) { postAccount(); }
+			if (e.affectsConfiguration('levelcode.ai')) { sendConfigToWebview(); }
+			if (e.affectsConfiguration('levelcode.ai.providerMode') || e.affectsConfiguration('levelcode.cloud')) { postAccount(); }
 		})
 	);
 
@@ -1098,18 +1528,18 @@ function activate(context) {
 	// Fallback guard: if the webview never renders (provider error, missing resource) hasSentMessage
 	// is never set, which would otherwise force the panel open forever. Stop after a few launches.
 	const AUTO_REVEAL_MAX_LAUNCHES = 5;
-	if (!context.globalState.get('atompp.ai.hasSentMessage')) {
-		const launches = (Number(context.globalState.get('atompp.ai.autoRevealLaunches')) || 0) + 1;
-		context.globalState.update('atompp.ai.autoRevealLaunches', launches);
+	if (!context.globalState.get('levelcode.ai.hasSentMessage')) {
+		const launches = (Number(context.globalState.get('levelcode.ai.autoRevealLaunches')) || 0) + 1;
+		context.globalState.update('levelcode.ai.autoRevealLaunches', launches);
 		if (launches <= AUTO_REVEAL_MAX_LAUNCHES) {
-			setTimeout(() => { vscode.commands.executeCommand('atomAi.chat.focus'); }, 600);
+			setTimeout(() => { vscode.commands.executeCommand('levelcodeAi.chat.focus'); }, 600);
 		}
 	}
 
 	// First-launch onboarding: open the Welcome walkthrough once.
-	if (!context.globalState.get('atompp.ai.didShowWelcome')) {
-		context.globalState.update('atompp.ai.didShowWelcome', true);
-		setTimeout(() => { vscode.commands.executeCommand('workbench.action.openWalkthrough', 'atompp.atom-ai#welcome', false).then(undefined, () => {}); }, 900);
+	if (!context.globalState.get('levelcode.ai.didShowWelcome')) {
+		context.globalState.update('levelcode.ai.didShowWelcome', true);
+		setTimeout(() => { vscode.commands.executeCommand('workbench.action.openWalkthrough', 'levelcode.levelcode-ai#welcome', false).then(undefined, () => {}); }, 900);
 	}
 }
 

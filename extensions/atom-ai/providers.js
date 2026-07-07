@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI · back-compat shim
+ *  LevelCode — AI · back-compat shim
  *
  *  `providers` is now a DIRECTORY (providers/index.js registry + anthropic.js + openaiCompat.js).
  *  This file preserves the old flat `require('./providers')` surface so nothing broke mid-migration

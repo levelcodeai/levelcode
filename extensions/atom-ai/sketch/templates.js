@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Agent Sketch · predefined flow templates  [SK1]
+ *  LevelCode — Agent Sketch · predefined flow templates  [SK1]
  *
  *  Ready-to-load starter sketches for the Agent Sketch canvas. Each template is a full sketch
  *  (name + goal + nodes + edges) built from the agentCatalog archetypes, laid out on a grid so

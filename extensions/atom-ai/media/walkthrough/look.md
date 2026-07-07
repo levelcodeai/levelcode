@@ -1,6 +1,6 @@
 ### Make it feel like home
 
-Atom++ keeps the Atom warmth and the Notepad++ power:
+LevelCode keeps the Atom warmth and the Notepad++ power:
 
 - **Signature themes** — One Dark / One Light, on by default
 - **Keymap presets** — Atom, Notepad++, or Sublime, so your muscle memory just works

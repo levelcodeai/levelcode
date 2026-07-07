@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI · tool-use translation (Anthropic ↔ OpenAI)  [P2]
+ *  LevelCode — AI · tool-use translation (Anthropic ↔ OpenAI)  [P2]
  *
  *  The agent keeps ONE internal transcript, and it is Anthropic-block-shaped (assistant messages
  *  carry {type:'text'} / {type:'tool_use', id, name, input} blocks; tool results come back as a user
@@ -10,7 +10,7 @@
  *  Everything in this file is PURE and unit-tested (test/translate.test.js). The fetch/SSE loop that
  *  drives it lives in openaiCompat.streamOpenAIAgentTurn.
  *
- *  The mapping (see docs/atompp-multiprovider-design.md §3.1):
+ *  The mapping (see docs/levelcode-multiprovider-design.md §3.1):
  *    tool defs      {name,description,input_schema}        → {type:'function',function:{name,description,parameters}}
  *    assistant call {type:'tool_use',id,name,input} block  → message.tool_calls:[{id,type:'function',function:{name,arguments:JSON}}]
  *    tool result    user{tool_result,tool_use_id,content}  → a separate {role:'tool',tool_call_id,content} message

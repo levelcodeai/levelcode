@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI · model catalog + per-model capabilities  [P4]
+ *  LevelCode — AI · model catalog + per-model capabilities  [P4]
  *
  *  Replaces the flat hard-coded context window (200000 everywhere) and the coarse per-PROVIDER tool
  *  gate with REAL per-MODEL capabilities: context window, tool support, vision, and a "fast" flag for
@@ -49,7 +49,10 @@ const CAPS = {
 	'grok-2-latest': { context: 131072, tools: true, vision: true },
 	// Mistral
 	'mistral-large-latest': { context: 128000, tools: true },
-	'codestral-latest':     { context: 256000, tools: true, fast: true }
+	'codestral-latest':     { context: 256000, tools: true, fast: true },
+	// LevelCode Cloud gateway engines (also reachable BYOK via OpenRouter)
+	'openai/gpt-oss-120b':       { context: 131072, tools: true },              // free tier
+	'moonshotai/kimi-k2.7-code': { context: 262144, tools: true, fast: true }   // Pro flagship
 };
 
 /** The basename of a model id ('openai/gpt-4o' → 'gpt-4o', 'gpt-4o' → 'gpt-4o'). */
