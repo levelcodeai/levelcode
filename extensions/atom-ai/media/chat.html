@@ -369,8 +369,17 @@
   .diff .dl.ctx { opacity: .55; }
   .autoctx { font-size: 11px; opacity: .55; margin: -4px 2px 2px; }
   .autoctx .files { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
-  #empty { margin: auto; max-width: 280px; text-align: center; opacity: .65; line-height: 1.55; padding: 20px; }
+  #empty { margin: auto; max-width: min(560px, 92vw); text-align: center; opacity: .65; line-height: 1.55; padding: 20px; }
+  #empty .empty-copy { max-width: 280px; margin: 0 auto; }
   #empty .big { font-size: 1.15em; opacity: .9; margin-bottom: 6px; }
+  /* LevelCode ASCII wordmark on the welcome (empty) state. Sizes with the panel width (webview vw),
+     clamped so it stays legible-yet-compact; theme accent to match the chevron mark in the status bar. */
+  #empty .lc-ascii-wrap { container-type: inline-size; width: 100%; }
+  /* font-size is sized off the CONTAINER width (cqi) — reliable in a webview where vw = the whole
+     editor, not this panel — so the wordmark always fits and the last glyph is never clipped.
+     line-height:1 makes the box-drawing rows connect into solid letters. */
+  #empty .lc-ascii { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: clamp(4px, 1.8cqi, 11px); line-height: 1; white-space: pre; color: var(--vscode-terminal-ansiGreen, #98c379); opacity: 1; width: max-content; max-width: 100%; margin: 2px auto 4px; overflow-x: auto; user-select: none; }
+  #empty .lc-ascii-sub { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; letter-spacing: .22em; color: var(--muted); opacity: .9; margin-bottom: 14px; }
   #empty .starters { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 14px; }
   #empty .starter { cursor: pointer; border: 1px solid var(--border); border-radius: 14px; padding: 4px 11px; font-size: 11.5px; background: var(--field-bg); color: var(--vscode-foreground); opacity: .95; }
   #empty .starter:hover { border-color: var(--accent); opacity: 1; }
@@ -654,8 +663,14 @@
 <body>
   <div id="log">
     <div id="empty">
-      <div class="big">LevelCode AI</div>
-      Ask about your code, or describe what to build. The open file is sent as context; add a selection with <b>+</b> or ⌥⌘A.
+      <div class="lc-ascii-wrap"><pre class="lc-ascii" role="img" aria-label="LevelCode AI">██╗      ███████╗ ██╗   ██╗ ███████╗ ██╗         ██████╗  ██████╗  ██████╗  ███████╗
+██║      ██╔════╝ ██║   ██║ ██╔════╝ ██║        ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝
+██║      █████╗   ██║   ██║ █████╗   ██║        ██║      ██║   ██║ ██║  ██║ █████╗
+██║      ██╔══╝   ╚██╗ ██╔╝ ██╔══╝   ██║        ██║      ██║   ██║ ██║  ██║ ██╔══╝
+███████╗ ███████╗  ╚████╔╝  ███████╗ ███████╗   ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗
+╚══════╝ ╚══════╝   ╚═══╝   ╚══════╝ ╚══════╝    ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝</pre></div>
+      <div class="lc-ascii-sub">levelcode.ai</div>
+      <div class="empty-copy">Ask about your code, or describe what to build. The open file is sent as context; add a selection with <b>+</b> or ⌥⌘A.</div>
       <div class="starters">
         <button class="starter" data-q="Explain what the current file does.">Explain this file</button>
         <button class="starter" data-q="Find and fix the bug in my selection.">Fix a bug</button>
