@@ -63,15 +63,15 @@ jobs:
         run: ./scripts/bootstrap.sh
         env:
           VSCODE_TAG: ${{ github.event.inputs.vscode_tag }}
-      - name: Build Atom++.app (${{ matrix.arch }}, proprietary stripped)
+      - name: Build LevelCode.app (${{ matrix.arch }}, proprietary stripped)
         run: ./scripts/build-macos.sh ${{ matrix.arch }}
       - name: Zip the unsigned app
-        run: ditto -c -k --sequesterRsrc --keepParent "VSCode-darwin-${{ matrix.arch }}/Atom++.app" "UNSIGNED-Atom++-${{ matrix.arch }}.app.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent "VSCode-darwin-${{ matrix.arch }}/LevelCode.app" "UNSIGNED-LevelCode-${{ matrix.arch }}.app.zip"
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UNSIGNED-Atom++-${{ matrix.arch }}
-          path: UNSIGNED-Atom++-${{ matrix.arch }}.app.zip
+          name: UNSIGNED-LevelCode-${{ matrix.arch }}
+          path: UNSIGNED-LevelCode-${{ matrix.arch }}.app.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -89,21 +89,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          name: Atom++ ${{ github.ref_name }}
+          name: LevelCode ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           files: apps/*.zip
           fail_on_unmatched_files: true
           body: |
-            **Draft — not for release as-is.** The attached `UNSIGNED-Atom++-<arch>.app.zip`
+            **Draft — not for release as-is.** The attached `UNSIGNED-LevelCode-<arch>.app.zip`
             files are CI build artifacts with **no Developer ID signature or notarization**.
 
             To finish the release **locally** (your signing cert never touches CI):
 
             1. `gh release download ${{ github.ref_name }} --pattern 'UNSIGNED-*.app.zip'`
             2. For each arch — unzip into `VSCode-darwin-<arch>/`, then
-               `CODESIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=atompp-notary ./scripts/make-dmg.sh <arch>`
-               (signs → dmg → notarizes → staples → `Atom++-<arch>.dmg`).
-            3. `gh release upload ${{ github.ref_name }} Atom++-arm64.dmg Atom++-x64.dmg`
+               `CODESIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=levelcode-notary ./scripts/make-dmg.sh <arch>`
+               (signs → dmg → notarizes → staples → `LevelCode-<arch>.dmg`).
+            3. `gh release upload ${{ github.ref_name }} LevelCode-arm64.dmg LevelCode-x64.dmg`
             4. **Delete the `UNSIGNED-*.app.zip` assets**, add real notes, and publish.
 
             Full runbook: `docs/RELEASING.md`.

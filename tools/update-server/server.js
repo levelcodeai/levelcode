@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — reference update-feed server
+ *  LevelCode — reference update-feed server
  *
  *  A tiny, dependency-free implementation of the Code-OSS update-feed contract that BOTH the
  *  built-in updater and the notify-only atom-updater extension speak:
@@ -10,7 +10,7 @@
  *
  *  The "latest build" per (target, quality) is read from a releases file (RELEASES_FILE, default
  *  ./releases.json). Use it to dev/test the updater, to self-host an update feed, and as the spec
- *  Atom++ Cloud implements for managed releases.
+ *  LevelCode Cloud implements for managed releases.
  *
  *  Run:  PORT=9696 RELEASES_FILE=./releases.json node server.js
  *--------------------------------------------------------------------------------------------*/
@@ -63,7 +63,7 @@ const server = http.createServer((req, res) => {
 	const method = req.method || 'GET';
 
 	if (url === '/' || url === '/health') {
-		return send(res, 200, 'Atom++ reference update-feed server\n', { 'Content-Type': 'text/plain' });
+		return send(res, 200, 'LevelCode reference update-feed server\n', { 'Content-Type': 'text/plain' });
 	}
 
 	const m = /^\/api\/update\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(url);
@@ -87,7 +87,7 @@ const server = http.createServer((req, res) => {
 if (require.main === module) {
 	server.listen(PORT, () => {
 		// eslint-disable-next-line no-console
-		console.log('Atom++ reference update-feed server on http://localhost:' + PORT + ' (releases: ' + releasesFile() + ')');
+		console.log('LevelCode reference update-feed server on http://localhost:' + PORT + ' (releases: ' + releasesFile() + ')');
 		console.log('Watch this terminal — every updater check prints as an [update] line.');
 	});
 }

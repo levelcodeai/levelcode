@@ -1,11 +1,11 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — reference Settings Sync server
+ *  LevelCode — reference Settings Sync server
  *
  *  A tiny, dependency-free implementation of the Code-OSS user-data-sync REST contract
  *  (the same protocol the editor's built-in Settings Sync speaks). Use it to:
- *    • develop/test Atom++ Sync end-to-end with no cloud backend, and
+ *    • develop/test LevelCode Sync end-to-end with no cloud backend, and
  *    • self-host the FREE sync tier (BYO storage).
- *  Atom++ Cloud implements the same contract for managed sync.
+ *  LevelCode Cloud implements the same contract for managed sync.
  *
  *  Storage is file-backed and isolated per bearer token (account). Bodies are opaque text —
  *  the server never parses settings, so client-side E2E encryption is trivial to add later.
@@ -169,7 +169,7 @@ const server = http.createServer(async (req, res) => {
 	const method = req.method || 'GET';
 
 	if (url === '/' || url === '/health') {
-		return send(res, 200, 'Atom++ reference sync server\n', { 'Content-Type': 'text/plain' });
+		return send(res, 200, 'LevelCode reference sync server\n', { 'Content-Type': 'text/plain' });
 	}
 
 	const auth = req.headers['authorization'] || '';
@@ -248,7 +248,7 @@ if (require.main === module) {
 	ensureDir(DATA_DIR);
 	server.listen(PORT, () => {
 		// eslint-disable-next-line no-console
-		console.log('Atom++ reference sync server on http://localhost:' + PORT + ' (data: ' + DATA_DIR + ')');
+		console.log('LevelCode reference sync server on http://localhost:' + PORT + ' (data: ' + DATA_DIR + ')');
 		console.log('Watch this terminal — every editor sync request prints as a [sync] line.');
 	});
 }

@@ -1,23 +1,23 @@
-# Atom++ reference Settings Sync server
+# LevelCode reference Settings Sync server
 
 A tiny, **dependency-free** implementation of the Code-OSS user-data-sync REST contract — the
 same protocol the editor's built-in **Settings Sync** speaks.
 
 It exists to:
-- **develop/test** Atom++ Sync end-to-end with no cloud backend, and
+- **develop/test** LevelCode Sync end-to-end with no cloud backend, and
 - **self-host the free sync tier** (bring your own storage).
 
-Atom++ Cloud implements the same contract for managed sync.
+LevelCode Cloud implements the same contract for managed sync.
 
 ## Run
 
 ```bash
 PORT=9595 node tools/sync-server/server.js
-# → Atom++ reference sync server on http://localhost:9595
+# → LevelCode reference sync server on http://localhost:9595
 ```
 
 `branding/product.overlay.json` → `configurationSync.store.url` points the editor here
-(`http://localhost:9595`) for dev. **Before release, point it at the managed Atom++ Cloud host.**
+(`http://localhost:9595`) for dev. **Before release, point it at the managed LevelCode Cloud host.**
 
 ## Test
 
@@ -38,8 +38,8 @@ node tools/sync-server/test.js     # round-trips the REST contract (manifest, ET
 ## Notes
 
 - **Auth:** every `/v1` request needs `Authorization: Bearer <token>` (the token comes from the
-  `atompp` auth provider in `extensions/atom-sync`). Storage is **isolated per token**.
+  `levelcode` auth provider in `extensions/atom-sync`). Storage is **isolated per token**.
 - **Opaque bodies:** the server never parses settings, so client-side **E2E encryption** can be
   added later with zero server changes.
 - **Dev only:** HTTP on localhost, file-backed storage under `tools/sync-server/.data` (gitignored).
-  Not hardened for production — Atom++ Cloud is the managed implementation.
+  Not hardened for production — LevelCode Cloud is the managed implementation.

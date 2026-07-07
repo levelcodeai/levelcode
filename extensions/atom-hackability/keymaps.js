@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Hackability: keymap presets
+ *  LevelCode — Hackability: keymap presets
  *
  *  Apply an Atom or Notepad++ keybinding preset so muscle memory transfers. A preset is
  *  written into the user's keybindings.json (backed up first); VS Code live-reloads it, so
@@ -89,16 +89,16 @@ async function applyKeymap(context) {
 				fs.copyFileSync(file, path.join(userDir, 'keybindings.backup-' + Date.now() + '.json'));
 			}
 		}
-		const header = '// Atom++ — ' + preset.label + ' keymap preset.\n' +
-			'// Applied via "Atom++: Apply Keymap Preset". Edit freely; re-apply any time.\n';
+		const header = '// LevelCode — ' + preset.label + ' keymap preset.\n' +
+			'// Applied via "LevelCode: Apply Keymap Preset". Edit freely; re-apply any time.\n';
 		fs.writeFileSync(file, header + JSON.stringify(preset.bindings, null, 2) + '\n', 'utf8');
 	} catch (e) {
-		vscode.window.showErrorMessage('Atom++: could not write keybindings.json: ' + ((e && e.message) || e));
+		vscode.window.showErrorMessage('LevelCode: could not write keybindings.json: ' + ((e && e.message) || e));
 		return;
 	}
 
 	const open = 'Open Keybindings';
-	const msg = `Atom++: applied the ${preset.label} keymap.` + (preset.note ? ' ' + preset.note : '');
+	const msg = `LevelCode: applied the ${preset.label} keymap.` + (preset.note ? ' ' + preset.note : '');
 	vscode.window.showInformationMessage(msg, open).then((c) => {
 		if (c === open) { vscode.commands.executeCommand('workbench.action.openGlobalKeybindingsFile'); }
 	});
@@ -106,7 +106,7 @@ async function applyKeymap(context) {
 
 function registerKeymaps(context) {
 	context.subscriptions.push(
-		vscode.commands.registerCommand('atompp.keymap.apply', () => applyKeymap(context))
+		vscode.commands.registerCommand('levelcode.keymap.apply', () => applyKeymap(context))
 	);
 }
 

@@ -54,8 +54,8 @@ test('isNewer: different commit → true; same → false; missing → false', ()
 });
 
 test('releaseLabel prefers productVersion', () => {
-	assert.strictEqual(U.releaseLabel({ version: 'x', productVersion: '0.3.0' }), 'Atom++ 0.3.0');
-	assert.strictEqual(U.releaseLabel({ version: 'x' }), 'A new Atom++ build');
+	assert.strictEqual(U.releaseLabel({ version: 'x', productVersion: '0.3.0' }), 'LevelCode 0.3.0');
+	assert.strictEqual(U.releaseLabel({ version: 'x' }), 'A new LevelCode build');
 });
 
 console.log('\nupdate.js: ' + n + ' tests passed.');

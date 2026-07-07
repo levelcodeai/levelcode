@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Sergii Demianchuk (Atom++)
+Copyright (c) 2026 Sergii Demianchuk (LevelCode)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,9 +22,9 @@ SOFTWARE.
 
 ---
 
-Atom++ is a derivative of Code-OSS (https://github.com/microsoft/vscode),
+LevelCode is a derivative of Code-OSS (https://github.com/microsoft/vscode),
 which is licensed under the MIT License, Copyright (c) Microsoft Corporation.
-Atom++ is not produced by, endorsed by, or affiliated with Microsoft.
+LevelCode is not produced by, endorsed by, or affiliated with Microsoft.
 "Visual Studio Code" and related marks are trademarks of Microsoft.
 The upstream Code-OSS source is fetched at build time and is not redistributed
 in this repository.

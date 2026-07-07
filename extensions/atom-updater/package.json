@@ -1,8 +1,8 @@
 {
   "name": "atom-updater",
-  "displayName": "Atom++ Updater (notify-only)",
-  "description": "Periodically checks for new Atom++ releases and notifies you with a download link. Notify-only — never auto-applies, so it works on any build with no code-signing.",
-  "publisher": "atompp",
+  "displayName": "LevelCode Updater (notify-only)",
+  "description": "Periodically checks for new LevelCode releases and notifies you with a download link. Notify-only — never auto-applies, so it works on any build with no code-signing.",
+  "publisher": "levelcode",
   "version": "0.1.0",
   "license": "MIT",
   "engines": {
@@ -24,25 +24,25 @@
   "contributes": {
     "commands": [
       {
-        "command": "atompp.update.check",
+        "command": "levelcode.update.check",
         "title": "Check for Updates",
-        "category": "Atom++"
+        "category": "LevelCode"
       }
     ],
     "configuration": {
-      "title": "Atom++ Updater",
+      "title": "LevelCode Updater",
       "properties": {
-        "atompp.update.enabled": {
+        "levelcode.update.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Periodically check for new Atom++ releases and notify with a download link (does not auto-install)."
+          "description": "Periodically check for new LevelCode releases and notify with a download link (does not auto-install)."
         },
-        "atompp.update.url": {
+        "levelcode.update.url": {
           "type": "string",
           "default": "",
           "description": "Update feed base URL. Overrides product.json updateUrl. Leave blank to use product.json. For local testing, point at the reference update server (e.g. http://localhost:9696)."
         },
-        "atompp.update.intervalHours": {
+        "levelcode.update.intervalHours": {
           "type": "number",
           "default": 4,
           "minimum": 1,

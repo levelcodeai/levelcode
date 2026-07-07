@@ -1,8 +1,8 @@
 {
   "name": "atom-hackability",
-  "displayName": "Atom++ Hackability",
-  "description": "Atom-style hackability for Atom++ — a user init script that runs your own code at startup.",
-  "publisher": "atompp",
+  "displayName": "LevelCode Hackability",
+  "description": "Atom-style hackability for LevelCode — a user init script that runs your own code at startup.",
+  "publisher": "levelcode",
   "version": "0.1.0",
   "license": "MIT",
   "engines": {
@@ -23,43 +23,43 @@
   "contributes": {
     "commands": [
       {
-        "command": "atompp.init.edit",
+        "command": "levelcode.init.edit",
         "title": "Open Init Script",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.init.reload",
+        "command": "levelcode.init.reload",
         "title": "Reload Init Script",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.keymap.apply",
+        "command": "levelcode.keymap.apply",
         "title": "Apply Keymap Preset…",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.package.generate",
+        "command": "levelcode.package.generate",
         "title": "Generate Package…",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.package.develop",
+        "command": "levelcode.package.develop",
         "title": "Develop Package (Hot Reload)…",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.package.stop",
+        "command": "levelcode.package.stop",
         "title": "Stop Developing Package",
-        "category": "Atom++"
+        "category": "LevelCode"
       }
     ],
     "configuration": {
-      "title": "Atom++ Hackability",
+      "title": "LevelCode Hackability",
       "properties": {
-        "atompp.init.enabled": {
+        "levelcode.init.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Run your user init script (~/.atom-plus-plus/init.js) when Atom++ starts."
+          "description": "Run your user init script (~/.levelcode/init.js) when LevelCode starts."
         }
       }
     }

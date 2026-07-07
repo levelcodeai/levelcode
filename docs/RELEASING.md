@@ -1,11 +1,11 @@
-# Releasing Atom++ (build → strip → sign → notarize → publish)
+# Releasing LevelCode (build → strip → sign → notarize → publish)
 
 How to turn the source into a **de-Microsoft'd, Developer-ID-signed, notarized, stapled** `.dmg` that
 launches cleanly on any Mac with no Gatekeeper warning — in one command once the one-time setup is done.
 
 > **Status (2026-07-01):** Apple Developer Program **enrolled**; the *Developer ID Application* cert is
-> installed (`AJ27Y4Z2HS`) and the `atompp-notary` credential is stored. `scripts/notarize.sh` +
-> `scripts/atompp.entitlements` + the `make-dmg.sh`/`build-macos.sh` wiring are all in place.
+> installed (`AJ27Y4Z2HS`) and the `levelcode-notary` credential is stored. `scripts/notarize.sh` +
+> `scripts/levelcode.entitlements` + the `make-dmg.sh`/`build-macos.sh` wiring are all in place.
 > Without `CODESIGN_IDENTITY` set, `make-dmg.sh` still produces an **ad-hoc** dmg (local/tester use;
 > other Macs need right-click→Open or `xattr -dr com.apple.quarantine`).
 
@@ -15,7 +15,7 @@ launches cleanly on any Mac with no Gatekeeper warning — in one command once t
 | --- | --- | --- |
 | Signature | `codesign --sign -` | `Developer ID Application: … (TEAMID)` |
 | Hardened runtime | no | **yes** (`--options runtime`) |
-| Entitlements | none | Electron/V8 JIT (`scripts/atompp.entitlements`) |
+| Entitlements | none | Electron/V8 JIT (`scripts/levelcode.entitlements`) |
 | Notarized + stapled | no | **yes** (`notarytool` + `stapler`) |
 | Proprietary MS/Copilot code | **stripped** either way | **stripped** (`scripts/strip-proprietary.mjs`) |
 | Other Macs | Gatekeeper blocks | **launches cleanly** |
@@ -38,7 +38,7 @@ Back it up: Keychain Access → My Certificates → right-click → **Export** t
 **b. Notary credential** (stored once; no secret ever enters the repo):
 ```bash
 # App-specific password: appleid.apple.com → Sign-In and Security → App-Specific Passwords → Generate
-xcrun notarytool store-credentials "atompp-notary" \
+xcrun notarytool store-credentials "levelcode-notary" \
   --apple-id "you@example.com" --team-id "AJ27Y4Z2HS" --password "xxxx-xxxx-xxxx-xxxx"
 ```
 (For CI, use an App Store Connect API key instead: `--key AuthKey_XXXX.p8 --key-id KEYID --issuer ISSUER-UUID`.)
@@ -46,14 +46,14 @@ xcrun notarytool store-credentials "atompp-notary" \
 **c. Export for your shell** (or your release env):
 ```bash
 export CODESIGN_IDENTITY="Developer ID Application: SERGII DEMIANCHUK (AJ27Y4Z2HS)"
-export NOTARY_PROFILE="atompp-notary"
+export NOTARY_PROFILE="levelcode-notary"
 ```
 
 ## 2. Cut a release
 
 ```bash
 ./scripts/bootstrap.sh        # first time / after an upstream bump (clone + brand + patch + npm ci)
-./scripts/build-macos.sh      # → VSCode-darwin-<arch>/Atom++.app, then auto-strips proprietary MS/Copilot code from the app
+./scripts/build-macos.sh      # → VSCode-darwin-<arch>/LevelCode.app, then auto-strips proprietary MS/Copilot code from the app
 ./scripts/make-dmg.sh         # de-Microsoft (defensive) → sign (Developer ID) → dmg → notarize → staple → verify
 ```
 With `CODESIGN_IDENTITY` + `NOTARY_PROFILE` set, `make-dmg.sh` runs the whole signed+notarized pipeline;
@@ -63,15 +63,15 @@ without them it's ad-hoc (unnotarized). **The de-Microsoft strip runs on the bui
 ## 3. Verify it will pass Gatekeeper on a clean Mac
 
 ```bash
-xcrun stapler validate Atom++-arm64.dmg
-spctl -a -t open --context context:primary-signature -v Atom++-arm64.dmg     # → "source=Notarized Developer ID" / "accepted"
+xcrun stapler validate LevelCode-arm64.dmg
+spctl -a -t open --context context:primary-signature -v LevelCode-arm64.dmg     # → "source=Notarized Developer ID" / "accepted"
 ```
 Best real test: copy the dmg to a **different Mac** (or fresh user account), open it, drag to Applications,
 double-click — it should launch with no warning.
 
 Confirm the app carries no proprietary code:
 ```bash
-find VSCode-darwin-arm64/Atom++.app \( -path "*@github/copilot*" -o -path "*mxc-sdk*" \) \
+find VSCode-darwin-arm64/LevelCode.app \( -path "*@github/copilot*" -o -path "*mxc-sdk*" \) \
   \( -name "*.node" -o -name "*.dylib" -o -name "mxc-exec-mac" \) -print   # → prints NOTHING
 ```
 
@@ -80,11 +80,11 @@ Build **both architectures** on matching hardware (Apple silicon → `arm64`, In
 ## 4. Publish
 
 ```bash
-gh release create v0.1.0 --title "Atom++ v0.1.0" --notes "First public build. …" \
-  Atom++-arm64.dmg Atom++-x64.dmg
+gh release create v0.1.0 --title "LevelCode v0.1.0" --notes "First public build. …" \
+  LevelCode-arm64.dmg LevelCode-x64.dmg
 ```
-Stable URL: `https://github.com/atom-plus-plus/atompp/releases/latest/download/Atom++-arm64.dmg` — link it
-from **atompp.ai/download**.
+Stable URL: `https://github.com/levelcodeai/levelcode/releases/latest/download/LevelCode-arm64.dmg` — link it
+from **levelcode.ai/download**.
 
 ## 5. Point the update feed at the release
 
@@ -98,12 +98,12 @@ see the new version. Keep the feed version in lockstep with the tag.
 | --- | --- |
 | ⚑ `security find-identity` → **0 valid identities**, cert shows **"not trusted"** in Keychain Access | The Apple **intermediate** is missing. Install the Developer ID **G2** CA: `curl -O https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer` → double-click. Do NOT hand-set trust on the leaf — leave "Use System Defaults". |
 | ⚑ `notarytool store-credentials` → **HTTP 401 Invalid credentials** | You used your Apple ID password, or never generated an app-specific one. appleid.apple.com → App-Specific Passwords → **Generate** → paste that (with the dashes). |
-| ⚑ Notarization stuck **In Progress** for hours | Apple-side queue/incident (check [system status](https://developer.apple.com/system-status/)). The submission is server-side — `Ctrl-C` the `--wait`, then `xcrun notarytool info <id> --keychain-profile atompp-notary` later and `stapler staple` once `Accepted`. Don't resubmit (duplicates just queue behind it). |
-| `notarytool` → **Invalid** | `xcrun notarytool log <id> --keychain-profile atompp-notary` names the exact file/entitlement. Usually: sign with the Developer ID identity + `--options runtime`. |
-| App crashes on launch (SIGKILL / code 137) after signing | Missing JIT entitlements on the main app or a helper — check `scripts/atompp.entitlements` is applied to the helper `.app`s too (notarize.sh does this). |
+| ⚑ Notarization stuck **In Progress** for hours | Apple-side queue/incident (check [system status](https://developer.apple.com/system-status/)). The submission is server-side — `Ctrl-C` the `--wait`, then `xcrun notarytool info <id> --keychain-profile levelcode-notary` later and `stapler staple` once `Accepted`. Don't resubmit (duplicates just queue behind it). |
+| `notarytool` → **Invalid** | `xcrun notarytool log <id> --keychain-profile levelcode-notary` names the exact file/entitlement. Usually: sign with the Developer ID identity + `--options runtime`. |
+| App crashes on launch (SIGKILL / code 137) after signing | Missing JIT entitlements on the main app or a helper — check `scripts/levelcode.entitlements` is applied to the helper `.app`s too (notarize.sh does this). |
 | "signature does not include a secure timestamp" | Add `--timestamp` (needs network) — notarize.sh always does. |
 | Gatekeeper still warns after notarizing | Forgot to **staple**, or stapled the app but not the dmg. |
-| Chat won't open / shortcut dead in a build | `atompp.ai.focus` is `Ctrl+Cmd+I` (moved off the `Cmd+Alt+I` DevTools collision); the chat also auto-reveals until the first message is sent. |
+| Chat won't open / shortcut dead in a build | `levelcode.ai.focus` is `Ctrl+Cmd+I` (moved off the `Cmd+Alt+I` DevTools collision); the chat also auto-reveals until the first message is sent. |
 
 ## 7. CI build — hybrid model (`.github/workflows/release.yml`)
 
@@ -117,26 +117,26 @@ The whole release becomes:
 ```sh
 # 1. Kick off CI (builds both arches, ~30–60 min/arch; free on public repos, 10× minutes while private)
 git tag v0.1.0 && git push --tags
-#    → workflow builds → creates a DRAFT release with UNSIGNED-Atom++-<arch>.app.zip attached
+#    → workflow builds → creates a DRAFT release with UNSIGNED-LevelCode-<arch>.app.zip attached
 
 # 2. Sign + notarize LOCALLY (needs the one-time setup from §1)
 gh release download v0.1.0 --pattern 'UNSIGNED-*.app.zip'
 for A in arm64 x64; do
-  rm -rf "VSCode-darwin-$A" && ditto -x -k "UNSIGNED-Atom++-$A.app.zip" "VSCode-darwin-$A"
+  rm -rf "VSCode-darwin-$A" && ditto -x -k "UNSIGNED-LevelCode-$A.app.zip" "VSCode-darwin-$A"
   CODESIGN_IDENTITY="Developer ID Application: SERGII DEMIANCHUK (AJ27Y4Z2HS)" \
-    NOTARY_PROFILE=atompp-notary ./scripts/make-dmg.sh "$A"     # → Atom++-$A.dmg (signed+notarized+stapled)
+    NOTARY_PROFILE=levelcode-notary ./scripts/make-dmg.sh "$A"     # → LevelCode-$A.dmg (signed+notarized+stapled)
 done
 
 # 3. Verify (§3), then attach the dmgs, drop the unsigned zips, and publish
-gh release upload v0.1.0 Atom++-arm64.dmg Atom++-x64.dmg
-gh release delete-asset v0.1.0 UNSIGNED-Atom++-arm64.app.zip UNSIGNED-Atom++-x64.app.zip
+gh release upload v0.1.0 LevelCode-arm64.dmg LevelCode-x64.dmg
+gh release delete-asset v0.1.0 UNSIGNED-LevelCode-arm64.app.zip UNSIGNED-LevelCode-x64.app.zip
 gh release edit v0.1.0 --draft=false --notes-file RELEASE-NOTES.md
 ```
 
 Notes:
 - **No secrets required** — the workflow is credential-free by design (that's the whole point of hybrid).
-- The dmg names (`Atom++-arm64.dmg` / `Atom++-x64.dmg`) are exactly what the download funnel at
-  `atompp.ai/download/<arch>` expects — don't rename them.
+- The dmg names (`LevelCode-arm64.dmg` / `LevelCode-x64.dmg`) are exactly what the download funnel at
+  `levelcode.ai/download/<arch>` expects — don't rename them.
 - `releases/latest` only resolves once this is a **published, non-prerelease** release with both dmgs.
 - **Fully-automated alternative** (signing in CI) if you ever want zero local steps: base64 the `.p12`
   Developer ID export + store it and an App Store Connect API key as secrets behind a *protected
