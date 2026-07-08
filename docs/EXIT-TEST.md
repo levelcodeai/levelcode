@@ -4,14 +4,14 @@ M0 is complete when **all** of these pass on your Mac. Check them off.
 
 ### Build & launch
 - [ ] `./scripts/bootstrap.sh` completes with no errors.
-- [ ] `./scripts/build-macos.sh` produces **Atom++.app**.
-- [ ] Atom++.app launches and opens a folder.
+- [ ] `./scripts/build-macos.sh` produces **LevelCode.app**.
+- [ ] LevelCode.app launches and opens a folder.
 
 ### It's ours, not Microsoft's
-- [ ] Window title / Dock / `About` all read **Atom++** (no "Visual Studio Code" / "Code - OSS").
-- [ ] Bundle identifier is `net.systemu.atom-plus-plus` (verify: `mdls -name kMDItemCFBundleIdentifier Atom++.app`).
+- [ ] Window title / Dock / `About` all read **LevelCode** (no "Visual Studio Code" / "Code - OSS").
+- [ ] Bundle identifier is `net.systemu.levelcode` (verify: `mdls -name kMDItemCFBundleIdentifier LevelCode.app`).
 - [ ] Telemetry is off by default (Settings shows no MS telemetry; `enableTelemetry` is `false` in `vscode/product.json`).
-- [ ] Custom URL protocol works conceptually: `product.json` `urlProtocol` is `atom-plus-plus`.
+- [ ] Custom URL protocol works conceptually: `product.json` `urlProtocol` is `levelcode`.
 
 ### Open VSX, not the MS marketplace
 - [ ] Extensions view loads results from **Open VSX** (search e.g. "Python" returns results; the gallery URL in `product.json` points at `open-vsx.org`).

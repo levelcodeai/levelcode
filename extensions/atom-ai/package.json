@@ -1,8 +1,8 @@
 {
-  "name": "atom-ai",
-  "displayName": "Atom++ AI",
-  "description": "Native, Claude-first AI for Atom++ — chat with your code, no middle-man backend.",
-  "publisher": "atompp",
+  "name": "levelcode-ai",
+  "displayName": "LevelCode AI",
+  "description": "Native, Claude-first AI for LevelCode — chat with your code, no middle-man backend.",
+  "publisher": "levelcode",
   "version": "0.1.0",
   "license": "MIT",
   "engines": {
@@ -25,52 +25,41 @@
     "walkthroughs": [
       {
         "id": "welcome",
-        "title": "Welcome to Atom++",
+        "title": "Welcome to LevelCode",
         "description": "Your AI-native, hackable, Notepad++-powered editor — set it up in a couple of minutes.",
         "steps": [
           {
             "id": "ai",
             "title": "Connect your AI",
-            "description": "Atom++ speaks every major model provider in BYOK mode — Claude (the default, and what powers the agent), plus OpenAI, OpenRouter, Groq, Mistral, DeepSeek, local Ollama and more. Bring your own key (or sign in to your Atom++ account), then open the chat.\n[Set your API key](command:atompp.ai.setApiKey)\n[Pick a model / provider](command:atompp.ai.pickModel)\n[Sign in to Atom++](command:atompp.ai.account)\n[Open the chat](command:atompp.ai.focus)",
+            "description": "LevelCode speaks every major model provider in BYOK mode — Claude (the default, and what powers the agent), plus OpenAI, OpenRouter, Groq, Mistral, DeepSeek, local Ollama and more. Bring your own key (or sign in to your LevelCode account), then open the chat.\n[Set your API key](command:levelcode.ai.setApiKey)\n[Pick a model / provider](command:levelcode.ai.pickModel)\n[Sign in to LevelCode](command:levelcode.ai.account)\n[Open the chat](command:levelcode.ai.focus)",
             "media": {
               "markdown": "media/walkthrough/ai.md"
             },
             "completionEvents": [
-              "onCommand:atompp.ai.setApiKey",
-              "onCommand:atompp.ai.account"
+              "onCommand:levelcode.ai.setApiKey",
+              "onCommand:levelcode.ai.account"
             ]
           },
           {
             "id": "look",
             "title": "Make it yours",
-            "description": "Pick a theme and an editing keymap — Atom, Notepad++, or Sublime muscle memory are built in.\n[Choose a theme](command:workbench.action.selectTheme)\n[Apply a keymap preset](command:atompp.keymap.apply)",
+            "description": "Pick a theme and an editing keymap — Atom, Notepad++, or Sublime muscle memory are built in.\n[Choose a theme](command:workbench.action.selectTheme)\n[Apply a keymap preset](command:levelcode.keymap.apply)",
             "media": {
               "markdown": "media/walkthrough/look.md"
             },
             "completionEvents": [
-              "onCommand:atompp.keymap.apply"
-            ]
-          },
-          {
-            "id": "sync",
-            "title": "Sync across machines",
-            "description": "Sign in once and your settings, keybindings, theme, and skills follow you to every machine.\n[Set up Sync](command:atompp.sync.setUp)",
-            "media": {
-              "markdown": "media/walkthrough/sync.md"
-            },
-            "completionEvents": [
-              "onCommand:atompp.sync.setUp"
+              "onCommand:levelcode.keymap.apply"
             ]
           },
           {
             "id": "updates",
             "title": "Stay up to date",
-            "description": "Atom++ checks for new releases and tells you when one is ready to download.\n[Check for updates](command:atompp.update.check)",
+            "description": "LevelCode checks for new releases and tells you when one is ready to download.\n[Check for updates](command:levelcode.update.check)",
             "media": {
               "markdown": "media/walkthrough/updates.md"
             },
             "completionEvents": [
-              "onCommand:atompp.update.check"
+              "onCommand:levelcode.update.check"
             ]
           }
         ]
@@ -78,23 +67,23 @@
     ],
     "languageModelChatProviders": [
       {
-        "vendor": "atompp",
-        "displayName": "Atom++ (Claude)"
+        "vendor": "levelcode",
+        "displayName": "LevelCode (Claude)"
       }
     ],
     "viewsContainers": {
       "secondarySidebar": [
         {
-          "id": "atomAi",
-          "title": "Atom++ AI",
-          "icon": "media/atom-ai.svg"
+          "id": "levelcodeAi",
+          "title": "LevelCode AI",
+          "icon": "media/levelcode-ai.svg"
         }
       ]
     },
     "views": {
-      "atomAi": [
+      "levelcodeAi": [
         {
-          "id": "atomAi.chat",
+          "id": "levelcodeAi.chat",
           "name": "Chat",
           "type": "webview"
         }
@@ -102,184 +91,184 @@
     },
     "commands": [
       {
-        "command": "atompp.customize",
+        "command": "levelcode.customize",
         "title": "Customize…",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.import.vscode",
+        "command": "levelcode.import.vscode",
         "title": "Import from VS Code…",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.ai.focus",
+        "command": "levelcode.ai.focus",
         "title": "AI: Focus Chat",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.ai.newChat",
+        "command": "levelcode.ai.newChat",
         "title": "AI: New Chat",
-        "category": "Atom++",
+        "category": "LevelCode",
         "icon": "$(add)"
       },
       {
-        "command": "atompp.ai.pickModel",
+        "command": "levelcode.ai.pickModel",
         "title": "AI: Select Model…",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.ai.sketch",
+        "command": "levelcode.ai.sketch",
         "title": "AI: Agent Sketch…",
-        "category": "Atom++",
+        "category": "LevelCode",
         "icon": "$(type-hierarchy)"
       },
       {
-        "command": "atompp.ai.addSelection",
+        "command": "levelcode.ai.addSelection",
         "title": "AI: Add Selection to Chat",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.ai.addFileContext",
+        "command": "levelcode.ai.addFileContext",
         "title": "AI: Add Files to Chat…",
-        "category": "Atom++",
+        "category": "LevelCode",
         "icon": "$(new-file)"
       },
       {
-        "command": "atompp.ai.editSelection",
+        "command": "levelcode.ai.editSelection",
         "title": "AI: Edit Selection…",
-        "category": "Atom++",
+        "category": "LevelCode",
         "icon": "$(sparkle)"
       },
       {
-        "command": "atompp.ai.applyEdit",
+        "command": "levelcode.ai.applyEdit",
         "title": "Keep AI Edit",
-        "category": "Atom++",
+        "category": "LevelCode",
         "icon": "$(check)"
       },
       {
-        "command": "atompp.ai.discardEdit",
+        "command": "levelcode.ai.discardEdit",
         "title": "Discard AI Edit",
-        "category": "Atom++",
+        "category": "LevelCode",
         "icon": "$(close)"
       },
       {
-        "command": "atompp.ai.setApiKey",
+        "command": "levelcode.ai.setApiKey",
         "title": "AI: Set API Key…",
-        "category": "Atom++",
+        "category": "LevelCode",
         "icon": "$(key)"
       },
       {
-        "command": "atompp.ai.account",
-        "title": "Account: Sign in to Atom++…",
-        "category": "Atom++",
+        "command": "levelcode.ai.account",
+        "title": "Account: Sign in to LevelCode…",
+        "category": "LevelCode",
         "icon": "$(account)"
       },
       {
-        "command": "atompp.ai.clearApiKey",
+        "command": "levelcode.ai.clearApiKey",
         "title": "AI: Clear API Key",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.ai.toggleCompletions",
+        "command": "levelcode.ai.toggleCompletions",
         "title": "AI: Toggle Inline Completions",
-        "category": "Atom++"
+        "category": "LevelCode"
       },
       {
-        "command": "atompp.ai.review.keepActive",
+        "command": "levelcode.ai.review.keepActive",
         "title": "Keep Agent Edit",
-        "category": "Atom++",
+        "category": "LevelCode",
         "icon": "$(check)"
       },
       {
-        "command": "atompp.ai.review.undoActive",
+        "command": "levelcode.ai.review.undoActive",
         "title": "Undo Agent Edit",
-        "category": "Atom++",
+        "category": "LevelCode",
         "icon": "$(discard)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "atompp.ai.addFileContext",
-          "when": "view == atomAi.chat",
+          "command": "levelcode.ai.addFileContext",
+          "when": "view == levelcodeAi.chat",
           "group": "navigation@1"
         },
         {
-          "command": "atompp.ai.newChat",
-          "when": "view == atomAi.chat",
+          "command": "levelcode.ai.newChat",
+          "when": "view == levelcodeAi.chat",
           "group": "navigation@2"
         },
         {
-          "command": "atompp.ai.setApiKey",
-          "when": "view == atomAi.chat",
+          "command": "levelcode.ai.setApiKey",
+          "when": "view == levelcodeAi.chat",
           "group": "navigation@3"
         }
       ],
       "editor/title": [
         {
-          "command": "atompp.ai.review.keepActive",
-          "when": "atompp.ai.reviewActive",
+          "command": "levelcode.ai.review.keepActive",
+          "when": "levelcode.ai.reviewActive",
           "group": "navigation@1"
         },
         {
-          "command": "atompp.ai.review.undoActive",
-          "when": "atompp.ai.reviewActive",
+          "command": "levelcode.ai.review.undoActive",
+          "when": "levelcode.ai.reviewActive",
           "group": "navigation@2"
         },
         {
-          "command": "atompp.ai.applyEdit",
-          "when": "atompp.ai.diffActive",
+          "command": "levelcode.ai.applyEdit",
+          "when": "levelcode.ai.diffActive",
           "group": "navigation@3"
         },
         {
-          "command": "atompp.ai.discardEdit",
-          "when": "atompp.ai.diffActive",
+          "command": "levelcode.ai.discardEdit",
+          "when": "levelcode.ai.diffActive",
           "group": "navigation@4"
         }
       ],
       "editor/context": [
         {
-          "command": "atompp.ai.editSelection",
+          "command": "levelcode.ai.editSelection",
           "when": "editorHasSelection",
-          "group": "z_atompp@1"
+          "group": "z_levelcode@1"
         },
         {
-          "command": "atompp.ai.addSelection",
+          "command": "levelcode.ai.addSelection",
           "when": "editorHasSelection",
-          "group": "z_atompp@2"
+          "group": "z_levelcode@2"
         }
       ],
       "commandPalette": [
         {
-          "command": "atompp.ai.applyEdit",
+          "command": "levelcode.ai.applyEdit",
           "when": "false"
         },
         {
-          "command": "atompp.ai.discardEdit",
+          "command": "levelcode.ai.discardEdit",
           "when": "false"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "atompp.ai.focus",
+        "command": "levelcode.ai.focus",
         "key": "ctrl+cmd+i"
       },
       {
-        "command": "atompp.ai.addSelection",
+        "command": "levelcode.ai.addSelection",
         "key": "cmd+alt+a",
         "when": "editorTextFocus && editorHasSelection"
       },
       {
-        "command": "atompp.ai.editSelection",
+        "command": "levelcode.ai.editSelection",
         "key": "cmd+alt+e",
         "when": "editorTextFocus && editorHasSelection"
       }
     ],
     "configuration": {
-      "title": "Atom++ AI",
+      "title": "LevelCode AI",
       "properties": {
-        "atompp.ai.provider": {
+        "levelcode.ai.provider": {
           "type": "string",
           "enum": [
             "claude",
@@ -305,112 +294,135 @@
             "xAI (Grok)",
             "Mistral (incl. Codestral)",
             "Local models via Ollama (no key)",
-            "Any OpenAI-compatible endpoint (set atompp.ai.baseURL) — vLLM, LM Studio, LiteLLM…"
+            "Any OpenAI-compatible endpoint (set levelcode.ai.baseURL) — vLLM, LM Studio, LiteLLM…"
           ],
           "default": "claude",
-          "markdownDescription": "Which AI provider chat, inline completion and edit use. Every provider except Anthropic speaks the OpenAI-compatible `/v1/chat/completions` protocol, so one key + one setting unlocks it. **Agent mode currently runs on Anthropic (Claude) only.** Pick a model with **Atom++: AI: Select Model…** — it sets the provider and model together."
+          "markdownDescription": "Which AI provider chat, inline completion and edit use. Every provider except Anthropic speaks the OpenAI-compatible `/v1/chat/completions` protocol, so one key + one setting unlocks it. **Agent mode currently runs on Anthropic (Claude) only.** Pick a model with **LevelCode: AI: Select Model…** — it sets the provider and model together."
         },
-        "atompp.ai.model": {
+        "levelcode.ai.model": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Active model id for the selected provider (used by every provider except Claude and Ollama, which keep their own `atompp.ai.claude.model` / `atompp.ai.ollama.model`). Usually set for you by **Atom++: AI: Select Model…**; you can also type any model id your provider serves (e.g. `gpt-4o`, `anthropic/claude-sonnet-4-6` on OpenRouter)."
+          "markdownDescription": "Active model id for the selected provider (used by every provider except Claude and Ollama, which keep their own `levelcode.ai.claude.model` / `levelcode.ai.ollama.model`). Usually set for you by **LevelCode: AI: Select Model…**; you can also type any model id your provider serves (e.g. `gpt-4o`, `anthropic/claude-sonnet-4-6` on OpenRouter)."
         },
-        "atompp.ai.baseURL": {
+        "levelcode.ai.baseURL": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Base URL for the **OpenAI-compatible (custom)** provider — must end in `/v1` (e.g. `http://localhost:8000/v1` for vLLM, `http://localhost:1234/v1` for LM Studio). Only used when `atompp.ai.provider` is `custom`. Prefer `https` (or explicit localhost) — your key is sent as a Bearer token to this host."
+          "markdownDescription": "Base URL for the **OpenAI-compatible (custom)** provider — must end in `/v1` (e.g. `http://localhost:8000/v1` for vLLM, `http://localhost:1234/v1` for LM Studio). Only used when `levelcode.ai.provider` is `custom`. Prefer `https` (or explicit localhost) — your key is sent as a Bearer token to this host."
         },
-        "atompp.ai.includeActiveFile": {
+        "levelcode.ai.cloudModel": {
+          "type": "string",
+          "default": "moonshotai/kimi-k2.7-code",
+          "markdownDescription": "Which **LevelCode Cloud** (gateway) model to run on a paid plan — chosen from your plan's roster via **LevelCode: AI: Select Model…** (the picker shows the live models with their credit multiplier + turns-left). Ignored on the free plan (always gpt-oss-120b) and in BYOK mode. The backend re-checks entitlement, so this can't over-reach your plan."
+        },
+        "levelcode.ai.includeActiveFile": {
           "type": "boolean",
           "default": true,
           "description": "Automatically send the currently open file to the AI as context with each chat message."
         },
-        "atompp.ai.chat.autoContext": {
+        "levelcode.ai.chat.autoContext": {
           "type": "boolean",
           "default": true,
           "description": "Automatically find and include workspace files relevant to your chat question (via filename + symbol search)."
         },
-        "atompp.ai.chat.autoContextMaxFiles": {
+        "levelcode.ai.chat.autoContextMaxFiles": {
           "type": "number",
           "default": 4,
           "minimum": 0,
           "description": "Maximum number of files auto-included as context per chat message."
         },
-        "atompp.ai.chat.scopeToActiveProject": {
+        "levelcode.ai.chat.scopeToActiveProject": {
           "type": "boolean",
           "default": true,
           "description": "Limit auto-context search to the active file's top-level sub-folder, so unrelated sibling projects in the same workspace don't pollute results."
         },
-        "atompp.ai.chat.workspaceMap": {
+        "levelcode.ai.chat.workspaceMap": {
           "type": "boolean",
           "default": false,
           "description": "Include a list of all project file paths with each chat message, so the AI knows the repo structure. Uses more tokens."
         },
-        "atompp.cloud.endpoint": {
+        "levelcode.cloud.endpoint": {
+          "type": "string",
+          "default": "https://levelcode.ai",
+          "markdownDescription": "Base URL of your LevelCode Cloud host (Rails on Elastic Beanstalk) — one host serves sign-in, the account dashboard, AND the metered AI gateway. **Dev:** set to your ngrok URL, e.g. `https://thinly.ngrok.app`. **Prod:** `https://levelcode.ai`. Set to empty to make sign-in inert. In **BYOK** mode your keys never leave your machine."
+        },
+        "levelcode.cloud.apiUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Base URL of your Atom++ Cloud account server (for sign-in + settings/skills sync). Leave empty until the backend exists (roadmap M9). **Your AI provider keys never go to this server — AI requests stay direct from your machine to your provider.**"
+          "markdownDescription": "Advanced: override the **backend API** base (metered gateway + token exchange) only if you split the API onto a different host from the website. Leave empty to use `levelcode.cloud.endpoint` (the normal one-host setup)."
         },
-        "atompp.ai.commandTimeout": {
+        "levelcode.ai.providerMode": {
+          "type": "string",
+          "enum": [
+            "byok",
+            "gateway"
+          ],
+          "enumDescriptions": [
+            "Bring your own key — AI requests go direct from your machine to your provider; your keys never touch the LevelCode Cloud.",
+            "LevelCode Cloud gateway — when signed in, AI runs through your metered LevelCode plan (no provider key needed); requests are proxied by the account server."
+          ],
+          "default": "byok",
+          "markdownDescription": "How AI requests are routed. **byok** (default): direct to your provider with your own key. **gateway**: when you're signed in to LevelCode Cloud, requests run through your metered LevelCode plan via `levelcode.cloud.apiUrl` (the Rails backend) — no provider key required. Gateway falls back to BYOK when you're signed out."
+        },
+        "levelcode.ai.commandTimeout": {
           "type": "number",
           "default": 120000,
           "description": "Backstop timeout in milliseconds before an approved shell command is force-killed (its whole process group). The Stop button on the terminal card is the primary control; set 0 to disable the backstop so long-running servers run until you stop them."
         },
-        "atompp.ai.contextWindow": {
+        "levelcode.ai.contextWindow": {
           "type": "number",
           "default": 200000,
           "description": "The model's context window in tokens, used for the in-chat context-usage meter and warning. Claude 4 models are 200000; raise to 1000000 if you've enabled the 1M-token context beta."
         },
-        "atompp.ai.debug": {
+        "levelcode.ai.debug": {
           "type": "boolean",
           "default": false,
           "description": "Print detailed debug logs (every agent/chat action) inline in the chat, prefixed with 🐛 DEBUG. For diagnosing agent/chat issues. Off by default — when on, logs may include file contents, tool arguments, and full model responses, so avoid enabling it during screen-shares or recorded demos."
         },
-        "atompp.ai.agent.maxSteps": {
+        "levelcode.ai.agent.maxSteps": {
           "type": "number",
           "default": 25,
           "minimum": 1,
           "description": "Maximum tool-use steps the AI agent may take for one goal before stopping."
         },
-        "atompp.ai.agent.maxTokens": {
+        "levelcode.ai.agent.maxTokens": {
           "type": "number",
           "default": 8192,
           "minimum": 1024,
           "maximum": 32768,
-          "description": "Maximum output tokens per agent turn (agent mode only; chat/completions use atompp.ai.claude.maxTokens). If a turn hits this cap mid-output the agent automatically continues in the next turn (so long answers/files aren't truncated), but raising it lets more come out in one turn. Capped at 32768 to bound worst-case spend across continuation turns."
+          "description": "Maximum output tokens per agent turn (agent mode only; chat/completions use levelcode.ai.claude.maxTokens). If a turn hits this cap mid-output the agent automatically continues in the next turn (so long answers/files aren't truncated), but raising it lets more come out in one turn. Capped at 32768 to bound worst-case spend across continuation turns."
         },
-        "atompp.ai.skills.enabled": {
+        "levelcode.ai.skills.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Let the agent self-select bundled skills (expert playbooks) for matching tasks like code review, bug fixes, and test writing. Each skill is a SKILL.md the agent loads on demand."
         },
-        "atompp.ai.verify.enabled": {
+        "levelcode.ai.verify.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "After the agent finishes editing, automatically verify its work — pull editor diagnostics (type/lint errors) for the files it changed and, if a verify command is set, run it — then feed any failures back so the agent self-corrects until clean (bounded by atompp.ai.verify.maxRounds)."
+          "description": "After the agent finishes editing, automatically verify its work — pull editor diagnostics (type/lint errors) for the files it changed and, if a verify command is set, run it — then feed any failures back so the agent self-corrects until clean (bounded by levelcode.ai.verify.maxRounds)."
         },
-        "atompp.ai.verify.command": {
+        "levelcode.ai.verify.command": {
           "type": "string",
           "default": "",
           "markdownDescription": "Optional one-shot command run to verify the agent's edits (e.g. `npm run typecheck`, `npm test`, `npm run lint`). It MUST exit on its own — do **not** use a dev server or watch command (those block; the `commandTimeout` backstop force-kills them). Leave empty to verify with editor diagnostics only."
         },
-        "atompp.ai.verify.maxRounds": {
+        "levelcode.ai.verify.maxRounds": {
           "type": "number",
           "default": 2,
           "minimum": 0,
           "description": "How many times the agent may be sent back to fix failing verification before it stops and hands the remaining problems to you. 0 = report-only (verification still runs and is shown, but the agent won't auto-retry)."
         },
-        "atompp.ai.verify.includeWarnings": {
+        "levelcode.ai.verify.includeWarnings": {
           "type": "boolean",
           "default": false,
           "description": "Treat editor warnings (not just errors) as verification failures the agent must fix. Off by default — only errors block."
         },
-        "atompp.ai.completions.enabled": {
+        "levelcode.ai.completions.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Show inline AI code completions (ghost text) as you type. Accept with Tab."
         },
-        "atompp.ai.completions.model": {
+        "levelcode.ai.completions.model": {
           "type": "string",
           "enum": [
             "claude-haiku-4-5-20251001",
@@ -425,13 +437,13 @@
           "default": "claude-haiku-4-5-20251001",
           "description": "Claude model used for inline completions. A fast model is recommended for low latency."
         },
-        "atompp.ai.completions.debounce": {
+        "levelcode.ai.completions.debounce": {
           "type": "number",
           "default": 150,
           "minimum": 0,
           "description": "Idle time in milliseconds before requesting an inline completion (lower = snappier but more requests)."
         },
-        "atompp.ai.claude.model": {
+        "levelcode.ai.claude.model": {
           "type": "string",
           "enum": [
             "claude-opus-4-8",
@@ -446,18 +458,18 @@
           "default": "claude-sonnet-4-6",
           "description": "Claude model to use."
         },
-        "atompp.ai.claude.maxTokens": {
+        "levelcode.ai.claude.maxTokens": {
           "type": "number",
           "default": 4096,
           "minimum": 256,
-          "description": "Maximum tokens in a Claude chat/completion response. (Agent turns use the separate atompp.ai.agent.maxTokens setting.)"
+          "description": "Maximum tokens in a Claude chat/completion response. (Agent turns use the separate levelcode.ai.agent.maxTokens setting.)"
         },
-        "atompp.ai.ollama.url": {
+        "levelcode.ai.ollama.url": {
           "type": "string",
           "default": "http://localhost:11434",
           "description": "Base URL of your local Ollama server."
         },
-        "atompp.ai.ollama.model": {
+        "levelcode.ai.ollama.model": {
           "type": "string",
           "default": "llama3.1",
           "description": "Ollama model name (must be pulled locally, e.g. `ollama pull llama3.1`)."

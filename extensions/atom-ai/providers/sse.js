@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI · shared streaming helper
+ *  LevelCode — AI · shared streaming helper
  *  Line reader for server-sent-event style response bodies, shared by every streaming adapter
  *  (Anthropic, OpenAI-compatible). Works with the Node (undici) fetch body used by the
  *  extension host. Kept as a leaf module so adapters can require it without a cycle.

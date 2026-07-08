@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#
+# level — LevelCode CLI launcher. Opens files/folders in the editor, just like `code`.
+#
+#   level .                  open the current folder
+#   level file.js            open a file
+#   level ~/projects/app     open a folder
+#   level -n .               open in a new window
+#   level --diff a.js b.js   diff two files
+#   level --version          print version and exit
+#
+# Forwards every argument to the editor app's bundled Code-OSS CLI. The shipped product also
+# exposes this via product.json `applicationName: "level"` + the in-editor "Shell Command:
+# Install 'level' command in PATH" action; this script is the repo-local convenience so you can
+# use `level` against any local build today.
+#
+# Put it on your PATH:  ./scripts/install-level.sh
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Resolve the editor .app: an installed copy first, then this repo's packaged build, then the dev build.
+APP=""
+for cand in \
+	"/Applications/LevelCode.app" \
+	"$ROOT"/VSCode-darwin-*/LevelCode.app \
+	"$ROOT/vscode/.build/electron/LevelCode.app"; do
+	if [ -d "$cand" ]; then APP="$cand"; break; fi
+done
+if [ -z "$APP" ]; then
+	echo "level: editor app not found — build it ('./scripts/build-macos.sh') or run './scripts/run-dev.sh' first." >&2
+	exit 1
+fi
+
+# Use the app's bundled CLI bin (named after applicationName: 'level', or 'code' on pre-rename builds).
+# NB: do NOT pass --disable-workspace-trust here. Workspace trust is a security boundary that
+# gates auto-execution of tasks.json, workspace settings overrides (terminal.integrated.env.* →
+# LD_PRELOAD/DYLD_INSERT_LIBRARIES), and recommended-extension installs. Never ship it disabled.
+for bin in "$APP/Contents/Resources/app/bin/level" "$APP/Contents/Resources/app/bin/code"; do
+	if [ -x "$bin" ]; then exec "$bin" "$@"; fi
+done
+
+echo "level: no CLI bin inside $APP — rebuild with './scripts/build-macos.sh' (it ships bin/level)." >&2
+exit 1

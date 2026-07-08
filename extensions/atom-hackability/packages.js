@@ -1,7 +1,7 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Hackability: package generator + hot reload
+ *  LevelCode — Hackability: package generator + hot reload
  *
- *  "Generate Package" scaffolds a runnable Atom++ package (plain JS, no build step).
+ *  "Generate Package" scaffolds a runnable LevelCode package (plain JS, no build step).
  *  "Develop Package (Hot Reload)" loads a package's extension.js into the RUNNING window and
  *  re-runs activate() on every save — Atom-style live development, no window restart. (Code
  *  runs live; manifest-only `contributes` still need the generated F5 launch config.)
@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const Module = require('module');
 
-const PACKAGES_DIR = path.join(os.homedir(), '.atom-plus-plus', 'packages');
+const PACKAGES_DIR = path.join(os.homedir(), '.levelcode', 'packages');
 
 /** @type {vscode.OutputChannel} */
 let output;
@@ -28,7 +28,7 @@ function pkgJson(name, title) {
 	return JSON.stringify({
 		name,
 		displayName: title,
-		description: 'An Atom++ package.',
+		description: 'An LevelCode package.',
 		version: '0.0.1',
 		publisher: 'you',
 		engines: { vscode: '^1.126.0' },
@@ -40,9 +40,9 @@ function pkgJson(name, title) {
 }
 
 function extJs(name) {
-	return `// ${name} — an Atom++ package.
+	return `// ${name} — an LevelCode package.
 //
-// Develop it live: run "Atom++: Develop Package (Hot Reload)" and pick this folder.
+// Develop it live: run "LevelCode: Develop Package (Hot Reload)" and pick this folder.
 // Edit + save and activate() re-runs instantly — no window restart. (For manifest
 // contributions like keybindings, press F5 for a full Extension Development Host.)
 
@@ -82,14 +82,14 @@ function launchJson() {
 
 async function generatePackage() {
 	const name = await vscode.window.showInputBox({
-		title: 'Atom++ — Generate Package',
+		title: 'LevelCode — Generate Package',
 		prompt: 'Package name (lowercase, hyphens — e.g. my-cool-package)',
 		validateInput: (v) => /^[a-z][a-z0-9-]*$/.test(v || '') ? null : 'Use lowercase letters, digits and hyphens; start with a letter.'
 	});
 	if (!name) { return; }
 	const dir = path.join(PACKAGES_DIR, name);
 	if (fs.existsSync(dir)) {
-		vscode.window.showErrorMessage('Atom++: a package named “' + name + '” already exists at ' + dir);
+		vscode.window.showErrorMessage('LevelCode: a package named “' + name + '” already exists at ' + dir);
 		return;
 	}
 	const title = name.replace(/(^|-)([a-z])/g, (_, s, c) => (s ? ' ' : '') + c.toUpperCase());
@@ -97,16 +97,16 @@ async function generatePackage() {
 		fs.mkdirSync(path.join(dir, '.vscode'), { recursive: true });
 		fs.writeFileSync(path.join(dir, 'package.json'), pkgJson(name, title), 'utf8');
 		fs.writeFileSync(path.join(dir, 'extension.js'), extJs(name), 'utf8');
-		fs.writeFileSync(path.join(dir, 'README.md'), '# ' + title + '\n\nAn Atom++ package.\n', 'utf8');
+		fs.writeFileSync(path.join(dir, 'README.md'), '# ' + title + '\n\nAn LevelCode package.\n', 'utf8');
 		fs.writeFileSync(path.join(dir, '.vscode', 'launch.json'), launchJson(), 'utf8');
 	} catch (e) {
-		vscode.window.showErrorMessage('Atom++: could not scaffold package: ' + ((e && e.message) || e));
+		vscode.window.showErrorMessage('LevelCode: could not scaffold package: ' + ((e && e.message) || e));
 		return;
 	}
 	const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(dir, 'extension.js')));
 	await vscode.window.showTextDocument(doc);
 	const go = 'Develop (Hot Reload)';
-	const c = await vscode.window.showInformationMessage('Atom++: created package “' + name + '”.', go);
+	const c = await vscode.window.showInformationMessage('LevelCode: created package “' + name + '”.', go);
 	if (c === go) { startDev(dir); }
 }
 
@@ -172,12 +172,12 @@ function reloadDev() {
 	try {
 		activatePackage();
 		dev.status.text = '$(sync) dev: ' + dev.name;
-		vscode.window.setStatusBarMessage('Atom++: reloaded ' + dev.name, 1500);
+		vscode.window.setStatusBarMessage('LevelCode: reloaded ' + dev.name, 1500);
 		setTimeout(() => { if (dev) { dev.status.text = '$(circle-filled) dev: ' + dev.name; } }, 600);
 	} catch (e) {
 		const msg = (e && e.stack) ? e.stack : String(e);
 		output.appendLine('[dev] ERROR activating ' + dev.name + ':\n' + msg);
-		vscode.window.showErrorMessage('Atom++: ' + dev.name + ' failed to load: ' + ((e && e.message) || e), 'Show Log')
+		vscode.window.showErrorMessage('LevelCode: ' + dev.name + ' failed to load: ' + ((e && e.message) || e), 'Show Log')
 			.then((c) => { if (c) { output.show(true); } });
 		if (dev) { dev.status.text = '$(error) dev: ' + dev.name; }
 	}
@@ -187,9 +187,9 @@ function startDev(dir) {
 	if (dev) { stopDev(); }
 	const name = path.basename(dir);
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -10);
-	status.command = 'atompp.package.stop';
+	status.command = 'levelcode.package.stop';
 	status.text = '$(circle-filled) dev: ' + name;
-	status.tooltip = 'Atom++ is hot-reloading “' + name + '”. Click to stop.';
+	status.tooltip = 'LevelCode is hot-reloading “' + name + '”. Click to stop.';
 	status.show();
 
 	const watcher = fs.watch(dir, { recursive: true }, (_event, file) => {
@@ -201,15 +201,15 @@ function startDev(dir) {
 
 	dev = { dir, name, exports: null, ctx: { subscriptions: [] }, watcher, status, timer: null };
 	reloadDev();
-	vscode.window.showInformationMessage('Atom++: developing “' + name + '” with hot reload. Save to re-run.');
+	vscode.window.showInformationMessage('LevelCode: developing “' + name + '” with hot reload. Save to re-run.');
 }
 
 function stopDev() {
-	if (!dev) { vscode.window.showInformationMessage('Atom++: no package is being developed.'); return; }
+	if (!dev) { vscode.window.showInformationMessage('LevelCode: no package is being developed.'); return; }
 	const name = dev.name;
 	teardownDev(false);
 	dev = null;
-	vscode.window.setStatusBarMessage('Atom++: stopped developing ' + name, 2000);
+	vscode.window.setStatusBarMessage('LevelCode: stopped developing ' + name, 2000);
 }
 
 async function developPackage() {
@@ -224,24 +224,24 @@ async function developPackage() {
 
 	let dir = pick._dir;
 	if (!dir) {
-		const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Develop this package', title: 'Pick an Atom++ package folder' });
+		const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Develop this package', title: 'Pick an LevelCode package folder' });
 		if (!picked || !picked.length) { return; }
 		dir = picked[0].fsPath;
 	}
 	if (!fs.existsSync(path.join(dir, 'extension.js')) && !fs.existsSync(path.join(dir, 'package.json'))) {
-		vscode.window.showErrorMessage('Atom++: that folder has no extension.js / package.json.');
+		vscode.window.showErrorMessage('LevelCode: that folder has no extension.js / package.json.');
 		return;
 	}
 	startDev(dir);
 }
 
 function registerPackages(context) {
-	output = vscode.window.createOutputChannel('Atom++ Packages');
+	output = vscode.window.createOutputChannel('LevelCode Packages');
 	context.subscriptions.push(
 		output,
-		vscode.commands.registerCommand('atompp.package.generate', generatePackage),
-		vscode.commands.registerCommand('atompp.package.develop', developPackage),
-		vscode.commands.registerCommand('atompp.package.stop', stopDev),
+		vscode.commands.registerCommand('levelcode.package.generate', generatePackage),
+		vscode.commands.registerCommand('levelcode.package.develop', developPackage),
+		vscode.commands.registerCommand('levelcode.package.stop', stopDev),
 		{ dispose: () => { if (dev) { teardownDev(false); dev = null; } } }
 	);
 }

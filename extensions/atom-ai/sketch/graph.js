@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Agent Sketch · pure graph logic  [SK1]
+ *  LevelCode — Agent Sketch · pure graph logic  [SK1]
  *
  *  The sketch is a DAG: nodes are agent instances ({id, agentId, label?, instructions?, model?,
  *  x, y}), edges are directed handoffs ({from, to} node ids) — the output text of `from` becomes

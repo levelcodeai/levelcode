@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Agent Sketch · model pricing  [SK1]
+ *  LevelCode — Agent Sketch · model pricing  [SK1]
  *
  *  $ per MILLION tokens (input/output), used by the sketch's per-node cost meter and the
  *  "what-if: recalculate this flow on a different model" comparison. Anthropic prices are from

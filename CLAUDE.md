@@ -1,6 +1,6 @@
-# Atom++ — Agent Guide (CLAUDE.md)
+# LevelCode — Agent Guide (CLAUDE.md)
 
-Atom++ is an **AI-native, hackable, Notepad++-powered code editor for macOS**, built as a
+LevelCode is an **AI-native, hackable, Notepad++-powered code editor for macOS**, built as a
 **fork of Code-OSS** (the MIT core behind VS Code). Goal: the user's "last editor" — Atom feel,
 Notepad++ power-editing, native Claude AI, all MIT/license-clean.
 
@@ -17,7 +17,7 @@ lives in the tracked repo and is re-applied onto a clean clone:
 | --- | --- | --- |
 | `extensions/atom-npp-pack/`, `extensions/atom-ai/` | `vscode/extensions/*` | `apply-branding.mjs` (copy) |
 | `branding/product.overlay.json`, `branding/icons/` | `vscode/product.json`, `vscode/resources/...` | `apply-branding.mjs` (merge/copy) |
-| `patches/atom-core.patch` | edits to `vscode/src/**`, `vscode/build/**` | `bootstrap.sh` (`git apply`) |
+| `patches/levelcode-core.patch` | edits to `vscode/src/**`, `vscode/build/**` | `bootstrap.sh` (`git apply`) |
 
 So: **edit extensions in `extensions/…`, not `vscode/extensions/…`.** After editing, run
 `./scripts/run-dev.sh` (it syncs canonical → checkout first) to test.
@@ -29,18 +29,18 @@ A full rebuild from nothing = `bootstrap.sh` → `build-macos.sh`. Nothing is lo
 ```
 PLAN.md                     vision + phased roadmap (M0/M1/M2…)
 CLAUDE.md                   this file
-docs/CORE-PATCHES.md        log of every edit inside vscode/ (tagged // [Atom++])
+docs/CORE-PATCHES.md        log of every edit inside vscode/ (tagged // [LevelCode])
 docs/M0-RUNBOOK.md, EXIT-TEST.md, M1-SPEC.md
-branding/product.overlay.json   Atom++ identity + Open VSX gallery (deep-merged onto product.json)
+branding/product.overlay.json   LevelCode identity + Open VSX gallery (deep-merged onto product.json)
 branding/icons/             app icon source PNG, generated .icns, 1024 png
 extensions/atom-npp-pack/   Notepad++ power-editing pack (plain JS, no build step)
 extensions/atom-ai/         native Claude AI (chat, inline completion, providers, edit-with-diff, LM provider)
 extensions/atom-themes/     signature One Dark / One Light themes (JSON, default via configurationDefaults)
 extensions/atom-hackability/ user init script + Atom/NPP keymap presets + package generator & hot-reload dev loader
-extensions/atom-sync/       'atompp' auth provider that lights up the built-in Settings Sync (Atom++ Sync, S0)
+extensions/atom-sync/       'levelcode' auth provider that lights up the built-in Settings Sync (LevelCode Sync, S0)
 extensions/atom-updater/    notify-only update checker (polls the update feed; never auto-applies)
-patches/atom-core.patch     our core source edits, applied on bootstrap
-scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-dmg.sh, make-icon.sh; atom (CLI launcher) + install-atom.sh
+patches/levelcode-core.patch     our core source edits, applied on bootstrap
+scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-dmg.sh, make-icon.sh; atom (CLI launcher) + install-level.sh
 tools/                      dependency-free reference servers: sync-server (/v1 Settings-Sync), update-server (/api/update feed)
 vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 ```
@@ -50,9 +50,9 @@ vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 ```bash
 ./scripts/bootstrap.sh        # fresh: clone Code-OSS @ pinned tag, brand, install extensions, apply patches, npm ci
 ./scripts/run-dev.sh          # dev: sync + compile + launch (Copilot disabled). Fast iteration.
-./scripts/build-macos.sh      # package Atom++.app (arch-aware). Output: VSCode-darwin-<arch>/Atom++.app
-./scripts/make-dmg.sh         # ad-hoc sign Atom++.app + wrap it into a single distributable Atom++-<arch>.dmg
-./scripts/make-icon.sh        # regenerate .icns from branding/icons/atom-plus-plus-source.png (sips+iconutil)
+./scripts/build-macos.sh      # package LevelCode.app (arch-aware). Output: VSCode-darwin-<arch>/LevelCode.app
+./scripts/make-dmg.sh         # ad-hoc sign LevelCode.app + wrap it into a single distributable LevelCode-<arch>.dmg
+./scripts/make-icon.sh        # regenerate .icns from branding/icons/levelcode-source.png (sips+iconutil)
 ```
 
 ## Toolchain (hard requirements — these bit us)
@@ -65,9 +65,9 @@ vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 
 ## Core patches (things changed inside vscode/)
 
-Tracked in `patches/atom-core.patch`, tagged with `// [Atom++]`. Find them all:
-`grep -rn "\[Atom++\]" vscode/src vscode/build`. Re-create the patch after editing core:
-`git -C vscode diff -- <files> > patches/atom-core.patch`. Current patches:
+Tracked in `patches/levelcode-core.patch`, tagged with `// [LevelCode]`. Find them all:
+`grep -rn "\[LevelCode\]" vscode/src vscode/build`. Re-create the patch after editing core:
+`git -C vscode diff -- <files> > patches/levelcode-core.patch`. Current patches:
 
 1. `src/vs/workbench/contrib/files/browser/files.contribution.ts` — `files.hotExit` default → `onExitAndWindowClose` (Sublime-style persistence; application-scoped so can't be set by an extension).
 2. `build/lib/extensions.ts` (`packageCopilotExtensionStream`) — returns empty: do NOT bundle the proprietary GitHub Copilot Chat extension (not MIT).
@@ -101,7 +101,7 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
   fetch + SSE `/v1/chat/completions`, param'd by `{baseURL,apiKey,headers}`): OpenAI, OpenRouter, Groq, Together,
   Fireworks, DeepSeek, xAI, Mistral, Ollama-via-`/v1`, and a user-supplied `custom` endpoint. Adding a provider =
   a new row, zero code. `providers.js` is now a thin **back-compat shim** (agent.js + lmProvider.js still import it).
-  Design: `docs/atompp-multiprovider-design.md`. Pure body-builder/SSE-parser/registry logic is unit-tested
+  Design: `docs/levelcode-multiprovider-design.md`. Pure body-builder/SSE-parser/registry logic is unit-tested
   (`test/providers.test.js`). **Chat, inline completion, edit AND the agent all route through the registry.**
   - **P2 — the agent is multi-provider too.** `providers/translate.js` (pure, `test/translate.test.js`) is the
     Anthropic↔OpenAI tool-use bridge; the agent's internal transcript stays **Anthropic-block-shaped for every
@@ -117,25 +117,25 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
     `contextWindowFor` drives the context meter; `fastCompletionModel` gives ghost-text a snappy per-provider model.
     `pickModel` shows caps inline and has a live "Browse all models" action (`getModelChoices({dynamic:true})` →
     OpenRouter `/api/v1/models`, OpenAI-compatible `/v1/models`, Ollama `/api/tags`), all best-effort (offline → built-ins).
-  - Per-provider keys in SecretStorage (`atompp.ai.key.<provider>`; Anthropic keeps its legacy `atompp.ai.anthropicKey`).
-    Provider via `atompp.ai.provider`; model via `atompp.ai.claude.model`/`ollama.model`/generic `atompp.ai.model`;
-    custom base URL via `atompp.ai.baseURL`.
+  - Per-provider keys in SecretStorage (`levelcode.ai.key.<provider>`; Anthropic keeps its legacy `levelcode.ai.anthropicKey`).
+    Provider via `levelcode.ai.provider`; model via `levelcode.ai.claude.model`/`ollama.model`/generic `levelcode.ai.model`;
+    custom base URL via `levelcode.ai.baseURL`.
 - `extension.js` — webview chat panel **in the secondary (right) side bar** (`viewsContainers.secondarySidebar`),
   opens by default on first launch (`globalState` `didAutoOpen`), `Cmd+Alt+I` to focus. Model picker
   (Opus 4.8 / Sonnet 4.6 / Haiku 4.5 + Ollama). Context: auto-includes the open file
-  (`atompp.ai.includeActiveFile`), **pin any workspace files** via a searchable picker (`addContext`,
+  (`levelcode.ai.includeActiveFile`), **pin any workspace files** via a searchable picker (`addContext`,
   removable chips), and **automatic retrieval** (`gatherAutoContext`) — ripgrep content search + filename +
   workspace symbols, scoped to the active sub-project, shown as a `🔎 Auto-context` line. Provider-aware key +
   model resolution (`prepProviderRequest`/`activeModel`/`baseUrlFor`); keys in SecretStorage per provider.
-  Settings under `atompp.ai.chat.*`.
+  Settings under `levelcode.ai.chat.*`.
 - `media/chat.html` — the chat UI: Codex-style composer (context chips, model/mode toolbar) and a
   `requestAnimationFrame` **typewriter** that reveals streamed text smoothly instead of dumping chunks.
 - `inlineComplete.js` — **inline tab-completion** (ghost text): `InlineCompletionItemProvider` over all files,
-  debounced (`atompp.ai.completions.debounce`, 150ms), cancels in-flight on keystroke, silent key lookup
-  (never prompts mid-typing). Status-bar toggle + `atompp.ai.toggleCompletions`. Default model Haiku.
-- `lmProvider.js` — registers Claude as a native `LanguageModelChatProvider` (vendor `atompp`). Stable API.
+  debounced (`levelcode.ai.completions.debounce`, 150ms), cancels in-flight on keystroke, silent key lookup
+  (never prompts mid-typing). Status-bar toggle + `levelcode.ai.toggleCompletions`. Default model Haiku.
+- `lmProvider.js` — registers Claude as a native `LanguageModelChatProvider` (vendor `levelcode`). Stable API.
 - `aiEdit.js` — **edit-with-diff**: select code → `Cmd+Alt+E` → instruction → side-by-side diff → ✓ Keep / ✗ Discard
-  buttons on the diff toolbar (gated on `atompp.ai.diffActive`).
+  buttons on the diff toolbar (gated on `levelcode.ai.diffActive`).
 - `inlineReview.js` — **dead code** (an inline per-hunk Keep/Undo attempt that was reverted; nothing imports it).
 
 ## Deferred / known limits (don't waste time re-hitting these)
@@ -153,7 +153,7 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
   update_plan, edit_file/write_file/**delete_file** (apply-then-review with Keep/Undo + per-turn checkpoint
   restore via `reviewSession.js`), run_command(+background)/read_command_output, ask_user, use_skill — plus the
   M5 auto-verify loop. `delete_file` also enables rename/move (write new path → delete old).
-- Atom++ Sync (S0) + notify-only updater (U0): see `extensions/atom-sync` / `extensions/atom-updater` + `tools/`.
+- LevelCode Sync (S0) + notify-only updater (U0): see `extensions/atom-sync` / `extensions/atom-updater` + `tools/`.
 - Not yet built: remaining M3 hackability — settings UI, theme studio, VS Code settings import.
 
 ## Conventions

@@ -10,9 +10,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const RELEASES_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'atompp-upd-')), 'releases.json');
+const RELEASES_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'levelcode-upd-')), 'releases.json');
 fs.writeFileSync(RELEASES_FILE, JSON.stringify({
-	'darwin-arm64': { stable: { commit: 'NEWSHA', productVersion: '0.2.0', url: 'https://cdn/Atom++-0.2.0-arm64.zip', sha256hash: 'abc', timestamp: 123 } }
+	'darwin-arm64': { stable: { commit: 'NEWSHA', productVersion: '0.2.0', url: 'https://cdn/LevelCode-0.2.0-arm64.zip', sha256hash: 'abc', timestamp: 123 } }
 }));
 process.env.RELEASES_FILE = RELEASES_FILE;
 const { server } = require('./server');
@@ -38,7 +38,7 @@ async function main() {
 	const feed = JSON.parse(r.body);
 	assert.strictEqual(feed.version, 'NEWSHA');
 	assert.strictEqual(feed.productVersion, '0.2.0');
-	assert.strictEqual(feed.url, 'https://cdn/Atom++-0.2.0-arm64.zip'); ok('old commit → 200 with the latest release');
+	assert.strictEqual(feed.url, 'https://cdn/LevelCode-0.2.0-arm64.zip'); ok('old commit → 200 with the latest release');
 
 	// already-latest commit → 204
 	r = await req('/api/update/darwin-arm64/stable/NEWSHA');
@@ -58,7 +58,7 @@ async function main() {
 
 	// fallback: with no releases.json, the server uses the committed releases.example.json
 	const savedRF = process.env.RELEASES_FILE;
-	process.env.RELEASES_FILE = path.join(os.tmpdir(), 'atompp-missing-' + Date.now() + '.json');
+	process.env.RELEASES_FILE = path.join(os.tmpdir(), 'levelcode-missing-' + Date.now() + '.json');
 	r = await req('/api/update/darwin-arm64/stable/ffffffffdifferentcommit');
 	assert.strictEqual(r.status, 200); ok('falls back to releases.example.json when releases.json is absent');
 	process.env.RELEASES_FILE = savedRF;

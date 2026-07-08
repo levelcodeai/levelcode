@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI (M4: agent edit-review, apply-then-review with Keep/Undo)
+ *  LevelCode — AI (M4: agent edit-review, apply-then-review with Keep/Undo)
  *
  *  Cursor-style review of edits the agent has ALREADY applied. The agent never blocks: each
  *  file edit lands immediately on the real file (and is saved, so run_command sees fresh
@@ -18,9 +18,9 @@ const fs = require('fs');
 const path = require('path');
 const { makeDiff } = require('./agent');
 
-const PERSIST_KEY = 'atompp.ai.pendingReviews';
+const PERSIST_KEY = 'levelcode.ai.pendingReviews';
 
-const SNAPSHOT_SCHEME = 'atompp-snapshot';
+const SNAPSHOT_SCHEME = 'levelcode-snapshot';
 
 function workspaceRoot() {
 	const f = vscode.workspace.workspaceFolders;
@@ -86,12 +86,12 @@ function registerReview(context, post, dbg, recordTouch) {
 	const keepStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
 	keepStatus.text = '$(check) Keep edit';
 	keepStatus.tooltip = 'Keep the agent edit in this file';
-	keepStatus.command = 'atompp.ai.review.keepActive';
+	keepStatus.command = 'levelcode.ai.review.keepActive';
 	keepStatus.color = new vscode.ThemeColor('gitDecoration.addedResourceForeground');
 	const undoStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
 	undoStatus.text = '$(discard) Undo edit';
 	undoStatus.tooltip = 'Undo the agent edit in this file';
-	undoStatus.command = 'atompp.ai.review.undoActive';
+	undoStatus.command = 'levelcode.ai.review.undoActive';
 
 	function activePendingKey() {
 		const ed = vscode.window.activeTextEditor;
@@ -99,7 +99,7 @@ function registerReview(context, post, dbg, recordTouch) {
 	}
 	function updateActiveUi() {
 		const key = activePendingKey();
-		vscode.commands.executeCommand('setContext', 'atompp.ai.reviewActive', !!key); // editor title-bar buttons
+		vscode.commands.executeCommand('setContext', 'levelcode.ai.reviewActive', !!key); // editor title-bar buttons
 		if (key) { keepStatus.show(); undoStatus.show(); } else { keepStatus.hide(); undoStatus.hide(); }
 	}
 
@@ -316,8 +316,8 @@ function registerReview(context, post, dbg, recordTouch) {
 			const r = new vscode.Range(fr.range.start.line, 0, fr.range.start.line, 0);
 			const key = doc.uri.toString();
 			return [
-				new vscode.CodeLens(r, { title: '$(check) Keep  (Atom++ +' + fr.add + ' -' + fr.del + ')', command: 'atompp.ai.review.keepFile', arguments: [key] }),
-				new vscode.CodeLens(r, { title: '$(discard) Undo', command: 'atompp.ai.review.undoFile', arguments: [key] })
+				new vscode.CodeLens(r, { title: '$(check) Keep  (LevelCode +' + fr.add + ' -' + fr.del + ')', command: 'levelcode.ai.review.keepFile', arguments: [key] }),
+				new vscode.CodeLens(r, { title: '$(discard) Undo', command: 'levelcode.ai.review.undoFile', arguments: [key] })
 			];
 		}
 	};
@@ -331,8 +331,8 @@ function registerReview(context, post, dbg, recordTouch) {
 	context.subscriptions.push(
 		greenType, lensChanged, keepStatus, undoStatus,
 		vscode.window.onDidChangeActiveTextEditor(() => updateActiveUi()),
-		vscode.commands.registerCommand('atompp.ai.review.keepActive', () => { const k = activePendingKey(); if (k) { keepFile(k, 'kept'); } }),
-		vscode.commands.registerCommand('atompp.ai.review.undoActive', () => { const k = activePendingKey(); if (k) { undoFile(k); } }),
+		vscode.commands.registerCommand('levelcode.ai.review.keepActive', () => { const k = activePendingKey(); if (k) { keepFile(k, 'kept'); } }),
+		vscode.commands.registerCommand('levelcode.ai.review.undoActive', () => { const k = activePendingKey(); if (k) { undoFile(k); } }),
 		vscode.languages.registerCodeLensProvider({ scheme: 'file' }, lensProvider),
 		vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshotProvider),
 		vscode.window.onDidChangeVisibleTextEditors(() => { for (const fr of pending.values()) { decorate(fr); } }),
@@ -351,12 +351,12 @@ function registerReview(context, post, dbg, recordTouch) {
 				keepFile(key, 'kept-user-edited');
 			}
 		}),
-		vscode.commands.registerCommand('atompp.ai.review.keepFile', (k) => keepFile(k, 'kept')),
-		vscode.commands.registerCommand('atompp.ai.review.undoFile', (k) => undoFile(k)),
-		vscode.commands.registerCommand('atompp.ai.review.keepAll', keepAll),
-		vscode.commands.registerCommand('atompp.ai.review.undoAll', undoAll),
-		vscode.commands.registerCommand('atompp.ai.review.openDiff', (k) => openDiff(k)),
-		vscode.commands.registerCommand('atompp.ai.review.revealEdit', (k) => revealEdit(k)),
+		vscode.commands.registerCommand('levelcode.ai.review.keepFile', (k) => keepFile(k, 'kept')),
+		vscode.commands.registerCommand('levelcode.ai.review.undoFile', (k) => undoFile(k)),
+		vscode.commands.registerCommand('levelcode.ai.review.keepAll', keepAll),
+		vscode.commands.registerCommand('levelcode.ai.review.undoAll', undoAll),
+		vscode.commands.registerCommand('levelcode.ai.review.openDiff', (k) => openDiff(k)),
+		vscode.commands.registerCommand('levelcode.ai.review.revealEdit', (k) => revealEdit(k)),
 		{ dispose: () => { for (const fr of pending.values()) { undecorate(fr.uri); } pending.clear(); } }
 	);
 

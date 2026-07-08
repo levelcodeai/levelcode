@@ -12,7 +12,7 @@ force-push, because forks/caches/crawlers may already have it).
       git grep -InE "sk-ant-[A-Za-z0-9_-]{20}|sk-[A-Za-z0-9]{40}|sk_live_[A-Za-z0-9]{20}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40}|xox[baprs]-" $(git rev-list --all)
       git ls-files | grep -iE "\.env($|\.)|secret|credential|\.pem$|\.key$|id_rsa"   # expect: no matches
       ```
-      Atom++ keeps provider API keys in the OS keychain (VS Code SecretStorage) — never in code.
+      LevelCode keeps provider API keys in the OS keychain (VS Code SecretStorage) — never in code.
 - [x] **LICENSE is MIT + Code-OSS attribution.** `LICENSE` is MIT and carries the Code-OSS / Microsoft
       derivative notice + "not affiliated with Microsoft" + "upstream fetched at build, not redistributed."
 - [x] **`.gitignore` excludes generated/heavy paths.** `/vscode/` (the disposable Code-OSS checkout),
@@ -23,7 +23,7 @@ force-push, because forks/caches/crawlers may already have it).
       `calculator.html`, `server.py`, `site/`, ad-hoc PDFs). `git status` should be clean of these.
 - [ ] **Never commit `vscode/`** — it's the gitignored, regenerated upstream checkout.
 - [x] **No internal strategy / pricing docs.** No PRD, roadmap, monetization/pricing, competitive, or
-      private-infra design docs in the tree *or history* — e.g. `PLAN.md`, `docs/atompp-cloud-PRD.md`,
+      private-infra design docs in the tree *or history* — e.g. `PLAN.md`, `docs/levelcode-cloud-PRD.md`,
       and the run-persistence / sync / update-flow design docs. These are gitignored and were scrubbed
       from history with `git filter-repo` (working copies kept locally, untracked). Re-verify:
       ```bash
@@ -32,7 +32,7 @@ force-push, because forks/caches/crawlers may already have it).
 
 ## 2. Flatten to a clean root (one-time, before first public push)
 
-The project should be the repo *root*, not nested under `atom-plus-plus/`. Do this on a **fresh clone**
+The project should be the repo *root*, not nested under `levelcode/`. Do this on a **fresh clone**
 (git-filter-repo's required workflow — never on your working dir), which also drops the old outer-level
 junk from *all* history:
 
@@ -42,8 +42,8 @@ brew install git-filter-repo
 # Commit any pending README/doc changes first; a clone only carries committed history.
 git clone <your-local-checkout> /tmp/app-clean
 cd /tmp/app-clean
-git filter-repo --subdirectory-filter atom-plus-plus     # the atom-plus-plus/ SUBFOLDER becomes the root; outer junk gone from history
-git remote add origin git@github.com:atom-plus-plus/atompp.git   # org = atom-plus-plus, repo = atompp (matches atompp.ai)
+git filter-repo --subdirectory-filter levelcode     # the levelcode/ SUBFOLDER becomes the root; outer junk gone from history
+git remote add origin git@github.com:levelcode/levelcode.git   # org = levelcode, repo = levelcode (matches levelcode.ai)
 ```
 
 Result: `CLAUDE.md`, `extensions/`, `LICENSE`, `README.md` at the root; all commits preserved
@@ -58,7 +58,7 @@ for ongoing dev so local matches the public root.
 
 ## 4. Nice-to-have before/soon after going public
 
-- [ ] Repo description + topics + the `atompp.ai` link in the About panel.
+- [ ] Repo description + topics + the `levelcode.ai` link in the About panel.
 - [ ] A `CONTRIBUTING.md` and an issue template (once you want outside contributions).
 - [ ] A tagged release + the `.dmg` as a downloadable asset (when you cut one).
 - [ ] `SECURITY.md` with how to report vulnerabilities (BYOK/keychain model is a selling point — say so).

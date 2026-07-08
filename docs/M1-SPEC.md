@@ -1,6 +1,6 @@
 # M1 Spec — The Notepad++ Power-Editing Pack
 
-Goal of M1: make Atom++ feel like Notepad++ for the editing muscle-memory Sergii misses, by adding the power-editing features VS Code lacks. Exit condition (from PLAN.md): *open a 500 MB log, record a macro to reformat lines, replay it, switch encoding — all smooth.*
+Goal of M1: make LevelCode feel like Notepad++ for the editing muscle-memory Sergii misses, by adding the power-editing features VS Code lacks. Exit condition (from PLAN.md): *open a 500 MB log, record a macro to reformat lines, replay it, switch encoding — all smooth.*
 
 ## Design principle: isolate, don't scatter
 
@@ -29,11 +29,11 @@ VS Code deliberately removed keystroke macros (multi-cursor + snippets were deem
 
 NPP's signature strength: open and search 300 MB–1 GB files that choke most editors. VS Code has a large-file heuristic but still degrades. We add an explicit, read-optimized path.
 
-**UX.** On opening a file above a threshold (default 256 MB, configurable `atompp.bigFile.thresholdMB`), Atom++ shows a non-blocking notification: "Opened in Big-File mode — tokenization, extensions, and minimap disabled for speed." A status-bar badge indicates the mode; one click toggles back to full mode (with a memory warning).
+**UX.** On opening a file above a threshold (default 256 MB, configurable `levelcode.bigFile.thresholdMB`), LevelCode shows a non-blocking notification: "Opened in Big-File mode — tokenization, extensions, and minimap disabled for speed." A status-bar badge indicates the mode; one click toggles back to full mode (with a memory warning).
 
 **Behavior in mode.** Disable syntax tokenization, the minimap, occurrence highlighting, language features/extensions for that editor, and word-based suggestions; keep find/replace (including regex) working on the virtualized buffer; keep go-to-line and basic editing. Read-only by default with an explicit "Enable editing" action.
 
-**Implementation.** Extend VS Code's existing large-file-optimization switch rather than inventing a new buffer: raise/secondary-gate the limits, force the optimization flags on for over-threshold models, and add the status-bar toggle. Isolated in `src/vs/atompp/bigfile/` and flag-gated. (Investigate streaming/virtualized load for >1 GB as a stretch; first cut targets a smooth 500 MB.)
+**Implementation.** Extend VS Code's existing large-file-optimization switch rather than inventing a new buffer: raise/secondary-gate the limits, force the optimization flags on for over-threshold models, and add the status-bar toggle. Isolated in `src/vs/levelcode/bigfile/` and flag-gated. (Investigate streaming/virtualized load for >1 GB as a stretch; first cut targets a smooth 500 MB.)
 
 **Exit test.** Open a 500 MB log: opens in <~3 s, scrolls smoothly, regex find-in-file returns results, no beachball; toggling full mode warns about memory.
 
@@ -65,7 +65,7 @@ The everyday NPP "TextFX"-style operations, bundled and discoverable.
 
 ## Feature 6 — Notepad++ keymap preset (Bucket A)
 
-Ship a selectable **"Notepad++"** keymap (alongside an "Atom" keymap from M3) so muscle memory transfers on day one. Mirror NPP's common bindings where they don't collide with essential Atom++/VS Code ones; document every deliberate deviation. Offer it on first run and via the keymap picker.
+Ship a selectable **"Notepad++"** keymap (alongside an "Atom" keymap from M3) so muscle memory transfers on day one. Mirror NPP's common bindings where they don't collide with essential LevelCode/VS Code ones; document every deliberate deviation. Offer it on first run and via the keymap picker.
 
 **Exit test.** Activate the NPP keymap → `Ctrl+D` (duplicate line), `Ctrl+L` (delete line), macro record/play, `Ctrl+Shift+Up/Down` (move line) all match NPP behavior.
 
@@ -73,13 +73,13 @@ Ship a selectable **"Notepad++"** keymap (alongside an "Atom" keymap from M3) so
 
 ## Build order & milestone gates
 
-1. **Scaffold `atom-npp-pack`** bundled extension + "Notepad++ Pack" settings namespace (`atompp.*`). Wire it into the build's built-in extensions list.
+1. **Scaffold `atom-npp-pack`** bundled extension + "Notepad++ Pack" settings namespace (`levelcode.*`). Wire it into the build's built-in extensions list.
 2. **Macros** (headline) → demo + exit test.
 3. **Line ops + column extras** (fast wins, pure extension) → exit tests.
 4. **Encoding/EOL status bar** (Bucket B, small core touch) → exit test.
 5. **Big-file mode** (headline, the riskiest core touch) → 500 MB exit test.
 6. **NPP keymap** preset + first-run offer.
-7. **M1 verification pass** (subagent): run all exit tests on the packaged `Atom++.app`, confirm no regressions to normal editing, and confirm Bucket B core touches are isolated to `src/vs/atompp/**` for clean rebasing.
+7. **M1 verification pass** (subagent): run all exit tests on the packaged `LevelCode.app`, confirm no regressions to normal editing, and confirm Bucket B core touches are isolated to `src/vs/levelcode/**` for clean rebasing.
 
 ## References we'll mine
 

@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI · native Anthropic Messages adapter
+ *  LevelCode — AI · native Anthropic Messages adapter
  *
  *  The high-fidelity Claude path: prompt caching (cache_control) and full tool-use streaming,
  *  both of which the agent depends on. This is the default provider — the internal agent

@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Updater (notify-only)
+ *  LevelCode — Updater (notify-only)
  *
  *  Polls the update feed (GET {updateUrl}/api/update/{target}/{quality}/{commit}); when a newer
  *  build is advertised, shows a notification with a Download link. It NEVER downloads or applies
@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const U = require('./update');
 
-const LAST_NOTIFIED_KEY = 'atompp.update.lastNotifiedVersion';
+const LAST_NOTIFIED_KEY = 'levelcode.update.lastNotifiedVersion';
 
 /** @type {vscode.ExtensionContext} */
 let ctx;
@@ -28,9 +28,9 @@ function readProduct() {
 	catch { return {}; }
 }
 
-function cfg() { return vscode.workspace.getConfiguration('atompp.update'); }
+function cfg() { return vscode.workspace.getConfiguration('levelcode.update'); }
 
-/** Resolve the feed base URL: the atompp.update.url setting wins, else product.json updateUrl. */
+/** Resolve the feed base URL: the levelcode.update.url setting wins, else product.json updateUrl. */
 function feedBase(product) {
 	return String(cfg().get('url', '') || product.updateUrl || '').trim();
 }
@@ -41,7 +41,7 @@ function httpGet(url) {
 		let mod;
 		try { mod = url.startsWith('https:') ? require('https') : require('http'); }
 		catch { return resolve({ status: 0, body: '' }); }
-		const req = mod.get(url, { timeout: 8000, headers: { 'User-Agent': 'Atom++ Updater' } }, (res) => {
+		const req = mod.get(url, { timeout: 8000, headers: { 'User-Agent': 'LevelCode Updater' } }, (res) => {
 			let body = '';
 			res.on('data', (c) => { body += c; });
 			res.on('end', () => resolve({ status: res.statusCode || 0, body }));
@@ -60,7 +60,7 @@ async function check(explicit) {
 	const base = feedBase(product);
 	const commit = product.commit || '';
 	if (!base) {
-		if (explicit) { vscode.window.showInformationMessage('Atom++: no update server configured (set atompp.update.url).'); }
+		if (explicit) { vscode.window.showInformationMessage('LevelCode: no update server configured (set levelcode.update.url).'); }
 		return;
 	}
 	if (!commit && !explicit) { return; } // dev build with no commit stamped — stay quiet in the background
@@ -71,17 +71,17 @@ async function check(explicit) {
 	const { status, body } = await httpGet(url);
 	if (status === 0) {
 		// network error / server down — DON'T claim "up to date" (that was the bug).
-		if (explicit) { vscode.window.showWarningMessage('Atom++ Updater: couldn’t reach the update server at ' + base + ' — is it running?'); }
+		if (explicit) { vscode.window.showWarningMessage('LevelCode Updater: couldn’t reach the update server at ' + base + ' — is it running?'); }
 		return;
 	}
 	if (status !== 200 && status !== 204) {
 		// e.g. the URL points at the SYNC server (which 404s /api/update) or a wrong path.
-		if (explicit) { vscode.window.showWarningMessage('Atom++ Updater: unexpected response (HTTP ' + status + ') from ' + url + ' — is the UPDATE server (tools/update-server, default :9696) running there? The Settings-Sync server on :9595 is a different one.'); }
+		if (explicit) { vscode.window.showWarningMessage('LevelCode Updater: unexpected response (HTTP ' + status + ') from ' + url + ' — is the UPDATE server (tools/update-server, default :9696) running there? The Settings-Sync server on :9595 is a different one.'); }
 		return;
 	}
 	const feed = U.parseFeed(status, body);
 	if (!U.isNewer(feed, commit)) {
-		if (explicit) { vscode.window.showInformationMessage('Atom++ is up to date. (checked ' + target + '/' + quality + ' — running ' + (commit ? commit.slice(0, 8) : 'dev build, no commit') + ')'); }
+		if (explicit) { vscode.window.showInformationMessage('LevelCode is up to date. (checked ' + target + '/' + quality + ' — running ' + (commit ? commit.slice(0, 8) : 'dev build, no commit') + ')'); }
 		return;
 	}
 	// New version available.
@@ -111,9 +111,9 @@ function reschedule() {
 
 function activate(context) {
 	ctx = context;
-	context.subscriptions.push(vscode.commands.registerCommand('atompp.update.check', () => check(true)));
+	context.subscriptions.push(vscode.commands.registerCommand('levelcode.update.check', () => check(true)));
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
-		if (e.affectsConfiguration('atompp.update')) { reschedule(); }
+		if (e.affectsConfiguration('levelcode.update')) { reschedule(); }
 	}));
 	context.subscriptions.push({ dispose: () => { if (timer) { clearInterval(timer); } } });
 	reschedule();

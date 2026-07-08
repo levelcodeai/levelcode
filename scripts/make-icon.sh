@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 #
-# Build the Atom++ macOS app icon (.icns) from a source PNG, using macOS built-ins
+# Build the LevelCode macOS app icon (.icns) from a source PNG, using macOS built-ins
 # (sips + iconutil) — no dependencies. Squares the image (black padding) if needed,
 # then emits all required iconset sizes and assembles code.icns.
 #
 # Usage:
 #   ./scripts/make-icon.sh [path/to/source.png]
-#   (defaults to branding/icons/atom-plus-plus-source.png)
+#   (defaults to branding/icons/levelcode-source.png)
 #
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ICONS_DIR="$ROOT_DIR/branding/icons"
-SRC="${1:-$ICONS_DIR/atom-plus-plus-source.png}"
-OUT_ICNS="$ICONS_DIR/atom-plus-plus.icns"
-OUT_PNG="$ICONS_DIR/atom-plus-plus-1024.png"   # for Linux builds
+SRC="${1:-$ICONS_DIR/levelcode-source.png}"
+OUT_ICNS="$ICONS_DIR/levelcode.icns"
+OUT_PNG="$ICONS_DIR/levelcode-1024.png"   # for Linux builds
 
 command -v sips >/dev/null     || { echo "sips not found (run on macOS)"; exit 1; }
 command -v iconutil >/dev/null || { echo "iconutil not found (run on macOS)"; exit 1; }
@@ -39,7 +39,7 @@ sips -z 1024 1024 "$TMP/master.png" >/dev/null
 cp "$TMP/master.png" "$OUT_PNG"
 
 # Build the .iconset with the exact names iconutil expects.
-ICONSET="$TMP/atom.iconset"; mkdir -p "$ICONSET"
+ICONSET="$TMP/level.iconset"; mkdir -p "$ICONSET"
 gen() { sips -z "$1" "$1" "$TMP/master.png" --out "$ICONSET/$2" >/dev/null; }
 gen 16   icon_16x16.png
 gen 32   icon_16x16@2x.png

@@ -1,15 +1,15 @@
-# Atom++ — Universal Multi-Provider BYOK — Design
+# LevelCode — Universal Multi-Provider BYOK — Design
 
 > **Status:** Draft v0.1 · **Date:** 2026-06-29 · **Owner:** Sergii Demianchuk
-> **Goal:** Unlock Atom++ from Anthropic-only to a broad development tool that works with **any** model provider in BYOK mode — the way Cline and Continue.dev do — without giving up Atom++'s dependency-free, no-build-step extension model.
+> **Goal:** Unlock LevelCode from Anthropic-only to a broad development tool that works with **any** model provider in BYOK mode — the way Cline and Continue.dev do — without giving up LevelCode's dependency-free, no-build-step extension model.
 
 ## 0. TL;DR
 
-Atom++ AI is Anthropic-only (with a second-class Ollama path): an `if (provider === 'claude') {…} else {…}` branch is copy-pasted at every call site, and the **agent is hard-gated to Claude**. Both Cline and Continue solved "many providers, little code" the **same** way:
+LevelCode AI is Anthropic-only (with a second-class Ollama path): an `if (provider === 'claude') {…} else {…}` branch is copy-pasted at every call site, and the **agent is hard-gated to Claude**. Both Cline and Continue solved "many providers, little code" the **same** way:
 
 **one provider interface + a single OpenAI-compatible adapter that covers dozens of providers + OpenRouter as a one-key mega-lever.**
 
-We adopt that pattern — but **hand-write the 2–3 protocol adapters with `fetch` + SSE** (as `streamClaude`/`streamOllama` already do) instead of pulling in the Vercel AI SDK, because **Atom++ extensions are plain JS with no build step** (CLAUDE.md). Phased so the biggest unlock (300+ models for chat/completion/edit) lands first, and the genuinely hard part (the *agent* across providers) is isolated.
+We adopt that pattern — but **hand-write the 2–3 protocol adapters with `fetch` + SSE** (as `streamClaude`/`streamOllama` already do) instead of pulling in the Vercel AI SDK, because **LevelCode extensions are plain JS with no build step** (CLAUDE.md). Phased so the biggest unlock (300+ models for chat/completion/edit) lands first, and the genuinely hard part (the *agent* across providers) is isolated.
 
 ---
 
@@ -33,11 +33,11 @@ Both ship OpenRouter as a single OpenAI-compatible endpoint (`https://openrouter
 ### 1.4 Only ~3 real protocols need bespoke code
 Everything reduces to **OpenAI Chat Completions**, **Anthropic Messages** (blocks + thinking + `cache_control`), and **Gemini** (`functionDeclarations`/`functionCall`). Everything else is OpenAI-compatible or reachable via OpenRouter.
 
-**The one divergence that matters for us:** Cline delegates *all* transforms to the **Vercel AI SDK** (`streamText()`) — inheriting tools/streaming/multimodal for free, but as an npm-installed, **bundled** dependency. Atom++ ships extensions as plain JS with no build step, so we follow **Continue's model**: hand-write the adapters with `fetch` + SSE. The existing `streamClaude`/`streamOllama` already prove the pattern; the new OpenAI adapter is ~200 lines, once.
+**The one divergence that matters for us:** Cline delegates *all* transforms to the **Vercel AI SDK** (`streamText()`) — inheriting tools/streaming/multimodal for free, but as an npm-installed, **bundled** dependency. LevelCode ships extensions as plain JS with no build step, so we follow **Continue's model**: hand-write the adapters with `fetch` + SSE. The existing `streamClaude`/`streamOllama` already prove the pattern; the new OpenAI adapter is ~200 lines, once.
 
 ---
 
-## 2. Recommended architecture for Atom++
+## 2. Recommended architecture for LevelCode
 
 ### 2.1 Module layout — `extensions/atom-ai/providers/`
 
@@ -62,7 +62,7 @@ const PROVIDERS = {
   anthropic:  { kind:'anthropic', label:'Anthropic',   keyId:'anthropic', caps:{tools:true, caching:true, vision:true} },
   // every openai-kind row shares ONE adapter — differ only by baseURL + auth + caps
   openai:     { kind:'openai', label:'OpenAI',     baseURL:'https://api.openai.com/v1',           keyId:'openai',   caps:{tools:true, vision:true} },
-  openrouter: { kind:'openai', label:'OpenRouter', baseURL:'https://openrouter.ai/api/v1',        keyId:'openrouter', caps:{tools:true, vision:true}, headers:{'HTTP-Referer':'https://atompp.ai','X-Title':'Atom++'} },
+  openrouter: { kind:'openai', label:'OpenRouter', baseURL:'https://openrouter.ai/api/v1',        keyId:'openrouter', caps:{tools:true, vision:true}, headers:{'HTTP-Referer':'https://levelcode.ai','X-Title':'LevelCode'} },
   groq:       { kind:'openai', label:'Groq',       baseURL:'https://api.groq.com/openai/v1',      keyId:'groq',     caps:{tools:true} },
   together:   { kind:'openai', label:'Together',   baseURL:'https://api.together.xyz/v1',         keyId:'together', caps:{tools:true} },
   fireworks:  { kind:'openai', label:'Fireworks',  baseURL:'https://api.fireworks.ai/inference/v1', keyId:'fireworks', caps:{tools:true} },
@@ -138,8 +138,8 @@ Collapse the 3 hard-coded Claude lists (`extension.js` model list, `lmProvider.j
 
 ## 5. Keys, settings & UI
 
-- **Per-provider keys.** Replace the single `atompp.ai.anthropicKey` (read in ~7 places) with `atompp.ai.key.<provider>` in SecretStorage + a provider-aware `promptForKey(providerId)` (current one is hardwired to Anthropic copy). `noKey` providers (Ollama) skip it.
-- **Settings schema.** Widen `atompp.ai.provider` beyond `["claude","ollama"]` to the registry ids; add `atompp.ai.model` (active model id, free-text/picked) and `atompp.ai.baseURL` (for the `custom` OpenAI-compatible provider).
+- **Per-provider keys.** Replace the single `levelcode.ai.anthropicKey` (read in ~7 places) with `levelcode.ai.key.<provider>` in SecretStorage + a provider-aware `promptForKey(providerId)` (current one is hardwired to Anthropic copy). `noKey` providers (Ollama) skip it.
+- **Settings schema.** Widen `levelcode.ai.provider` beyond `["claude","ollama"]` to the registry ids; add `levelcode.ai.model` (active model id, free-text/picked) and `levelcode.ai.baseURL` (for the `custom` OpenAI-compatible provider).
 - **Customize panel.** The AI section gains a provider dropdown + "Set key for <provider>" + model picker + (for `custom`) a base-URL field.
 
 ---
@@ -155,7 +155,7 @@ Collapse the 3 hard-coded Claude lists (`extension.js` model list, `lmProvider.j
 
 **P1 is ~90% of the value for ~10% of the effort** and is a clean, dependency-free adapter mirroring code that already exists. P2 (the agent across providers) is the hard part and is deliberately isolated.
 
-> **P3 is intentionally deferred as a release/marketing beat**, not a backlog gap. Gemini and Bedrock models already work in Atom++ *today* through OpenRouter (BYO OpenRouter key), so P3 delivers the *native, direct-with-your-own-Google/AWS-key* path — a concrete "new in Atom++" headline to announce once there's a downloadable app and an audience following updates. Do not build it opportunistically; hold it for launch.
+> **P3 is intentionally deferred as a release/marketing beat**, not a backlog gap. Gemini and Bedrock models already work in LevelCode *today* through OpenRouter (BYO OpenRouter key), so P3 delivers the *native, direct-with-your-own-Google/AWS-key* path — a concrete "new in LevelCode" headline to announce once there's a downloadable app and an audience following updates. Do not build it opportunistically; hold it for launch.
 
 ### 6.1 P2 provider-compat notes (from adversarial review)
 The agent runs on OpenAI-shaped providers via the boundary translation, but three real wire-protocol quirks were handled explicitly (the transcript stays Anthropic-shaped; these live in `openaiCompat.js`/`index.js`):

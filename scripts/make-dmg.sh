@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Package the built Atom++.app into a single distributable .dmg disk image.
+# Package the built LevelCode.app into a single distributable .dmg disk image.
 #
 # An .app is actually a *folder* of thousands of files — cloud drives upload it as
 # loose files and it can't be "installed". A .dmg wraps the whole app into one
 # compressed file you can upload, download, and drag-to-install.
 #
 # This script:
-#   1. Locates VSCode-darwin-<arch>/Atom++.app (run ./scripts/build-macos.sh first).
+#   1. Locates VSCode-darwin-<arch>/LevelCode.app (run ./scripts/build-macos.sh first).
 #   2. Ad-hoc code-signs it. arm64 macOS refuses to launch *unsigned* binaries at all,
 #      so even for personal use the app must carry at least an ad-hoc signature.
 #   3. Builds a compressed .dmg containing the app + an /Applications symlink.
@@ -15,7 +15,7 @@
 # The result is UNNOTARIZED. On another Mac, Gatekeeper will still warn on first launch:
 #   - Right-click the app > Open (once), OR
 #   - clear quarantine after copying out of the dmg:
-#       xattr -dr com.apple.quarantine "/Applications/Atom++.app"
+#       xattr -dr com.apple.quarantine "/Applications/LevelCode.app"
 #
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,8 +23,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
 # Target arch: first arg (arm64|x64) overrides the host arch (match build-macos.sh). Arch is
-# normalized to arm64|x64 so the output is Atom++-arm64.dmg / Atom++-x64.dmg — the EXACT filenames
-# the download funnel (atompp.ai/download/<arch>) and the site link to. Do not emit "x86_64" here.
+# normalized to arm64|x64 so the output is LevelCode-arm64.dmg / LevelCode-x64.dmg — the EXACT filenames
+# the download funnel (levelcode.ai/download/<arch>) and the site link to. Do not emit "x86_64" here.
 ARCH="${1:-$(uname -m)}"
 case "$ARCH" in
   arm64|aarch64)    ARCH="arm64"; OUT_DIR="VSCode-darwin-arm64" ;;
@@ -32,16 +32,16 @@ case "$ARCH" in
   *) echo "[make-dmg] Unsupported arch: $ARCH (use arm64 or x64)"; exit 1 ;;
 esac
 
-APP="$OUT_DIR/Atom++.app"
+APP="$OUT_DIR/LevelCode.app"
 if [ ! -d "$APP" ]; then
   echo "[make-dmg] ERROR: $APP not found. Run ./scripts/build-macos.sh first."
   exit 1
 fi
 
-VOL_NAME="Atom++"
-DMG_OUT="$ROOT_DIR/Atom++-$ARCH.dmg"
+VOL_NAME="LevelCode"
+DMG_OUT="$ROOT_DIR/LevelCode-$ARCH.dmg"
 
-# 0. De-Microsoft + hide not-yet-ready features (Atom++ Sync) before we sign + ship it (idempotent —
+# 0. De-Microsoft + hide not-yet-ready features (LevelCode Sync) before we sign + ship it (idempotent —
 # no-ops if build-macos.sh already did it). Runs BEFORE signing so the signature covers the result.
 node "$SCRIPT_DIR/strip-proprietary.mjs" "$APP/Contents/Resources/app"
 node "$SCRIPT_DIR/strip-unreleased.mjs" "$APP/Contents/Resources/app"
@@ -95,6 +95,6 @@ echo "[make-dmg]   Output: $DMG_OUT  ($SIZE)"
 if [ "$NOTARIZE" = "1" ]; then
   echo "[make-dmg]   Signed + notarized — upload it; users just open the dmg and drag to Applications."
 else
-  echo "[make-dmg]   Upload this single file. On the other Mac: open the dmg, drag Atom++ to"
+  echo "[make-dmg]   Upload this single file. On the other Mac: open the dmg, drag LevelCode to"
   echo "[make-dmg]   Applications, then right-click > Open the first time (it's unnotarized)."
 fi

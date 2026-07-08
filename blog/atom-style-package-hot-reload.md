@@ -1,10 +1,10 @@
 ---
-title: "Bringing Back Atom's Magic: Live Package Hot-Reload in Atom++"
+title: "Bringing Back Atom's Magic: Live Package Hot-Reload in LevelCode"
 date: 2026-06-26
-tags: [atom-plus-plus, editor, hackability, developer-experience]
+tags: [levelcode, editor, hackability, developer-experience]
 ---
 
-# Bringing Back Atom's Magic: Live Package Hot-Reload in Atom++
+# Bringing Back Atom's Magic: Live Package Hot-Reload in LevelCode
 
 ![Hero: editing a package and watching the status bar update live, no reload](./images/hot-reload-hero.gif)
 <!-- HERO GIF (the money shot, ~6-10s, loop):
@@ -22,28 +22,28 @@ powerful, but extending them tends to mean: scaffold a project, press F5, wait f
 "Extension Development Host" window to boot, make a change, then reload that window to see
 it. It works. It's just… cold. The loop is long enough that you stop experimenting.
 
-So while building **Atom++** — an AI-native, hackable editor on the VS Code core — I wanted
+So while building **LevelCode** — an AI-native, hackable editor on the VS Code core — I wanted
 that warmth back. Two commands now do it:
 
-- **`Atom++: Generate Package…`** — scaffold a real, runnable package in one step.
-- **`Atom++: Develop Package (Hot Reload)…`** — load it into the editor you're *already
+- **`LevelCode: Generate Package…`** — scaffold a real, runnable package in one step.
+- **`LevelCode: Develop Package (Hot Reload)…`** — load it into the editor you're *already
   using*, and re-run it every time you save.
 
 Here's what that feels like, and how it works.
 
 ## The loop, in ten seconds
 
-Open the command palette and run **`Atom++: Generate Package…`**. Type a name —
+Open the command palette and run **`LevelCode: Generate Package…`**. Type a name —
 `hello-atom`.
 
 ![The Generate Package command in the command palette with the name prompt](./images/generate-package-palette.png)
-<!-- SCREENSHOT: command palette open showing "Atom++: Generate Package…" (or the name
+<!-- SCREENSHOT: command palette open showing "LevelCode: Generate Package…" (or the name
      input box with "hello-atom" typed). Crop to the palette + a bit of editor for context. -->
 
-Atom++ scaffolds a complete package:
+LevelCode scaffolds a complete package:
 
 ```
-~/.atom-plus-plus/packages/hello-atom/
+~/.levelcode/packages/hello-atom/
 ├── package.json        # manifest + a sample command
 ├── extension.js        # activate() / deactivate()
 ├── README.md
@@ -88,7 +88,7 @@ VS Code's extension model loads each extension **once**. That's the right call f
 but it's why the normal dev story is "reload the whole window." To get true hot-reload, you
 have to step outside that model a little — carefully.
 
-Atom++ runs a small **dev loader** inside the running window. When you start developing a
+LevelCode runs a small **dev loader** inside the running window. When you start developing a
 package, it does three things:
 
 **1. Loads your code into the live editor.** Instead of registering your package as a
@@ -125,13 +125,13 @@ disposable for everything you create, "undo the last version" is just "dispose w
 registered." Hot-reload becomes a bookkeeping problem, not a magic one.
 
 **3. Fails safely.** If your edit has a typo, the reload is caught: you get a one-line error
-toast and a full stack trace in an "Atom++ Packages" output channel, while the editor keeps
+toast and a full stack trace in an "LevelCode Packages" output channel, while the editor keeps
 running. Fix the typo, save, and it recovers on the next reload. You never lose your session
 to a bad keystroke — which, again, is what makes you brave enough to experiment.
 
 ![A caught reload error: the error toast plus the stack trace in the output channel](./images/reload-error.png)
 <!-- SCREENSHOT (optional but nice): introduce a deliberate typo, save, and capture the
-     error toast + the "Atom++ Packages" output channel showing the stack trace. Shows the
+     error toast + the "LevelCode Packages" output channel showing the stack trace. Shows the
      editor survived a broken edit. -->
 
 
@@ -159,7 +159,7 @@ playfully. You write a tiny command to scratch an itch. You tweak a status bar t
 thing you actually care about. You make the editor *yours* — which was always the whole
 point of Atom.
 
-Atom++ is a bet that an editor can be both modern (the VS Code core, native AI, real
+LevelCode is a bet that an editor can be both modern (the VS Code core, native AI, real
 performance) and warm (hackable, scriptable, live). Package hot-reload is a small feature,
 but it's the one that, the first time it worked, genuinely felt like the Atom golden days
 again.
@@ -168,6 +168,6 @@ Write, save, see it. Welcome back.
 
 ---
 
-*Atom++ is an AI-native, hackable, Notepad++-powered editor for macOS, built on the MIT
+*LevelCode is an AI-native, hackable, Notepad++-powered editor for macOS, built on the MIT
 Code-OSS core. The package generator and hot-reload loader live in the `atom-hackability`
 extension, alongside the user init script and the Atom/Notepad++ keymap presets.*

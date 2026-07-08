@@ -1,47 +1,38 @@
 {
-  "_comment": "Atom++ branding overlay. This is DEEP-MERGED onto the stock vscode/product.json by scripts/apply-branding.mjs. Keep it minimal — only the keys we intentionally change. Do not paste a whole product.json here; merging keeps us compatible across upstream versions.",
+  "_comment": "LevelCode branding overlay. This is DEEP-MERGED onto the stock vscode/product.json by scripts/apply-branding.mjs. Keep it minimal — only the keys we intentionally change. Do not paste a whole product.json here; merging keeps us compatible across upstream versions.",
 
-  "nameShort": "Atom++",
-  "nameLong": "Atom++",
-  "applicationName": "atom",
-  "serverApplicationName": "atom-plus-plus-server",
-  "serverDataFolderName": ".atom-plus-plus-server",
-  "dataFolderName": ".atom-plus-plus",
-  "darwinBundleIdentifier": "net.systemu.atom-plus-plus",
-  "win32AppUserModelId": "SystemU.AtomPlusPlus",
-  "win32MutexName": "atomplusplus",
-  "win32DirName": "Atom++",
-  "win32NameVersion": "Atom++",
-  "win32RegValueName": "AtomPlusPlus",
-  "win32AppId": "{{EA2A1F4B-0000-0000-0000-ATOMPLUSPLUS}}",
-  "win32x64AppId": "{{EA2A1F4B-0001-0000-0000-ATOMPLUSPLUS}}",
-  "win32arm64AppId": "{{EA2A1F4B-0002-0000-0000-ATOMPLUSPLUS}}",
-  "win32UserAppId": "{{EA2A1F4B-0003-0000-0000-ATOMPLUSPLUS}}",
-  "win32x64UserAppId": "{{EA2A1F4B-0004-0000-0000-ATOMPLUSPLUS}}",
-  "win32arm64UserAppId": "{{EA2A1F4B-0005-0000-0000-ATOMPLUSPLUS}}",
+  "nameShort": "LevelCode",
+  "nameLong": "LevelCode",
+  "applicationName": "level",
+  "serverApplicationName": "levelcode-server",
+  "serverDataFolderName": ".levelcode-server",
+  "dataFolderName": ".levelcode",
+  "darwinBundleIdentifier": "ai.levelcode.app",
+  "win32AppUserModelId": "SystemU.LevelCode",
+  "win32MutexName": "levelcode",
+  "win32DirName": "LevelCode",
+  "win32NameVersion": "LevelCode",
+  "win32RegValueName": "LevelCode",
+  "win32AppId": "{{EA2A1F4B-0000-0000-0000-LEVELCODE}}",
+  "win32x64AppId": "{{EA2A1F4B-0001-0000-0000-LEVELCODE}}",
+  "win32arm64AppId": "{{EA2A1F4B-0002-0000-0000-LEVELCODE}}",
+  "win32UserAppId": "{{EA2A1F4B-0003-0000-0000-LEVELCODE}}",
+  "win32x64UserAppId": "{{EA2A1F4B-0004-0000-0000-LEVELCODE}}",
+  "win32arm64UserAppId": "{{EA2A1F4B-0005-0000-0000-LEVELCODE}}",
 
-  "urlProtocol": "atom-plus-plus",
+  "urlProtocol": "levelcode",
   "quality": "stable",
 
-  "_syncComment": "Atom++ Sync (the Obsidian analog). Reuses Code-OSS's built-in Settings Sync, pointed at our own server. The `atompp` auth provider is contributed by extensions/atom-sync. The localhost url below is a DEV placeholder and is FINE to keep: scripts/strip-unreleased.mjs removes atom-sync + this configurationSync.store + the Welcome 'Sync' step from the PUBLIC build, so Sync is dev-only until the managed Atom++ Cloud host ships. When it ships, drop strip-unreleased's sync entries and point this url at the managed host.",
-  "configurationSync.store": {
-    "url": "http://localhost:9595",
-    "stableUrl": "http://localhost:9595",
-    "insidersUrl": "http://localhost:9595",
-    "canSwitch": false,
-    "authenticationProviders": {
-      "atompp": { "scopes": ["sync"] }
-    }
-  },
+  "_syncComment": "LevelCode Sync (built-in Settings Sync + the `levelcode` auth provider from extensions/atom-sync) was REMOVED for now — the managed sync host isn't built and it duplicated the LevelCode Cloud sign-in. Removed at source: the atom-sync extension, this configurationSync.store block, and the Welcome 'Sync' step. Re-add when the managed sync host ships.",
 
   "licenseName": "MIT",
-  "licenseUrl": "https://github.com/atom-plus-plus/atompp/blob/main/LICENSE",
-  "reportIssueUrl": "https://github.com/atom-plus-plus/atompp/issues/new",
+  "licenseUrl": "https://github.com/levelcode/levelcode/blob/main/LICENSE",
+  "reportIssueUrl": "https://github.com/levelcode/levelcode/issues/new",
 
-  "_downloadComment": "Download + update funnel through atompp.ai (see site/app/download/[arch]/route.ts). downloadUrl is where the notify-only updater's Download button sends the user; releaseNotesUrl backs its 'Release Notes' button. updateUrl is the feed base — the updater GETs {updateUrl}/api/update/{target}/{quality}/{commit}; until that endpoint is live it returns 404 and the updater silently treats it as 'up to date' (notify-only, non-fatal). RELEASE NOTE: atompp.ai must resolve to the deployed site before these links work.",
-  "downloadUrl": "https://atompp.ai/download",
-  "releaseNotesUrl": "https://github.com/atom-plus-plus/atompp/releases/latest",
-  "updateUrl": "https://atompp.ai",
+  "_downloadComment": "Download + update funnel through levelcode.ai (see site/app/download/[arch]/route.ts). downloadUrl is where the notify-only updater's Download button sends the user; releaseNotesUrl backs its 'Release Notes' button. updateUrl is the feed base — the updater GETs {updateUrl}/api/update/{target}/{quality}/{commit}; until that endpoint is live it returns 404 and the updater silently treats it as 'up to date' (notify-only, non-fatal). RELEASE NOTE: levelcode.ai must resolve to the deployed site before these links work.",
+  "downloadUrl": "https://levelcode.ai/download",
+  "releaseNotesUrl": "https://github.com/levelcode/levelcode/releases/latest",
+  "updateUrl": "https://levelcode.ai",
 
   "enableTelemetry": false,
   "telemetryOptOutUrl": "",
@@ -62,7 +53,7 @@
     "https://open-vsx.org"
   ],
 
-  "_atomPlusPlus": {
-    "note": "Namespace reserved for Atom++ feature flags (M1 Notepad++ pack, M2 AI core, M3 hackability). Upstream ignores unknown keys, so this is a safe place to carry our config across rebases."
+  "_levelcode": {
+    "note": "Namespace reserved for LevelCode feature flags (M1 Notepad++ pack, M2 AI core, M3 hackability). Upstream ignores unknown keys, so this is a safe place to carry our config across rebases."
   }
 }

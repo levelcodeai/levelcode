@@ -1,8 +1,8 @@
 {
 	"name": "atom-themes",
-	"displayName": "Atom++ Themes",
-	"description": "Signature Atom++ themes — One Dark and One Light, adapted from Atom's iconic MIT palette.",
-	"publisher": "atompp",
+	"displayName": "LevelCode Themes",
+	"description": "Signature LevelCode themes — One Dark and One Light, adapted from Atom's iconic MIT palette.",
+	"publisher": "levelcode",
 	"version": "0.1.0",
 	"license": "MIT",
 	"engines": {
@@ -13,11 +13,11 @@
 	],
 	"contributes": {
 		"themes": [
-			{ "label": "Atom++ One Dark", "uiTheme": "vs-dark", "path": "./themes/atom-one-dark.json" },
-			{ "label": "Atom++ One Light", "uiTheme": "vs", "path": "./themes/atom-one-light.json" }
+			{ "label": "LevelCode One Dark", "uiTheme": "vs-dark", "path": "./themes/atom-one-dark.json" },
+			{ "label": "LevelCode One Light", "uiTheme": "vs", "path": "./themes/atom-one-light.json" }
 		],
 		"configurationDefaults": {
-			"workbench.colorTheme": "Atom++ One Dark"
+			"workbench.colorTheme": "LevelCode One Dark"
 		}
 	}
 }

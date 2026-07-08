@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Updater : pure helpers (no vscode import, unit-testable with `node`).
+ *  LevelCode — Updater : pure helpers (no vscode import, unit-testable with `node`).
  *
  *  Speaks the same update-feed contract as the editor's built-in updater
  *  (GET {updateUrl}/api/update/{target}/{quality}/{commit}), but only NOTIFIES — it never
@@ -43,7 +43,7 @@ function isNewer(feed, currentCommit) {
 /** Human label for a notification, preferring the SemVer productVersion. */
 function releaseLabel(feed) {
 	if (!feed) { return 'A new version'; }
-	return feed.productVersion ? ('Atom++ ' + feed.productVersion) : 'A new Atom++ build';
+	return feed.productVersion ? ('LevelCode ' + feed.productVersion) : 'A new LevelCode build';
 }
 
 module.exports = { platformTarget, buildFeedUrl, parseFeed, isNewer, releaseLabel };

@@ -1,9 +1,9 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Import from VS Code
+ *  LevelCode — Import from VS Code
  *
  *  Bring your settings, keybindings, and snippets over from VS Code / VSCodium / Cursor so
- *  switching to Atom++ takes seconds. Settings are MERGED (your VS Code values win on conflicts,
- *  Atom++ defaults kept), keybindings are appended (later = higher priority), snippets copied.
+ *  switching to LevelCode takes seconds. Settings are MERGED (your VS Code values win on conflicts,
+ *  LevelCode defaults kept), keybindings are appended (later = higher priority), snippets copied.
  *
  *  Data safety (verified by review + tests):
  *   - The destination is the editor's REAL User dir, derived from context.globalStorageUri
@@ -72,7 +72,7 @@ function jsoncParse(text) {
 function nonEmpty(text) { return text != null && String(text).trim() !== ''; }
 
 /**
- * Merge VS Code settings over the existing Atom++ settings (incoming wins). Returns null (→ skip)
+ * Merge VS Code settings over the existing LevelCode settings (incoming wins). Returns null (→ skip)
  * if the incoming OR a NON-EMPTY existing file can't be parsed (so we never clobber/lose data).
  */
 function mergeSettings(baseText, incomingText) {
@@ -110,7 +110,7 @@ function vscodeCandidates() {
 
 /** The running editor's REAL User dir, derived from globalStorageUri = <userData>/User/globalStorage/<id>. */
 function userDirFromContext(context) {
-	try { return path.dirname(path.dirname(context.globalStorageUri.fsPath)); } catch { return path.join(supportDir(), 'Atom++', 'User'); }
+	try { return path.dirname(path.dirname(context.globalStorageUri.fsPath)); } catch { return path.join(supportDir(), 'LevelCode', 'User'); }
 }
 
 function readSafe(p) { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } }
@@ -148,11 +148,11 @@ function copySnippets(srcDir, destDir, stamp) {
 async function importFromVscode(context) {
 	const vscode = require('vscode');
 	if (process.platform !== 'darwin') {
-		vscode.window.showInformationMessage('Atom++: Import from VS Code is currently macOS-only.');
+		vscode.window.showInformationMessage('LevelCode: Import from VS Code is currently macOS-only.');
 		return;
 	}
 	const cands = vscodeCandidates();
-	if (!cands.length) { vscode.window.showInformationMessage('Atom++: no VS Code / VSCodium / Cursor settings found to import.'); return; }
+	if (!cands.length) { vscode.window.showInformationMessage('LevelCode: no VS Code / VSCodium / Cursor settings found to import.'); return; }
 
 	let src = cands[0];
 	if (cands.length > 1) {
@@ -164,10 +164,10 @@ async function importFromVscode(context) {
 	const has = (f) => { try { return fs.existsSync(path.join(src.dir, f)); } catch { return false; } };
 	const hasSnippets = () => { try { return fs.readdirSync(path.join(src.dir, 'snippets')).some((f) => /\.(json|code-snippets)$/i.test(f)); } catch { return false; } };
 	const items = [];
-	if (has('settings.json')) { items.push({ label: 'Settings', detail: 'merged at top level — your VS Code values win, Atom++ defaults kept', id: 'settings', picked: true }); }
-	if (has('keybindings.json')) { items.push({ label: 'Keybindings', detail: 'appended after Atom++ defaults', id: 'keybindings', picked: true }); }
+	if (has('settings.json')) { items.push({ label: 'Settings', detail: 'merged at top level — your VS Code values win, LevelCode defaults kept', id: 'settings', picked: true }); }
+	if (has('keybindings.json')) { items.push({ label: 'Keybindings', detail: 'appended after LevelCode defaults', id: 'keybindings', picked: true }); }
 	if (hasSnippets()) { items.push({ label: 'Snippets', detail: 'copied into your snippets folder', id: 'snippets', picked: true }); }
-	if (!items.length) { vscode.window.showInformationMessage('Atom++: nothing to import from ' + src.name + '.'); return; }
+	if (!items.length) { vscode.window.showInformationMessage('LevelCode: nothing to import from ' + src.name + '.'); return; }
 
 	const chosen = await vscode.window.showQuickPick(items, { canPickMany: true, title: 'Import from ' + src.name + ' — existing files are backed up first' });
 	if (!chosen || !chosen.length) { return; }

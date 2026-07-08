@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI: Claude as a native Language Model provider.
+ *  LevelCode — AI: Claude as a native Language Model provider.
  *
  *  Registering a LanguageModelChatProvider makes Claude a first-class model inside the editor:
  *  VS Code's native chat, model picker, inline edits and agent flows can all use it. This is
@@ -12,7 +12,7 @@
 const vscode = require('vscode');
 const { streamClaude } = require('./providers');
 
-const VENDOR = 'atompp';
+const VENDOR = 'levelcode';
 
 const MODELS = [
 	{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', version: '4.6', maxOut: 8192 },
@@ -57,7 +57,7 @@ function makeProvider(getKey) {
 
 		async provideLanguageModelChatResponse(model, messages, _options, progress, token) {
 			const key = await getKey(true);
-			if (!key) { throw new Error('Atom++ AI: no Anthropic API key set.'); }
+			if (!key) { throw new Error('LevelCode AI: no Anthropic API key set.'); }
 			const ac = new AbortController();
 			token.onCancellationRequested(() => ac.abort());
 			await streamClaude({
@@ -81,13 +81,13 @@ function makeProvider(getKey) {
 /** @param {vscode.ExtensionContext} context @param {(silent:boolean)=>Promise<string|undefined>} getKey */
 function registerLmProvider(context, getKey) {
 	if (!vscode.lm || typeof vscode.lm.registerLanguageModelChatProvider !== 'function') {
-		console.warn('[atom-ai] lm.registerLanguageModelChatProvider unavailable in this build.');
+		console.warn('[levelcode-ai] lm.registerLanguageModelChatProvider unavailable in this build.');
 		return;
 	}
 	try {
 		context.subscriptions.push(vscode.lm.registerLanguageModelChatProvider(VENDOR, makeProvider(getKey)));
 	} catch (e) {
-		console.error('[atom-ai] LM provider registration failed:', e);
+		console.error('[levelcode-ai] LM provider registration failed:', e);
 	}
 }
 

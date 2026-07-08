@@ -1,13 +1,13 @@
-# Atom++ — Agent Sketch — Design
+# LevelCode — Agent Sketch — Design
 
 > **Status:** SK1 skeleton shipped · **Date:** 2026-07-01 · **Owner:** Sergii Demianchuk
-> **Vision:** Sketch a whole agentic system visually, right inside the Atom++ editor — connect
+> **Vision:** Sketch a whole agentic system visually, right inside the LevelCode editor — connect
 > specialized agents into flows, watch **tokens burned per step**, and **recalculate the same flow
 > against different models** before committing to one. Chaining in the spirit of
 > [ruflo](https://github.com/ruvnet/ruflo) ("Agent = Model + Harness"; 100+ specialized agents),
 > with the canvas interaction model adapted from the SystemSketch (SysDes) prototype.
 
-## 0. Why this is a natural Atom++ feature
+## 0. Why this is a natural LevelCode feature
 
 Everything below sits on the multi-provider layer already shipped:
 
@@ -17,7 +17,7 @@ Everything below sits on the multi-provider layer already shipped:
 | **Real token usage per step** | P2 — `usage` from `message_start`/`stream_options.include_usage` |
 | Per-model capabilities to pick sensible defaults | P4 — `providers/catalog.js` tiers/caps |
 | Cost math for the meter + what-if | `sketch/pricing.js` ($/MTok table; Anthropic published, others list-price estimates, labeled "est.") |
-| No middle-man backend, keys in the keychain | The Atom++ architecture invariant |
+| No middle-man backend, keys in the keychain | The LevelCode architecture invariant |
 
 ## 1. The SK1 skeleton (shipped)
 
@@ -80,8 +80,8 @@ The `Workflow` adversarial review surfaced 31 confirmed findings; the load-beari
   re-running — the feature that answers "what would this flow cost on Haiku vs Opus?"
 - **Per-node model:** catalog `tier` (fast/balanced/powerful) → provider-specific default
   (`MODEL_TIERS`), overridable per node in the inspector.
-- **Persistence:** named sketches in the workspace at `.atompp/sketches/<name>.json`.
-- Command: **`atompp.ai.sketch`** ("AI: Agent Sketch…"), also in the Customize panel.
+- **Persistence:** named sketches in the workspace at `.levelcode/sketches/<name>.json`.
+- Command: **`levelcode.ai.sketch`** ("AI: Agent Sketch…"), also in the Customize panel.
 
 ### Safety posture (SK1)
 Sketch nodes are **text-only** — no file edits, no commands, no tools. A sketch run cannot touch the
@@ -121,7 +121,7 @@ files). Costs shown are planning estimates from list prices — the provider bil
 | **SK1.3** | **Prompt → whole flow** (shipped): type a plain-English description into the (empty) board and the active model designs a complete DAG — `generateFlow()` returns `{goal, nodes, edges}`, normalized to a loadable sketch and auto-laid-out. Empty canvas = *build*; populated canvas = *edit* (the existing ops command). |
 | **SK2** | **Tool-using + connector nodes**: a node runs the full `agent.js` loop (read/edit/run with Keep-Undo review) so a sketched flow edits the workspace; **connector nodes actually act** — Telegram/Slack post, email send, webhook call, file write — behind credentials + per-flow permission (see §4). |
 | **SK3** | **Triggers & topologies**: a `scheduler`/`webhook-trigger` root fires the flow on a **cron cadence / inbound event** (Managed-Agents-style scheduled deployment); coordinator/hierarchical patterns, conditional edges, retry/verify loops; per-flow token budgets. |
-| **SK4** | **Interop**: import/export ruflo swarm configs; publish sketches as shareable templates; sketch → `atompp.ai` chat-agent handoff. |
+| **SK4** | **Interop**: import/export ruflo swarm configs; publish sketches as shareable templates; sketch → `levelcode.ai` chat-agent handoff. |
 
 ## 4. Node tiers: text → tools → connectors → triggers
 
@@ -140,7 +140,7 @@ all as **text-only** (a connector emits the payload it *would* send; a trigger e
 timer — you can design and cost a Telegram-publishing pipeline today and see exactly what it *would*
 post), while giving a clear, honest path to real automation where each dangerous capability (send,
 write, schedule) is gated by the credential + permission model it deserves. The BYOK rule is unchanged
-— connectors use the *user's own* integration credentials; Atom++ never proxies or stores the content.
+— connectors use the *user's own* integration credentials; LevelCode never proxies or stores the content.
 
 ### Worked example (what the generator produces)
 Prompt: *"5 agents collect recent AI & agentic-AI news; a head-of-press-release edits them; a
@@ -162,5 +162,5 @@ makes `daily-trigger` actually fire the flow every morning.
 
 ## 3. Attribution & licensing
 Agent names/roles derived from ruflo's `.claude/agents/` library (MIT © 2024–2026 ruvnet) — metadata
-only (name + one-line role); every node executes on Atom++'s own agent loop and providers. The canvas
+only (name + one-line role); every node executes on LevelCode's own agent loop and providers. The canvas
 interaction model (palette/nodes/edges/live metrics) is adapted from the internal SysDes prototype.

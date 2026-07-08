@@ -1,14 +1,14 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — hide NOT-YET-READY features from the PUBLIC build. Runs on the BUILT app (same arg
+ *  LevelCode — hide NOT-YET-READY features from the PUBLIC build. Runs on the BUILT app (same arg
  *  as strip-proprietary.mjs: the .../Contents/Resources/app dir). Source keeps everything for dev
  *  and the future Pro release; only the shipped .dmg has these surfaces removed.
  *
- *  Today this hides **Atom++ Sync**: the managed cloud host isn't deployed and the store URL is a
+ *  Today this hides **LevelCode Sync**: the managed cloud host isn't deployed and the store URL is a
  *  localhost dev placeholder, so a public user clicking "Set up Sync" would just fail. We remove
  *  its user-facing surfaces:
- *    1. the atom-sync extension       (its commands + the `atompp` sync auth provider)
+ *    1. the atom-sync extension       (its commands + the `levelcode` sync auth provider)
  *    2. product.json configurationSync.store   (the dead localhost sync endpoint)
- *    3. the "Sync" step in the Atom++ AI Welcome walkthrough
+ *    3. the "Sync" step in the LevelCode AI Welcome walkthrough
  *  (The Customize panel's Sync section hides itself at runtime when the sync command is absent.)
  *
  *  Idempotent + loud; warns — does not fail — if a target is already gone.
@@ -29,7 +29,7 @@ const missing = [];
 const syncExt = path.join(appDir, "extensions", "atom-sync");
 if (fs.existsSync(syncExt)) {
   fs.rmSync(syncExt, { recursive: true, force: true });
-  done.push("extensions/atom-sync (commands + `atompp` sync auth provider)");
+  done.push("extensions/atom-sync (commands + `levelcode` sync auth provider)");
 } else {
   missing.push("extensions/atom-sync");
 }
@@ -58,7 +58,7 @@ try {
   missing.push("product.json (" + ((e && e.message) || e) + ")");
 }
 
-// 3. Remove the "Sync" step from the Atom++ AI Welcome walkthrough so it can't dangle a dead link.
+// 3. Remove the "Sync" step from the LevelCode AI Welcome walkthrough so it can't dangle a dead link.
 const aiPkgPath = path.join(appDir, "extensions", "atom-ai", "package.json");
 try {
   const pkg = JSON.parse(fs.readFileSync(aiPkgPath, "utf8"));
@@ -68,7 +68,7 @@ try {
     if (!Array.isArray(w.steps)) continue;
     const before = w.steps.length;
     w.steps = w.steps.filter(
-      (s) => s.id !== "sync" && !JSON.stringify(s).includes("atompp.sync."),
+      (s) => s.id !== "sync" && !JSON.stringify(s).includes("levelcode.sync."),
     );
     removed += before - w.steps.length;
   }
@@ -82,7 +82,7 @@ try {
   missing.push("atom-ai package.json (" + ((e && e.message) || e) + ")");
 }
 
-console.log("[hide] removing not-yet-ready features from the public build (Atom++ Sync)");
+console.log("[hide] removing not-yet-ready features from the public build (LevelCode Sync)");
 for (const d of done) console.log("  removed: " + d);
 for (const m of missing) console.log("  · not present (already hidden?): " + m);
 if (!done.length) {

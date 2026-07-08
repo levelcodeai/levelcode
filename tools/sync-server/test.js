@@ -12,7 +12,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'atompp-sync-'));
+const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'levelcode-sync-'));
 process.env.DATA_DIR = DATA_DIR;
 const { server } = require('./server');
 

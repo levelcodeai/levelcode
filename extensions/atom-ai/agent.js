@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI (M4, feature 1: agentic multi-file tasks)
+ *  LevelCode — AI (M4, feature 1: agentic multi-file tasks)
  *
  *  An autonomous coding agent. Given a goal, Claude reads/searches/edits files and runs
  *  commands via tools to accomplish it. Read-only tools run automatically; every file write
@@ -17,7 +17,7 @@ const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
 
 const SYSTEM_BASE = [
-	"You are Atom++'s built-in autonomous coding agent. You accomplish the user's goal in their",
+	"You are LevelCode's built-in autonomous coding agent. You accomplish the user's goal in their",
 	'workspace using the provided tools. Rules:',
 	'- Be DECISIVE and FAST. Read only the file you are changing (plus at most 1 other if truly needed), then ACT. Do NOT write long multi-point plans — at most ONE short sentence before each tool call.',
 	'- Start acting within your first 1-2 turns. Use read_file / list_files / search to understand code before editing — never guess file contents.',
@@ -460,7 +460,7 @@ async function runAgent(ctx) {
 		if (r.unrunnable) {
 			// The verify command itself is misconfigured — tell the user, never make the agent "fix" it.
 			dbg('verify.unrunnable', { tail: String(r.cmdTail || '').slice(0, 160) });
-			ctx.post({ type: 'agentTool', icon: 'warning', text: 'verify command couldn’t run — check the atompp.ai.verify.command setting' });
+			ctx.post({ type: 'agentTool', icon: 'warning', text: 'verify command couldn’t run — check the levelcode.ai.verify.command setting' });
 		}
 		if (outcome === 'pass') { dbg('verify.pass', { cmd: !!cmd, touched: touchedCount, unrunnable: r.unrunnable }); return false; }
 		if (outcome === 'exhausted') {
@@ -501,6 +501,18 @@ async function runAgent(ctx) {
 				cumulativeOutputTokens += (turn.usage.output_tokens || 0);
 				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens, cumulativeOutput: cumulativeOutputTokens });
 				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: TOOLS_TOKENS_EST });
+			}
+
+			// Reasoning models (e.g. Kimi K2.7 Code) emit <think>…</think> inline in the text
+			// block. Strip it from the STORED turn so the reasoning isn't re-sent — and
+			// re-metered on the gateway — on every later turn. (The chat view hides it too.)
+			for (const c of turn.content) {
+				if (c.type === 'text' && typeof c.text === 'string') {
+					let t = c.text.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '');   // completed pairs
+					const close = t.match(/<\/think\s*>/i);                            // dangling closer (implicit open)
+					if (close) { t = t.slice(close.index + close[0].length); }
+					c.text = t.replace(/^\s+/, '');
+				}
 			}
 
 			// Guard: never push an empty assistant message — Anthropic 400s on content:[] (e.g. a

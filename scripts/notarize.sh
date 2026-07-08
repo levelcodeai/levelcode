@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Atom++ — Developer ID signing + Apple notarization for the packaged .app / .dmg.
+# LevelCode — Developer ID signing + Apple notarization for the packaged .app / .dmg.
 #
 # Notarization requires a paid Apple Developer Program membership and a
 # "Developer ID Application" certificate in your login keychain. It turns the scary
@@ -11,29 +11,29 @@
 #      "Developer ID Application" (or developer.apple.com > Certificates). Confirm:
 #        security find-identity -v -p codesigning        # note the exact "Developer ID Application: …" line
 #   2. Save notary credentials ONCE (a keychain profile so you never paste the password again):
-#        xcrun notarytool store-credentials "atompp-notary" \
+#        xcrun notarytool store-credentials "levelcode-notary" \
 #          --apple-id "you@example.com" --team-id "TEAMID" --password "<app-specific-password>"
 #      (App-specific password: appleid.apple.com > Sign-In & Security > App-Specific Passwords.)
 #
 # ── Usage ───────────────────────────────────────────────────────────────────────────────
 #   Normally you don't call this directly — make-dmg.sh runs it when CODESIGN_IDENTITY is set:
-#     CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE="atompp-notary" \
+#     CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE="levelcode-notary" \
 #       ./scripts/make-dmg.sh
 #
 #   Or by hand:
-#     CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" scripts/notarize.sh sign  VSCode-darwin-arm64/Atom++.app
-#     NOTARY_PROFILE="atompp-notary"                                    scripts/notarize.sh submit Atom++-arm64.dmg
+#     CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" scripts/notarize.sh sign  VSCode-darwin-arm64/LevelCode.app
+#     NOTARY_PROFILE="levelcode-notary"                                    scripts/notarize.sh submit LevelCode-arm64.dmg
 #
 # ── Config (env) ────────────────────────────────────────────────────────────────────────
 #   CODESIGN_IDENTITY   (sign)   the "Developer ID Application: …" identity string
-#   ENTITLEMENTS        (sign)   optional; defaults to scripts/atompp.entitlements
+#   ENTITLEMENTS        (sign)   optional; defaults to scripts/levelcode.entitlements
 #   NOTARY_PROFILE      (submit) notarytool keychain profile from store-credentials
 #     — or, for CI without a stored profile —
 #   APPLE_ID + TEAM_ID + APP_SPECIFIC_PASSWORD
 #
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENTITLEMENTS="${ENTITLEMENTS:-$SCRIPT_DIR/atompp.entitlements}"
+ENTITLEMENTS="${ENTITLEMENTS:-$SCRIPT_DIR/levelcode.entitlements}"
 
 die() { echo "[notarize] ERROR: $*" >&2; exit 1; }
 
@@ -96,7 +96,7 @@ submit_dmg() {
 
 cmd="${1:-}"; [ $# -gt 0 ] && shift || true
 case "$cmd" in
-  sign)   [ $# -ge 1 ] || die "usage: notarize.sh sign <Atom++.app>";  sign_app "$1" ;;
-  submit) [ $# -ge 1 ] || die "usage: notarize.sh submit <Atom++.dmg>"; submit_dmg "$1" ;;
-  *) echo "usage: $(basename "$0") {sign <Atom++.app> | submit <Atom++.dmg>}"; exit 2 ;;
+  sign)   [ $# -ge 1 ] || die "usage: notarize.sh sign <LevelCode.app>";  sign_app "$1" ;;
+  submit) [ $# -ge 1 ] || die "usage: notarize.sh submit <LevelCode.dmg>"; submit_dmg "$1" ;;
+  *) echo "usage: $(basename "$0") {sign <LevelCode.app> | submit <LevelCode.dmg>}"; exit 2 ;;
 esac

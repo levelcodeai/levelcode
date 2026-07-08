@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — strip proprietary Microsoft/GitHub packages from the Code-OSS build.
+ *  LevelCode — strip proprietary Microsoft/GitHub packages from the Code-OSS build.
  *
  *  VS Code 1.126 bundles GitHub's Copilot-CLI SDK + a Microsoft sandbox SDK as CORE deps for its
  *  new "agentHost" platform (src/vs/platform/agentHost/): @github/copilot, @github/copilot-sdk,
  *  @microsoft/mxc-sdk (~120 MB). These are NOT MIT/redistributable, so they must not ship in a
- *  public Atom++ build. They're only loaded by VS Code's built-in Copilot agent — a separate
- *  utility process that Atom++ disables and replaces with its own agent — so at runtime, in
+ *  public LevelCode build. They're only loaded by VS Code's built-in Copilot agent — a separate
+ *  utility process that LevelCode disables and replaces with its own agent — so at runtime, in
  *  normal use, these stubs are never even called.
  *
  *  We replace each package with a tiny MIT-clean stub: an index.js exporting the few symbols the
@@ -14,13 +14,13 @@
  *  path news it, calls it, or reads a property off it.
  *
  *  IMPORTANT — this runs on the BUILT APP (build-macos.sh / make-dmg.sh point it at
- *  `Atom++.app/Contents/Resources/app`), NOT the source `vscode/` checkout. The source keeps the real
+ *  `LevelCode.app/Contents/Resources/app`), NOT the source `vscode/` checkout. The source keeps the real
  *  packages so dev-mode typecheck (run-dev.sh → tsgo) still sees their type declarations; only the
- *  shipped bundle is stripped. Idempotent (a .atompp-stub sentinel), loud, and it WARNS (doesn't fail)
+ *  shipped bundle is stripped. Idempotent (a .levelcode-stub sentinel), loud, and it WARNS (doesn't fail)
  *  if a target package is absent — so an upstream change is surfaced, not hidden.
  *
  *  Usage:  node scripts/strip-proprietary.mjs <dir-containing-node_modules>
- *          (build: …/Atom++.app/Contents/Resources/app)
+ *          (build: …/LevelCode.app/Contents/Resources/app)
  *--------------------------------------------------------------------------------------------*/
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,7 +48,7 @@ const stubbed = [], skipped = [], missing = [];
 for (const [pkg, spec] of Object.entries(STUBS)) {
 	const dir = path.join(nm, pkg);
 	if (!fs.existsSync(dir)) { missing.push(pkg); continue; }
-	if (fs.existsSync(path.join(dir, '.atompp-stub'))) { skipped.push(pkg); continue; }
+	if (fs.existsSync(path.join(dir, '.levelcode-stub'))) { skipped.push(pkg); continue; }
 
 	let version = '0.0.0';
 	try { version = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version || version; } catch { /* */ }
@@ -58,13 +58,13 @@ for (const [pkg, spec] of Object.entries(STUBS)) {
 	fs.mkdirSync(dir, { recursive: true });
 
 	const js = spec.exports.length
-		? '// Atom++ MIT-clean stub (proprietary package removed — see scripts/strip-proprietary.mjs).\n' +
+		? '// LevelCode MIT-clean stub (proprietary package removed — see scripts/strip-proprietary.mjs).\n' +
 		  spec.exports.map((n) => `exports.${n} = function ${n}() {};`).join('\n') + '\n'
-		: '// Atom++ MIT-clean stub (proprietary package removed — see scripts/strip-proprietary.mjs).\nmodule.exports = {};\n';
+		: '// LevelCode MIT-clean stub (proprietary package removed — see scripts/strip-proprietary.mjs).\nmodule.exports = {};\n';
 	fs.writeFileSync(path.join(dir, 'index.js'), js);
-	fs.writeFileSync(path.join(dir, 'index.d.ts'), '// Atom++ stub types: all named imports resolve to any.\ndeclare const _: any;\nexport = _;\n');
-	fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: pkg, version, description: 'Atom++ stub — proprietary package removed (scripts/strip-proprietary.mjs)', main: 'index.js', types: 'index.d.ts', license: 'MIT' }, null, 2) + '\n');
-	fs.writeFileSync(path.join(dir, '.atompp-stub'), spec.note + '\n');
+	fs.writeFileSync(path.join(dir, 'index.d.ts'), '// LevelCode stub types: all named imports resolve to any.\ndeclare const _: any;\nexport = _;\n');
+	fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: pkg, version, description: 'LevelCode stub — proprietary package removed (scripts/strip-proprietary.mjs)', main: 'index.js', types: 'index.d.ts', license: 'MIT' }, null, 2) + '\n');
+	fs.writeFileSync(path.join(dir, '.levelcode-stub'), spec.note + '\n');
 
 	reclaimed += before;
 	stubbed.push(`${pkg}  (−${human(before)})  — ${spec.note}`);

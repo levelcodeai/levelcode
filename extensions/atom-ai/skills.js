@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI (M6.5: implicit skills — SKILL.md expertise the agent picks per task)
+ *  LevelCode — AI (M6.5: implicit skills — SKILL.md expertise the agent picks per task)
  *
  *  A dependency-free registry of bundled SKILL.md "skills" (the open agentskills.io standard:
  *  a folder per skill with YAML-style frontmatter `name` + `description`, then a markdown body).

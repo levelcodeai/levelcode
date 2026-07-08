@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Unit tests for extensions/atom-ai/importVscode.js (pure helpers) — run: node importVscode.test.js
+ *  Unit tests for extensions/levelcode-ai/importVscode.js (pure helpers) — run: node importVscode.test.js
  *  Heavy on the string-aware JSONC scanner — that's the data-safety-critical part.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
@@ -25,7 +25,7 @@ test('jsoncParse: preserves /* */ inside a string value (no silent corruption)',
 });
 test('jsoncParse: preserves // inside a string value', () => {
 	assert.deepStrictEqual(I.jsoncParse('{"comment":"use a // here"}'), { comment: 'use a // here' });
-	assert.deepStrictEqual(I.jsoncParse('{"url":"https://atompp.ai/x","n":1}'), { url: 'https://atompp.ai/x', n: 1 });
+	assert.deepStrictEqual(I.jsoncParse('{"url":"https://levelcode.ai/x","n":1}'), { url: 'https://levelcode.ai/x', n: 1 });
 	assert.deepStrictEqual(I.jsoncParse('{"u":"//cdn/x"}'), { u: '//cdn/x' });
 });
 test('jsoncParse: preserves trailing-comma-looking text inside strings', () => {
@@ -42,10 +42,10 @@ test('jsoncParse: returns null on genuinely unparseable input', () => {
 
 // --- mergeSettings ---
 test('mergeSettings: incoming (VS Code) wins, base-only keys kept', () => {
-	const merged = JSON.parse(I.mergeSettings('{ "editor.fontSize": 12, "atompp.ai.claude.model": "claude-opus-4-8" }', '{ "editor.fontSize": 15, "editor.tabSize": 2 }'));
+	const merged = JSON.parse(I.mergeSettings('{ "editor.fontSize": 12, "levelcode.ai.claude.model": "claude-opus-4-8" }', '{ "editor.fontSize": 15, "editor.tabSize": 2 }'));
 	assert.strictEqual(merged['editor.fontSize'], 15);
 	assert.strictEqual(merged['editor.tabSize'], 2);
-	assert.strictEqual(merged['atompp.ai.claude.model'], 'claude-opus-4-8');
+	assert.strictEqual(merged['levelcode.ai.claude.model'], 'claude-opus-4-8');
 });
 test('mergeSettings: empty/missing base merges incoming; output ends with newline', () => {
 	assert.deepStrictEqual(JSON.parse(I.mergeSettings(null, '{ "x": 1 }')), { x: 1 });
@@ -62,7 +62,7 @@ test('mergeSettings: unparseable incoming → null; array incoming → null', ()
 
 // --- mergeKeybindings ---
 test('mergeKeybindings: appends incoming after base (later wins)', () => {
-	const merged = JSON.parse(I.mergeKeybindings('[ { "key": "cmd+d", "command": "atompp.file.duplicate" } ]', '[ { "key": "cmd+d", "command": "editor.action.copyLinesDownAction" } ]'));
+	const merged = JSON.parse(I.mergeKeybindings('[ { "key": "cmd+d", "command": "levelcode.file.duplicate" } ]', '[ { "key": "cmd+d", "command": "editor.action.copyLinesDownAction" } ]'));
 	assert.strictEqual(merged.length, 2);
 	assert.strictEqual(merged[1].command, 'editor.action.copyLinesDownAction');
 });
@@ -74,7 +74,7 @@ test('mergeKeybindings: missing base → incoming only; non-empty unparseable ba
 
 // --- IO exports + the dest-dir derivation (the wrong-dir blocker fix) ---
 test('userDirFromContext derives <userData>/User from globalStorageUri', () => {
-	const ctx = { globalStorageUri: { fsPath: '/Users/me/Library/Application Support/code-oss-dev/User/globalStorage/atompp.atom-ai' } };
+	const ctx = { globalStorageUri: { fsPath: '/Users/me/Library/Application Support/code-oss-dev/User/globalStorage/levelcode.levelcode-ai' } };
 	assert.strictEqual(I.userDirFromContext(ctx), '/Users/me/Library/Application Support/code-oss-dev/User');
 });
 test('exports the IO entry points', () => {

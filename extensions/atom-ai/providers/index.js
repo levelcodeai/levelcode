@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — AI · provider registry + dispatch facade
+ *  LevelCode — AI · provider registry + dispatch facade
  *
  *  The "many providers, little code" core: a data table (PROVIDERS) where every OpenAI-kind row
  *  shares ONE adapter (openaiCompat.js) and differs only by baseURL + auth + capabilities. Adding
@@ -17,7 +17,7 @@ const anthropic = require('./anthropic');
 const openai = require('./openaiCompat');
 
 /**
- * The registry. `id` is the value stored in `atompp.ai.provider`. `kind` drives dispatch/translation.
+ * The registry. `id` is the value stored in `levelcode.ai.provider`. `kind` drives dispatch/translation.
  * `keyId` is the SecretStorage namespace (see secretStorageKey). `noKey` providers skip auth.
  * `models` are built-in defaults for the picker until the dynamic catalog (P4) lands.
  */
@@ -42,8 +42,9 @@ const PROVIDERS = {
 	},
 	openrouter: {
 		id: 'openrouter', kind: 'openai', label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', keyId: 'openrouter',
-		caps: { tools: true, vision: true }, headers: { 'HTTP-Referer': 'https://atompp.ai', 'X-Title': 'Atom++' },
+		caps: { tools: true, vision: true }, headers: { 'HTTP-Referer': 'https://levelcode.ai', 'X-Title': 'LevelCode' },
 		models: [
+			{ id: 'moonshotai/kimi-k2.7-code', label: 'Kimi K2.7 Code', detail: 'Moonshot · coding, 262K · via OpenRouter' },
 			{ id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', detail: 'via OpenRouter' },
 			{ id: 'openai/gpt-4o', label: 'GPT-4o', detail: 'via OpenRouter' },
 			{ id: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash', detail: 'via OpenRouter' },
@@ -127,14 +128,14 @@ function isInsecureCustomUrl(url) {
 
 /**
  * SecretStorage key for a provider. Anthropic keeps its LEGACY location so existing users don't
- * lose their key; every other provider is namespaced under atompp.ai.key.<keyId>. `noKey` → null.
+ * lose their key; every other provider is namespaced under levelcode.ai.key.<keyId>. `noKey` → null.
  * Pure — unit-tested.
  */
 function secretStorageKey(id) {
 	const p = getProvider(id);
 	if (!p || p.noKey) { return null; }
-	if (p.kind === 'anthropic') { return 'atompp.ai.anthropicKey'; }   // legacy — do not change
-	return 'atompp.ai.key.' + p.keyId;
+	if (p.kind === 'anthropic') { return 'levelcode.ai.anthropicKey'; }   // legacy — do not change
+	return 'levelcode.ai.key.' + p.keyId;
 }
 
 /**
