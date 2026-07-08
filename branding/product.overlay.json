@@ -23,7 +23,7 @@
   "urlProtocol": "levelcode",
   "quality": "stable",
 
-  "_syncComment": "LevelCode Sync (built-in Settings Sync + the `levelcode` auth provider from extensions/atom-sync) was REMOVED for now — the managed sync host isn't built and it duplicated the LevelCode Cloud sign-in. Removed at source: the atom-sync extension, this configurationSync.store block, and the Welcome 'Sync' step. Re-add when the managed sync host ships.",
+  "_syncComment": "LevelCode Sync (built-in Settings Sync + the `levelcode` auth provider from extensions/levelcode-sync) was REMOVED for now — the managed sync host isn't built and it duplicated the LevelCode Cloud sign-in. Removed at source: the levelcode-sync extension, this configurationSync.store block, and the Welcome 'Sync' step. Re-add when the managed sync host ships.",
 
   "licenseName": "MIT",
   "licenseUrl": "https://github.com/levelcode/levelcode/blob/main/LICENSE",

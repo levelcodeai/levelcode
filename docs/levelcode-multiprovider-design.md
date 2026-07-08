@@ -39,12 +39,12 @@ Everything reduces to **OpenAI Chat Completions**, **Anthropic Messages** (block
 
 ## 2. Recommended architecture for LevelCode
 
-### 2.1 Module layout — `extensions/atom-ai/providers/`
+### 2.1 Module layout — `extensions/levelcode-ai/providers/`
 
 Today everything is one flat `providers.js` with eight provider-named exports and hard-coded Anthropic assumptions in 4 places. Evolve it into a directory (keep `providers.js` as a thin re-export shim during migration so nothing breaks mid-refactor):
 
 ```
-extensions/atom-ai/providers/
+extensions/levelcode-ai/providers/
   index.js         # registry (PROVIDERS data table) + getProvider(id) + resolveProvider(id) + shared readLines()
   anthropic.js     # native Anthropic Messages adapter (streamClaude/completeClaude/streamClaudeAgentTurn moved here)
   openaiCompat.js  # THE universal adapter — /v1/chat/completions, param'd by {baseURL, apiKey, headers}

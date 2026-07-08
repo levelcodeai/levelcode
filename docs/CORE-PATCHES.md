@@ -10,7 +10,7 @@ comment in the code, so a rebase onto a newer Code-OSS tag is easy to re-apply/v
 that is *ours* lives in the tracked repo and is re-installed onto a clean clone:
 
 - **Branding** → `branding/product.overlay.json` (+ `branding/icons/`), applied by `apply-branding.mjs`.
-- **Extensions** → `extensions/atom-npp-pack/`, `extensions/atom-ai/` are the **canonical source**;
+- **Extensions** → `extensions/levelcode-npp-pack/`, `extensions/levelcode-ai/` are the **canonical source**;
   `apply-branding.mjs` copies them into `vscode/extensions/`. Edit them *here*, not in `vscode/`.
 - **Core source edits** → captured as `patches/levelcode-core.patch`; `bootstrap.sh` applies it
   (`git apply --3way`) onto the fresh checkout.

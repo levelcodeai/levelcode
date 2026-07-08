@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Unit tests for extensions/atom-updater/update.js  —  run: node update.test.js
+ *  Unit tests for extensions/levelcode-updater/update.js  —  run: node update.test.js
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';

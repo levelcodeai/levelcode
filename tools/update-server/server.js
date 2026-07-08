@@ -2,7 +2,7 @@
  *  LevelCode — reference update-feed server
  *
  *  A tiny, dependency-free implementation of the Code-OSS update-feed contract that BOTH the
- *  built-in updater and the notify-only atom-updater extension speak:
+ *  built-in updater and the notify-only levelcode-updater extension speak:
  *
  *     GET /api/update/{target}/{quality}/{commit}
  *        → 204  if {commit} is already the latest build

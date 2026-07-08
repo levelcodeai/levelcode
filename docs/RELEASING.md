@@ -88,7 +88,7 @@ from **levelcode.ai/download**.
 
 ## 5. Point the update feed at the release
 
-The notify-only updater (`extensions/atom-updater`) polls a feed from `tools/update-server`. After
+The notify-only updater (`extensions/levelcode-updater`) polls a feed from `tools/update-server`. After
 publishing, update the feed's release entry (version + the release-asset URLs above) so running installs
 see the new version. Keep the feed version in lockstep with the tag.
 

@@ -1,5 +1,5 @@
 {
-  "name": "atom-hackability",
+  "name": "levelcode-hackability",
   "displayName": "LevelCode Hackability",
   "description": "Atom-style hackability for LevelCode — a user init script that runs your own code at startup.",
   "publisher": "levelcode",

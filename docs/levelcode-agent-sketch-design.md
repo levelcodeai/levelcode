@@ -22,7 +22,7 @@ Everything below sits on the multi-provider layer already shipped:
 ## 1. The SK1 skeleton (shipped)
 
 ```
-extensions/atom-ai/
+extensions/levelcode-ai/
   sketch.js                  controller: panel, persistence, THE RUNNER (reentrancy-guarded, abortable)
   sketch/agentCatalog.js     96 agent archetypes in 13 palette groups (derived from ruflo, MIT © ruvnet — names + one-line roles only)
   sketch/templates.js        ready-made topologies — incl. the "Design a Key-Value Store" hero template   [unit-tested]

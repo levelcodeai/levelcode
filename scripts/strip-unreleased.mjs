@@ -6,7 +6,7 @@
  *  Today this hides **LevelCode Sync**: the managed cloud host isn't deployed and the store URL is a
  *  localhost dev placeholder, so a public user clicking "Set up Sync" would just fail. We remove
  *  its user-facing surfaces:
- *    1. the atom-sync extension       (its commands + the `levelcode` sync auth provider)
+ *    1. the levelcode-sync extension       (its commands + the `levelcode` sync auth provider)
  *    2. product.json configurationSync.store   (the dead localhost sync endpoint)
  *    3. the "Sync" step in the LevelCode AI Welcome walkthrough
  *  (The Customize panel's Sync section hides itself at runtime when the sync command is absent.)
@@ -25,13 +25,13 @@ if (!fs.existsSync(appDir)) {
 const done = [];
 const missing = [];
 
-// 1. Remove the atom-sync extension from the built app.
-const syncExt = path.join(appDir, "extensions", "atom-sync");
+// 1. Remove the levelcode-sync extension from the built app.
+const syncExt = path.join(appDir, "extensions", "levelcode-sync");
 if (fs.existsSync(syncExt)) {
   fs.rmSync(syncExt, { recursive: true, force: true });
-  done.push("extensions/atom-sync (commands + `levelcode` sync auth provider)");
+  done.push("extensions/levelcode-sync (commands + `levelcode` sync auth provider)");
 } else {
-  missing.push("extensions/atom-sync");
+  missing.push("extensions/levelcode-sync");
 }
 
 // 2. Drop the configurationSync.store override from product.json (the dead localhost endpoint).
@@ -59,7 +59,7 @@ try {
 }
 
 // 3. Remove the "Sync" step from the LevelCode AI Welcome walkthrough so it can't dangle a dead link.
-const aiPkgPath = path.join(appDir, "extensions", "atom-ai", "package.json");
+const aiPkgPath = path.join(appDir, "extensions", "levelcode-ai", "package.json");
 try {
   const pkg = JSON.parse(fs.readFileSync(aiPkgPath, "utf8"));
   const walkthroughs = ((pkg.contributes || {}).walkthroughs) || [];
@@ -74,12 +74,12 @@ try {
   }
   if (removed) {
     fs.writeFileSync(aiPkgPath, JSON.stringify(pkg, null, "\t") + "\n");
-    done.push(`atom-ai Welcome walkthrough: removed ${removed} Sync step`);
+    done.push(`levelcode-ai Welcome walkthrough: removed ${removed} Sync step`);
   } else {
-    missing.push("atom-ai walkthrough Sync step");
+    missing.push("levelcode-ai walkthrough Sync step");
   }
 } catch (e) {
-  missing.push("atom-ai package.json (" + ((e && e.message) || e) + ")");
+  missing.push("levelcode-ai package.json (" + ((e && e.message) || e) + ")");
 }
 
 console.log("[hide] removing not-yet-ready features from the public build (LevelCode Sync)");

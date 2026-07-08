@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Notepad++ Pack
+ *  LevelCode — Notepad++ Pack
  *  Feature: Big-file mode (M1, feature 2 — headline).
  *
  *  The editor engine already handles large files well: it streams them into a piece-tree
@@ -22,7 +22,7 @@ let statusItem;
 const notified = new Set();
 
 function cfg() {
-	return vscode.workspace.getConfiguration('atompp.bigFile');
+	return vscode.workspace.getConfiguration('levelcode.bigFile');
 }
 
 async function fileSizeBytes(uri) {
@@ -47,14 +47,14 @@ async function refresh() {
 
 	const mbLabel = mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(0)} MB`;
 	statusItem.text = '$(zap) Big-file mode';
-	statusItem.tooltip = `Atom++: large file (${mbLabel}). Syntax highlighting and other heavy features are reduced for speed — editing, scrolling and find still work.`;
+	statusItem.tooltip = `LevelCode: large file (${mbLabel}). Syntax highlighting and other heavy features are reduced for speed — editing, scrolling and find still work.`;
 	statusItem.show();
 
 	const key = ed.document.uri.toString();
 	if (cfg().get('notify', true) && !notified.has(key)) {
 		notified.add(key);
 		vscode.window.showInformationMessage(
-			`Atom++: opened ${path.basename(ed.document.uri.fsPath)} (${mbLabel}) in Big-file mode — some features reduced for performance.`
+			`LevelCode: opened ${path.basename(ed.document.uri.fsPath)} (${mbLabel}) in Big-file mode — some features reduced for performance.`
 		);
 	}
 }
@@ -69,7 +69,7 @@ function registerBigFile(context) {
 		vscode.window.onDidChangeVisibleTextEditors(() => { refresh(); }),
 		vscode.workspace.onDidOpenTextDocument(() => { refresh(); }),
 		vscode.workspace.onDidChangeConfiguration((e) => {
-			if (e.affectsConfiguration('atompp.bigFile')) { refresh(); }
+			if (e.affectsConfiguration('levelcode.bigFile')) { refresh(); }
 		})
 	);
 	refresh();

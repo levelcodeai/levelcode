@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Notepad++ Pack
+ *  LevelCode — Notepad++ Pack
  *  Feature: Duplicate file/folder from the Explorer context menu (and Cmd+D in the tree).
  *
  *  Mirrors Finder/Notepad++ "Duplicate": creates "name copy.ext" next to the original,
@@ -53,7 +53,7 @@ async function duplicate(clickedUri, selectedUris) {
 	}
 	targets = targets.filter(u => u && u.scheme === 'file');
 	if (targets.length === 0) {
-		vscode.window.showInformationMessage('Atom++: nothing to duplicate (select a file or folder in the Explorer).');
+		vscode.window.showInformationMessage('LevelCode: nothing to duplicate (select a file or folder in the Explorer).');
 		return;
 	}
 
@@ -66,7 +66,7 @@ async function duplicate(clickedUri, selectedUris) {
 			lastNew = target;
 		} catch (e) {
 			vscode.window.showErrorMessage(
-				`Atom++: could not duplicate ${path.basename(src.fsPath)}: ${e && e.message ? e.message : String(e)}`
+				`LevelCode: could not duplicate ${path.basename(src.fsPath)}: ${e && e.message ? e.message : String(e)}`
 			);
 		}
 	}
@@ -76,7 +76,7 @@ async function duplicate(clickedUri, selectedUris) {
 		try { await vscode.commands.executeCommand('revealInExplorer', lastNew); } catch { /* noop */ }
 		const label = path.basename(lastNew.fsPath);
 		vscode.window.setStatusBarMessage(
-			`$(files) Atom++: duplicated → ${label}${targets.length > 1 ? ` (+${targets.length - 1} more)` : ''}`,
+			`$(files) LevelCode: duplicated → ${label}${targets.length > 1 ? ` (+${targets.length - 1} more)` : ''}`,
 			2500
 		);
 	}
@@ -85,7 +85,7 @@ async function duplicate(clickedUri, selectedUris) {
 /** @param {vscode.ExtensionContext} context */
 function registerFileOps(context) {
 	context.subscriptions.push(
-		vscode.commands.registerCommand('atompp.file.duplicate', duplicate)
+		vscode.commands.registerCommand('levelcode.file.duplicate', duplicate)
 	);
 }
 

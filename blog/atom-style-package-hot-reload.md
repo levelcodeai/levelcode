@@ -169,5 +169,5 @@ Write, save, see it. Welcome back.
 ---
 
 *LevelCode is an AI-native, hackable, Notepad++-powered editor for macOS, built on the MIT
-Code-OSS core. The package generator and hot-reload loader live in the `atom-hackability`
+Code-OSS core. The package generator and hot-reload loader live in the `levelcode-hackability`
 extension, alongside the user init script and the Atom/Notepad++ keymap presets.*

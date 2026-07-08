@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Notepad++ Pack
+ *  LevelCode — Notepad++ Pack
  *  Feature: Macro record & replay (M1, feature 1).
  *
  *  Recording model (reliable within the extension API):
@@ -7,7 +7,7 @@
  *     recording, and forwarding to `default:type` so insertion still happens.
  *   - Cursor moves / deletions / newline / tab are captured via thin "recordable"
  *     commands that are bound to the normal keys ONLY while the
- *     `atompp.macroRecording` context is true (see keybindings in package.json),
+ *     `levelcode.macroRecording` context is true (see keybindings in package.json),
  *     so normal editing is never disturbed when not recording.
  *
  *  Replay re-dispatches the recorded steps at the current cursor. Inserts use
@@ -24,9 +24,9 @@ const { registerColumnOps } = require('./columnOps');
 const { registerEncodingEol } = require('./encodingEol');
 const { registerBigFile } = require('./bigFile');
 
-const CTX_RECORDING = 'atompp.macroRecording';
-const KEY_LAST = 'atompp.macros.last';
-const KEY_SAVED = 'atompp.macros.saved';
+const CTX_RECORDING = 'levelcode.macroRecording';
+const KEY_LAST = 'levelcode.macros.last';
+const KEY_SAVED = 'levelcode.macros.saved';
 
 /** Recordable cursor/delete commands: our command id suffix -> built-in command. */
 const RECORDABLE_COMMANDS = {
@@ -57,7 +57,7 @@ let statusItem;
 let ctx;
 
 function cfg() {
-	return vscode.workspace.getConfiguration('atompp.macros');
+	return vscode.workspace.getConfiguration('levelcode.macros');
 }
 
 function setRecordingContext(on) {
@@ -67,7 +67,7 @@ function setRecordingContext(on) {
 function updateStatus() {
 	if (recording) {
 		statusItem.text = `$(record) Recording macro (${currentSteps.length})`;
-		statusItem.tooltip = 'Atom++: recording a macro — press Cmd+Shift+R to stop';
+		statusItem.tooltip = 'LevelCode: recording a macro — press Cmd+Shift+R to stop';
 		statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
 		statusItem.show();
 	} else {
@@ -79,7 +79,7 @@ function updateStatus() {
 function pushStep(step) {
 	const max = cfg().get('maxSteps', 5000);
 	if (currentSteps.length >= max) {
-		vscode.window.showWarningMessage(`Atom++: macro hit the ${max}-step cap; recording stopped.`);
+		vscode.window.showWarningMessage(`LevelCode: macro hit the ${max}-step cap; recording stopped.`);
 		stopRecording();
 		return;
 	}
@@ -104,7 +104,7 @@ function startRecording() {
 	} catch (e) {
 		typeOverride = undefined;
 		vscode.window.showWarningMessage(
-			'Atom++: could not capture typed text (another extension owns `type`). Cursor moves and deletes will still record.'
+			'LevelCode: could not capture typed text (another extension owns `type`). Cursor moves and deletes will still record.'
 		);
 	}
 
@@ -121,9 +121,9 @@ function stopRecording() {
 
 	if (currentSteps.length > 0) {
 		ctx.globalState.update(KEY_LAST, currentSteps);
-		vscode.window.setStatusBarMessage(`$(check) Atom++: macro recorded (${currentSteps.length} steps)`, 2500);
+		vscode.window.setStatusBarMessage(`$(check) LevelCode: macro recorded (${currentSteps.length} steps)`, 2500);
 	} else {
-		vscode.window.setStatusBarMessage('Atom++: empty macro (nothing recorded)', 2000);
+		vscode.window.setStatusBarMessage('LevelCode: empty macro (nothing recorded)', 2000);
 	}
 }
 
@@ -142,12 +142,12 @@ async function applyInsert(editor, text) {
 /** @param {Step[]} steps @param {number} times */
 async function replay(steps, times) {
 	if (!steps || steps.length === 0) {
-		vscode.window.showInformationMessage('Atom++: no macro to play. Record one with Cmd+Shift+R.');
+		vscode.window.showInformationMessage('LevelCode: no macro to play. Record one with Cmd+Shift+R.');
 		return;
 	}
 	const editor = vscode.window.activeTextEditor;
 	if (!editor) {
-		vscode.window.showWarningMessage('Atom++: open a text editor to play a macro.');
+		vscode.window.showWarningMessage('LevelCode: open a text editor to play a macro.');
 		return;
 	}
 	if (recording) { stopRecording(); }
@@ -165,7 +165,7 @@ async function replay(steps, times) {
 			}
 		}
 	} catch (e) {
-		vscode.window.showErrorMessage('Atom++: macro playback failed: ' + (e && e.message ? e.message : String(e)));
+		vscode.window.showErrorMessage('LevelCode: macro playback failed: ' + (e && e.message ? e.message : String(e)));
 	} finally {
 		replaying = false;
 	}
@@ -185,7 +185,7 @@ async function playLast() {
 
 async function playNTimes() {
 	const last = getLast();
-	if (!last) { vscode.window.showInformationMessage('Atom++: no macro recorded yet.'); return; }
+	if (!last) { vscode.window.showInformationMessage('LevelCode: no macro recorded yet.'); return; }
 	const maxN = cfg().get('maxReplayCount', 100000);
 	const input = await vscode.window.showInputBox({
 		prompt: 'Play the last macro how many times?',
@@ -203,19 +203,19 @@ async function playNTimes() {
 
 async function saveLast() {
 	const last = getLast();
-	if (!last) { vscode.window.showInformationMessage('Atom++: no macro to save yet.'); return; }
+	if (!last) { vscode.window.showInformationMessage('LevelCode: no macro to save yet.'); return; }
 	const name = await vscode.window.showInputBox({ prompt: 'Name this macro', placeHolder: 'e.g. comment-line' });
 	if (!name) { return; }
 	const saved = getSaved();
 	saved[name] = last;
 	await ctx.globalState.update(KEY_SAVED, saved);
-	vscode.window.setStatusBarMessage(`$(save) Atom++: saved macro “${name}”`, 2500);
+	vscode.window.setStatusBarMessage(`$(save) LevelCode: saved macro “${name}”`, 2500);
 }
 
 async function runSaved() {
 	const saved = getSaved();
 	const names = Object.keys(saved);
-	if (names.length === 0) { vscode.window.showInformationMessage('Atom++: no saved macros yet.'); return; }
+	if (names.length === 0) { vscode.window.showInformationMessage('LevelCode: no saved macros yet.'); return; }
 	const pick = await vscode.window.showQuickPick(names, { placeHolder: 'Run which saved macro?' });
 	if (!pick) { return; }
 	await ctx.globalState.update(KEY_LAST, saved[pick]); // make it the "last" too
@@ -225,12 +225,12 @@ async function runSaved() {
 async function deleteSaved() {
 	const saved = getSaved();
 	const names = Object.keys(saved);
-	if (names.length === 0) { vscode.window.showInformationMessage('Atom++: no saved macros to delete.'); return; }
+	if (names.length === 0) { vscode.window.showInformationMessage('LevelCode: no saved macros to delete.'); return; }
 	const pick = await vscode.window.showQuickPick(names, { placeHolder: 'Delete which saved macro?' });
 	if (!pick) { return; }
 	delete saved[pick];
 	await ctx.globalState.update(KEY_SAVED, saved);
-	vscode.window.setStatusBarMessage(`Atom++: deleted macro “${pick}”`, 2000);
+	vscode.window.setStatusBarMessage(`LevelCode: deleted macro “${pick}”`, 2000);
 }
 
 function activate(context) {
@@ -240,16 +240,16 @@ function activate(context) {
 
 	const reg = (id, fn) => context.subscriptions.push(vscode.commands.registerCommand(id, fn));
 
-	reg('atompp.macro.toggleRecording', toggleRecording);
-	reg('atompp.macro.play', playLast);
-	reg('atompp.macro.playNTimes', playNTimes);
-	reg('atompp.macro.saveLast', saveLast);
-	reg('atompp.macro.runSaved', runSaved);
-	reg('atompp.macro.deleteSaved', deleteSaved);
+	reg('levelcode.macro.toggleRecording', toggleRecording);
+	reg('levelcode.macro.play', playLast);
+	reg('levelcode.macro.playNTimes', playNTimes);
+	reg('levelcode.macro.saveLast', saveLast);
+	reg('levelcode.macro.runSaved', runSaved);
+	reg('levelcode.macro.deleteSaved', deleteSaved);
 
 	// Recordable cursor/delete wrappers: record (if recording) then run the built-in.
 	for (const [suffix, builtin] of Object.entries(RECORDABLE_COMMANDS)) {
-		reg('atompp.macro.rec.' + suffix, async () => {
+		reg('levelcode.macro.rec.' + suffix, async () => {
 			if (recording) { pushStep({ k: 'cmd', id: builtin }); }
 			await vscode.commands.executeCommand(builtin);
 		});
@@ -257,11 +257,11 @@ function activate(context) {
 
 	// Newline / tab while recording: record an insert and perform it via default:type
 	// (bypasses our `type` override so it isn't double-recorded).
-	reg('atompp.macro.rec.insertNewline', async () => {
+	reg('levelcode.macro.rec.insertNewline', async () => {
 		if (recording) { pushStep({ k: 'insert', text: '\n' }); }
 		await vscode.commands.executeCommand('default:type', { text: '\n' });
 	});
-	reg('atompp.macro.rec.insertTab', async () => {
+	reg('levelcode.macro.rec.insertTab', async () => {
 		if (recording) { pushStep({ k: 'insert', text: '\t' }); }
 		await vscode.commands.executeCommand('default:type', { text: '\t' });
 	});

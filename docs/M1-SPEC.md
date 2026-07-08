@@ -4,11 +4,11 @@ Goal of M1: make LevelCode feel like Notepad++ for the editing muscle-memory Ser
 
 ## Design principle: isolate, don't scatter
 
-Everything that **can** live in a first-party bundled extension **does** — shipped enabled by default as the "Notepad++ Pack" (`extensions/atom-npp-pack/`). This keeps our code out of upstream core files so rebasing onto new Code-OSS stays cheap (PLAN.md §8). We only touch core where the extension API genuinely can't reach: large-file rendering and the encoding/EOL status-bar affordances. Those core touches are kept in clearly marked, self-contained modules.
+Everything that **can** live in a first-party bundled extension **does** — shipped enabled by default as the "Notepad++ Pack" (`extensions/levelcode-npp-pack/`). This keeps our code out of upstream core files so rebasing onto new Code-OSS stays cheap (PLAN.md §8). We only touch core where the extension API genuinely can't reach: large-file rendering and the encoding/EOL status-bar affordances. Those core touches are kept in clearly marked, self-contained modules.
 
 Two buckets:
 
-- **Bucket A — bundled extension** (`atom-npp-pack`): macros, line operations, column-mode extras, NPP keymap. No core edits.
+- **Bucket A — bundled extension** (`levelcode-npp-pack`): macros, line operations, column-mode extras, NPP keymap. No core edits.
 - **Bucket B — core touches** (small, isolated): big-file mode, always-visible encoding/EOL status bar items. Each guarded behind an `_atomPlusPlus` product.json flag so it's easy to diff and toggle.
 
 ---
@@ -73,7 +73,7 @@ Ship a selectable **"Notepad++"** keymap (alongside an "Atom" keymap from M3) so
 
 ## Build order & milestone gates
 
-1. **Scaffold `atom-npp-pack`** bundled extension + "Notepad++ Pack" settings namespace (`levelcode.*`). Wire it into the build's built-in extensions list.
+1. **Scaffold `levelcode-npp-pack`** bundled extension + "Notepad++ Pack" settings namespace (`levelcode.*`). Wire it into the build's built-in extensions list.
 2. **Macros** (headline) → demo + exit test.
 3. **Line ops + column extras** (fast wins, pure extension) → exit tests.
 4. **Encoding/EOL status bar** (Bucket B, small core touch) → exit test.
