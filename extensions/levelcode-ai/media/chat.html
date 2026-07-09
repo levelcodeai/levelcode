@@ -111,6 +111,17 @@
   .msg.user .body { background: var(--field-bg); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
   .msg.assistant .body { padding: 1px 2px; }
   .err { color: var(--vscode-errorForeground); }
+  /* free-tier cap reached → a compelling upgrade CTA instead of raw 402 error text */
+  .upgradecard { border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 12px; margin: 8px 2px; padding: 13px 15px 14px; background: color-mix(in srgb, var(--accent) 9%, var(--field-bg)); }
+  .upgradecard .uchead { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .upgradecard .uchead .ci { width: 15px; height: 15px; color: var(--accent); }
+  .upgradecard .ucbody { font-size: 12.5px; line-height: 1.55; opacity: .92; margin-bottom: 12px; }
+  .upgradecard .ucbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .upgradecard .ucbtn { cursor: pointer; border: none; border-radius: 7px; padding: 7px 16px; font-size: 12px; font-weight: 500; }
+  .upgradecard .ucbtn.primary { background: var(--accent); color: var(--vscode-button-foreground, #fff); }
+  .upgradecard .ucbtn.primary:hover { filter: brightness(1.1); }
+  .upgradecard .ucbtn.ghost { background: transparent; border: 1px solid var(--border); color: var(--vscode-foreground); }
+  .upgradecard .ucbtn.ghost:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.14)); }
   pre { background: var(--vscode-editor-background, #282c34); border: 1px solid var(--border); padding: 9px 11px; border-radius: 8px; overflow-x: auto; margin: 8px 0; min-height: 1.3em; color: var(--vscode-editor-foreground, var(--vscode-foreground)); }
   pre code { background: none; padding: 0; }
   code { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: .92em; }
@@ -230,7 +241,14 @@
 
   /* ---- ask_user: clickable clarifying questions ---- */
   .questions { border: 1px solid var(--border); border-radius: 10px; margin: 6px 2px; padding: 10px 11px 11px; background: var(--field-bg); }
-  .questions .qhead { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  .questions .qhead { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 8px; cursor: pointer; user-select: none; }
+  .questions .qhead .qtitle { flex: 1 1 auto; min-width: 0; }
+  .questions .qtoggle { flex: 0 0 auto; display: inline-flex; align-items: center; padding: 1px; border-radius: 4px; opacity: .7; }
+  .questions .qhead:hover .qtoggle { opacity: 1; }
+  .questions .qtoggle .ci { transition: transform .15s ease; }
+  .questions.collapsed .qtoggle .ci { transform: rotate(-90deg); }
+  .questions.collapsed .qhead { margin-bottom: 0; }
+  .questions.collapsed .qblock, .questions.collapsed .qnotes, .questions.collapsed .qbtns { display: none; }
   .questions .qblock { margin: 8px 0 10px; }
   .questions .qtag { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; margin-bottom: 3px; }
   .questions .qtext { font-size: 12.5px; margin-bottom: 6px; }
@@ -345,17 +363,32 @@
     background: var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e));
     border-top: 1px solid var(--border); box-shadow: 0 -8px 14px -8px rgba(0,0,0,.4); }
   #planBar .plancard { margin: 0; }
-  .plancard { border: 1px solid var(--border); border-radius: 10px; margin: 6px 2px; overflow: hidden; background: var(--field-bg); }
-  .plancard .phead { padding: 7px 11px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--border); }
-  .plancard .pcount { float: right; opacity: .65; font-weight: 400; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
-  .plancard .pitems { padding: 4px 0 6px; }
-  .plancard .pitem { display: flex; gap: 8px; align-items: baseline; padding: 3px 11px; font-size: 12px; line-height: 1.4; }
-  .plancard .pitem .pic { width: 13px; flex: 0 0 auto; text-align: center; }
-  .plancard .pitem.done .ptitle { opacity: .55; text-decoration: line-through; }
+  .plancard { border: 1px solid var(--border); border-radius: 12px; margin: 6px 2px; overflow: hidden; background: var(--field-bg); }
+  .plancard .phead { display: flex; align-items: center; gap: 8px; padding: 9px 12px 8px; font-size: 12px; font-weight: 600; letter-spacing: .01em; cursor: pointer; user-select: none; }
+  .plancard .ptoggle { flex: 0 0 auto; display: inline-flex; color: var(--muted); opacity: .65; transition: transform .18s cubic-bezier(.4,0,.2,1); }
+  .plancard .ptoggle .ci { width: 13px; height: 13px; }
+  .plancard .phead:hover .ptoggle { opacity: 1; }
+  .plancard.collapsed .ptoggle { transform: rotate(-90deg); }
+  .plancard .phtitle { flex: 1 1 auto; min-width: 0; }
+  .plancard .pcount { flex: 0 0 auto; opacity: .75; font-weight: 500; font-variant-numeric: tabular-nums; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; padding: 1px 8px; border-radius: 999px; background: rgba(127,127,127,.14); }
+  .plancard.alldone .pcount { opacity: 1; color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground, #4ec97a) 16%, transparent); }
+  .plancard .pprog { height: 3px; margin: 0 12px 2px; border-radius: 3px; background: rgba(127,127,127,.16); overflow: hidden; }
+  .plancard .pprog .pfill { height: 100%; border-radius: 3px; background: var(--accent); transition: width .4s cubic-bezier(.4,0,.2,1); }
+  .plancard.alldone .pprog .pfill { background: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
+  .plancard .pitems { padding: 6px 0 7px; }
+  .plancard.collapsed .pprog, .plancard.collapsed .pitems { display: none; }
+  .plancard .pitem { display: flex; gap: 9px; align-items: center; padding: 4px 12px; font-size: 12.5px; line-height: 1.45; position: relative; }
+  .plancard .pitem .pic { flex: 0 0 auto; width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; }
+  .plancard .pitem .pic .ci { width: 13px; height: 13px; }
   .plancard .pitem.done .pic { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
-  .plancard .pitem.doing .pic { color: var(--accent); animation: agentpulse 1.3s ease-in-out infinite; }
+  .plancard .pitem.done .ptitle { opacity: .5; text-decoration: line-through; text-decoration-thickness: 1px; }
+  .plancard .pitem.doing { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+  .plancard .pitem.doing::before { content: ''; position: absolute; left: 0; top: 3px; bottom: 3px; width: 2px; border-radius: 2px; background: var(--accent); }
+  .plancard .pitem.doing .pic { color: var(--accent); }
+  .plancard .pitem.doing .pic .ci { animation: spin .9s linear infinite; }
   .plancard .pitem.doing .ptitle { font-weight: 600; }
-  .plancard .pitem.todo .pic { opacity: .4; }
+  .plancard .pitem.todo .pic { color: var(--muted); opacity: .5; }
+  .plancard .pitem.todo .ptitle { opacity: .82; }
   @keyframes agentpulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
   .diff { overflow: auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; line-height: 1.5; padding: 4px 0; }
   .diff .dl { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 10px 0 22px; text-indent: -16px; }
@@ -855,6 +888,8 @@
     'sparkle': { vb: '0 0 16 16', p: '<path d="M8 1 L9 7 L15 8 L9 9 L8 15 L7 9 L1 8 L7 7 Z"/>' },
     'trash': { vb: '0 0 16 16', p: '<path d="M10 3h3v1h-1v9l-1 1H4l-1-1V4H2V3h3V2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zM9 2H6v1h3V2zM4 13h7V4H4v9zm2-8H5v7h1V5zm1 0h1v7H7V5zm2 0h1v7H9V5z"/>' },
     'sync': { vb: '0 0 16 16', p: '<path d="M2.006 8.267 0.78 9.5 0 8.73l2.09-2.07.76.01 2.09 2.12-.76.76-1.167-1.18a5 5 0 0 0 9.4 1.983l.813.597A6 6 0 0 1 2.006 8.267Zm11.99-.518L15.22 6.51 16 7.29l-2.09 2.07-.76-.01-2.09-2.12.76-.76 1.167 1.18a5 5 0 0 0-9.4-1.983l-.813-.597A6 6 0 0 1 13.996 7.75Z"/>' },
+    'chevron-down': { vb: '0 0 16 16', p: '<path d="M3.22 5.97a.75.75 0 0 1 1.06 0L8 9.69l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L3.22 7.03a.75.75 0 0 1 0-1.06z"/>' },
+    'circle': { vb: '0 0 16 16', p: '<path fill-rule="evenodd" clip-rule="evenodd" d="M8 1C11.86 1 15 4.14 15 8C15 11.86 11.86 15 8 15C4.14 15 1 11.86 1 8C1 4.14 4.14 1 8 1ZM8 2C4.691 2 2 4.691 2 8C2 11.309 4.691 14 8 14C11.309 14 14 11.309 14 8C14 4.691 11.309 2 8 2Z"/>' },
   };
   function codicon(name, cls){ const i = IC[name]; if (!i) { return esc(name || ''); } return '<svg class="ci' + (cls ? ' ' + cls : '') + '" viewBox="' + i.vb + '" fill="currentColor" aria-hidden="true">' + i.p + '</svg>'; }
 
@@ -1284,12 +1319,37 @@
   }
 
   // Blocking clarifying questions (ask_user) — clickable numbered options the agent waits on.
+  // A free-tier cap hit arrives as an error string like `<provider> API 402: {"error":{"code":"cap_reached",…}}`.
+  // Parse the payload so we can show an upgrade CTA instead of dumping raw red JSON.
+  function capReachedInfo(message){
+    const s = String(message || '');
+    if (!/cap_reached/.test(s)) { return null; }
+    const i = s.indexOf('{'); if (i < 0) { return null; }
+    try {
+      const err = (JSON.parse(s.slice(i)) || {}).error || {};
+      return err.code === 'cap_reached' ? { message: err.message || '', upgrade: !!err.upgrade_url } : null;
+    } catch (_) { return null; }
+  }
+  // Compelling cap-reached card (reuses the existing accountUpgrade action → opens /ai/pricing). Free
+  // tier → sell Pro; a paid user who hit their own cap → point at plan management, not "Upgrade to Pro".
+  function addUpgradeCard(info){
+    clearStatus(); finishAgentBubble();
+    const up = info.upgrade;
+    const card = document.createElement('div'); card.className = 'upgradecard';
+    card.innerHTML =
+      '<div class="uchead">' + codicon('sparkle') + '<span>' + (up ? 'Keep building with Pro' : 'You’ve hit your usage limit') + '</span></div>'
+      + '<div class="ucbody">' + esc(info.message || 'Upgrade to keep building without interruptions.') + '</div>'
+      + '<div class="ucbtns"><button class="ucbtn primary" data-act="upgrade">' + (up ? 'Upgrade to Pro' : 'Manage plan') + '</button></div>';
+    log.appendChild(card); scrollIfStuck();
+    card.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => vscode.postMessage({ type: 'accountUpgrade' }); });
+  }
   function addQuestions(m){
     clearEmpty(); clearStatus(); agentBubble = null;
     const qs = m.questions || [];
     const state = qs.map((q) => ({ multi: !!q.multiSelect, sel: new Set() }));
     const card = document.createElement('div'); card.className = 'questions';
-    let h = '<div class="qhead">' + codicon('question') + ' A few quick decisions — click to choose</div>';
+    let h = '<div class="qhead"><span class="qtoggle" title="Collapse / expand">' + codicon('chevron-down') + '</span>'
+          + '<span class="qtitle">' + codicon('question') + ' A few quick decisions — click to choose</span></div>';
     qs.forEach((q, qi) => {
       h += '<div class="qblock">';
       if (q.header){ h += '<div class="qtag">' + esc(q.header) + (q.multiSelect ? ' · pick any' : '') + '</div>'; }
@@ -1307,6 +1367,10 @@
     h += '<div class="qbtns"><button class="qsend">Send answers</button></div>';
     card.innerHTML = h;
     log.appendChild(card); scrollIfStuck();
+
+    // Collapse/expand the whole panel by clicking its header (chevron rotates).
+    const qhead = card.querySelector('.qhead');
+    if (qhead) { qhead.onclick = () => card.classList.toggle('collapsed'); }
 
     card.querySelectorAll('.qopt').forEach((btn) => {
       btn.onclick = () => {
@@ -1510,16 +1574,24 @@
     renderBgTasks();
   }
   const planBar = document.getElementById('planBar');
+  let planCollapsed = false;   // persists across the agent's repeated update_plan re-renders
   function renderPlan(todos){
     if (!todos || !todos.length){ planBar.style.display = 'none'; planBar.innerHTML = ''; return; }
     const total = todos.length, done = todos.filter(t => t && t.status === 'done').length;
-    let h = '<div class="phead">Plan <span class="pcount">' + done + '/' + total + '</span></div><div class="pitems">';
+    const pct = Math.round(done / total * 100), allDone = done === total;
+    let items = '';
     for (const t of todos){
       const st = t.status === 'done' ? 'done' : t.status === 'in_progress' ? 'doing' : 'todo';
-      const ic = st === 'done' ? '✓' : st === 'doing' ? '◉' : '○';
-      h += '<div class="pitem ' + st + '"><span class="pic">' + ic + '</span><span class="ptitle">' + esc(t.title) + '</span></div>';
+      const ic = st === 'done' ? codicon('check') : st === 'doing' ? codicon('sync') : codicon('circle');
+      items += '<div class="pitem ' + st + '"><span class="pic">' + ic + '</span><span class="ptitle">' + esc(t.title) + '</span></div>';
     }
-    planBar.innerHTML = '<div class="plancard">' + h + '</div></div>';
+    const head = '<div class="phead"><span class="ptoggle">' + codicon('chevron-down') + '</span>'
+               + '<span class="phtitle">Plan</span><span class="pcount">' + done + '/' + total + '</span></div>'
+               + '<div class="pprog"><div class="pfill" style="width:' + pct + '%"></div></div>';
+    planBar.innerHTML = '<div class="plancard' + (allDone ? ' alldone' : '') + (planCollapsed ? ' collapsed' : '') + '">'
+                      + head + '<div class="pitems">' + items + '</div></div>';
+    const phead = planBar.querySelector('.phead');
+    if (phead){ phead.onclick = () => { planCollapsed = !planCollapsed; const c = planBar.querySelector('.plancard'); if (c){ c.classList.toggle('collapsed', planCollapsed); } }; }
     planBar.style.display = 'block';
     scrollIfStuck();   // log shrank as the sticky plan appeared — keep pinned if we were at bottom
   }
@@ -1904,9 +1976,14 @@
     else if (m.type === 'assistantDone'){ doneSignaled = true; ensurePump(); }
     else if (m.type === 'assistantError'){
       pending = ''; flushAll = false; doneSignaled = false;
-      const html = '<span class="err">' + esc(m.message) + '</span>';
-      if (current){ streamSetHtml(current, html); } else { add('assistant', html); }
-      current = null; setStreaming(false);
+      const cap = capReachedInfo(m.message);
+      if (cap){ current = null; addUpgradeCard(cap); }
+      else {
+        const html = '<span class="err">' + esc(m.message) + '</span>';
+        if (current){ streamSetHtml(current, html); } else { add('assistant', html); }
+        current = null;
+      }
+      setStreaming(false);
     }
     else if (m.type === 'activeFile'){ activeFileLabel = m.label; renderChips(); }
     else if (m.type === 'contextFiles'){ ctxFiles = m.files || []; renderChips(); }
@@ -1939,7 +2016,7 @@
     else if (m.type === 'debug'){ addDebug(m); }
     else if (m.type === 'account'){ renderAccount(m); if (m.open) openAccount(); }
     else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
-    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); add('assistant', '<span class="err">' + esc(m.message) + '</span>'); }
+    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); const cap = capReachedInfo(m.message); if (cap){ addUpgradeCard(cap); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
     else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps); setStreaming(false); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
