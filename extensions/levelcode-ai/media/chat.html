@@ -239,6 +239,93 @@
   .verifyrun .tbartitle { color: var(--vscode-terminal-ansiCyan, var(--accent)); display: inline-flex; align-items: center; gap: 5px; }
   .verifyrun .tbartitle .ci { width: 1em; height: 1em; }
 
+  /* ── Agent activity timeline — tool + command actions thread one rail (GitHub-commit style) ──
+     Scope: only the tool/command nodes are threaded; free reasoning bubbles break the rail (intended). */
+  .tl { display: flex; gap: 11px; margin: 0 4px; position: relative; }
+  .tl-rail { flex: 0 0 22px; position: relative; }
+  .tl-rail::before { content: ''; position: absolute; left: 11px; top: 0; bottom: 0; width: 2px; transform: translateX(-1px); background: var(--border); }
+  .tl-node { position: absolute; left: 0; top: 3px; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    background: var(--vscode-editor-background, var(--field-bg)); border: 1.5px solid var(--border); color: var(--muted); z-index: 1; }
+  .tl-node .ci { width: 12px; height: 12px; }
+  .tl-body { flex: 1 1 auto; min-width: 0; padding: 3px 0 8px; }
+  /* light tool action (read / edit / search …) — a one-liner node */
+  .tl-tool .tl-body { padding: 4px 0 6px; }
+  .tl-tool .toolt { display: block; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; color: var(--muted); line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* heavier command action — collapsible boxed card: header (chevron · verb · chips · state)
+     → highlighted command → streamed output → status foot → italic why */
+  .tl-cmd .tl-node { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--vscode-editor-background, var(--field-bg))); }
+  .tl-cmd.running .tl-node { animation: nodepulse 2s ease-out infinite; }
+  @keyframes nodepulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
+  .tl-cmd .cmdhead { display: flex; align-items: center; gap: 7px; min-width: 0; cursor: pointer; user-select: none; padding: 2px 0; }
+  .tl-cmd .cmdchev { flex: 0 0 auto; display: inline-flex; color: var(--muted); }
+  .tl-cmd .cmdchev .ci { width: 11px; height: 11px; transition: transform .15s ease; }
+  .tl-cmd.collapsed .cmdchev .ci { transform: rotate(-90deg); }
+  .tl-cmd .cmdverb { flex: 0 0 auto; font-size: 12.5px; color: var(--vscode-foreground); }
+  .tl-cmd .cmdhead:hover .cmdverb { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--muted); }
+  .tl-cmd .cmdchips { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 5px; overflow: hidden; }
+  .tl-cmd .cmdchips code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; line-height: 18px;
+    padding: 0 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--field-bg); color: var(--muted); }
+  .tl-cmd .cmdchips code.more { flex: 0 0 auto; opacity: .75; }
+  .tl-cmd .cmdstate { flex: 0 0 auto; display: inline-flex; color: var(--muted); }
+  .tl-cmd .cmdstate .ci { width: 12px; height: 12px; }
+  .tl-cmd .cmdstate.ok { color: var(--vscode-terminal-ansiBrightGreen, #4ec97a); }
+  .tl-cmd .cmdstate.bad { color: var(--vscode-errorForeground, #f14c4c); }
+  /* Copilot-style falling-dots progress — a 2×3 dot grid cascading downward while a command runs */
+  .lcdots { display: inline-grid; grid-template-columns: repeat(2, 3px); gap: 2px; color: var(--accent); align-self: center; }
+  .lcdots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: lcdotfall 1.1s ease-in-out infinite; }
+  .lcdots i:nth-child(2) { animation-delay: .09s; }
+  .lcdots i:nth-child(3) { animation-delay: .18s; }
+  .lcdots i:nth-child(4) { animation-delay: .27s; }
+  .lcdots i:nth-child(5) { animation-delay: .36s; }
+  .lcdots i:nth-child(6) { animation-delay: .45s; }
+  @keyframes lcdotfall { 0% { opacity: .15; transform: translateY(-1.5px); } 25%, 55% { opacity: 1; transform: translateY(0); } 85%, 100% { opacity: .15; transform: translateY(1.5px); } }
+  @media (prefers-reduced-motion: reduce) { .lcdots i { animation: none; opacity: .7; } }
+  .tl-cmd .cmdbox { margin-top: 7px; border: 1px solid var(--border); border-radius: 8px; background: var(--field-bg); overflow: hidden; }
+  .tl-cmd.collapsed .cmdbox, .tl-cmd.collapsed .cmdwhy { display: none; }
+  .tl-cmd .cmdsrc { padding: 9px 12px; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 12px; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word; color: var(--vscode-terminal-foreground, var(--vscode-foreground)); }
+  /* shell syntax tints — VS Code terminal ANSI theme colors, so they follow light/dark */
+  .tl-cmd .sh-c { color: var(--vscode-terminal-ansiBrightBlue, var(--vscode-terminal-ansiBlue, #4fc1ff)); font-weight: 600; }
+  .tl-cmd .sh-f { color: var(--vscode-terminal-ansiBrightCyan, var(--vscode-terminal-ansiCyan, #56b6c2)); }
+  .tl-cmd .sh-s { color: var(--vscode-terminal-ansiYellow, #ce9178); }
+  .tl-cmd .sh-o { color: var(--vscode-terminal-ansiBrightRed, var(--vscode-terminal-ansiRed, #d16969)); }
+  .tl-cmd .sh-v { color: var(--vscode-terminal-ansiBrightGreen, var(--vscode-terminal-ansiGreen, #4ec9b0)); }
+  .tl-cmd .sh-k { color: var(--vscode-terminal-ansiBrightBlack, var(--muted)); font-style: italic; }
+  .tl-cmd .termout { margin: 0; padding: 8px 12px; border: none; border-top: 1px solid var(--border); border-radius: 0;
+    background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 55%, var(--field-bg));
+    max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 12px; line-height: 1.5; color: var(--vscode-terminal-foreground, var(--vscode-foreground)); }
+  .tl-cmd .termout:empty { display: none; }
+  .tl-cmd .termerr { color: var(--vscode-terminal-ansiRed, var(--vscode-errorForeground, #f14c4c)); }
+  .tl-cmd .cmdfoot { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--border); }
+  .tl-cmd .termstatus { flex: 1 1 auto; font-size: 11.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .tl-cmd .termstatus.ok { color: var(--vscode-terminal-ansiBrightGreen, #4ec97a); }
+  .tl-cmd .termstatus.bad { color: var(--vscode-errorForeground, #f14c4c); }
+  .tl-cmd .termstatus .ci { width: 1em; height: 1em; }
+  .tl-cmd .cmdmeta { flex: 0 0 auto; font-size: 10.5px; color: var(--muted); letter-spacing: .03em; opacity: .75; }
+  .tl-cmd .termstop { flex: 0 0 auto; cursor: pointer; border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px; background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.22)); color: var(--vscode-foreground); }
+  .tl-cmd .termstop:hover { background: var(--vscode-errorForeground, #f14c4c); color: #fff; border-color: transparent; }
+  .tl-cmd .termstop[disabled] { opacity: .6; cursor: default; }
+  .tl-cmd .termstop .ci { width: 1em; height: 1em; }
+  .tl-cmd .cmdwhy { margin-top: 8px; font-size: 11.5px; font-style: italic; color: var(--muted); white-space: pre-wrap; word-break: break-word; padding-left: 9px; border-left: 2px solid var(--border); }
+  /* command-approval ask card (Cursor/Claude style) — same skeleton as .tl-cmd, question header,
+     Run/Skip in the foot; collapses to a one-line verdict once decided */
+  .tl-ask .cmdhead { cursor: default; }
+  .tl-ask .cmdhead:hover .cmdverb { text-decoration: none; }
+  .tl-ask .cmdhead .cmdverb { font-weight: 600; }
+  .tl-ask .cmdhead.ask .cmdverb { flex: 1 1 auto; }
+  .tl-ask.asking .tl-node { animation: nodepulse 2s ease-out infinite; }
+  .tl-ask .asknote { flex: 1 1 auto; min-width: 0; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tl-ask .cmdfoot button { cursor: pointer; border: none; border-radius: 6px; padding: 4px 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .tl-ask .cmdfoot .approve { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .tl-ask .cmdfoot .approve:hover { background: var(--vscode-button-hoverBackground); }
+  .tl-ask .cmdfoot .skip { background: var(--vscode-button-secondaryBackground, rgba(127,127,127,.25)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+  .tl-ask .cmdfoot kbd { font-family: inherit; font-size: 9.5px; opacity: .75; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 3px; padding: 0 4px; line-height: 14px; }
+  .tl-ask.skipped .tl-node { color: var(--muted); border-color: var(--border); background: var(--vscode-editor-background, var(--field-bg)); }
+  .tl-ask.skipped .cmdstate.bad { color: var(--muted); }   /* skipped is a choice, not a failure — keep it neutral */
+  @media (prefers-reduced-motion: reduce) { .tl-cmd.running .tl-node, .tl-ask.asking .tl-node { animation: none; } }
+
   /* ---- ask_user: clickable clarifying questions ---- */
   .questions { border: 1px solid var(--border); border-radius: 10px; margin: 6px 2px; padding: 10px 11px 11px; background: var(--field-bg); }
   .questions .qhead { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 8px; cursor: pointer; user-select: none; }
@@ -892,6 +979,8 @@
     'circle': { vb: '0 0 16 16', p: '<path fill-rule="evenodd" clip-rule="evenodd" d="M8 1C11.86 1 15 4.14 15 8C15 11.86 11.86 15 8 15C4.14 15 1 11.86 1 8C1 4.14 4.14 1 8 1ZM8 2C4.691 2 2 4.691 2 8C2 11.309 4.691 14 8 14C11.309 14 14 11.309 14 8C14 4.691 11.309 2 8 2Z"/>' },
   };
   function codicon(name, cls){ const i = IC[name]; if (!i) { return esc(name || ''); } return '<svg class="ci' + (cls ? ' ' + cls : '') + '" viewBox="' + i.vb + '" fill="currentColor" aria-hidden="true">' + i.p + '</svg>'; }
+  // Falling-dots progress (Copilot-style) shown while a command runs; styled by .lcdots CSS.
+  const LC_DOTS = '<span class="lcdots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>';
 
   // "name.ext · 12 lines" -> badge from extension (JS, TS, PY…), capped at 3 chars.
   function badgeFor(label){
@@ -1177,10 +1266,12 @@
     log.appendChild(d); scrollIfStuck();
   }
   function clearStatus(){ if (agentStatusEl){ agentStatusEl.remove(); agentStatusEl = null; } }
+  // A tool action (read / edit / search …) — rendered as a light node on the activity timeline rail.
   function addAgentLine(icon, text){
     clearEmpty(); clearStatus();
-    const d = document.createElement('div'); d.className = 'agentline';
-    d.innerHTML = '<span class="ic">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span><span class="t">' + esc(text || '') + '</span>';
+    const d = document.createElement('div'); d.className = 'tl tl-tool';
+    d.innerHTML = '<div class="tl-rail"><span class="tl-node">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span></div>'
+      + '<div class="tl-body"><span class="toolt">' + esc(text || '') + '</span></div>';
     log.appendChild(d); scrollIfStuck();
   }
   function setAgentStatus(text){
@@ -1205,49 +1296,115 @@
     return h + '</div>';
   }
   // Blocking approval — run_command ONLY (file edits no longer gate; they apply-then-review).
+  // Quiet Cursor/Claude-style ask card on the activity timeline: question header →
+  // highlighted command → foot (note · Skip esc · Run ⏎). On decision it collapses to a
+  // one-line verdict; the live run card follows with the output.
+  let pendingApproval = null;   // { done } while a decision is awaited — Enter approves, Esc skips
   function addApproval(m){
     clearEmpty(); clearStatus(); agentBubble = null;
-    const cwd = m.cwd || 'workspace';
-    const card = document.createElement('div'); card.className = 'approval term';
+    const card = document.createElement('div'); card.className = 'tl tl-cmd tl-ask asking';
+    const segs = String(m.command || '').split(/\n+|\s*&&\s*|\s*;\s*/).map(s => s.trim()).filter(Boolean);
+    const chips = segs.slice(0, 2).map(s => '<code>' + esc(s) + '</code>').join('')
+      + (segs.length > 2 ? '<code class="more">+' + (segs.length - 2) + '</code>' : '');
     card.innerHTML =
-      '<div class="termbar"><span class="tdots"><i class="r"></i><i class="y"></i><i class="g"></i></span>'
-        + '<span class="tbartitle">zsh — ' + esc(cwd) + '</span></div>'
-      + '<div class="termbody">'
-        + '<div class="termline"><span class="tprompt">➜</span> <span class="tcwd">' + esc(cwd) + '</span> '
-        + '<span class="tcmd">' + esc(m.command) + '</span><span class="tcaret"></span></div>'
-        + (m.explanation ? '<div class="termwhy"># ' + esc(m.explanation) + '</div>' : '')
-      + '</div>'
-      + '<div class="termfoot"><span class="termask">⌘ LevelCode wants to run this in your terminal</span>'
-        + '<span class="tspacer"></span>'
-        + '<button class="approve" title="Run the command (⏎)">▶ Run</button>'
-        + '<button class="skip" title="Don’t run it">Skip</button></div>';
+      '<div class="tl-rail"><span class="tl-node">' + codicon('terminal') + '</span></div>'
+      + '<div class="tl-body">'
+        + '<div class="cmdhead ask"><span class="cmdverb">Run this command?</span>'
+          + '<span class="cmdmeta">zsh' + (m.cwd ? ' · ' + esc(m.cwd) : '') + '</span></div>'
+        + '<div class="cmdbox">'
+          + '<div class="cmdsrc">' + shHighlight(m.command || '') + '</div>'
+          + '<div class="cmdfoot">'
+            + '<span class="asknote">LevelCode wants to run this in your terminal</span>'
+            + '<button class="skip" title="Don’t run it (esc)">Skip <kbd>esc</kbd></button>'
+            + '<button class="approve" title="Run the command (⏎)">Run <kbd>⏎</kbd></button>'
+          + '</div>'
+        + '</div>'
+        + (m.explanation ? '<div class="cmdwhy">' + esc(m.explanation) + '</div>' : '')
+      + '</div>';
     log.appendChild(card); scrollIfStuck();
     const done = (approved) => {
+      pendingApproval = null;
       vscode.postMessage({ type: 'approvalResponse', id: m.id, approved });
-      card.classList.add(approved ? 'ran' : 'skipped');
-      const caret = card.querySelector('.tcaret'); if (caret) { caret.remove(); }
-      card.querySelector('.termfoot').innerHTML = '<span class="verdict">' + (approved ? codicon('check') + ' Approved' : codicon('circle-slash') + ' Skipped') + '</span>';
+      card.classList.remove('asking');
+      if (!approved) { card.classList.add('skipped'); }
+      card.querySelector('.tl-body').innerHTML =
+        '<div class="cmdhead"><span class="cmdverb">' + (approved ? 'Approved' : 'Skipped') + '</span>'
+        + '<span class="cmdchips">' + chips + '</span>'
+        + '<span class="cmdstate ' + (approved ? 'ok' : 'bad') + '">' + codicon(approved ? 'check' : 'circle-slash') + '</span></div>';
     };
     card.querySelector('.approve').onclick = () => done(true);
     card.querySelector('.skip').onclick = () => done(false);
+    pendingApproval = { done };
+  }
+  // Enter/Esc answer the pending command approval — but never while the user is typing
+  // in a field, or when the account modal / context popover own the keys.
+  document.addEventListener('keydown', (e) => {
+    if (!pendingApproval) { return; }
+    const t = e.target;
+    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) { return; }
+    if (acctOverlay.style.display !== 'none' || ctxOpen) { return; }
+    if (e.key === 'Enter') { e.preventDefault(); pendingApproval.done(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); pendingApproval.done(false); }
+  });
+
+  // Lightweight shell syntax highlighter for the command source shown in the card.
+  // Tokenizes the RAW string and escapes each piece — never feed pre-escaped HTML in.
+  function shHighlight(cmd){
+    const s = String(cmd || '');
+    const re = /(#[^\n]*)|('(?:[^'\\]|\\.)*'?)|("(?:[^"\\]|\\.)*"?)|(\$\{[^}]*\}|\$\w+)|(\n|\|\||&&|;|\||\d?>>?&?\d?|<)|([^\S\n]+)|([^\s'"#$|&;<>]+)/g;
+    let html = '', atCmd = true, mt;
+    while ((mt = re.exec(s))) {
+      const tok = mt[0];
+      if (mt[1] != null) { html += '<span class="sh-k">' + esc(tok) + '</span>'; }
+      else if (mt[2] != null || mt[3] != null) { html += '<span class="sh-s">' + esc(tok) + '</span>'; atCmd = false; }
+      else if (mt[4] != null) { html += '<span class="sh-v">' + esc(tok) + '</span>'; }
+      else if (mt[5] != null) {
+        html += tok === '\n' ? '\n' : '<span class="sh-o">' + esc(tok) + '</span>';
+        if (tok === '\n' || tok === '|' || tok === '||' || tok === '&&' || tok === ';') { atCmd = true; }  // redirects don't start a new command
+      }
+      else if (mt[6] != null) { html += tok; }
+      else {
+        if (atCmd && /^\w+=/.test(tok)) { html += '<span class="sh-v">' + esc(tok) + '</span>'; }          // FOO=bar prefix — command still to come
+        else if (atCmd) { html += '<span class="sh-c">' + esc(tok) + '</span>'; atCmd = false; }
+        else if (/^-{1,2}[\w]/.test(tok)) { html += '<span class="sh-f">' + esc(tok) + '</span>'; }
+        else { html += esc(tok); }
+      }
+    }
+    return html;
   }
 
-  // Live terminal: an approved command streams its real stdout/stderr here as it runs.
+  // An executed command — a collapsible card on the activity timeline:
+  // header (chevron · Running/Ran · command chips · state icon) → highlighted command
+  // → streamed output (visible by default) → status foot → italic why.
   function addTermRun(m){
     clearEmpty(); clearStatus(); agentBubble = null;
-    const card = document.createElement('div'); card.className = 'approval term termrun';
+    const card = document.createElement('div'); card.className = 'tl tl-cmd running';
+    const segs = String(m.command || '').split(/\n+|\s*&&\s*|\s*;\s*/).map(s => s.trim()).filter(Boolean);
+    const chips = segs.slice(0, 2).map(s => '<code>' + esc(s) + '</code>').join('')
+      + (segs.length > 2 ? '<code class="more">+' + (segs.length - 2) + '</code>' : '');
     card.innerHTML =
-      '<div class="termbar"><span class="tdots"><i class="r"></i><i class="y"></i><i class="g"></i></span>'
-        + '<span class="tbartitle">zsh — ' + esc(m.cwd || 'workspace') + '</span></div>'
-      + '<div class="termbody">'
-        + '<div class="termline"><span class="tprompt">➜</span> <span class="tcwd">' + esc(m.cwd || '') + '</span> '
-        + '<span class="tcmd">' + esc(m.command || '') + '</span></div>'
-        + '<pre class="termout"></pre>'
-        + '<div class="termstatus running"><span class="tcaret"></span> ' + (m.background ? 'running in background… ' : 'running… ')
-        + '<button class="termstop" title="Stop this command">' + codicon('stop-circle') + ' Stop</button></div>'
+      '<div class="tl-rail"><span class="tl-node">' + codicon('terminal') + '</span></div>'
+      + '<div class="tl-body">'
+        + '<div class="cmdhead" title="Collapse / expand">'
+          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
+          + '<span class="cmdverb">' + (m.background ? 'Running in background' : 'Running') + '</span>'
+          + '<span class="cmdchips">' + chips + '</span>'
+          + '<span class="cmdstate running">' + LC_DOTS + '</span>'
+        + '</div>'
+        + '<div class="cmdbox">'
+          + '<div class="cmdsrc">' + shHighlight(m.command || '') + '</div>'
+          + '<pre class="termout"></pre>'
+          + '<div class="cmdfoot">'
+            + '<div class="termstatus running">' + LC_DOTS + ' ' + (m.background ? 'running in background…' : 'running…') + '</div>'
+            + '<span class="cmdmeta">zsh' + (m.cwd ? ' · ' + esc(m.cwd) : '') + '</span>'
+            + '<button class="termstop" title="Stop this command">' + codicon('stop-circle') + ' Stop</button>'
+          + '</div>'
+        + '</div>'
+        + (m.explanation ? '<div class="cmdwhy">' + esc(m.explanation) + '</div>' : '')
       + '</div>';
     log.appendChild(card); scrollIfStuck();
     termCards[m.id] = card;
+    card.querySelector('.cmdhead').onclick = () => card.classList.toggle('collapsed');
     const sb = card.querySelector('.termstop'); if (sb) { sb.onclick = () => { sb.disabled = true; sb.textContent = 'stopping…'; vscode.postMessage({ type: 'stopCommand', id: m.id }); }; }
   }
   function termOutputAppend(m){
@@ -1261,9 +1418,16 @@
     const card = termCards[m.id]; if (!card) { return; }
     const st = card.querySelector('.termstatus'); if (!st) { return; }
     const dur = (typeof m.ms === 'number') ? (m.ms >= 1000 ? (m.ms / 1000).toFixed(1) + 's' : m.ms + 'ms') : '';
-    if (m.how === 'stopped'){ st.innerHTML = codicon('circle-slash') + ' stopped' + (dur ? ' · ' + dur : ''); st.className = 'termstatus bad'; }
-    else if (m.how === 'timeout'){ st.innerHTML = codicon('warning') + ' timed out' + (dur ? ' · ' + dur : ''); st.className = 'termstatus bad'; }
-    else { const ok = m.code === 0; st.innerHTML = (ok ? codicon('check') : codicon('circle-slash')) + ' exit ' + m.code + (dur ? ' · ' + dur : ''); st.className = 'termstatus ' + (ok ? 'ok' : 'bad'); }
+    let icon, text, cls;
+    if (m.how === 'stopped'){ icon = 'circle-slash'; text = 'stopped'; cls = 'bad'; }
+    else if (m.how === 'timeout'){ icon = 'warning'; text = 'timed out'; cls = 'bad'; }
+    else { const ok = m.code === 0; icon = ok ? 'check' : 'circle-slash'; text = 'exit ' + m.code; cls = ok ? 'ok' : 'bad'; }
+    st.innerHTML = codicon(icon) + ' ' + text + (dur ? ' · ' + dur : '');
+    st.className = 'termstatus ' + cls;
+    card.classList.remove('running');                     // stops the node pulse
+    const verb = card.querySelector('.cmdverb'); if (verb) { verb.textContent = 'Ran'; }
+    const state = card.querySelector('.cmdstate'); if (state) { state.innerHTML = codicon(icon); state.className = 'cmdstate ' + cls; }
+    const sb = card.querySelector('.termstop'); if (sb) { sb.remove(); }
     delete termCards[m.id];
     scrollIfStuck();
   }

@@ -305,7 +305,7 @@ async function runTool(tu, ctx) {
 			const approved = await ctx.approve({ kind: 'command', command: cmd, explanation: input.explanation || '' });
 			if (!approved) { return 'User skipped this command. Do not retry it.'; }
 			const runId = tu.id || ('run-' + Date.now());
-			ctx.post({ type: 'termRun', id: runId, command: cmd, cwd: path.basename(root) || 'workspace', background: bg });
+			ctx.post({ type: 'termRun', id: runId, command: cmd, cwd: path.basename(root) || 'workspace', background: bg, explanation: input.explanation || '' });
 			const stops = ctx.commandStops;   // shared registry so the Stop button / ■ can kill the process group
 			// Only BACKGROUND commands get a registry entry (read_command_output reads it). Foreground
 			// one-shots keep their old behavior + don't accumulate — the model already gets their output.
