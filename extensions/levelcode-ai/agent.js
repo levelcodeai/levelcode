@@ -393,6 +393,13 @@ async function runTool(tu, ctx) {
  *   providerId/baseURL select the model provider (Anthropic native, or any OpenAI-shaped one via the
  *   tool-use translation layer); applyEdit applies file edits (apply-then-review); approve gates run_command only.
  */
+// A gateway 401 (expired LevelCode access token) surfaces as "<provider> API 401: …" or the raw
+// "Signature has expired". Used to trigger ONE token-refresh + retry inside the agent loop (mirrors
+// the chat path's refresh-on-401 — see extension.js isAuthError).
+function isAgentAuthError(e) {
+	return /\bAPI 401\b|signature has expired/i.test(String((e && e.message) || e));
+}
+
 async function runAgent(ctx) {
 	const root = workspaceRoot();
 	if (!root) { ctx.post({ type: 'agentError', message: 'Open a folder first — the agent works on your workspace.' }); ctx.post({ type: 'agentDone', reason: 'error' }); return; }
@@ -481,7 +488,7 @@ async function runAgent(ctx) {
 			dbg('turn.request', { step, transcriptMsgs: messages.length });
 			let streamed = false;
 			let textChars = 0;
-			const turn = await providers.streamAgentTurn({
+			const turnOpts = {
 				providerId: ctx.providerId, baseURL: ctx.baseURL,
 				apiKey: ctx.apiKey, model: ctx.model, maxTokens: perTurnMax, system: system,
 				messages, tools: TOOLS, signal: ctx.signal,
@@ -493,7 +500,25 @@ async function runAgent(ctx) {
 						: name === 'run_command' ? 'preparing command…' : name === 'update_plan' ? 'planning…' : 'running ' + name + '…';
 					ctx.post({ type: 'agentStatus', text: verb });
 				}
-			});
+			};
+			let turn;
+			try {
+				turn = await providers.streamAgentTurn(turnOpts);
+			} catch (e) {
+				// LevelCode Cloud access token expired mid-run → refresh once and retry THIS turn. A 401 is
+				// rejected upfront, so we only retry when nothing has streamed yet (a mid-stream failure
+				// would otherwise duplicate output). BYOK / no refresh hook / refresh returned null → rethrow.
+				if (!streamed && isAgentAuthError(e) && typeof ctx.refreshAuth === 'function') {
+					const fresh = await ctx.refreshAuth();
+					if (!fresh) { throw e; }
+					dbg('turn.authRetry', { step });
+					ctx.apiKey = fresh;
+					turnOpts.apiKey = fresh;
+					turn = await providers.streamAgentTurn(turnOpts);
+				} else {
+					throw e;
+				}
+			}
 			if (streamed) { ctx.post({ type: 'agentTurnEnd' }); }
 			dbg('turn.response', { step, stop: turn.stop_reason, blocks: turn.content.length, textChars, tools: turn.content.filter((c) => c.type === 'tool_use').map((c) => c.name + (turn.malformed && turn.malformed.has(c.id) ? '!malformed' : '')) });
 			// Report real context usage (input_tokens = how full the transcript is) so the UI can meter + warn.
