@@ -15,7 +15,11 @@ node "$SCRIPT_DIR/apply-branding.mjs" "$VSCODE_DIR" >/dev/null
 
 cd "$VSCODE_DIR"
 echo "[run-dev] Building core (first run takes a while)…"
-npm run compile
+# compile-client ONLY — deliberately NOT `npm run compile`, which also runs compile-copilot (the
+# proprietary GitHub Copilot Chat extension). LevelCode disables Copilot at launch (--disable-extension
+# below) and strips it from the packaged app (build-macos.sh), so compiling it is pointless here — and
+# upstream's extensions/copilot/.esbuild.mts fails under Node 24 (glob CJS/ESM named-export error).
+npm run compile-client
 echo "[run-dev] Ensuring a clean LevelCode instance…"
 # LevelCode dev + packaged builds share the same macOS bundle identifier. If another
 # instance is already running, LaunchServices can hand this launch off to that

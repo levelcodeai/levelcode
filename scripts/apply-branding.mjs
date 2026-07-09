@@ -93,12 +93,35 @@ if (existsSync(pngSrc) && existsSync(dirname(pngDst))) {
 
 // Install our bundled LevelCode extensions into the checkout. The canonical, version-controlled
 // source lives in this repo's extensions/ folder; the copies inside vscode/ are generated.
+const OUR_PUBLISHERS = new Set(["levelcode", "atompp"]); // atompp = pre-rename, prune any leftovers
 const extSrcRoot = join(repoRoot, "extensions");
+const vscodeExtDir = join(vscodeDir, "extensions");
 if (existsSync(extSrcRoot)) {
-  for (const name of readdirSync(extSrcRoot)) {
+  const current = new Set(readdirSync(extSrcRoot).filter((n) => statSync(join(extSrcRoot, n)).isDirectory()));
+
+  // Prune stale copies of OUR extensions left in vscode/ from a previous rename (e.g. atom-ai →
+  // levelcode-ai). Without this, both the old and new folder load and double-register commands
+  // ("command 'levelcode.init.edit' already exists"). A dir is "ours" if its package.json publisher
+  // is one of OUR_PUBLISHERS; drop any that isn't in the current repo set. Code-OSS built-ins (other
+  // publishers) are never touched.
+  if (existsSync(vscodeExtDir)) {
+    for (const name of readdirSync(vscodeExtDir)) {
+      if (current.has(name)) { continue; }
+      const pkg = join(vscodeExtDir, name, "package.json");
+      if (!existsSync(pkg)) { continue; }
+      try {
+        const publisher = JSON.parse(readFileSync(pkg, "utf8")).publisher;
+        if (OUR_PUBLISHERS.has(publisher)) {
+          rmSync(join(vscodeExtDir, name), { recursive: true, force: true });
+          console.log(`[apply-branding] Pruned stale LevelCode extension -> ${name}`);
+        }
+      } catch { /* unreadable manifest: leave it alone */ }
+    }
+  }
+
+  for (const name of current) {
     const src = join(extSrcRoot, name);
-    if (!statSync(src).isDirectory()) { continue; }
-    const dst = join(vscodeDir, "extensions", name);
+    const dst = join(vscodeExtDir, name);
     rmSync(dst, { recursive: true, force: true }); // clean overwrite (avoids stale/locked files)
     cpSync(src, dst, { recursive: true });
     console.log(`[apply-branding] Installed extension -> extensions/${name}`);
