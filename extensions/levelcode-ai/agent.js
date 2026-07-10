@@ -631,6 +631,7 @@ async function runAgent(ctx) {
 		if (step > ctx.maxSteps) { reason = 'limit'; }
 	} catch (e) {
 		const msg = String((e && e.message) || e);
+		const code = e && e.code;   // structured gateway code (e.g. service_unavailable) → webview picks the card
 		dbg('agent.error', { msg, aborted: ctx.signal.aborted });
 		if (ctx.signal.aborted) { reason = 'stopped'; }
 		else if (/prompt is too long|context.{0,12}(limit|window|length)|exceed.{0,20}(context|maximum)|too many tokens/i.test(msg)) {
@@ -638,7 +639,7 @@ async function runAgent(ctx) {
 			ctx.post({ type: 'agentError', message: 'You’ve hit the model’s context window (the conversation got too long). Start a New chat to reset it, switch to a larger-context model, or pin fewer files — then continue.', kind: 'context' });
 			reason = 'error';
 		}
-		else { ctx.post({ type: 'agentError', message: msg }); reason = 'error'; }
+		else { ctx.post({ type: 'agentError', message: msg, code }); reason = 'error'; }
 	} finally {
 		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, credits: ctx.credits != null ? ctx.credits : null });
 		// credits: null until the M10 gateway returns real usage; the response bar shows it when present.

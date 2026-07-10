@@ -93,7 +93,7 @@ async function streamOpenAI(opts) {
 		if (!data || data === '[DONE]') { return; }
 		let ev;
 		try { ev = JSON.parse(data); } catch { return; }
-		if (ev.error) { throw new Error((ev.error && ev.error.message) ? ev.error.message : (label + ' stream error')); }
+		if (ev.error) { const _e = new Error((ev.error && ev.error.message) ? ev.error.message : (label + ' stream error')); if (ev.error && ev.error.code) { _e.code = ev.error.code; } throw _e; }
 		const t = deltaFromEvent(ev);
 		if (t) { opts.onDelta(t); }
 	});
@@ -184,7 +184,7 @@ async function streamOpenAIAgentTurn(opts) {
 		if (!data || data === '[DONE]') { return; }
 		let ev;
 		try { ev = JSON.parse(data); } catch { return; }
-		if (ev.error) { throw new Error((ev.error && ev.error.message) ? ev.error.message : (label + ' stream error')); }
+		if (ev.error) { const _e = new Error((ev.error && ev.error.message) ? ev.error.message : (label + ' stream error')); if (ev.error && ev.error.code) { _e.code = ev.error.code; } throw _e; }
 		if (ev.usage) {   // opportunistic — only some providers include usage in the stream
 			if (ev.usage.prompt_tokens) { usage.input_tokens = ev.usage.prompt_tokens; }
 			if (ev.usage.completion_tokens) { usage.output_tokens = ev.usage.completion_tokens; }

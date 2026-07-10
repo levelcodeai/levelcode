@@ -122,6 +122,11 @@
   .upgradecard .ucbtn.primary:hover { filter: brightness(1.1); }
   .upgradecard .ucbtn.ghost { background: transparent; border: 1px solid var(--border); color: var(--vscode-foreground); }
   .upgradecard .ucbtn.ghost:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.14)); }
+  /* our-side outage notice — neutral, NO accent, NO CTA (it is not the user's account/usage) */
+  .noticecard { border: 1px solid var(--border); border-radius: 12px; margin: 8px 2px; padding: 13px 15px 14px; background: var(--field-bg); }
+  .noticecard .uchead { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .noticecard .uchead .ci { width: 15px; height: 15px; color: var(--vscode-editorWarning-foreground, #e0a030); }
+  .noticecard .ucbody { font-size: 12.5px; line-height: 1.55; opacity: .92; }
   pre { background: var(--vscode-editor-background, #282c34); border: 1px solid var(--border); padding: 9px 11px; border-radius: 8px; overflow-x: auto; margin: 8px 0; min-height: 1.3em; color: var(--vscode-editor-foreground, var(--vscode-foreground)); }
   pre code { background: none; padding: 0; }
   code { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: .92em; }
@@ -1507,6 +1512,26 @@
     log.appendChild(card); scrollIfStuck();
     card.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => vscode.postMessage({ type: 'accountUpgrade' }); });
   }
+  // Our-side outage / transient issue → a neutral "service" notice, NOT the red error and NOT the
+  // upgrade card (the gateway already sanitized the message; this just picks a calmer presentation).
+  function isServiceIssue(m){
+    const code = m && m.code;
+    if (code === 'service_unavailable' || code === 'service_busy' || code === 'gateway_error') { return true; }
+    return /service_unavailable|service_busy|gateway_error/.test(String((m && m.message) || m || ''));
+  }
+  function addServiceCard(m){
+    clearStatus(); finishAgentBubble();
+    const busy = (m && m.code === 'service_busy') || /service_busy/.test(String((m && m.message) || ''));
+    const title = busy ? 'Service is busy' : 'Service temporarily unavailable';
+    const fallback = busy ? 'The AI service is busy right now. Please wait a moment and try again.'
+      : 'The AI service is temporarily unavailable. Please try again in a moment.';
+    const msg = (m && m.message) ? m.message : fallback;
+    const card = document.createElement('div'); card.className = 'noticecard';
+    card.innerHTML =
+      '<div class="uchead">' + codicon('warning') + '<span>' + esc(title) + '</span></div>'
+      + '<div class="ucbody">' + esc(msg) + '</div>';
+    log.appendChild(card); scrollIfStuck();
+  }
   function addQuestions(m){
     clearEmpty(); clearStatus(); agentBubble = null;
     const qs = m.questions || [];
@@ -2142,6 +2167,7 @@
       pending = ''; flushAll = false; doneSignaled = false;
       const cap = capReachedInfo(m.message);
       if (cap){ current = null; addUpgradeCard(cap); }
+      else if (isServiceIssue(m)){ current = null; addServiceCard(m); }
       else {
         const html = '<span class="err">' + esc(m.message) + '</span>';
         if (current){ streamSetHtml(current, html); } else { add('assistant', html); }
@@ -2180,7 +2206,7 @@
     else if (m.type === 'debug'){ addDebug(m); }
     else if (m.type === 'account'){ renderAccount(m); if (m.open) openAccount(); }
     else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
-    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); const cap = capReachedInfo(m.message); if (cap){ addUpgradeCard(cap); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
+    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); const cap = capReachedInfo(m.message); if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
     else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps); setStreaming(false); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }

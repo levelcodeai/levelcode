@@ -959,7 +959,7 @@ async function handleSend(text) {
 			post({ type: 'assistantDone' });
 		} else {
 			conversation.pop();
-			post({ type: 'assistantError', message: String((e && e.message) || e) });
+			post({ type: 'assistantError', message: String((e && e.message) || e), code: e && e.code });
 		}
 	} finally {
 		abort = null;
