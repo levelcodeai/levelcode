@@ -1970,7 +1970,7 @@
         : '<p class="meta">' + esc(account.email || '') + (account.plan ? ' · ' + esc(account.plan) : '') + '</p>';
       // Free-tier Upgrade CTA (gateway only): unlock the flagship Kimi K2.7 Code.
       const upgradeBtn = (gateway && !paidPlan)
-        ? '<button class="abtn primary" data-act="upgrade">🚀 Upgrade to Pro — unlock Kimi K2.7 Code</button>'
+        ? '<button class="abtn primary" data-act="upgrade">' + codicon('sparkle') + ' Upgrade to Pro — unlock Kimi K2.7 Code</button>'
         : '';
       acctBody.innerHTML =
         '<div class="bigavatar">' + esc(initials(account.name || account.email)) + '</div>'
