@@ -865,6 +865,13 @@ async function agentFlow(text) {
 			post, dbg,
 			approve: requestApproval,           // run_command only
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
+			// Gateway-mode token refresh for the agent loop: on a mid-run 401 (expired access token)
+			// agent.js calls this to renew silently + retry the turn. Returns the fresh token, or null
+			// (BYOK / signed out / refresh failed → the run surfaces the auth error as before).
+			refreshAuth: async () => {
+				if (!req.gateway) { return null; }
+				return (await refreshGatewayToken()) ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
+			},
 			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
 			contextLimit: contextLimitFor(req.providerId, capsModel(req.model)), // Auto → flagship window; the model SENT stays req.model
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
@@ -952,7 +959,7 @@ async function handleSend(text) {
 			post({ type: 'assistantDone' });
 		} else {
 			conversation.pop();
-			post({ type: 'assistantError', message: String((e && e.message) || e) });
+			post({ type: 'assistantError', message: String((e && e.message) || e), code: e && e.code });
 		}
 	} finally {
 		abort = null;

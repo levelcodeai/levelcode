@@ -1,0 +1,404 @@
+{
+  "name": "levelcode-npp-pack",
+  "displayName": "LevelCode Notepad++ Pack",
+  "description": "Notepad++-style power editing for LevelCode: macros, line operations, column extras.",
+  "publisher": "levelcode",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.126.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "levelcode.macro.toggleRecording",
+        "title": "Macro: Start/Stop Recording",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.macro.play",
+        "title": "Macro: Play Last",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.macro.playNTimes",
+        "title": "Macro: Play Last N Times…",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.macro.saveLast",
+        "title": "Macro: Save Last Macro…",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.macro.runSaved",
+        "title": "Macro: Run Saved Macro…",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.macro.deleteSaved",
+        "title": "Macro: Delete Saved Macro…",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.file.duplicate",
+        "title": "Duplicate",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.sortAsc",
+        "title": "Lines: Sort Ascending",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.sortDesc",
+        "title": "Lines: Sort Descending",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.sortCaseInsensitive",
+        "title": "Lines: Sort (Case-Insensitive)",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.sortNumeric",
+        "title": "Lines: Sort Numerically",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.removeDuplicates",
+        "title": "Lines: Remove Duplicate Lines",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.removeDuplicatesAdjacent",
+        "title": "Lines: Remove Consecutive Duplicate Lines",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.removeEmpty",
+        "title": "Lines: Remove Empty Lines",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.reverse",
+        "title": "Lines: Reverse",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.join",
+        "title": "Lines: Join",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.lines.trimTrailing",
+        "title": "Lines: Trim Trailing Whitespace",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.case.upper",
+        "title": "Convert to UPPERCASE",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.case.lower",
+        "title": "Convert to lowercase",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.case.title",
+        "title": "Convert to Title Case",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.case.toggle",
+        "title": "Toggle Case",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.column.insertNumbers",
+        "title": "Column: Insert Incrementing Numbers…",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.column.fill",
+        "title": "Column: Fill With Text…",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.eol.toLF",
+        "title": "Convert Line Endings to macOS/Unix (LF)",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.eol.toCRLF",
+        "title": "Convert Line Endings to Windows (CRLF)",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.eol.toggle",
+        "title": "Toggle Line Endings (Windows ⇄ macOS/Unix)",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.encoding.change",
+        "title": "Change File Encoding…",
+        "category": "LevelCode"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "levelcode.lineOps",
+        "label": "Line Operations"
+      },
+      {
+        "id": "levelcode.columnOps",
+        "label": "Column Editor"
+      },
+      {
+        "id": "levelcode.encodingOps",
+        "label": "Encoding / Line Endings"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "levelcode.file.duplicate",
+          "group": "5_cutcopypaste@11",
+          "when": "!explorerResourceIsRoot"
+        }
+      ],
+      "editor/context": [
+        {
+          "submenu": "levelcode.lineOps",
+          "group": "1_modification@100",
+          "when": "editorTextFocus"
+        },
+        {
+          "submenu": "levelcode.columnOps",
+          "group": "1_modification@101",
+          "when": "editorTextFocus"
+        },
+        {
+          "submenu": "levelcode.encodingOps",
+          "group": "1_modification@102",
+          "when": "editorTextFocus"
+        }
+      ],
+      "levelcode.columnOps": [
+        {
+          "command": "levelcode.column.insertNumbers",
+          "group": "1_column@1"
+        },
+        {
+          "command": "levelcode.column.fill",
+          "group": "1_column@2"
+        }
+      ],
+      "levelcode.encodingOps": [
+        {
+          "command": "levelcode.eol.toLF",
+          "group": "1_eol@1"
+        },
+        {
+          "command": "levelcode.eol.toCRLF",
+          "group": "1_eol@2"
+        },
+        {
+          "command": "levelcode.eol.toggle",
+          "group": "1_eol@3"
+        },
+        {
+          "command": "levelcode.encoding.change",
+          "group": "2_encoding@1"
+        }
+      ],
+      "levelcode.lineOps": [
+        {
+          "command": "levelcode.lines.sortAsc",
+          "group": "1_sort@1"
+        },
+        {
+          "command": "levelcode.lines.sortDesc",
+          "group": "1_sort@2"
+        },
+        {
+          "command": "levelcode.lines.sortCaseInsensitive",
+          "group": "1_sort@3"
+        },
+        {
+          "command": "levelcode.lines.sortNumeric",
+          "group": "1_sort@4"
+        },
+        {
+          "command": "levelcode.lines.removeDuplicates",
+          "group": "2_clean@1"
+        },
+        {
+          "command": "levelcode.lines.removeDuplicatesAdjacent",
+          "group": "2_clean@2"
+        },
+        {
+          "command": "levelcode.lines.removeEmpty",
+          "group": "2_clean@3"
+        },
+        {
+          "command": "levelcode.lines.trimTrailing",
+          "group": "2_clean@4"
+        },
+        {
+          "command": "levelcode.lines.reverse",
+          "group": "3_order@1"
+        },
+        {
+          "command": "levelcode.lines.join",
+          "group": "3_order@2"
+        },
+        {
+          "command": "levelcode.case.upper",
+          "group": "4_case@1"
+        },
+        {
+          "command": "levelcode.case.lower",
+          "group": "4_case@2"
+        },
+        {
+          "command": "levelcode.case.title",
+          "group": "4_case@3"
+        },
+        {
+          "command": "levelcode.case.toggle",
+          "group": "4_case@4"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "levelcode.macro.toggleRecording",
+        "key": "cmd+shift+r",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.play",
+        "key": "cmd+alt+p",
+        "when": "editorTextFocus && !levelcode.macroRecording"
+      },
+      {
+        "command": "levelcode.macro.rec.cursorDown",
+        "key": "down",
+        "when": "levelcode.macroRecording && editorTextFocus && !suggestWidgetVisible"
+      },
+      {
+        "command": "levelcode.macro.rec.cursorUp",
+        "key": "up",
+        "when": "levelcode.macroRecording && editorTextFocus && !suggestWidgetVisible"
+      },
+      {
+        "command": "levelcode.macro.rec.cursorLeft",
+        "key": "left",
+        "when": "levelcode.macroRecording && editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.rec.cursorRight",
+        "key": "right",
+        "when": "levelcode.macroRecording && editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.rec.cursorHome",
+        "key": "home",
+        "when": "levelcode.macroRecording && editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.rec.cursorEnd",
+        "key": "end",
+        "when": "levelcode.macroRecording && editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.rec.cursorWordLeft",
+        "key": "alt+left",
+        "when": "levelcode.macroRecording && editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.rec.cursorWordRight",
+        "key": "alt+right",
+        "when": "levelcode.macroRecording && editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.rec.deleteLeft",
+        "key": "backspace",
+        "when": "levelcode.macroRecording && editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.rec.deleteRight",
+        "key": "delete",
+        "when": "levelcode.macroRecording && editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.rec.deleteWordLeft",
+        "key": "alt+backspace",
+        "when": "levelcode.macroRecording && editorTextFocus"
+      },
+      {
+        "command": "levelcode.macro.rec.insertNewline",
+        "key": "enter",
+        "when": "levelcode.macroRecording && editorTextFocus && !suggestWidgetVisible && !inSnippetMode"
+      },
+      {
+        "command": "levelcode.macro.rec.insertTab",
+        "key": "tab",
+        "when": "levelcode.macroRecording && editorTextFocus && !suggestWidgetVisible && !inSnippetMode"
+      },
+      {
+        "command": "levelcode.file.duplicate",
+        "key": "cmd+d",
+        "when": "filesExplorerFocus && !inputFocus && !explorerResourceIsRoot"
+      }
+    ],
+    "configurationDefaults": {
+      "workbench.editorLargeFileConfirmation": 2048,
+      "chat.commandCenter.enabled": false,
+      "chat.disableAIFeatures": true
+    },
+    "configuration": {
+      "title": "LevelCode Notepad++ Pack",
+      "properties": {
+        "levelcode.macros.maxSteps": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 100,
+          "description": "Safety cap on the number of steps recorded in a single macro."
+        },
+        "levelcode.macros.maxReplayCount": {
+          "type": "number",
+          "default": 100000,
+          "minimum": 1,
+          "description": "Maximum repeat count allowed when playing a macro N times."
+        },
+        "levelcode.bigFile.thresholdMB": {
+          "type": "number",
+          "default": 256,
+          "minimum": 1,
+          "description": "Show the Big-file mode indicator when the active file is at least this many megabytes."
+        },
+        "levelcode.bigFile.notify": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a one-time notification when a file opens in Big-file mode."
+        }
+      }
+    }
+  }
+}

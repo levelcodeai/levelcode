@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Notepad++ Pack
+ *  LevelCode — Notepad++ Pack
  *  Feature: Encoding & line-ending controls (M1, feature 3).
  *
  *  VS Code already shows encoding/EOL in the status bar, but converting line endings there
@@ -25,29 +25,29 @@ function refreshEol() {
 	if (!ed) { eolStatus.hide(); return; }
 	eolStatus.text = isCRLF(ed.document) ? '$(arrow-swap) CRLF · Windows' : '$(arrow-swap) LF · macOS/Unix';
 	eolStatus.tooltip = isCRLF(ed.document)
-		? 'Atom++: Windows line endings (CRLF). Click to switch to macOS/Unix (LF).'
-		: 'Atom++: macOS/Unix line endings (LF). Click to switch to Windows (CRLF).';
-	eolStatus.command = 'atompp.eol.toggle';
+		? 'LevelCode: Windows line endings (CRLF). Click to switch to macOS/Unix (LF).'
+		: 'LevelCode: macOS/Unix line endings (LF). Click to switch to Windows (CRLF).';
+	eolStatus.command = 'levelcode.eol.toggle';
 	eolStatus.show();
 }
 
 /** @param {vscode.EndOfLine} target */
 async function setEol(target) {
 	const ed = vscode.window.activeTextEditor;
-	if (!ed) { vscode.window.showWarningMessage('Atom++: open a text editor first.'); return; }
+	if (!ed) { vscode.window.showWarningMessage('LevelCode: open a text editor first.'); return; }
 	if (ed.document.eol === target) {
-		vscode.window.setStatusBarMessage('Atom++: line endings already set', 1500);
+		vscode.window.setStatusBarMessage('LevelCode: line endings already set', 1500);
 		return;
 	}
 	await ed.edit((eb) => eb.setEndOfLine(target));
 	refreshEol();
 	vscode.window.setStatusBarMessage(
-		`$(check) Atom++: converted line endings to ${target === vscode.EndOfLine.CRLF ? 'CRLF' : 'LF'}`, 2000);
+		`$(check) LevelCode: converted line endings to ${target === vscode.EndOfLine.CRLF ? 'CRLF' : 'LF'}`, 2000);
 }
 
 function toggleEol() {
 	const ed = vscode.window.activeTextEditor;
-	if (!ed) { vscode.window.showWarningMessage('Atom++: open a text editor first.'); return; }
+	if (!ed) { vscode.window.showWarningMessage('LevelCode: open a text editor first.'); return; }
 	return setEol(isCRLF(ed.document) ? vscode.EndOfLine.LF : vscode.EndOfLine.CRLF);
 }
 
@@ -57,11 +57,11 @@ function registerEncodingEol(context) {
 	context.subscriptions.push(eolStatus);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('atompp.eol.toLF', () => setEol(vscode.EndOfLine.LF)),
-		vscode.commands.registerCommand('atompp.eol.toCRLF', () => setEol(vscode.EndOfLine.CRLF)),
-		vscode.commands.registerCommand('atompp.eol.toggle', toggleEol),
+		vscode.commands.registerCommand('levelcode.eol.toLF', () => setEol(vscode.EndOfLine.LF)),
+		vscode.commands.registerCommand('levelcode.eol.toCRLF', () => setEol(vscode.EndOfLine.CRLF)),
+		vscode.commands.registerCommand('levelcode.eol.toggle', toggleEol),
 		// Built-in encoding picker (Reopen with Encoding / Save with Encoding).
-		vscode.commands.registerCommand('atompp.encoding.change',
+		vscode.commands.registerCommand('levelcode.encoding.change',
 			() => vscode.commands.executeCommand('workbench.action.editor.changeEncoding'))
 	);
 

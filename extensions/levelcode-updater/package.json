@@ -1,5 +1,5 @@
 {
-  "name": "atom-updater",
+  "name": "levelcode-updater",
   "displayName": "LevelCode Updater (notify-only)",
   "description": "Periodically checks for new LevelCode releases and notifies you with a download link. Notify-only — never auto-applies, so it works on any build with no code-signing.",
   "publisher": "levelcode",

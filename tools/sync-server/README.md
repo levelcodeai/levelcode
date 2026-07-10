@@ -38,7 +38,7 @@ node tools/sync-server/test.js     # round-trips the REST contract (manifest, ET
 ## Notes
 
 - **Auth:** every `/v1` request needs `Authorization: Bearer <token>` (the token comes from the
-  `levelcode` auth provider in `extensions/atom-sync`). Storage is **isolated per token**.
+  `levelcode` auth provider in `extensions/levelcode-sync`). Storage is **isolated per token**.
 - **Opaque bodies:** the server never parses settings, so client-side **E2E encryption** can be
   added later with zero server changes.
 - **Dev only:** HTTP on localhost, file-backed storage under `tools/sync-server/.data` (gitignored).

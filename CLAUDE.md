@@ -15,7 +15,7 @@ lives in the tracked repo and is re-applied onto a clean clone:
 
 | Ours (edit here, tracked) | Gets installed into (generated) | By |
 | --- | --- | --- |
-| `extensions/atom-npp-pack/`, `extensions/atom-ai/` | `vscode/extensions/*` | `apply-branding.mjs` (copy) |
+| `extensions/levelcode-npp-pack/`, `extensions/levelcode-ai/` | `vscode/extensions/*` | `apply-branding.mjs` (copy) |
 | `branding/product.overlay.json`, `branding/icons/` | `vscode/product.json`, `vscode/resources/...` | `apply-branding.mjs` (merge/copy) |
 | `patches/levelcode-core.patch` | edits to `vscode/src/**`, `vscode/build/**` | `bootstrap.sh` (`git apply`) |
 
@@ -33,12 +33,12 @@ docs/CORE-PATCHES.md        log of every edit inside vscode/ (tagged // [LevelCo
 docs/M0-RUNBOOK.md, EXIT-TEST.md, M1-SPEC.md
 branding/product.overlay.json   LevelCode identity + Open VSX gallery (deep-merged onto product.json)
 branding/icons/             app icon source PNG, generated .icns, 1024 png
-extensions/atom-npp-pack/   Notepad++ power-editing pack (plain JS, no build step)
-extensions/atom-ai/         native Claude AI (chat, inline completion, providers, edit-with-diff, LM provider)
-extensions/atom-themes/     signature One Dark / One Light themes (JSON, default via configurationDefaults)
-extensions/atom-hackability/ user init script + Atom/NPP keymap presets + package generator & hot-reload dev loader
-extensions/atom-sync/       'levelcode' auth provider that lights up the built-in Settings Sync (LevelCode Sync, S0)
-extensions/atom-updater/    notify-only update checker (polls the update feed; never auto-applies)
+extensions/levelcode-npp-pack/   Notepad++ power-editing pack (plain JS, no build step)
+extensions/levelcode-ai/         native Claude AI (chat, inline completion, providers, edit-with-diff, LM provider)
+extensions/levelcode-themes/     signature One Dark / One Light themes (JSON, default via configurationDefaults)
+extensions/levelcode-hackability/ user init script + Atom/NPP keymap presets + package generator & hot-reload dev loader
+extensions/levelcode-sync/       'levelcode' auth provider that lights up the built-in Settings Sync (LevelCode Sync, S0)
+extensions/levelcode-updater/    notify-only update checker (polls the update feed; never auto-applies)
 patches/levelcode-core.patch     our core source edits, applied on bootstrap
 scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-dmg.sh, make-icon.sh; atom (CLI launcher) + install-level.sh
 tools/                      dependency-free reference servers: sync-server (/v1 Settings-Sync), update-server (/api/update feed)
@@ -83,17 +83,17 @@ Tracked in `patches/levelcode-core.patch`, tagged with `// [LevelCode]`. Find th
 ## Settings shipped as defaults (via extension `configurationDefaults` or core patch)
 
 - `files.hotExit = onExitAndWindowClose` (core patch — application-scoped).
-- `workbench.editorLargeFileConfirmation = 2048`, `chat.commandCenter.enabled = false`, `chat.disableAIFeatures = true` (atom-npp-pack).
+- `workbench.editorLargeFileConfirmation = 2048`, `chat.commandCenter.enabled = false`, `chat.disableAIFeatures = true` (levelcode-npp-pack).
 - Extensions can only override **machine-overridable / window / resource / language-overridable** scoped settings — NOT application/machine. (That's why hotExit needed a core patch.)
 
 ## Feature status
 
-**M1 — Notepad++ pack (`extensions/atom-npp-pack/`, all done, plain JS):**
+**M1 — Notepad++ pack (`extensions/levelcode-npp-pack/`, all done, plain JS):**
 macros (`Cmd+Shift+R`/`Cmd+Alt+P`), Duplicate file (`Cmd+D` / Explorer menu), Sublime hot-exit,
 line operations (sort/dedup/case/…), column incrementing numbers, encoding/EOL status-bar toggle,
 big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol/bigFile.js.
 
-**M2 — native AI (`extensions/atom-ai/`, working):**
+**M2 — native AI (`extensions/levelcode-ai/`, working):**
 - `providers/` — **multi-provider BYOK (P1)**. A registry data table (`providers/index.js` `PROVIDERS` +
   `getProvider`/`normId`/`secretStorageKey`/`isInsecureCustomUrl`) dispatches `streamChat()`/`complete()` on the
   row's `kind`: **Anthropic** keeps its native adapter (`providers/anthropic.js` — prompt caching + full tool-use,
@@ -147,13 +147,13 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
   multi-session core effort. We use the diff-tab review instead.
 - Built since M2 shipped: inline tab-completion (`inlineComplete.js`), multi-file + auto-retrieval chat context
   (`gatherAutoContext`), chat moved to the right side bar, typewriter streaming, `make-dmg.sh` packaging.
-- M3 so far: One Dark/Light themes (`atom-themes`); user init script + Atom/Notepad++ keymap presets +
-  package generator with live hot-reload (`atom-hackability`). The Atom/NPP keymap also clears the old M1 leftover.
+- M3 so far: One Dark/Light themes (`levelcode-themes`); user init script + Atom/Notepad++ keymap presets +
+  package generator with live hot-reload (`levelcode-hackability`). The Atom/NPP keymap also clears the old M1 leftover.
 - M4 agentic multi-file tasks: DONE. `agent.js` has the full tool loop — list_files/read_file/search,
   update_plan, edit_file/write_file/**delete_file** (apply-then-review with Keep/Undo + per-turn checkpoint
   restore via `reviewSession.js`), run_command(+background)/read_command_output, ask_user, use_skill — plus the
   M5 auto-verify loop. `delete_file` also enables rename/move (write new path → delete old).
-- LevelCode Sync (S0) + notify-only updater (U0): see `extensions/atom-sync` / `extensions/atom-updater` + `tools/`.
+- LevelCode Sync (S0) + notify-only updater (U0): see `extensions/levelcode-sync` / `extensions/levelcode-updater` + `tools/`.
 - Not yet built: remaining M3 hackability — settings UI, theme studio, VS Code settings import.
 
 ## Conventions

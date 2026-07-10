@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Notepad++ Pack
+ *  LevelCode — Notepad++ Pack
  *  Feature: Line operations (M1, feature 5) — the everyday Notepad++/TextFX set.
  *
  *  Each line op works on the selected lines (selection expanded to whole lines), or the
@@ -33,17 +33,17 @@ function eol(doc) {
 /** Run a lines-array transform over the target range as one edit. */
 async function transformLines(editorArg, fn, opName) {
 	const editor = editorArg || vscode.window.activeTextEditor;
-	if (!editor) { vscode.window.showWarningMessage('Atom++: open a text editor first.'); return; }
+	if (!editor) { vscode.window.showWarningMessage('LevelCode: open a text editor first.'); return; }
 	const doc = editor.document;
 	const range = lineRange(editor);
 	const lines = doc.getText(range).split(/\r?\n/);
 	const out = fn(lines);
 	if (out.join('\n') === lines.join('\n')) {
-		vscode.window.setStatusBarMessage(`Atom++: ${opName} — no change`, 1500);
+		vscode.window.setStatusBarMessage(`LevelCode: ${opName} — no change`, 1500);
 		return;
 	}
 	await editor.edit((eb) => eb.replace(range, out.join(eol(doc))));
-	vscode.window.setStatusBarMessage(`$(check) Atom++: ${opName} (${lines.length}→${out.length} lines)`, 2000);
+	vscode.window.setStatusBarMessage(`$(check) LevelCode: ${opName} (${lines.length}→${out.length} lines)`, 2000);
 }
 
 // --- sorting ---------------------------------------------------------------
@@ -89,7 +89,7 @@ const casers = {
 
 async function convertCase(mode) {
 	const editor = vscode.window.activeTextEditor;
-	if (!editor) { vscode.window.showWarningMessage('Atom++: open a text editor first.'); return; }
+	if (!editor) { vscode.window.showWarningMessage('LevelCode: open a text editor first.'); return; }
 	const fn = casers[mode];
 	await editor.edit((eb) => {
 		for (const sel of editor.selections) {
@@ -107,32 +107,32 @@ function registerLineOps(context) {
 	const reg = (id, fn) => context.subscriptions.push(vscode.commands.registerCommand(id, fn));
 
 	// Sorting
-	reg('atompp.lines.sortAsc', () => transformLines(null, sorters.asc, 'sort ascending'));
-	reg('atompp.lines.sortDesc', () => transformLines(null, sorters.desc, 'sort descending'));
-	reg('atompp.lines.sortCaseInsensitive', () => transformLines(null, sorters.ci, 'sort (case-insensitive)'));
-	reg('atompp.lines.sortNumeric', () => transformLines(null, sorters.numeric, 'sort numerically'));
+	reg('levelcode.lines.sortAsc', () => transformLines(null, sorters.asc, 'sort ascending'));
+	reg('levelcode.lines.sortDesc', () => transformLines(null, sorters.desc, 'sort descending'));
+	reg('levelcode.lines.sortCaseInsensitive', () => transformLines(null, sorters.ci, 'sort (case-insensitive)'));
+	reg('levelcode.lines.sortNumeric', () => transformLines(null, sorters.numeric, 'sort numerically'));
 
 	// Dedup / blank lines / order
-	reg('atompp.lines.removeDuplicates', () => transformLines(null, (a) => {
+	reg('levelcode.lines.removeDuplicates', () => transformLines(null, (a) => {
 		const seen = new Set(); const out = [];
 		for (const l of a) { if (!seen.has(l)) { seen.add(l); out.push(l); } }
 		return out;
 	}, 'remove duplicate lines'));
-	reg('atompp.lines.removeDuplicatesAdjacent', () => transformLines(null, (a) =>
+	reg('levelcode.lines.removeDuplicatesAdjacent', () => transformLines(null, (a) =>
 		a.filter((l, i) => i === 0 || l !== a[i - 1]), 'remove consecutive duplicates'));
-	reg('atompp.lines.removeEmpty', () => transformLines(null, (a) =>
+	reg('levelcode.lines.removeEmpty', () => transformLines(null, (a) =>
 		a.filter((l) => l.trim().length > 0), 'remove empty lines'));
-	reg('atompp.lines.reverse', () => transformLines(null, (a) => [...a].reverse(), 'reverse lines'));
+	reg('levelcode.lines.reverse', () => transformLines(null, (a) => [...a].reverse(), 'reverse lines'));
 
 	// Aliases to robust built-ins (selection-aware already)
-	reg('atompp.lines.join', () => vscode.commands.executeCommand('editor.action.joinLines'));
-	reg('atompp.lines.trimTrailing', () => vscode.commands.executeCommand('editor.action.trimTrailingWhitespace'));
+	reg('levelcode.lines.join', () => vscode.commands.executeCommand('editor.action.joinLines'));
+	reg('levelcode.lines.trimTrailing', () => vscode.commands.executeCommand('editor.action.trimTrailingWhitespace'));
 
 	// Case
-	reg('atompp.case.upper', () => convertCase('upper'));
-	reg('atompp.case.lower', () => convertCase('lower'));
-	reg('atompp.case.title', () => convertCase('title'));
-	reg('atompp.case.toggle', () => convertCase('toggle'));
+	reg('levelcode.case.upper', () => convertCase('upper'));
+	reg('levelcode.case.lower', () => convertCase('lower'));
+	reg('levelcode.case.title', () => convertCase('title'));
+	reg('levelcode.case.toggle', () => convertCase('toggle'));
 }
 
 module.exports = { registerLineOps };

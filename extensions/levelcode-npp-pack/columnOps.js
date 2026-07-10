@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Atom++ — Notepad++ Pack
+ *  LevelCode — Notepad++ Pack
  *  Feature: Column editor (M1, feature 4) — insert incrementing numbers + column fill.
  *
  *  Use a box selection (Shift+Alt+drag) or multiple cursors, then "Insert Incrementing
@@ -61,7 +61,7 @@ function formatNum(n, spec) {
 
 async function insertIncrementingNumbers() {
 	const editor = vscode.window.activeTextEditor;
-	if (!editor) { vscode.window.showWarningMessage('Atom++: open a text editor first.'); return; }
+	if (!editor) { vscode.window.showWarningMessage('LevelCode: open a text editor first.'); return; }
 
 	const input = await vscode.window.showInputBox({
 		title: 'Insert Incrementing Numbers',
@@ -82,25 +82,25 @@ async function insertIncrementingNumbers() {
 			eb.replace(sel, formatNum(spec.start + i * spec.step, spec));
 		});
 	});
-	vscode.window.setStatusBarMessage(`$(list-ordered) Atom++: inserted ${selections.length} numbers`, 2000);
+	vscode.window.setStatusBarMessage(`$(list-ordered) LevelCode: inserted ${selections.length} numbers`, 2000);
 }
 
 async function columnFill() {
 	const editor = vscode.window.activeTextEditor;
-	if (!editor) { vscode.window.showWarningMessage('Atom++: open a text editor first.'); return; }
+	if (!editor) { vscode.window.showWarningMessage('LevelCode: open a text editor first.'); return; }
 	const text = await vscode.window.showInputBox({ title: 'Column Fill', prompt: 'Text to insert at every cursor / selection' });
 	if (text === undefined) { return; }
 	await editor.edit((eb) => {
 		for (const sel of editor.selections) { eb.replace(sel, text); }
 	});
-	vscode.window.setStatusBarMessage(`$(symbol-string) Atom++: filled ${editor.selections.length} positions`, 2000);
+	vscode.window.setStatusBarMessage(`$(symbol-string) LevelCode: filled ${editor.selections.length} positions`, 2000);
 }
 
 /** @param {vscode.ExtensionContext} context */
 function registerColumnOps(context) {
 	context.subscriptions.push(
-		vscode.commands.registerCommand('atompp.column.insertNumbers', insertIncrementingNumbers),
-		vscode.commands.registerCommand('atompp.column.fill', columnFill)
+		vscode.commands.registerCommand('levelcode.column.insertNumbers', insertIncrementingNumbers),
+		vscode.commands.registerCommand('levelcode.column.fill', columnFill)
 	);
 }
 

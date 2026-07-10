@@ -30,7 +30,7 @@ jobs:
           node-version: "24"
       - name: Extension unit tests
         run: |
-          cd extensions/atom-ai
+          cd extensions/levelcode-ai
           for t in test/*.test.js; do node "$t"; done
 
   build:
