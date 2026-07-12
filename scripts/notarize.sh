@@ -46,11 +46,24 @@ sign_app() {
   echo "[notarize] Signing $APP"
   echo "[notarize]   identity: $CODESIGN_IDENTITY"
 
-  # Inside-out: sign every nested Mach-O leaf first (dylibs / .node / .so / helper binaries),
-  # each with the hardened runtime + a secure timestamp. (Uses `file` so nothing is missed;
-  # this pass takes a minute on a full app.)
+  # Inside-out: sign the deepest code first, and seal each *bundle* only AFTER its nested
+  # code is signed — otherwise codesign fails with "In subcomponent: …: code object is not
+  # signed at all". Order below: loose nested Mach-O → helper .apps → frameworks → the app.
+  #
+  # CRITICAL: skip every bundle *main executable* in this leaf pass — the .app/helper main
+  # binaries (…/Contents/MacOS/…) AND each framework's main binary (…/Foo.framework/Versions/
+  # <v>/Foo). Signing a bundle's main executable seals that whole bundle, so signing one here
+  # would seal the enclosing .app / .framework before its nested code (helpers, dylibs, the
+  # crashpad handler) is signed. Those bundles are sealed explicitly further down, which signs
+  # their main executable for us. This latent ordering bug was masked on arm64 — whose nested
+  # binaries arrive already (ad-hoc) signed, so the premature seal happened to pass — but it
+  # broke on an unsigned Intel (x64) build ("In subcomponent: …/Electron Framework").
+  # (Uses `file` so nothing is missed; this pass takes a minute on a full app.)
   echo "[notarize]   signing nested binaries …"
   while IFS= read -r -d '' f; do
+    b="${f##*/}"; d="${f%/*}"                                   # basename / dirname (no subprocess)
+    case "$f" in */Contents/MacOS/*) continue ;; esac           # .app / helper .app main executable
+    case "$d" in */"$b".framework/Versions/*) continue ;; esac  # …/Foo.framework/Versions/A/Foo main binary
     if file -b "$f" | grep -q "Mach-O"; then
       codesign --force --timestamp --options runtime --sign "$CODESIGN_IDENTITY" "$f"
     fi
