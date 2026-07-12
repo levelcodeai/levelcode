@@ -21,8 +21,9 @@
 #       ./scripts/make-dmg.sh
 #
 #   Or by hand:
-#     CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" scripts/notarize.sh sign  VSCode-darwin-arm64/LevelCode.app
-#     NOTARY_PROFILE="levelcode-notary"                                    scripts/notarize.sh submit LevelCode-arm64.dmg
+#     CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" scripts/notarize.sh sign         VSCode-darwin-arm64/LevelCode.app
+#     NOTARY_PROFILE="levelcode-notary"                                    scripts/notarize.sh notarize-app VSCode-darwin-arm64/LevelCode.app
+#     NOTARY_PROFILE="levelcode-notary"                                    scripts/notarize.sh submit       LevelCode-arm64.dmg
 #
 # ── Config (env) ────────────────────────────────────────────────────────────────────────
 #   CODESIGN_IDENTITY   (sign)   the "Developer ID Application: …" identity string
@@ -89,18 +90,48 @@ sign_app() {
   echo "[notarize]   signature OK"
 }
 
-submit_dmg() {
-  local DMG="$1"
-  [ -f "$DMG" ] || die "dmg not found: $DMG"
+# Submit a container (zip / dmg / pkg) to Apple's notary service and block until done.
+# notarytool can't ingest a bare .app — it must be wrapped — hence the zip in notarize_app.
+_notary_submit() {
+  local FILE="$1"
   command -v xcrun >/dev/null || die "xcrun not found (install Xcode command line tools)"
-  echo "[notarize] Submitting $DMG to Apple's notary service (a few minutes) …"
   if [ -n "${NOTARY_PROFILE:-}" ]; then
-    xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun notarytool submit "$FILE" --keychain-profile "$NOTARY_PROFILE" --wait
   elif [ -n "${APPLE_ID:-}" ] && [ -n "${TEAM_ID:-}" ] && [ -n "${APP_SPECIFIC_PASSWORD:-}" ]; then
-    xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_SPECIFIC_PASSWORD" --wait
+    xcrun notarytool submit "$FILE" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_SPECIFIC_PASSWORD" --wait
   else
     die "set NOTARY_PROFILE (from 'xcrun notarytool store-credentials'), or APPLE_ID + TEAM_ID + APP_SPECIFIC_PASSWORD"
   fi
+}
+
+# Notarize a .app and STAPLE the ticket onto the bundle itself. This is what lets the app
+# launch on first run WITHOUT a network round-trip after a user drags it out of the dmg to
+# /Applications — the dmg's own stapled ticket does not travel with the extracted app, so an
+# offline first launch of an un-stapled app fails Gatekeeper ("cannot be checked for malicious
+# software"). Stapling is signature-safe (the ticket is stored outside the sealed contents).
+notarize_app() {
+  local APP="$1"
+  [ -d "$APP" ] || die "app not found: $APP"
+  command -v xcrun >/dev/null || die "xcrun not found (install Xcode command line tools)"
+  command -v ditto >/dev/null || die "ditto not found"
+  local ZIP="${TMPDIR:-/tmp}/$(basename "${APP%.app}").notarize.$$.zip"
+  echo "[notarize] Zipping $APP for notarization …"
+  rm -f "$ZIP"
+  ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+  echo "[notarize] Submitting the app to Apple's notary service (a few minutes) …"
+  _notary_submit "$ZIP"
+  rm -f "$ZIP"
+  echo "[notarize] Stapling the ticket onto $APP …"
+  xcrun stapler staple "$APP"
+  xcrun stapler validate "$APP"
+  echo "[notarize] ✅ $APP is notarized and stapled (launches offline on first run)."
+}
+
+submit_dmg() {
+  local DMG="$1"
+  [ -f "$DMG" ] || die "dmg not found: $DMG"
+  echo "[notarize] Submitting $DMG to Apple's notary service (a few minutes) …"
+  _notary_submit "$DMG"
   echo "[notarize] Stapling the ticket onto $DMG …"
   xcrun stapler staple "$DMG"
   xcrun stapler validate "$DMG"
@@ -109,7 +140,8 @@ submit_dmg() {
 
 cmd="${1:-}"; [ $# -gt 0 ] && shift || true
 case "$cmd" in
-  sign)   [ $# -ge 1 ] || die "usage: notarize.sh sign <LevelCode.app>";  sign_app "$1" ;;
-  submit) [ $# -ge 1 ] || die "usage: notarize.sh submit <LevelCode.dmg>"; submit_dmg "$1" ;;
-  *) echo "usage: $(basename "$0") {sign <LevelCode.app> | submit <LevelCode.dmg>}"; exit 2 ;;
+  sign)         [ $# -ge 1 ] || die "usage: notarize.sh sign <LevelCode.app>";         sign_app "$1" ;;
+  notarize-app) [ $# -ge 1 ] || die "usage: notarize.sh notarize-app <LevelCode.app>"; notarize_app "$1" ;;
+  submit)       [ $# -ge 1 ] || die "usage: notarize.sh submit <LevelCode.dmg>";       submit_dmg "$1" ;;
+  *) echo "usage: $(basename "$0") {sign <LevelCode.app> | notarize-app <LevelCode.app> | submit <LevelCode.dmg>}"; exit 2 ;;
 esac
