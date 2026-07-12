@@ -357,11 +357,11 @@
             "gateway"
           ],
           "enumDescriptions": [
-            "Bring your own key — AI requests go direct from your machine to your provider; your keys never touch the LevelCode Cloud.",
-            "LevelCode Cloud gateway — when signed in, AI runs through your metered LevelCode plan (no provider key needed); requests are proxied by the account server."
+            "Bring your own key — AI requests always go direct from your machine to your provider with your own key, even when you're signed in; your keys never touch LevelCode Cloud.",
+            "LevelCode Cloud gateway (default) — when you're signed in, AI runs through your metered LevelCode plan (no provider key needed) and automatically falls back to your own key (BYOK) when you're signed out."
           ],
-          "default": "byok",
-          "markdownDescription": "How AI requests are routed. **byok** (default): direct to your provider with your own key. **gateway**: when you're signed in to LevelCode Cloud, requests run through your metered LevelCode plan via `levelcode.cloud.apiUrl` (the Rails backend) — no provider key required. Gateway falls back to BYOK when you're signed out."
+          "default": "gateway",
+          "markdownDescription": "How AI requests are routed. **gateway** (default): when you're signed in to LevelCode Cloud, requests run through your metered LevelCode plan via `levelcode.cloud.apiUrl` (the Rails backend) — no provider key required — and **automatically fall back to BYOK when you're signed out**, so simply signing in puts you on your plan with nothing to toggle. **byok**: always go direct to your provider with your own key, even when signed in. (The gateway is only ever used while signed in, so this default is safe when signed out.)"
         },
         "levelcode.ai.commandTimeout": {
           "type": "number",
