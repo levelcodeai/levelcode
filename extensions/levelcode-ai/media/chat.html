@@ -581,6 +581,38 @@
   .pill .caret { opacity: .5; font-size: 10px; }
   .sep { width: 1px; height: 16px; background: var(--border); margin: 0 2px; flex: 0 0 auto; }
 
+  /* ---- Agent/Chat mode dropdown (anchored above the mode pill) ---- */
+  .modewrap { position: relative; display: inline-flex; }
+  .modemenu {
+    position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 60;
+    min-width: 236px; padding: 5px; border-radius: 10px;
+    background: var(--vscode-menu-background, var(--field-bg));
+    border: 1px solid var(--vscode-menu-border, var(--border));
+    box-shadow: 0 8px 24px rgba(0,0,0,.30);
+  }
+  .modemenu[hidden] { display: none; }
+  .modeopt {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 7px 9px; border: none; border-radius: 7px; background: transparent;
+    color: var(--vscode-foreground); cursor: pointer; text-align: left;
+  }
+  .modeopt:hover, .modeopt:focus-visible { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.16)); outline: none; }
+  .modeopt .moico { flex: 0 0 auto; width: 18px; text-align: center; opacity: .8; }
+  .modeopt .moico.mono { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; }
+  .modeopt .motext { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
+  .modeopt .moname { font-size: 12.5px; font-weight: 600; }
+  .modeopt .modesc { font-size: 11px; opacity: .7; }
+  .modeopt .mocheck { flex: 0 0 auto; visibility: hidden; color: var(--accent); font-size: 12px; }
+  .modeopt.active .mocheck { visibility: visible; }
+  .modeopt.active .moname { color: var(--accent); }
+
+  /* Group the plan/mode chip (st-key, e.g. "Gateway · Pro+") beside the account avatar on the
+     RIGHT — a Claude-Code-style cluster. Pure flex order, so no DOM move of the big inline SVGs:
+     st-local + context ring stay left; grow pushes; st-key then the avatar sit together right. */
+  #status .grow { order: 1; }
+  #status #st-key { order: 2; }
+  #status .acct { order: 3; }
+
   #send {
     display: inline-flex; align-items: center; justify-content: center;
     width: 30px; height: 30px; flex: 0 0 auto; cursor: pointer;
@@ -828,8 +860,22 @@
       <div class="left">
         <button class="tbtn" id="attach" title="Add selected code as context (⌥⌘A)">+</button>
         <span class="sep"></span>
-        <span class="pill agent" id="mode" title="Toggle Chat / Agent mode">
-          <span class="mono">&lt;/&gt;</span> <span id="modeLabel">Agent</span>
+        <span class="modewrap">
+          <span class="pill agent" id="mode" title="Choose Agent or Chat mode" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
+            <span class="mono">&lt;/&gt;</span> <span id="modeLabel">Agent</span> <span class="caret">▾</span>
+          </span>
+          <div class="modemenu" id="modeMenu" role="listbox" aria-label="Mode" hidden>
+            <button type="button" class="modeopt" role="option" data-agent="1">
+              <span class="moico mono">&lt;/&gt;</span>
+              <span class="motext"><span class="moname">Agent</span><span class="modesc">Edits files across your workspace</span></span>
+              <span class="mocheck">&#10003;</span>
+            </button>
+            <button type="button" class="modeopt" role="option" data-agent="0">
+              <span class="moico" aria-hidden="true"><svg class="ci" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2c3.31 0 6 2.24 6 5s-2.69 5-6 5c-.6 0-1.19-.07-1.74-.2L3.5 13.5l.66-2.3C3.13 10.3 2 8.77 2 7c0-2.76 2.69-5 6-5Z"/></svg></span>
+              <span class="motext"><span class="moname">Chat</span><span class="modesc">Ask questions — no file edits</span></span>
+              <span class="mocheck">&#10003;</span>
+            </button>
+          </div>
         </span>
         <span class="pill" id="model" title="Click to change model">Auto <span class="caret">▾</span></span>
         <button class="tbtn" id="settings" title="LevelCode AI settings">&#9776;</button>
@@ -1291,6 +1337,18 @@
     document.getElementById('modeLabel').textContent = agent ? 'Agent' : 'Chat';
     document.getElementById('mode').classList.toggle('agent', agent);
     input.placeholder = agent ? 'Give the agent a goal…' : 'Describe what to build';
+    syncModeMenu();
+  }
+  // Mark the active option in the Agent/Chat dropdown. Uses getElementById (not a captured
+  // const) so it's safe to call from applyMode regardless of script evaluation order.
+  function syncModeMenu(){
+    const menu = document.getElementById('modeMenu');
+    if (!menu) return;
+    menu.querySelectorAll('.modeopt').forEach((b) => {
+      const on = (b.getAttribute('data-agent') === '1') === agentMode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', String(on));
+    });
   }
   function diffHtml(diff){
     let h = '<div class="diff">';
@@ -1907,7 +1965,30 @@
   sendBtn.onclick = doSend;
   document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'addContext' });
   document.getElementById('model').onclick = () => vscode.postMessage({ type: 'pickModel' });
-  document.getElementById('mode').onclick = () => vscode.postMessage({ type: 'setMode', agent: !agentMode });
+  // Agent/Chat mode dropdown (replaces the old click-to-toggle pill). Selecting an option posts
+  // setMode; the extension echoes 'mode' back → applyMode updates the label + the active check.
+  const modePill = document.getElementById('mode');
+  const modeMenu = document.getElementById('modeMenu');
+  function toggleModeMenu(){
+    if (modeMenu.hidden) { modeMenu.hidden = false; modePill.setAttribute('aria-expanded', 'true'); syncModeMenu(); }
+    else { modeMenu.hidden = true; modePill.setAttribute('aria-expanded', 'false'); }
+  }
+  function closeModeMenu(){ modeMenu.hidden = true; modePill.setAttribute('aria-expanded', 'false'); }
+  modePill.onclick = (e) => { e.stopPropagation(); toggleModeMenu(); };
+  modePill.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleModeMenu(); } };
+  modeMenu.querySelectorAll('.modeopt').forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const agent = b.getAttribute('data-agent') === '1';
+      if (agent !== agentMode) { vscode.postMessage({ type: 'setMode', agent }); }
+      closeModeMenu();
+    };
+  });
+  // Click outside or Esc closes the menu (pill/option clicks stopPropagation, so this only fires
+  // for genuine outside clicks).
+  document.addEventListener('click', () => { if (!modeMenu.hidden) closeModeMenu(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modeMenu.hidden) closeModeMenu(); });
+  syncModeMenu();
   document.getElementById('settings').onclick = () => vscode.postMessage({ type: 'openSettings' });
 
   // ---- LevelCode account / sign-in ----
