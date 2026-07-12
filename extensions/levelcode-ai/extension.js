@@ -157,7 +157,7 @@ function providerErrorMessage(req) {
 /** The configured provider routing mode ('byok' default | 'gateway'). NOTE: the key is
  *  `levelcode.ai.providerMode`, NOT `provider.mode` — the latter collides with the scalar
  *  `levelcode.ai.provider` (VS Code navigates into the string → always undefined). */
-function providerMode() { return aiConfig().get('providerMode', 'byok'); }
+function providerMode() { return aiConfig().get('providerMode', 'gateway'); }
 
 // ── LevelCode Cloud gateway model entitlement (mirrors backend LevelCode.gateway_model) ──────────
 // The free plan runs the cheap open-weights engine; a paid plan runs the flagship. The BACKEND
