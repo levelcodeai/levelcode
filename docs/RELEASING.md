@@ -109,8 +109,14 @@ see the new version. Keep the feed version in lockstep with the tag.
 
 **CI builds both arches; you sign locally.** Your Developer ID cert never touches GitHub. CI exists to
 solve the awkward part — building the **Intel (x64)** dmg, which you can't easily do on an Apple-silicon
-Mac — by building each arch on its **native** runner (`macos-14` = arm64, `macos-13` = x64). It produces
-**unsigned** `.app` bundles; you do the fast, sensitive sign + notarize + staple on your machine.
+Mac — by building each arch on its **native** runner (`macos-14` = arm64, `macos-15-intel` = x64). It
+produces **unsigned** `.app` bundles; you do the fast, sensitive sign + notarize + staple on your machine.
+
+> **Intel runner note.** `macos-13` (the old x64 runner) was retired 2025-12-04, so we build x64 on
+> `macos-15-intel` — GitHub's last native x86_64 image. It's a premium/large runner (bills ~2× minutes)
+> and Intel support on Actions ends **Fall 2027**. After that, the x64 job must cross-compile on an
+> arm64 runner (set `VSCODE_ARCH=x64`/`npm_config_arch=x64`, rebuild native modules for x64) rather than
+> build natively — a `scripts/build-macos.sh` + `scripts/bootstrap.sh` change, not just a runner swap.
 
 The whole release becomes:
 
