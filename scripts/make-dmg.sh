@@ -54,8 +54,12 @@ node "$SCRIPT_DIR/strip-unreleased.mjs" "$APP/Contents/Resources/app"
 #      fine for personal/tester use, Gatekeeper warns on first launch.
 NOTARIZE=0
 if [ -n "${CODESIGN_IDENTITY:-}" ] && [ "${CODESIGN_IDENTITY}" != "-" ]; then
-  echo "[make-dmg] Developer ID signing (will notarize the .dmg after) …"
+  echo "[make-dmg] Developer ID signing + notarizing the app (will sign + notarize the .dmg after) …"
   "$SCRIPT_DIR/notarize.sh" sign "$APP"
+  # Notarize + staple the APP *before* it goes into the dmg, so an app dragged out to
+  # /Applications launches offline on first run. The dmg gets its own ticket below, but a
+  # dmg's stapled ticket does NOT travel with the app once it's copied out.
+  "$SCRIPT_DIR/notarize.sh" notarize-app "$APP"
   NOTARIZE=1
 else
   echo "[make-dmg] Ad-hoc signing $APP (unnotarized — set CODESIGN_IDENTITY for a distributable build) …"
@@ -84,8 +88,13 @@ hdiutil create \
   -ov \
   "$DMG_OUT" >/dev/null
 
-# 4. Notarize + staple the .dmg (only when Developer ID signing was used).
+# 4. Sign, notarize + staple the .dmg (only when Developer ID signing was used). Signing the
+# disk image itself (before notarizing) makes it tamper-evident and lets Gatekeeper/spctl anchor
+# the "Notarized Developer ID" verdict on the dmg, not just the app inside — an UNsigned dmg is
+# still notarizable, but reports "no usable signature" under `spctl -t open`.
 if [ "$NOTARIZE" = "1" ]; then
+  echo "[make-dmg] Code-signing the .dmg (Developer ID) …"
+  codesign --force --timestamp --sign "$CODESIGN_IDENTITY" "$DMG_OUT"
   "$SCRIPT_DIR/notarize.sh" submit "$DMG_OUT"
 fi
 
