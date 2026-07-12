@@ -41,7 +41,11 @@ jobs:
       matrix:
         include:
           - { runner: macos-14, arch: arm64 } # Apple Silicon (native)
-          - { runner: macos-13, arch: x64 } # Intel (native)
+          # macos-15-intel is GitHub's last native x86_64 image (macos-13 was retired 2025-12-04;
+          # jobs still requesting it hang forever "Waiting for a runner…" until the 24h queue timeout).
+          # It's a premium/large runner (bills ~2× minutes) and Intel support ends Fall 2027 — after
+          # that the x64 build must cross-compile on an arm64 runner. See docs/RELEASING.md §7.
+          - { runner: macos-15-intel, arch: x64 } # Intel (native)
     runs-on: ${{ matrix.runner }}
     # Authenticate npm postinstall downloads (notably @vscode/ripgrep, which fetches a prebuilt binary
     # from GitHub releases). Without a token they use GitHub's 60/hr ANONYMOUS limit and 403 on busy
