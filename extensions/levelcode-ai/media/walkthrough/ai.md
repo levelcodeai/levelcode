@@ -7,4 +7,4 @@ LevelCode ships Claude as a first-class part of the editor — not a bolted-on e
 - **Edit with diff** — select code, `⌥⌘E`, review the change
 - An **agent** that reads, searches, edits across files, runs commands, and verifies its own work
 
-**Bring your own key or subscription.** LevelCode is BYOK — you connect your Anthropic API key (or sign in to your LevelCode account), and you're never locked in.
+**Sign in and you're on your plan.** Sign in to LevelCode and AI runs through your subscription automatically — no key to manage. Prefer your own key? BYOK works too: connect your Anthropic API key (or any major provider), and you're never locked in.
