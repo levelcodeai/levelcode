@@ -222,4 +222,43 @@ test('end-to-end: streamed edit_file call assembles into a canonical tool_use bl
 	assert.strictEqual(content[1].id, 'call_9');
 });
 
+// ---- [LevelCode] prompt-caching breakpoints (opts.cache) ----
+test('toOpenAIMessages: no cache opt → system stays a plain string (legacy shape unchanged)', () => {
+	const out = T.toOpenAIMessages('SYS', [{ role: 'user', content: 'hi' }]);
+	assert.strictEqual(out[0].content, 'SYS');
+	assert.strictEqual(out[1].content, 'hi');
+});
+
+test('toOpenAIMessages: cache:true → cache_control on the system block AND the last message', () => {
+	const out = T.toOpenAIMessages('SYS', [{ role: 'user', content: 'hi' }], { cache: true });
+	assert.ok(Array.isArray(out[0].content));                                  // system → block form
+	assert.strictEqual(out[0].content[0].text, 'SYS');
+	assert.deepStrictEqual(out[0].content[0].cache_control, { type: 'ephemeral' });   // caches tools+system upstream
+	const last = out[out.length - 1];
+	assert.ok(Array.isArray(last.content));
+	assert.deepStrictEqual(last.content[last.content.length - 1].cache_control, { type: 'ephemeral' }); // rolling transcript breakpoint
+});
+
+test('toOpenAIMessages: cache:true → rolling breakpoint lands on the last tool_result message', () => {
+	const msgs = [
+		{ role: 'user', content: 'do it' },
+		{ role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'x' } }] },
+		{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'file body' }] }
+	];
+	const out = T.toOpenAIMessages('SYS', msgs, { cache: true });
+	const last = out[out.length - 1];
+	assert.strictEqual(last.role, 'tool');                                     // tool_result → {role:'tool'}
+	assert.deepStrictEqual(last.content[0].cache_control, { type: 'ephemeral' });
+});
+
+test('isAnthropicFamily: gates cache_control writes to Claude upstreams only', () => {
+	const O = require('../providers/openaiCompat');
+	assert.strictEqual(O.isAnthropicFamily('anthropic/claude-sonnet-4-6'), true);
+	assert.strictEqual(O.isAnthropicFamily('claude-opus-4-8'), true);
+	assert.strictEqual(O.isAnthropicFamily('openai/gpt-4o'), false);
+	assert.strictEqual(O.isAnthropicFamily('deepseek/deepseek-chat'), false);
+	assert.strictEqual(O.isAnthropicFamily('moonshotai/kimi-k2.7-code'), false);
+	assert.strictEqual(O.isAnthropicFamily(''), false);
+});
+
 console.log('\ntranslate: ' + n + ' tests passed.');

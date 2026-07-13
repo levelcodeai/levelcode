@@ -157,8 +157,41 @@ function finalizeAgentBlocks(blocks) {
  *          onToolStart?:(name:string)=>void}} opts
  * @returns {Promise<{content:any[], stop_reason:string}>}
  */
+/**
+ * [LevelCode] Return a shallow copy of the transcript with a cache_control breakpoint on the LAST
+ * message's last content block. Combined with the cached system block below, this caches the whole
+ * growing transcript: turn N writes it, turn N+1 reads it (cached input bills ~0.1x). Anthropic allows
+ * 4 breakpoints; we use 2 (system + this). Messages with empty content are skipped.
+ */
+function withRollingCacheBreakpoint(messages) {
+	const arr = Array.isArray(messages) ? messages.slice() : [];
+	for (let i = arr.length - 1; i >= 0; i--) {
+		const m = arr[i];
+		if (!m) { continue; }
+		let content = m.content;
+		if (typeof content === 'string') {
+			if (!content) { continue; }
+			content = [{ type: 'text', text: content, cache_control: { type: 'ephemeral' } }];
+		} else if (Array.isArray(content) && content.length) {
+			content = content.slice();
+			content[content.length - 1] = { ...content[content.length - 1], cache_control: { type: 'ephemeral' } };
+		} else {
+			continue;
+		}
+		arr[i] = { ...m, content };
+		break;
+	}
+	return arr;
+}
+
 async function streamClaudeAgentTurn(opts) {
-	const body = { model: opts.model, max_tokens: opts.maxTokens, system: opts.system, messages: opts.messages, stream: true };
+	// [LevelCode] Prompt caching — the real token/$ saver. tools + system are byte-identical every turn
+	// and the transcript only grows, so cache them: a breakpoint on the system block caches tools+system;
+	// a rolling breakpoint on the last message caches the prior transcript. Cached input bills ~0.1x vs
+	// full price. Without this an agent loop re-pays FULL input for the entire prefix on every turn.
+	const system = [{ type: 'text', text: String(opts.system || ''), cache_control: { type: 'ephemeral' } }];
+	const messages = withRollingCacheBreakpoint(opts.messages);
+	const body = { model: opts.model, max_tokens: opts.maxTokens, system, messages, stream: true };
 	if (opts.tools && opts.tools.length) { body.tools = opts.tools; }
 	const res = await fetch(ANTHROPIC_URL, {
 		method: 'POST',
