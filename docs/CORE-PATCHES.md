@@ -26,7 +26,7 @@ So a full rebuild from nothing is: `bootstrap.sh` (clone → brand → extension
 To re-create the core patch after changing core files in `vscode/`:
 
 ```bash
-# STRUCTURAL patch only (8 files). Display-string rebrands are NOT here — they live in scripts/de-brand.mjs.
+# STRUCTURAL patch only (11 files). Display-string rebrands are NOT here — they live in scripts/de-brand.mjs.
 git -C vscode diff HEAD -- \
   src/vs/workbench/contrib/files/browser/files.contribution.ts \
   build/lib/extensions.ts build/lib/copilot.ts \
@@ -35,9 +35,15 @@ git -C vscode diff HEAD -- \
   src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts \
   src/vs/workbench/browser/actions/helpActions.ts \
   src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts \
+  src/vs/workbench/contrib/welcomeOnboarding/browser/welcomeOnboarding.contribution.ts \
+  src/vs/workbench/api/node/loopbackServer.ts \
+  src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts \
   > patches/levelcode-core.patch
-# NOTE: use `diff HEAD` (not plain `diff`) — bootstrap's `git apply` may leave these STAGED,
+# NOTE 1: use `diff HEAD` (not plain `diff`) — bootstrap's `git apply` may leave these STAGED,
 # and plain `git diff` shows only UNSTAGED changes, silently dropping the staged patches.
+# NOTE 2: regenerate BEFORE running de-brand.mjs. de-brand's global MS-doc-link sweep (pass 2) also
+# strips links from `files.contribution.ts` (a patched file); if you regen after de-brand, those
+# link-strips leak into the patch. Order: patch → regen → de-brand (this is also bootstrap's order).
 ```
 
 To find every core touch in the checkout:
@@ -64,21 +70,34 @@ compile-client` after touching a core file.**
 | 6 | `update/browser/releaseNotesEditor.ts` (`show`) | Open `product.releaseNotesUrl` in the browser instead of fetching `code.visualstudio.com/raw/v{ver}.md`. | De-brand (WS-B). Stops the in-editor **"Visual Studio Code 1.126"** release-notes tab. `useCurrentFile` dev command still renders a local `.md`. |
 | 7 | `browser/actions/helpActions.ts` | **Hide** the "**Ask @vscode**" Help item (`when: ContextKeyExpr.false()`) + command (`f1: false`). | De-brand (WS-C/M4). Copilot participant, not shipped. *Gated* rather than deleted so all imports stay used — the class stays registered but never surfaces. |
 | 8 | `welcomeWalkthrough/browser/walkThrough.contribution.ts` | **Remove** the "**Editor Playground**" action registration + Help item + their now-unused imports (`registerAction2`, `MenuRegistry`, `MenuId`, `EditorWalkThroughAction`). | De-brand (WS-C/M5). Its walkthrough is verbatim Microsoft VS Code content. Clean full removal (no leftover unused imports). |
+| 9 | `welcomeOnboarding/browser/welcomeOnboarding.contribution.ts` | Developer command **"Welcome Onboarding 2026"** → `f1: false`. | De-brand (WS-A/B3). That command calls `onboardingService.show()`, which renders the verbatim **"Welcome to VS Code — Sign in to use GitHub Copilot"** modal. Patch #4 blocks it on *first run*; this hides the one remaining Command-Palette path to it. `f1:false` (not removal) keeps the action + its imports used. |
+| 10 | `api/node/loopbackServer.ts` (`getHtml`) | Replace the `this._appName === 'Visual Studio Code'` / `'… - Insiders'` branches (which embedded the VS Code stable/Insiders **shields**, falling through to the blue VS Code **"book"** default) with a single **LevelCode chevron** data-URI. | De-brand (WS-C/L5). A latent bug **and** a leak: `appName` is now "LevelCode" so no branch matched → every GitHub OAuth success page flashed a VS Code logo. `this._appName` is still used in the page text, so no unused-field error. |
+| 11 | `chat/browser/chat.shared.contribution.ts` | Add a `WorkbenchPhase.BlockRestore` contribution that calls `IChatEntitlementService.setForceHidden(true)`. | De-brand (WS-A/B4). `product.defaultChatAgent` is kept (assertDefined-d, ~15 files), which leaves `Setup.hidden=false` → a signed-out user sees "Sign in to use GitHub Copilot" CTAs in the Accounts menu, title bar, and Chat status. `setForceHidden(true)` flips **only** that gate — it does **not** disable AI/inline suggestions or suppress LevelCode's own AI-panel auto-open, unlike `chat.disableAIFeatures:true` (`layout.ts` first-run). No new imports (file already imports `registerWorkbenchContribution2` + `IChatEntitlementService`). |
 
-## String rebrands — `scripts/de-brand.mjs` (NOT in the patch)
+## String + link rebrands — `scripts/de-brand.mjs` (NOT in the patch)
 
-Every user-visible **"VS Code" / "Visual Studio Code" → "LevelCode"** display string (settings
-descriptions, notifications, menu labels, the Agents-window "Open …" actions, and the `openInVSCode.css`
-icon swap) lives here as a **content** replacement — deliberately kept out of the patch, because ~30
-scattered line-anchored hunks are exactly what breaks on an upstream bump. A content match doesn't care
-where the string is, and no-ops if upstream removes it. `bootstrap.sh` runs it right after `git apply`;
-it's idempotent and **warns (never fails)** on drift (a missing targeted string, or a residual "Visual
-Studio Code"). **Add or adjust display-string rules in `scripts/de-brand.mjs`, not the patch.**
+Content-based replacements — matched on the string, not its line number — so they survive upstream line
+movement and no-op if a target disappears. `bootstrap.sh` runs it right after `git apply`; idempotent, and
+it **warns (never fails)** on drift. **Add display-string / link rules here, not the patch.** Two passes:
 
-- **KEPT** (intentional): `sessions/contrib/applyCommitsToParentRepo/.../applyChangesToParentRepo.ts` "Open in VS Code" — a real hand-off to *external* VS Code via the `vscode://` scheme.
+**Pass 1 — curated name swaps.** Every user-visible **"VS Code" / "Visual Studio Code" → "LevelCode"**
+display string (settings descriptions, notifications, menu labels, the Agents-window "Open …" actions, the
+`openInVSCode.css` icon swap, and now the **update settings** M1 reword, the **git SCM welcome** M3, and the
+bundled-extension `package.nls.json` descriptions L1). Curated per-file because a blanket swap could clobber
+a genuine external-VS-Code reference or a `vscode://` scheme.
+
+**Pass 2 — global MS-doc-link strip.** Collapses `[text](https://code.visualstudio.com/…)` and
+`[text](https://aka.ms/…)` to just `text` across **all** of `vscode/src` (minus `test/`, `.test.ts`, and
+vendored `agentHost/**`) plus every bundled extension's `package.nls.json`. Safe to run globally: the
+pattern only ever matches a Microsoft **doc link**, never a LevelCode keep. Two subtleties baked into the
+regex/callback: link text is `[^\[\]\r\n]+` (can't span an `= [` array bracket to a later link), and the
+`{Locked='](url)'}` NLS translator-annotation idiom is skipped (its `[` is a code bracket, not markdown).
+**`.d.ts` are included on purpose** — `monaco.d.ts` copies JSDoc (incl. these links) verbatim from the
+editor source, and the build fails ("monaco.d.ts is no longer up to date") unless both sides are stripped.
+
+- **KEPT** (intentional): `sessions/contrib/applyCommitsToParentRepo/.../applyChangesToParentRepo.ts` "Open in VS Code" — a real hand-off to *external* VS Code via the `vscode://` scheme. And the `{Locked=…}` NLS annotations (translator metadata, never user-visible) keep their MS URLs.
 - **SKIPPED**: M13 quality-switch dialogs — dormant (no Insiders LevelCode build); rebranding would imply a false "Insiders LevelCode".
 - **EXCLUDED**: `platform/agentHost/**` — its ~631 "VS Code" hits are all `test/` files + vendored proprietary Copilot/MS SDK (stripped from the shipped app by `strip-proprietary.mjs`).
-- **Residual**: an `aka.ms/VSCode/Agents/docs` "Learn more" link in the policy-blocked card — no LevelCode equivalent yet.
 
 > **Branding asset override:** `apply-branding.mjs` copies `branding/icons/code-icon.svg` (the LevelCode
 > chevron mark) over `vscode/src/vs/workbench/browser/media/code-icon.svg` — the blue `#167abf` VS Code
