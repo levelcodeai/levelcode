@@ -26,12 +26,11 @@ So a full rebuild from nothing is: `bootstrap.sh` (clone → brand → extension
 To re-create the core patch after changing core files in `vscode/`:
 
 ```bash
-# STRUCTURAL patch only (9 files). Display-string rebrands are NOT here — they live in scripts/de-brand.mjs.
+# STRUCTURAL patch only (8 files). Display-string rebrands are NOT here — they live in scripts/de-brand.mjs.
 git -C vscode diff HEAD -- \
   src/vs/workbench/contrib/files/browser/files.contribution.ts \
   build/lib/extensions.ts build/lib/copilot.ts \
   src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts \
-  src/vs/workbench/contrib/welcomeGettingStarted/browser/startupPage.ts \
   src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts \
   src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts \
   src/vs/workbench/browser/actions/helpActions.ts \
@@ -49,19 +48,22 @@ grep -rn "\[LevelCode\]" vscode/src vscode/build
 
 ## Patches (structural / behavioural only)
 
-These can't be a content swap — behaviour, build logic, unregistrations, early-returns. Kept small on
-purpose so they survive Code-OSS bumps. Each is tagged `[LevelCode]` in the source.
+These can't be a content swap — behaviour, build logic, unregistrations. Kept small on purpose so they
+survive Code-OSS bumps. Each is tagged `[LevelCode]`. **The build is strict** (`noUnusedLocals` +
+`allowUnreachableCode: false`), so these avoid dead early-`return`s (unreachable-code error), commented-out
+calls that orphan a private method (unused-member error), and any now-unused import — **run `npm run
+compile-client` after touching a core file.**
 
 | # | File | Change | Why |
 | --- | --- | --- | --- |
 | 1 | `src/vs/workbench/contrib/files/browser/files.contribution.ts` | `files.hotExit` default → `onExitAndWindowClose` | Sublime-style persistence by default; `files.hotExit` is application-scoped, which extensions may not override — so it must be a core default. |
 | 2 | `build/lib/extensions.ts` (`packageCopilotExtensionStream`) | Return an empty stream — don't bundle GitHub Copilot Chat. | Proprietary, not MIT; from-source packaging is fragile. LevelCode's own AI layer replaces it. |
 | 3 | `build/lib/copilot.ts` (`prepareBuiltInCopilotRipgrepShim`) | Skip instead of throwing when the Copilot SDK dir is absent. | Pairs with #2 — the ripgrep-shim step must no-op when Copilot isn't bundled. |
-| 4 | `welcomeGettingStarted/browser/gettingStarted.contribution.ts` | `experimentalOnboarding` default `true`→`false`; removed `experiment:{mode:'auto'}`. | De-brand (WS-A). Kills the first-run **"Welcome to VS Code — Sign in to use GitHub Copilot"** overlay; the experiment block would silently re-enable it. |
-| 5 | `welcomeGettingStarted/browser/startupPage.ts` (`tryShowOnboarding`) | Early `return` — never call `onboardingService.show()`. | De-brand (WS-A). Guaranteed kill. Do **not** null `product.defaultChatAgent` (assertDefined-d, ~15 files) — kill the *entry point*. |
-| 6 | `welcomeGettingStarted/browser/gettingStartedService.ts` (`registerWalkthroughs`) | Early `return` → the built-in **VS Code walkthroughs** (Setup / Web / Accessibility) never register. | De-brand (WS-C/H2). LevelCode's own walkthrough registers via the **extension** path and is unaffected. |
-| 7 | `update/browser/releaseNotesEditor.ts` (`show`) | Open `product.releaseNotesUrl` in the browser instead of fetching `code.visualstudio.com/raw/v{ver}.md`. | De-brand (WS-B). Stops the in-editor **"Visual Studio Code 1.126"** release-notes tab. `useCurrentFile` dev command still renders a local `.md`. |
-| 8 | `browser/actions/helpActions.ts`; `welcomeWalkthrough/browser/walkThrough.contribution.ts` | **Unregister** the Help ▸ "**Ask @vscode**" item + command (Copilot participant, not shipped) and the "**Editor Playground**" action + Help item (100% Microsoft VS Code content). | De-brand (WS-C/M4+M5). The now-dead classes are tree-shaken from the build. |
+| 4 | `welcomeGettingStarted/browser/gettingStarted.contribution.ts` | `experimentalOnboarding` default `true`→`false`; removed `experiment:{mode:'auto'}`. | De-brand (WS-A). The **sole** kill of the first-run **"Welcome to VS Code — Sign in to use GitHub Copilot"** overlay: with it off (and no experiment to re-enable it) `tryShowOnboarding` returns at its config check, so `onboardingService.show()` never runs. No code-level guard in `startupPage.ts` — a bare `return` there is unreachable-code-flagged. Do **not** null `product.defaultChatAgent` (assertDefined-d, ~15 files). |
+| 5 | `welcomeGettingStarted/browser/gettingStartedService.ts` (`registerWalkthroughs`) | Iterate `walkthroughs.slice(0, 0)` → the built-in **VS Code walkthroughs** (Setup / Web / Accessibility) never register. | De-brand (WS-C/H2). An empty slice — *not* an early `return` (unreachable) nor an uncalled method (unused) — keeps `walkthroughs` referenced and compiles clean. LevelCode's own walkthrough registers via the **extension** path. |
+| 6 | `update/browser/releaseNotesEditor.ts` (`show`) | Open `product.releaseNotesUrl` in the browser instead of fetching `code.visualstudio.com/raw/v{ver}.md`. | De-brand (WS-B). Stops the in-editor **"Visual Studio Code 1.126"** release-notes tab. `useCurrentFile` dev command still renders a local `.md`. |
+| 7 | `browser/actions/helpActions.ts` | **Hide** the "**Ask @vscode**" Help item (`when: ContextKeyExpr.false()`) + command (`f1: false`). | De-brand (WS-C/M4). Copilot participant, not shipped. *Gated* rather than deleted so all imports stay used — the class stays registered but never surfaces. |
+| 8 | `welcomeWalkthrough/browser/walkThrough.contribution.ts` | **Remove** the "**Editor Playground**" action registration + Help item + their now-unused imports (`registerAction2`, `MenuRegistry`, `MenuId`, `EditorWalkThroughAction`). | De-brand (WS-C/M5). Its walkthrough is verbatim Microsoft VS Code content. Clean full removal (no leftover unused imports). |
 
 ## String rebrands — `scripts/de-brand.mjs` (NOT in the patch)
 
