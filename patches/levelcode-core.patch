@@ -66,6 +66,102 @@ index 5d89e0be..18d3b47b 100644
  }
  
  .monaco-enable-motion .monaco-workbench .open-in-vscode-titlebar-widget > .open-in-vscode-titlebar-widget-icon,
+diff --git a/src/vs/sessions/browser/widget/openInVSCodeWidget.ts b/src/vs/sessions/browser/widget/openInVSCodeWidget.ts
+index 5d7e07a0..24ccc732 100644
+--- a/src/vs/sessions/browser/widget/openInVSCodeWidget.ts
++++ b/src/vs/sessions/browser/widget/openInVSCodeWidget.ts
+@@ -44,7 +44,7 @@ export class OpenInVSCodeTitleBarWidget extends BaseActionViewItem {
+ 		}
+ 
+ 		const label = this.action.label;
+-		const hoverText = this.keybindingService.appendKeybinding(localize('openInVSCodeHover', "Open in VS Code Editor Window"), this.keybindingCommandId);
++		const hoverText = this.keybindingService.appendKeybinding(localize('openInVSCodeHover', "Open in LevelCode Editor Window"), this.keybindingCommandId);
+ 		container.setAttribute('aria-label', hoverText);
+ 		this._register(this.hoverService.setupManagedHover(getDefaultHoverDelegate('element'), container, hoverText));
+ 
+diff --git a/src/vs/sessions/contrib/policyBlocked/browser/sessionsPolicyBlocked.ts b/src/vs/sessions/contrib/policyBlocked/browser/sessionsPolicyBlocked.ts
+index ee8e0bdb..71e76bc4 100644
+--- a/src/vs/sessions/contrib/policyBlocked/browser/sessionsPolicyBlocked.ts
++++ b/src/vs/sessions/contrib/policyBlocked/browser/sessionsPolicyBlocked.ts
+@@ -100,7 +100,7 @@ export class SessionsPolicyBlockedOverlay extends Disposable {
+ 		}));
+ 
+ 		const button = this._register(new Button(card, { ...defaultButtonStyles, secondary: true }));
+-		button.label = localize('policyBlocked.openVSCode', "Open VS Code");
++		button.label = localize('policyBlocked.openVSCode', "Open LevelCode"); // [LevelCode] rebrand (opens a LevelCode window via urlProtocol)
+ 		this._register(button.onDidClick(() => this._openVSCode()));
+ 	}
+ 
+diff --git a/src/vs/sessions/contrib/providers/localChatSessions/browser/localChatSessions.contribution.ts b/src/vs/sessions/contrib/providers/localChatSessions/browser/localChatSessions.contribution.ts
+index 54145042..1bdc071d 100644
+--- a/src/vs/sessions/contrib/providers/localChatSessions/browser/localChatSessions.contribution.ts
++++ b/src/vs/sessions/contrib/providers/localChatSessions/browser/localChatSessions.contribution.ts
+@@ -28,7 +28,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
+ 			default: true,
+ 			tags: ['experimental'],
+ 			experiment: { mode: 'startup' },
+-			description: localize('sessions.chat.localAgent.enabled', "Enable Local VS Code chat sessions in the Agents Window. Reload the window for changes to take effect."),
++			description: localize('sessions.chat.localAgent.enabled', "Enable Local LevelCode chat sessions in the Agents Window. Reload the window for changes to take effect."),
+ 		},
+ 	},
+ });
+diff --git a/src/vs/sessions/contrib/providers/remoteAgentHost/browser/remoteAgentHost.contribution.ts b/src/vs/sessions/contrib/providers/remoteAgentHost/browser/remoteAgentHost.contribution.ts
+index 5a99c9fd..7042c1ad 100644
+--- a/src/vs/sessions/contrib/providers/remoteAgentHost/browser/remoteAgentHost.contribution.ts
++++ b/src/vs/sessions/contrib/providers/remoteAgentHost/browser/remoteAgentHost.contribution.ts
+@@ -1044,7 +1044,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
+ 				},
+ 				required: ['address', 'name'],
+ 			},
+-			description: nls.localize('chat.remoteAgentHosts', "A list of WebSocket remote agent host addresses to connect to (e.g. \"localhost:3000\"). SSH remote agent host details are managed by VS Code."),
++			description: nls.localize('chat.remoteAgentHosts', "A list of WebSocket remote agent host addresses to connect to (e.g. \"localhost:3000\"). SSH remote agent host details are managed by LevelCode."),
+ 			default: [],
+ 			scope: ConfigurationScope.APPLICATION,
+ 			tags: ['experimental', 'advanced'],
+diff --git a/src/vs/sessions/electron-browser/actions/vscodeActions.ts b/src/vs/sessions/electron-browser/actions/vscodeActions.ts
+index b2606fd2..987523c1 100644
+--- a/src/vs/sessions/electron-browser/actions/vscodeActions.ts
++++ b/src/vs/sessions/electron-browser/actions/vscodeActions.ts
+@@ -97,7 +97,7 @@ export class OpenVSCodeWindowAction extends Action2 {
+ 	constructor() {
+ 		super({
+ 			id: OpenVSCodeWindowAction.ID,
+-			title: localize2('openVSCodeWindow', 'Open VS Code Window'),
++			title: localize2('openVSCodeWindow', 'Open LevelCode Window'), // [LevelCode] rebrand (focuses the app's own main window)
+ 			f1: true,
+ 			keybinding: {
+ 				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyA,
+diff --git a/src/vs/workbench/contrib/chat/browser/widget/input/chatModelPicker.ts b/src/vs/workbench/contrib/chat/browser/widget/input/chatModelPicker.ts
+index b16728b8..79695842 100644
+--- a/src/vs/workbench/contrib/chat/browser/widget/input/chatModelPicker.ts
++++ b/src/vs/workbench/contrib/chat/browser/widget/input/chatModelPicker.ts
+@@ -51,14 +51,14 @@ function getUpdateHoverContent(updateState: StateType): MarkdownString {
+ 	const hoverContent = new MarkdownString('', { isTrusted: true, supportThemeIcons: true });
+ 	switch (updateState) {
+ 		case StateType.AvailableForDownload:
+-			hoverContent.appendMarkdown(localize('chat.modelPicker.downloadUpdateHover', "This model requires a newer version of VS Code. [Download Update](command:update.downloadUpdate) to access it."));
++			hoverContent.appendMarkdown(localize('chat.modelPicker.downloadUpdateHover', "This model requires a newer version of LevelCode. [Download Update](command:update.downloadUpdate) to access it."));
+ 			break;
+ 		case StateType.Downloaded:
+ 		case StateType.Ready:
+-			hoverContent.appendMarkdown(localize('chat.modelPicker.restartUpdateHover', "This model requires a newer version of VS Code. [Restart to Update](command:update.restartToUpdate) to access it."));
++			hoverContent.appendMarkdown(localize('chat.modelPicker.restartUpdateHover', "This model requires a newer version of LevelCode. [Restart to Update](command:update.restartToUpdate) to access it."));
+ 			break;
+ 		default:
+-			hoverContent.appendMarkdown(localize('chat.modelPicker.checkUpdateHover', "This model requires a newer version of VS Code. [Update VS Code](command:update.checkForUpdate) to access it."));
++			hoverContent.appendMarkdown(localize('chat.modelPicker.checkUpdateHover', "This model requires a newer version of LevelCode. [Update LevelCode](command:update.checkForUpdate) to access it."));
+ 			break;
+ 	}
+ 	return hoverContent;
+@@ -886,7 +886,7 @@ function createUnavailableModelItem(
+ 	if (reason === 'upgrade') {
+ 		description = new MarkdownString(localize('chat.modelPicker.upgradeLink', "[Upgrade](command:workbench.action.chat.upgradePlan \" \")"), { isTrusted: true });
+ 	} else if (reason === 'update') {
+-		description = localize('chat.modelPicker.updateDescription', "Update VS Code");
++		description = localize('chat.modelPicker.updateDescription', "Update LevelCode");
+ 	} else {
+ 		description = manageSettingsUrl
+ 			? new MarkdownString(localize('chat.modelPicker.adminLink', "[Contact your admin]({0})", manageSettingsUrl), { isTrusted: true })
 diff --git a/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts b/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
 index 0c0965d3..aa17d72f 100644
 --- a/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
@@ -129,6 +225,21 @@ index 574c2d8e..f6b8c7af 100644
  		'markdownEnumDescriptions': [
  			nls.localize('hotExit.off', 'Disable hot exit. A prompt will show when attempting to close a window with editors that have unsaved changes.'),
  			nls.localize('hotExit.onExit', 'Hot exit will be triggered when the last window is closed on Windows/Linux or when the `workbench.action.quit` command is triggered (command palette, keybinding, menu). All windows without folders opened will be restored upon next launch. A list of previously opened windows with unsaved files can be accessed via `File > Open Recent > More...`'),
+diff --git a/src/vs/workbench/contrib/issue/browser/baseIssueReporterService.ts b/src/vs/workbench/contrib/issue/browser/baseIssueReporterService.ts
+index 44e0b933..39533c02 100644
+--- a/src/vs/workbench/contrib/issue/browser/baseIssueReporterService.ts
++++ b/src/vs/workbench/contrib/issue/browser/baseIssueReporterService.ts
+@@ -1053,8 +1053,8 @@ export class BaseIssueReporterService extends Disposable {
+ 
+ 		sourceSelect.innerText = '';
+ 		sourceSelect.append(this.makeOption('', localize('selectSource', "Select source"), true));
+-		sourceSelect.append(this.makeOption(IssueSource.VSCode, localize('vscode', "Visual Studio Code"), false));
+-		sourceSelect.append(this.makeOption(IssueSource.Extension, localize('extension', "A VS Code extension"), false));
++		sourceSelect.append(this.makeOption(IssueSource.VSCode, localize('vscode', "LevelCode"), false)); // [LevelCode] rebrand
++		sourceSelect.append(this.makeOption(IssueSource.Extension, localize('extension', "A LevelCode extension"), false)); // [LevelCode] rebrand
+ 		if (this.product.reportMarketplaceIssueUrl) {
+ 			sourceSelect.append(this.makeOption(IssueSource.Marketplace, localize('marketplace', "Extensions Marketplace"), false));
+ 		}
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalView.ts b/src/vs/workbench/contrib/terminal/browser/terminalView.ts
 index 9a745727..a0f7b147 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalView.ts

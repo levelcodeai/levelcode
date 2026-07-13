@@ -31,6 +31,13 @@ git -C vscode diff HEAD -- \
   src/vs/workbench/contrib/extensions/browser/extensionsActions.ts \
   src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts \
   src/vs/workbench/contrib/terminal/browser/terminalView.ts \
+  src/vs/sessions/electron-browser/actions/vscodeActions.ts \
+  src/vs/sessions/browser/widget/openInVSCodeWidget.ts \
+  src/vs/sessions/contrib/providers/remoteAgentHost/browser/remoteAgentHost.contribution.ts \
+  src/vs/sessions/contrib/providers/localChatSessions/browser/localChatSessions.contribution.ts \
+  src/vs/sessions/contrib/policyBlocked/browser/sessionsPolicyBlocked.ts \
+  src/vs/workbench/contrib/issue/browser/baseIssueReporterService.ts \
+  src/vs/workbench/contrib/chat/browser/widget/input/chatModelPicker.ts \
   > patches/levelcode-core.patch
 # NOTE: use `diff HEAD` (not plain `diff`) — bootstrap's `git apply` may leave these STAGED,
 # and plain `git diff` shows only UNSTAGED changes, silently dropping the staged patches.
@@ -54,6 +61,8 @@ grep -rn "\[LevelCode\]" vscode/src vscode/build
 | 6 | `src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts` (`show`) | Open `product.releaseNotesUrl` in the browser instead of fetching `code.visualstudio.com/raw/v{ver}.md`. | De-brand (WS-B/B5). Stops the in-editor **"Visual Studio Code 1.126"** release-notes tab. The `useCurrentFile` dev command (author a local `.md`) still renders locally. |
 | 7 | `src/vs/sessions/browser/media/openInVSCode.css` | The `[data-product-quality]` "Open in VS Code" button icon → `./vscode-icon.svg` (the real VS Code shield) instead of `code-icon.svg`. | De-brand (WS-D). That button *opens VS Code*, so it must show the VS Code logo — but we now overwrite `code-icon.svg` with the LevelCode mark (see the asset-override note below), which would otherwise make it show LevelCode. |
 | 8 | extensions `extensions.contribution.ts`, `extensionsActions.ts`, `extensionsWorkbenchService.ts`; terminal `terminalView.ts` | Rebrand user-visible reload/restart/deprecation notices: "Please reload/restart **Visual Studio Code**", "[**VS Code** Release Notes]", "bundled with **Visual Studio Code**" → **LevelCode**. | De-brand (WS-C / H4+M7). These fire on extension install/uninstall and terminal font changes. Tagged `// [LevelCode] rebrand` where the syntax allows. NOTE: lower-priority *settings-description* strings ("VS Code installs only…") in these files are **not yet** done (L1). |
+| 9 | sessions `vscodeActions.ts`, `openInVSCodeWidget.ts`, `policyBlocked/sessionsPolicyBlocked.ts`, `remoteAgentHost.contribution.ts`, `localChatSessions.contribution.ts` | Rebrand Agents-window strings that reference the app itself: "Open VS Code Window" / "Open in VS Code Editor Window" / "Open VS Code" (all open a **LevelCode** window via `urlProtocol`) → LevelCode; "SSH … managed by VS Code" and "Local VS Code chat sessions" settings → LevelCode. | De-brand (WS-C/H3). **KEPT** `applyCommitsToParentRepo/applyChangesToParentRepo.ts` "Open in VS Code" — that one genuinely hands off to *external* VS Code via the `vscode://` scheme. (Residual: a `aka.ms/VSCode/Agents/docs` "Learn more" URL in the policy-blocked card — no LevelCode equivalent yet.) |
+| 10 | issue `baseIssueReporterService.ts`; chat `chatModelPicker.ts` | Report-Issue **source dropdown** "Visual Studio Code" / "A VS Code extension" → LevelCode; chat model-picker "requires a newer version of VS Code" / "Update VS Code" → LevelCode. | De-brand (WS-C/M2+M6). **SKIPPED** M13 quality-switch dialogs — dormant (no Insiders LevelCode build); rebranding would imply a false "Insiders LevelCode". |
 
 > **Branding asset override (not a patch):** `apply-branding.mjs` also copies `branding/icons/code-icon.svg` (the LevelCode chevron mark) over `vscode/src/vs/workbench/browser/media/code-icon.svg`. Stock Code-OSS ships the blue `#167abf` VS Code "book" there; it's used as a `background-image` on the title-bar app icon, the update tooltip, the welcome/onboarding hero, the walkthrough and the banner (one file → ~6 surfaces). Because it's a whole-file swap it's done by the branding copy step, not this patch — but patch #7 above pairs with it.
 
