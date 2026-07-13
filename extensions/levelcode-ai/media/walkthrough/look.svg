@@ -1,0 +1,33 @@
+<svg viewBox="0 0 720 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Signature themes, keymap presets, and Notepad++ power-editing" style="color: var(--vscode-foreground, #b9b7b1); max-width: 100%; height: auto;">
+  <!-- window -->
+  <rect x="86" y="70" width="548" height="234" rx="16" stroke="currentColor" stroke-opacity="0.26" stroke-width="2"/>
+  <line x1="86" y1="116" x2="634" y2="116" stroke="currentColor" stroke-opacity="0.14" stroke-width="2"/>
+  <circle cx="114" cy="93" r="4.5" fill="currentColor" fill-opacity="0.28"/>
+  <circle cx="132" cy="93" r="4.5" fill="currentColor" fill-opacity="0.28"/>
+  <circle cx="150" cy="93" r="4.5" fill="currentColor" fill-opacity="0.28"/>
+
+  <!-- theme swatches (the selected one ringed in violet) -->
+  <g>
+    <rect x="120" y="150" width="88" height="88" rx="14" fill="#7C5CD6" fill-opacity="0.18" stroke="#7C5CD6" stroke-width="2.5"/>
+    <circle cx="164" cy="194" r="15" fill="#7C5CD6"/>
+    <rect x="228" y="150" width="88" height="88" rx="14" fill="currentColor" fill-opacity="0.09" stroke="currentColor" stroke-opacity="0.2" stroke-width="2"/>
+    <circle cx="272" cy="194" r="15" fill="currentColor" fill-opacity="0.32"/>
+    <rect x="336" y="150" width="88" height="88" rx="14" fill="currentColor" fill-opacity="0.03" stroke="currentColor" stroke-opacity="0.2" stroke-width="2"/>
+    <circle cx="380" cy="194" r="15" fill="currentColor" fill-opacity="0.14"/>
+  </g>
+
+  <!-- keycaps (keymap presets) -->
+  <g>
+    <rect x="470" y="150" width="46" height="46" rx="9" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.28" stroke-width="1.5"/>
+    <rect x="524" y="150" width="46" height="46" rx="9" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.28" stroke-width="1.5"/>
+    <rect x="470" y="204" width="100" height="34" rx="9" fill="#7C5CD6" fill-opacity="0.14" stroke="#7C5CD6" stroke-opacity="0.5" stroke-width="1.5"/>
+    <!-- abstract keycap marks (glyph-free so they always render) -->
+    <rect x="483" y="164" width="20" height="20" rx="5" fill="none" stroke="currentColor" stroke-opacity="0.5" stroke-width="2"/>
+    <rect x="538" y="171" width="18" height="4.5" rx="2.25" fill="currentColor" fill-opacity="0.5"/>
+    <rect x="486" y="217" width="68" height="8" rx="4" fill="#7C5CD6" fill-opacity="0.5"/>
+  </g>
+
+  <!-- caption chips -->
+  <rect x="120" y="262" width="150" height="12" rx="6" fill="currentColor" fill-opacity="0.13"/>
+  <rect x="470" y="262" width="120" height="12" rx="6" fill="currentColor" fill-opacity="0.13"/>
+</svg>
