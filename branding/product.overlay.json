@@ -27,7 +27,10 @@
 
   "licenseName": "MIT",
   "licenseUrl": "https://github.com/levelcodeai/levelcode/blob/main/LICENSE",
+  "serverLicenseUrl": "https://github.com/levelcodeai/levelcode/blob/main/LICENSE",
   "reportIssueUrl": "https://github.com/levelcodeai/levelcode/issues/new",
+  "win32ShellNameShort": "LevelCode",
+  "crashReporter": { "companyName": "SystemU", "productName": "LevelCode" },
 
   "_downloadComment": "Download + update funnel through levelcode.ai (see site/app/download/[arch]/route.ts). downloadUrl is where the notify-only updater's Download button sends the user; releaseNotesUrl backs its 'Release Notes' button. updateUrl is the feed base — the updater GETs {updateUrl}/api/update/{target}/{quality}/{commit}; until that endpoint is live it returns 404 and the updater silently treats it as 'up to date' (notify-only, non-fatal). RELEASE NOTE: levelcode.ai must resolve to the deployed site before these links work.",
   "downloadUrl": "https://levelcode.ai/download",
