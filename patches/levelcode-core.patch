@@ -193,9 +193,38 @@ index b16728b8..79695842 100644
  		description = manageSettingsUrl
  			? new MarkdownString(localize('chat.modelPicker.adminLink', "[Contact your admin]({0})", manageSettingsUrl), { isTrusted: true })
 diff --git a/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts b/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
-index 0c0965d3..aa17d72f 100644
+index 0c0965d3..d01de04e 100644
 --- a/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
 +++ b/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
+@@ -417,24 +417,24 @@ CommandsRegistry.registerCommand({
+ 			{
+ 				name: 'options',
+ 				description: '(optional) Options for installing the extension. Object with the following properties: ' +
+-					'`installOnlyNewlyAddedFromExtensionPackVSIX`: When enabled, VS Code installs only newly added extensions from the extension pack VSIX. This option is considered only when installing VSIX. ',
++					'`installOnlyNewlyAddedFromExtensionPackVSIX`: When enabled, LevelCode installs only newly added extensions from the extension pack VSIX. This option is considered only when installing VSIX. ',
+ 				isOptional: true,
+ 				schema: {
+ 					'type': 'object',
+ 					'properties': {
+ 						'installOnlyNewlyAddedFromExtensionPackVSIX': {
+ 							'type': 'boolean',
+-							'description': localize('workbench.extensions.installExtension.option.installOnlyNewlyAddedFromExtensionPackVSIX', "When enabled, VS Code installs only newly added extensions from the extension pack VSIX. This option is considered only while installing a VSIX."),
++							'description': localize('workbench.extensions.installExtension.option.installOnlyNewlyAddedFromExtensionPackVSIX', "When enabled, LevelCode installs only newly added extensions from the extension pack VSIX. This option is considered only while installing a VSIX."),
+ 							default: false
+ 						},
+ 						'installPreReleaseVersion': {
+ 							'type': 'boolean',
+-							'description': localize('workbench.extensions.installExtension.option.installPreReleaseVersion', "When enabled, VS Code installs the pre-release version of the extension if available."),
++							'description': localize('workbench.extensions.installExtension.option.installPreReleaseVersion', "When enabled, LevelCode installs the pre-release version of the extension if available."),
+ 							default: false
+ 						},
+ 						'donotSync': {
+ 							'type': 'boolean',
+-							'description': localize('workbench.extensions.installExtension.option.donotSync', "When enabled, VS Code do not sync this extension when Settings Sync is on."),
++							'description': localize('workbench.extensions.installExtension.option.donotSync', "When enabled, LevelCode do not sync this extension when Settings Sync is on."),
+ 							default: false
+ 						},
+ 						'justification': {
 @@ -959,8 +959,8 @@ class ExtensionsContributions extends Disposable implements IWorkbenchContributi
  				if (requireReload) {
  					notificationService.prompt(
@@ -270,6 +299,80 @@ index 44e0b933..39533c02 100644
  		if (this.product.reportMarketplaceIssueUrl) {
  			sourceSelect.append(this.makeOption(IssueSource.Marketplace, localize('marketplace', "Extensions Marketplace"), false));
  		}
+diff --git a/src/vs/workbench/contrib/tasks/browser/abstractTaskService.ts b/src/vs/workbench/contrib/tasks/browser/abstractTaskService.ts
+index 36209197..610a7123 100644
+--- a/src/vs/workbench/contrib/tasks/browser/abstractTaskService.ts
++++ b/src/vs/workbench/contrib/tasks/browser/abstractTaskService.ts
+@@ -3481,7 +3481,7 @@ export abstract class AbstractTaskService extends Disposable implements ITaskSer
+ 							return;
+ 						}
+ 						if (response.code && response.code === TerminateResponseCode.ProcessNotFound) {
+-							this._notificationService.error(nls.localize('TerminateAction.noProcess', 'The launched process doesn\'t exist anymore. If the task spawned background tasks exiting VS Code might result in orphaned processes.'));
++							this._notificationService.error(nls.localize('TerminateAction.noProcess', 'The launched process doesn\'t exist anymore. If the task spawned background tasks exiting LevelCode might result in orphaned processes.'));
+ 						} else {
+ 							this._notificationService.error(nls.localize('TerminateAction.failed', 'Failed to terminate running task'));
+ 						}
+diff --git a/src/vs/workbench/contrib/tasks/common/jsonSchemaCommon.ts b/src/vs/workbench/contrib/tasks/common/jsonSchemaCommon.ts
+index 9db6b8ad..004a871d 100644
+--- a/src/vs/workbench/contrib/tasks/common/jsonSchemaCommon.ts
++++ b/src/vs/workbench/contrib/tasks/common/jsonSchemaCommon.ts
+@@ -191,7 +191,7 @@ const schema: IJSONSchema = {
+ 				},
+ 				promptOnClose: {
+ 					type: 'boolean',
+-					description: nls.localize('JsonSchema.tasks.promptOnClose', 'Whether the user is prompted when VS Code closes with a running task.'),
++					description: nls.localize('JsonSchema.tasks.promptOnClose', 'Whether the user is prompted when LevelCode closes with a running task.'),
+ 					default: false
+ 				},
+ 				isBuildCommand: {
+@@ -245,7 +245,7 @@ const schema: IJSONSchema = {
+ 				},
+ 				promptOnClose: {
+ 					type: 'boolean',
+-					description: nls.localize('JsonSchema.promptOnClose', 'Whether the user is prompted when VS Code closes with a running background task.'),
++					description: nls.localize('JsonSchema.promptOnClose', 'Whether the user is prompted when LevelCode closes with a running background task.'),
+ 					default: false
+ 				},
+ 				echoCommand: {
+diff --git a/src/vs/workbench/contrib/tasks/common/jsonSchema_v2.ts b/src/vs/workbench/contrib/tasks/common/jsonSchema_v2.ts
+index f063bfc0..a4a21964 100644
+--- a/src/vs/workbench/contrib/tasks/common/jsonSchema_v2.ts
++++ b/src/vs/workbench/contrib/tasks/common/jsonSchema_v2.ts
+@@ -437,7 +437,7 @@ const taskConfiguration: IJSONSchema = {
+ 		},
+ 		promptOnClose: {
+ 			type: 'boolean',
+-			description: nls.localize('JsonSchema.tasks.promptOnClose', 'Whether the user is prompted when VS Code closes with a running task.'),
++			description: nls.localize('JsonSchema.tasks.promptOnClose', 'Whether the user is prompted when LevelCode closes with a running task.'),
+ 			default: false
+ 		},
+ 		presentation: Objects.deepClone(presentation),
+diff --git a/src/vs/workbench/contrib/tasks/common/taskDefinitionRegistry.ts b/src/vs/workbench/contrib/tasks/common/taskDefinitionRegistry.ts
+index 7f48c40d..f3d21dd9 100644
+--- a/src/vs/workbench/contrib/tasks/common/taskDefinitionRegistry.ts
++++ b/src/vs/workbench/contrib/tasks/common/taskDefinitionRegistry.ts
+@@ -27,7 +27,7 @@ const taskDefinitionSchema: IJSONSchema = {
+ 		},
+ 		required: {
+ 			type: 'array',
+-			markdownDescription: nls.localize('TaskDefinition.required', 'The names of the properties from the `properties` object that must be provided for a task of this type to be considered a match. Used by VS Code to associate a `tasks.json` entry with a registered task provider.'),
++			markdownDescription: nls.localize('TaskDefinition.required', 'The names of the properties from the `properties` object that must be provided for a task of this type to be considered a match. Used by LevelCode to associate a `tasks.json` entry with a registered task provider.'),
+ 			items: {
+ 				type: 'string'
+ 			}
+diff --git a/src/vs/workbench/contrib/tasks/electron-browser/taskService.ts b/src/vs/workbench/contrib/tasks/electron-browser/taskService.ts
+index bffaa341..3d05bb61 100644
+--- a/src/vs/workbench/contrib/tasks/electron-browser/taskService.ts
++++ b/src/vs/workbench/contrib/tasks/electron-browser/taskService.ts
+@@ -220,7 +220,7 @@ export class TaskService extends AbstractTaskService {
+ 						return false; // no veto
+ 					} else if (code && code === TerminateResponseCode.ProcessNotFound) {
+ 						return this._dialogService.confirm({
+-							message: nls.localize('TaskSystem.noProcess', 'The launched task doesn\'t exist anymore. If the task spawned background processes exiting VS Code might result in orphaned processes. To avoid this start the last background process with a wait flag.'),
++							message: nls.localize('TaskSystem.noProcess', 'The launched task doesn\'t exist anymore. If the task spawned background processes exiting LevelCode might result in orphaned processes. To avoid this start the last background process with a wait flag.'),
+ 							primaryButton: nls.localize({ key: 'TaskSystem.exitAnyways', comment: ['&& denotes a mnemonic'] }, "&&Exit Anyways"),
+ 							type: 'info'
+ 						}).then(res => !res.confirmed);
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalView.ts b/src/vs/workbench/contrib/terminal/browser/terminalView.ts
 index 9a745727..a0f7b147 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalView.ts
@@ -283,6 +386,91 @@ index 9a745727..a0f7b147 100644
  				}
  			}
  		}));
+diff --git a/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts b/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts
+index 3d3e8f2d..c29e2506 100644
+--- a/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts
++++ b/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts
+@@ -320,7 +320,7 @@ const terminalConfiguration: IStringDictionary<IConfigurationPropertySchema> = {
+ 		default: 1000
+ 	},
+ 	[TerminalSettingId.DetectLocale]: {
+-		markdownDescription: localize('terminal.integrated.detectLocale', "Controls whether to detect and set the `$LANG` environment variable to a UTF-8 compliant option since VS Code's terminal only supports UTF-8 encoded data coming from the shell."),
++		markdownDescription: localize('terminal.integrated.detectLocale', "Controls whether to detect and set the `$LANG` environment variable to a UTF-8 compliant option since LevelCode's terminal only supports UTF-8 encoded data coming from the shell."),
+ 		type: 'string',
+ 		enum: ['auto', 'off', 'on'],
+ 		markdownEnumDescriptions: [
+@@ -334,7 +334,7 @@ const terminalConfiguration: IStringDictionary<IConfigurationPropertySchema> = {
+ 		type: 'string',
+ 		enum: ['auto', 'on', 'off'],
+ 		markdownEnumDescriptions: [
+-			localize('terminal.integrated.gpuAcceleration.auto', "Let VS Code detect which renderer will give the best experience."),
++			localize('terminal.integrated.gpuAcceleration.auto', "Let LevelCode detect which renderer will give the best experience."),
+ 			localize('terminal.integrated.gpuAcceleration.on', "Enable GPU acceleration within the terminal."),
+ 			localize('terminal.integrated.gpuAcceleration.off', "Disable GPU acceleration within the terminal. The terminal will render much slower when GPU acceleration is off but it should reliably work on all systems."),
+ 		],
+@@ -422,7 +422,7 @@ const terminalConfiguration: IStringDictionary<IConfigurationPropertySchema> = {
+ 	[TerminalSettingId.CommandsToSkipShell]: {
+ 		markdownDescription: localize(
+ 			'terminal.integrated.commandsToSkipShell',
+-			"A set of command IDs whose keybindings will not be sent to the shell but instead always be handled by VS Code. This allows keybindings that would normally be consumed by the shell to act instead the same as when the terminal is not focused, for example `Ctrl+P` to launch Quick Open.\n\n&nbsp;\n\nMany commands are skipped by default. To override a default and pass that command's keybinding to the shell instead, add the command prefixed with the `-` character. For example add `-workbench.action.quickOpen` to allow `Ctrl+P` to reach the shell.\n\n&nbsp;\n\nThe following list of default skipped commands is truncated when viewed in Settings Editor. To see the full list, {1} and search for the first command from the list below.\n\n&nbsp;\n\nDefault Skipped Commands:\n\n{0}",
++			"A set of command IDs whose keybindings will not be sent to the shell but instead always be handled by LevelCode. This allows keybindings that would normally be consumed by the shell to act instead the same as when the terminal is not focused, for example `Ctrl+P` to launch Quick Open.\n\n&nbsp;\n\nMany commands are skipped by default. To override a default and pass that command's keybinding to the shell instead, add the command prefixed with the `-` character. For example add `-workbench.action.quickOpen` to allow `Ctrl+P` to reach the shell.\n\n&nbsp;\n\nThe following list of default skipped commands is truncated when viewed in Settings Editor. To see the full list, {1} and search for the first command from the list below.\n\n&nbsp;\n\nDefault Skipped Commands:\n\n{0}",
+ 			DEFAULT_COMMANDS_TO_SKIP_SHELL.sort().map(command => `- ${command}`).join('\n'),
+ 			`[${localize('openDefaultSettingsJson', "open the default settings JSON")}](command:workbench.action.openRawDefaultSettings '${localize('openDefaultSettingsJson.capitalized', "Open Default Settings (JSON)")}')`,
+ 
+@@ -434,7 +434,7 @@ const terminalConfiguration: IStringDictionary<IConfigurationPropertySchema> = {
+ 		default: []
+ 	},
+ 	[TerminalSettingId.AllowChords]: {
+-		markdownDescription: localize('terminal.integrated.allowChords', "Whether or not to allow chord keybindings in the terminal. Note that when this is true and the keystroke results in a chord it will bypass {0}, setting this to false is particularly useful when you want ctrl+k to go to your shell (not VS Code).", '`#terminal.integrated.commandsToSkipShell#`'),
++		markdownDescription: localize('terminal.integrated.allowChords', "Whether or not to allow chord keybindings in the terminal. Note that when this is true and the keystroke results in a chord it will bypass {0}, setting this to false is particularly useful when you want ctrl+k to go to your shell (not LevelCode).", '`#terminal.integrated.commandsToSkipShell#`'),
+ 		type: 'boolean',
+ 		default: true
+ 	},
+@@ -445,7 +445,7 @@ const terminalConfiguration: IStringDictionary<IConfigurationPropertySchema> = {
+ 	},
+ 	[TerminalSettingId.EnvMacOs]: {
+ 		restricted: true,
+-		markdownDescription: localize('terminal.integrated.env.osx', "Object with environment variables that will be added to the VS Code process to be used by the terminal on macOS. Set to `null` to delete the environment variable."),
++		markdownDescription: localize('terminal.integrated.env.osx', "Object with environment variables that will be added to the LevelCode process to be used by the terminal on macOS. Set to `null` to delete the environment variable."),
+ 		type: 'object',
+ 		additionalProperties: {
+ 			type: ['string', 'null']
+@@ -454,7 +454,7 @@ const terminalConfiguration: IStringDictionary<IConfigurationPropertySchema> = {
+ 	},
+ 	[TerminalSettingId.EnvLinux]: {
+ 		restricted: true,
+-		markdownDescription: localize('terminal.integrated.env.linux', "Object with environment variables that will be added to the VS Code process to be used by the terminal on Linux. Set to `null` to delete the environment variable."),
++		markdownDescription: localize('terminal.integrated.env.linux', "Object with environment variables that will be added to the LevelCode process to be used by the terminal on Linux. Set to `null` to delete the environment variable."),
+ 		type: 'object',
+ 		additionalProperties: {
+ 			type: ['string', 'null']
+@@ -463,7 +463,7 @@ const terminalConfiguration: IStringDictionary<IConfigurationPropertySchema> = {
+ 	},
+ 	[TerminalSettingId.EnvWindows]: {
+ 		restricted: true,
+-		markdownDescription: localize('terminal.integrated.env.windows', "Object with environment variables that will be added to the VS Code process to be used by the terminal on Windows. Set to `null` to delete the environment variable."),
++		markdownDescription: localize('terminal.integrated.env.windows', "Object with environment variables that will be added to the LevelCode process to be used by the terminal on Windows. Set to `null` to delete the environment variable."),
+ 		type: 'object',
+ 		additionalProperties: {
+ 			type: ['string', 'null']
+@@ -482,7 +482,7 @@ const terminalConfiguration: IStringDictionary<IConfigurationPropertySchema> = {
+ 	},
+ 	[TerminalSettingId.WindowsUseConptyDll]: {
+ 		restricted: true,
+-		markdownDescription: localize('terminal.integrated.windowsUseConptyDll', "Whether to use the conpty.dll (v1.25.260303002) shipped with VS Code, instead of the one bundled with Windows."),
++		markdownDescription: localize('terminal.integrated.windowsUseConptyDll', "Whether to use the conpty.dll (v1.25.260303002) shipped with LevelCode, instead of the one bundled with Windows."),
+ 		type: 'boolean',
+ 		default: true,
+ 	},
+@@ -608,7 +608,7 @@ const terminalConfiguration: IStringDictionary<IConfigurationPropertySchema> = {
+ 	},
+ 	[TerminalSettingId.ShellIntegrationEnabled]: {
+ 		restricted: true,
+-		markdownDescription: localize('terminal.integrated.shellIntegration.enabled', "Determines whether or not shell integration is auto-injected to support features like enhanced command tracking and current working directory detection. \n\nShell integration works by injecting the shell with a startup script. The script gives VS Code insight into what is happening within the terminal.\n\nSupported shells:\n\n- Linux/macOS: bash, fish, pwsh, zsh\n - Windows: pwsh, git bash\n\nThis setting applies only when terminals are created, so you will need to restart your terminals for it to take effect.\n\n Note that the script injection may not work if you have custom arguments defined in the terminal profile, have enabled {1}, have a [complex bash `PROMPT_COMMAND`](https://code.visualstudio.com/docs/editor/integrated-terminal#_complex-bash-promptcommand), or other unsupported setup. To disable decorations, see {0}", '`#terminal.integrated.shellIntegration.decorationsEnabled#`', '`#editor.accessibilitySupport#`'),
++		markdownDescription: localize('terminal.integrated.shellIntegration.enabled', "Determines whether or not shell integration is auto-injected to support features like enhanced command tracking and current working directory detection. \n\nShell integration works by injecting the shell with a startup script. The script gives LevelCode insight into what is happening within the terminal.\n\nSupported shells:\n\n- Linux/macOS: bash, fish, pwsh, zsh\n - Windows: pwsh, git bash\n\nThis setting applies only when terminals are created, so you will need to restart your terminals for it to take effect.\n\n Note that the script injection may not work if you have custom arguments defined in the terminal profile, have enabled {1}, have a [complex bash `PROMPT_COMMAND`](https://code.visualstudio.com/docs/editor/integrated-terminal#_complex-bash-promptcommand), or other unsupported setup. To disable decorations, see {0}", '`#terminal.integrated.shellIntegration.decorationsEnabled#`', '`#editor.accessibilitySupport#`'),
+ 		type: 'boolean',
+ 		default: true
+ 	},
 diff --git a/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts b/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts
 index 835f4980..f452db2c 100644
 --- a/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts
@@ -304,7 +492,7 @@ index 835f4980..f452db2c 100644
  		const base = await this.getBase(useCurrentFile);
  		this._lastMeta = { text: releaseNoteText, base };
 diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
-index 067580a4..fc23f00e 100644
+index 067580a4..92e3a697 100644
 --- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
 +++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
 @@ -50,7 +50,7 @@ registerAction2(class extends Action2 {
@@ -316,6 +504,15 @@ index 067580a4..fc23f00e 100644
  			}
  		});
  	}
+@@ -320,7 +320,7 @@ configurationRegistry.registerConfiguration({
+ 			'enum': ['none', 'welcomePage', 'readme', 'newUntitledFile', 'welcomePageInEmptyWorkbench', 'terminal', 'agentSessionsWelcomePage'],
+ 			'enumDescriptions': [
+ 				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.none' }, "Start without an editor."),
+-				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.welcomePage' }, "Open the Welcome page, with content to aid in getting started with VS Code and extensions."),
++				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.welcomePage' }, "Open the Welcome page, with content to aid in getting started with LevelCode and extensions."),
+ 				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.readme' }, "Open the README when opening a folder that contains one, fallback to 'welcomePage' otherwise. Note: This is only observed as a global configuration, it will be ignored if set in a workspace or folder configuration."),
+ 				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.newUntitledFile' }, "Open a new untitled text file (only applies when opening an empty window)."),
+ 				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.welcomePageInEmptyWorkbench' }, "Open the Welcome page when opening an empty workbench."),
 @@ -342,12 +342,10 @@ configurationRegistry.registerConfiguration({
  		'workbench.welcomePage.experimentalOnboarding': {
  			scope: ConfigurationScope.APPLICATION,
@@ -331,6 +528,19 @@ index 067580a4..fc23f00e 100644
  		}
  	}
  });
+diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedExtensionPoint.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedExtensionPoint.ts
+index 297598ef..2a882e51 100644
+--- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedExtensionPoint.ts
++++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedExtensionPoint.ts
+@@ -159,7 +159,7 @@ export const walkthroughsExtensionPoint = ExtensionsRegistry.registerExtensionPo
+ 									defaultSnippets: [
+ 										{
+ 											label: 'onCommand',
+-											description: localize('walkthroughs.steps.completionEvents.onCommand', 'Check off step when a given command is executed anywhere in VS Code.'),
++											description: localize('walkthroughs.steps.completionEvents.onCommand', 'Check off step when a given command is executed anywhere in LevelCode.'),
+ 											body: 'onCommand:${1:commandId}'
+ 										},
+ 										{
 diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts
 index ac89ae8e..5303ca2e 100644
 --- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts
@@ -391,3 +601,87 @@ index 1a1f1e1d..3bb6a0c8 100644
 -	order: 3
 -});
 +// [LevelCode] Removed the Help ▸ "Editor Playground" menu item (its walkthrough is Microsoft VS Code content).
+diff --git a/src/vs/workbench/services/extensions/common/extensionsRegistry.ts b/src/vs/workbench/services/extensions/common/extensionsRegistry.ts
+index 09dd590e..65968ce1 100644
+--- a/src/vs/workbench/services/extensions/common/extensionsRegistry.ts
++++ b/src/vs/workbench/services/extensions/common/extensionsRegistry.ts
+@@ -179,21 +179,21 @@ export const schema: IJSONSchema = {
+ 			properties: {
+ 				'vscode': {
+ 					type: 'string',
+-					description: nls.localize('vscode.extension.engines.vscode', 'For VS Code extensions, specifies the VS Code version that the extension is compatible with. Cannot be *. For example: ^1.105.0 indicates compatibility with a minimum VS Code version of 1.105.0.'),
++					description: nls.localize('vscode.extension.engines.vscode', 'For LevelCode extensions, specifies the LevelCode version that the extension is compatible with. Cannot be *. For example: ^1.105.0 indicates compatibility with a minimum LevelCode version of 1.105.0.'),
+ 					default: '^1.105.0',
+ 				}
+ 			}
+ 		},
+ 		publisher: {
+-			description: nls.localize('vscode.extension.publisher', 'The publisher of the VS Code extension.'),
++			description: nls.localize('vscode.extension.publisher', 'The publisher of the LevelCode extension.'),
+ 			type: 'string'
+ 		},
+ 		displayName: {
+-			description: nls.localize('vscode.extension.displayName', 'The display name for the extension used in the VS Code gallery.'),
++			description: nls.localize('vscode.extension.displayName', 'The display name for the extension used in the LevelCode gallery.'),
+ 			type: 'string'
+ 		},
+ 		categories: {
+-			description: nls.localize('vscode.extension.categories', 'The categories used by the VS Code gallery to categorize the extension.'),
++			description: nls.localize('vscode.extension.categories', 'The categories used by the LevelCode gallery to categorize the extension.'),
+ 			type: 'array',
+ 			uniqueItems: true,
+ 			items: {
+@@ -210,10 +210,10 @@ export const schema: IJSONSchema = {
+ 		},
+ 		galleryBanner: {
+ 			type: 'object',
+-			description: nls.localize('vscode.extension.galleryBanner', 'Banner used in the VS Code marketplace.'),
++			description: nls.localize('vscode.extension.galleryBanner', 'Banner used in the LevelCode marketplace.'),
+ 			properties: {
+ 				color: {
+-					description: nls.localize('vscode.extension.galleryBanner.color', 'The banner color on the VS Code marketplace page header.'),
++					description: nls.localize('vscode.extension.galleryBanner.color', 'The banner color on the LevelCode marketplace page header.'),
+ 					type: 'string'
+ 				},
+ 				theme: {
+@@ -224,7 +224,7 @@ export const schema: IJSONSchema = {
+ 			}
+ 		},
+ 		contributes: {
+-			description: nls.localize('vscode.extension.contributes', 'All contributions of the VS Code extension represented by this package.'),
++			description: nls.localize('vscode.extension.contributes', 'All contributions of the LevelCode extension represented by this package.'),
+ 			type: 'object',
+ 			// eslint-disable-next-line local/code-no-any-casts
+ 			properties: {
+@@ -259,7 +259,7 @@ export const schema: IJSONSchema = {
+ 			]
+ 		},
+ 		activationEvents: {
+-			description: nls.localize('vscode.extension.activationEvents', 'Activation events for the VS Code extension.'),
++			description: nls.localize('vscode.extension.activationEvents', 'Activation events for the LevelCode extension.'),
+ 			type: 'array',
+ 			items: {
+ 				type: 'string',
+@@ -426,7 +426,7 @@ export const schema: IJSONSchema = {
+ 					},
+ 					{
+ 						label: '*',
+-						description: nls.localize('vscode.extension.activationEvents.star', 'An activation event emitted on VS Code startup. To ensure a great end user experience, please use this activation event in your extension only when no other activation events combination works in your use-case.'),
++						description: nls.localize('vscode.extension.activationEvents.star', 'An activation event emitted on LevelCode startup. To ensure a great end user experience, please use this activation event in your extension only when no other activation events combination works in your use-case.'),
+ 						body: '*'
+ 					}
+ 				],
+@@ -607,11 +607,11 @@ export const schema: IJSONSchema = {
+ 			type: 'object',
+ 			properties: {
+ 				'vscode:prepublish': {
+-					description: nls.localize('vscode.extension.scripts.prepublish', 'Script executed before the package is published as a VS Code extension.'),
++					description: nls.localize('vscode.extension.scripts.prepublish', 'Script executed before the package is published as a LevelCode extension.'),
+ 					type: 'string'
+ 				},
+ 				'vscode:uninstall': {
+-					description: nls.localize('vscode.extension.scripts.uninstall', 'Uninstall hook for VS Code extension. Script that gets executed when the extension is completely uninstalled from VS Code which is when VS Code is restarted (shutdown and start) after the extension is uninstalled. Only Node scripts are supported.'),
++					description: nls.localize('vscode.extension.scripts.uninstall', 'Uninstall hook for LevelCode extension. Script that gets executed when the extension is completely uninstalled from LevelCode which is when LevelCode is restarted (shutdown and start) after the extension is uninstalled. Only Node scripts are supported.'),
+ 					type: 'string'
+ 				}
+ 			}

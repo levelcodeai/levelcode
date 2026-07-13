@@ -41,6 +41,14 @@ git -C vscode diff HEAD -- \
   src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts \
   src/vs/workbench/browser/actions/helpActions.ts \
   src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts \
+  src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts \
+  src/vs/workbench/services/extensions/common/extensionsRegistry.ts \
+  src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedExtensionPoint.ts \
+  src/vs/workbench/contrib/tasks/common/taskDefinitionRegistry.ts \
+  src/vs/workbench/contrib/tasks/common/jsonSchemaCommon.ts \
+  src/vs/workbench/contrib/tasks/common/jsonSchema_v2.ts \
+  src/vs/workbench/contrib/tasks/browser/abstractTaskService.ts \
+  src/vs/workbench/contrib/tasks/electron-browser/taskService.ts \
   > patches/levelcode-core.patch
 # NOTE: use `diff HEAD` (not plain `diff`) — bootstrap's `git apply` may leave these STAGED,
 # and plain `git diff` shows only UNSTAGED changes, silently dropping the staged patches.
@@ -68,6 +76,7 @@ grep -rn "\[LevelCode\]" vscode/src vscode/build
 | 10 | issue `baseIssueReporterService.ts`; chat `chatModelPicker.ts` | Report-Issue **source dropdown** "Visual Studio Code" / "A VS Code extension" → LevelCode; chat model-picker "requires a newer version of VS Code" / "Update VS Code" → LevelCode. | De-brand (WS-C/M2+M6). **SKIPPED** M13 quality-switch dialogs — dormant (no Insiders LevelCode build); rebranding would imply a false "Insiders LevelCode". |
 | 11 | `browser/actions/helpActions.ts`; `welcomeWalkthrough/browser/walkThrough.contribution.ts` | **Unregister** the Help ▸ "**Ask @vscode**" item + command (Copilot participant; Copilot not shipped) and the Help ▸ "**Editor Playground**" action + item (100% Microsoft VS Code walkthrough content). | De-brand (WS-C/M4+M5). The now-dead classes are left in place (tree-shaken from the build). |
 | 12 | `welcomeGettingStarted/browser/gettingStartedService.ts` (+ `gettingStarted.contribution.ts` §4) | `registerWalkthroughs()` early-returns → the built-in **VS Code walkthroughs** (Setup / VS Code for the Web / Accessibility, all `code.visualstudio.com`/`aka.ms`-linked) never register; Welcome menu description "get started in VS Code" → LevelCode. | De-brand (WS-C/H2). LevelCode's "Welcome to LevelCode" walkthrough registers via the **extension** path, so it's the only getting-started walkthrough shown. |
+| 13 | terminal `terminalConfiguration.ts`; `services/extensions/common/extensionsRegistry.ts`; `welcomeGettingStarted/browser/gettingStartedExtensionPoint.ts`; tasks `taskDefinitionRegistry.ts` / `jsonSchemaCommon.ts` / `jsonSchema_v2.ts` / `abstractTaskService.ts` / `electron-browser/taskService.ts` | Batch rebrand of ~30 **settings-description / task-notification** strings: "VS Code" / "Visual Studio Code" → LevelCode (scoped `perl -pi` on these files only, **diff-reviewed** — no URLs, URI schemes, or command ids touched, since those use lowercase `vscode`). | De-brand (WS-C/L1). **EXCLUDED** `platform/agentHost/**` — its 631 "VS Code" hits are all `test/` files + vendored proprietary Copilot/MS SDK (stripped from the build by `strip-proprietary.mjs`). Minor: extension-manifest schema docs now read "LevelCode marketplace/gallery" (really Open VSX) — author-only, acceptable. |
 
 > **Branding asset override (not a patch):** `apply-branding.mjs` also copies `branding/icons/code-icon.svg` (the LevelCode chevron mark) over `vscode/src/vs/workbench/browser/media/code-icon.svg`. Stock Code-OSS ships the blue `#167abf` VS Code "book" there; it's used as a `background-image` on the title-bar app icon, the update tooltip, the welcome/onboarding hero, the walkthrough and the banner (one file → ~6 surfaces). Because it's a whole-file swap it's done by the branding copy step, not this patch — but patch #7 above pairs with it.
 
