@@ -131,6 +131,36 @@ index b2606fd2..987523c1 100644
  			f1: true,
  			keybinding: {
  				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyA,
+diff --git a/src/vs/workbench/browser/actions/helpActions.ts b/src/vs/workbench/browser/actions/helpActions.ts
+index 8251c4a4..17562d4b 100644
+--- a/src/vs/workbench/browser/actions/helpActions.ts
++++ b/src/vs/workbench/browser/actions/helpActions.ts
+@@ -355,15 +355,9 @@ class AskVSCodeCopilot extends Action2 {
+ 	}
+ }
+ 
+-MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
+-	command: {
+-		id: AskVSCodeCopilot.ID,
+-		title: localize2('askVScode', 'Ask @vscode'),
+-	},
+-	order: 7,
+-	group: '1_welcome',
+-	when: ContextKeyExpr.and(ContextKeyExpr.equals('chatSetupHidden', false), ContextKeyExpr.equals('chatSetupDisabledInWorkspace', false), IsSessionsWindowContext.negate())
+-});
++// [LevelCode] Removed the "Ask @vscode" Help menu item — it opened the Copilot `@vscode` chat
++// participant, and Copilot is not shipped in LevelCode. (The dead AskVSCodeCopilot class above is
++// left unregistered; it's tree-shaken from the build.)
+ 
+ // --- Actions Registration
+ 
+@@ -405,4 +399,5 @@ if (OpenPrivacyStatementUrlAction.AVAILABLE) {
+ 
+ registerAction2(GetStartedWithAccessibilityFeatures);
+ 
+-registerAction2(AskVSCodeCopilot);
++// [LevelCode] "Ask @vscode" (Copilot participant) not registered — Copilot is not shipped.
++// registerAction2(AskVSCodeCopilot);
 diff --git a/src/vs/workbench/contrib/chat/browser/widget/input/chatModelPicker.ts b/src/vs/workbench/contrib/chat/browser/widget/input/chatModelPicker.ts
 index b16728b8..79695842 100644
 --- a/src/vs/workbench/contrib/chat/browser/widget/input/chatModelPicker.ts
@@ -274,9 +304,18 @@ index 835f4980..f452db2c 100644
  		const base = await this.getBase(useCurrentFile);
  		this._lastMeta = { text: releaseNoteText, base };
 diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
-index 067580a4..d23d4885 100644
+index 067580a4..fc23f00e 100644
 --- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
 +++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
+@@ -50,7 +50,7 @@ registerAction2(class extends Action2 {
+ 				order: 1,
+ 			},
+ 			metadata: {
+-				description: localize2('minWelcomeDescription', 'Opens a Walkthrough to help you get started in VS Code.')
++				description: localize2('minWelcomeDescription', 'Opens a Walkthrough to help you get started in LevelCode.')
+ 			}
+ 		});
+ 	}
 @@ -342,12 +342,10 @@ configurationRegistry.registerConfiguration({
  		'workbench.welcomePage.experimentalOnboarding': {
  			scope: ConfigurationScope.APPLICATION,
@@ -292,6 +331,22 @@ index 067580a4..d23d4885 100644
  		}
  	}
  });
+diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts
+index ac89ae8e..5303ca2e 100644
+--- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts
++++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts
+@@ -180,6 +180,11 @@ export class WalkthroughsService extends Disposable implements IWalkthroughsServ
+ 	}
+ 
+ 	private registerWalkthroughs() {
++		// [LevelCode] Do not register the built-in VS Code walkthroughs (Setup / VS Code for the Web /
++		// Accessibility — all VS-Code-branded, with code.visualstudio.com + aka.ms links). LevelCode ships
++		// its own "Welcome to LevelCode" walkthrough via the levelcode-ai extension, which registers through
++		// the extension-contribution path (registerExtensionWalkthroughContributions) and is unaffected.
++		return;
+ 
+ 		walkthroughs.forEach(async (category, index) => {
+ 
 diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/startupPage.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/startupPage.ts
 index 777f3ad8..eb15caf5 100644
 --- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/startupPage.ts
@@ -308,3 +363,31 @@ index 777f3ad8..eb15caf5 100644
  		if (this.environmentService.skipWelcome) {
  			return; // skip welcome flag is set
  		}
+diff --git a/src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts b/src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts
+index 1a1f1e1d..3bb6a0c8 100644
+--- a/src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts
++++ b/src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts
+@@ -25,7 +25,9 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane)
+ 	),
+ 		[new SyncDescriptor(WalkThroughInput)]);
+ 
+-registerAction2(EditorWalkThroughAction);
++// [LevelCode] Editor Playground unregistered — its content (vs_code_editor_walkthrough.ts) is 100%
++// Microsoft "VS Code" copy with code.visualstudio.com / go.microsoft.com links.
++// registerAction2(EditorWalkThroughAction);
+ 
+ Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(EditorWalkThroughInputSerializer.ID, EditorWalkThroughInputSerializer);
+ 
+@@ -39,11 +41,4 @@ KeybindingsRegistry.registerCommandAndKeybindingRule(WalkThroughPageUp);
+ 
+ KeybindingsRegistry.registerCommandAndKeybindingRule(WalkThroughPageDown);
+ 
+-MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
+-	group: '1_welcome',
+-	command: {
+-		id: 'workbench.action.showInteractivePlayground',
+-		title: localize({ key: 'miPlayground', comment: ['&& denotes a mnemonic'] }, "Editor Playgrou&&nd")
+-	},
+-	order: 3
+-});
++// [LevelCode] Removed the Help ▸ "Editor Playground" menu item (its walkthrough is Microsoft VS Code content).
