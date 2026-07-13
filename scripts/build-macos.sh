@@ -53,6 +53,21 @@ if [ -n "$ESBUILD_PKGS" ] && ! echo "$ESBUILD_PKGS" | grep -q "darwin-${EXPECT_N
   exit 1
 fi
 
+# Stamp the shipped product.json with the LevelCode *release* commit, not the Code-OSS clone's.
+# gulp's getVersion() prefers $BUILD_SOURCEVERSION when it's a full 40-hex sha; otherwise it falls back
+# to vscode/.git HEAD — the pinned upstream Code-OSS commit, which is IDENTICAL for every LevelCode build
+# from tag $VSCODE_TAG. A shared commit across releases breaks the self-update up-to-date check
+# (GET /api/update/:target/:quality/:commit compares this exact value), so the app can never tell one
+# LevelCode release from the next. Use the LevelCode repo HEAD → each release reports a distinct commit;
+# set the same sha as the release's `commit` in the thin.ly update feed (LEVELCODE_UPDATE_FEED).
+if LC_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)" && [ "${#LC_COMMIT}" -eq 40 ]; then
+  export BUILD_SOURCEVERSION="$LC_COMMIT"
+  echo "[build] Stamping product.json commit = $LC_COMMIT (LevelCode repo HEAD)."
+else
+  echo "[build] WARN: could not resolve a 40-char LevelCode repo commit — product.json will fall back to"
+  echo "[build]       the Code-OSS clone commit, which is shared across releases (breaks self-update)."
+fi
+
 echo "[build] Compiling production build for $ARCH …"
 npm run gulp -- "$GULP_TARGET"
 
