@@ -51,6 +51,21 @@ index e487ff5c..778c3de9 100644
  }
  
  export function packageMarketplaceExtensionsStream(forWeb: boolean): Stream {
+diff --git a/src/vs/sessions/browser/media/openInVSCode.css b/src/vs/sessions/browser/media/openInVSCode.css
+index 5d89e0be..18d3b47b 100644
+--- a/src/vs/sessions/browser/media/openInVSCode.css
++++ b/src/vs/sessions/browser/media/openInVSCode.css
+@@ -40,7 +40,9 @@
+ .monaco-workbench .open-in-vscode-titlebar-widget[data-product-quality="stable"] > .open-in-vscode-titlebar-widget-icon,
+ .monaco-workbench .open-in-vscode-titlebar-widget[data-product-quality="insider"] > .open-in-vscode-titlebar-widget-icon,
+ .monaco-workbench .open-in-vscode-titlebar-widget[data-product-quality="exploration"] > .open-in-vscode-titlebar-widget-icon {
+-	background-image: url('../../../workbench/browser/media/code-icon.svg');
++	/* [LevelCode] This button OPENS VS CODE, so it must show the real VS Code shield — not code-icon.svg,
++	   which LevelCode overwrites with its own chevron mark. Use the bundled shield like the dev fallback. */
++	background-image: url('./vscode-icon.svg');
+ }
+ 
+ .monaco-enable-motion .monaco-workbench .open-in-vscode-titlebar-widget > .open-in-vscode-titlebar-widget-icon,
 diff --git a/src/vs/workbench/contrib/files/browser/files.contribution.ts b/src/vs/workbench/contrib/files/browser/files.contribution.ts
 index 574c2d8e..f6b8c7af 100644
 --- a/src/vs/workbench/contrib/files/browser/files.contribution.ts

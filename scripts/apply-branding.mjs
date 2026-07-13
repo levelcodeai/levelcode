@@ -91,6 +91,16 @@ if (existsSync(pngSrc) && existsSync(dirname(pngDst))) {
   copyFileSync(pngSrc, pngDst);
 }
 
+// The in-app logo used as a background-image on the title-bar app icon, the update tooltip, the
+// welcome/onboarding hero and the walkthrough (one file, ~6 surfaces). Stock Code-OSS ships the blue
+// VS Code "book" here; overwrite it with the LevelCode chevron mark so no #167abf logo shows anywhere.
+const codeIconSrc = join(repoRoot, "branding", "icons", "code-icon.svg");
+const codeIconDst = join(vscodeDir, "src", "vs", "workbench", "browser", "media", "code-icon.svg");
+if (existsSync(codeIconSrc) && existsSync(dirname(codeIconDst))) {
+  copyFileSync(codeIconSrc, codeIconDst);
+  console.log(`[apply-branding] Installed in-app logo -> ${codeIconDst}`);
+}
+
 // Install our bundled LevelCode extensions into the checkout. The canonical, version-controlled
 // source lives in this repo's extensions/ folder; the copies inside vscode/ are generated.
 const OUR_PUBLISHERS = new Set(["levelcode", "atompp"]); // atompp = pre-rename, prune any leftovers
