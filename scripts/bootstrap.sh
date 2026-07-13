@@ -120,6 +120,13 @@ if [ -f "$ROOT_DIR/patches/levelcode-core.patch" ]; then
   fi
 fi
 
+# Content-based de-branding of user-visible "VS Code" strings (settings, notifications, menu labels).
+# Kept OUT of the line-anchored patch above on purpose: a content match survives upstream line movement
+# and no-ops if a string is gone, so it's far more durable across Code-OSS bumps. Warns (never fails) on
+# drift — see scripts/de-brand.mjs + docs/CORE-PATCHES.md.
+info "De-branding user-visible VS Code strings"
+node "$ROOT_DIR/scripts/de-brand.mjs" "$VSCODE_DIR"
+
 # --- install deps -----------------------------------------------------------
 info "Installing dependencies (this is the slow part — several minutes)"
 info "Using Python: $("$PYTHON" --version 2>&1) at $(command -v "$PYTHON")"
