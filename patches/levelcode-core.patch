@@ -1,5 +1,5 @@
 diff --git a/build/lib/copilot.ts b/build/lib/copilot.ts
-index 74babc79..a95c9cf4 100644
+index 74babc79..4d696744 100644
 --- a/build/lib/copilot.ts
 +++ b/build/lib/copilot.ts
 @@ -185,7 +185,10 @@ export function prepareBuiltInCopilotRipgrepShim(platform: string, arch: string,
@@ -15,7 +15,7 @@ index 74babc79..a95c9cf4 100644
  	pruneNonTargetCopilotSdkPrebuilds(platformArch, path.join(copilotSdkBase, 'prebuilds'), copilotPlatforms);
  	pruneNonTargetCopilotSdkPrebuilds(tgrepPlatformArch, path.join(copilotSdkBase, path.join('tgrep', 'bin')), copilotTgrepPlatforms);
 diff --git a/build/lib/extensions.ts b/build/lib/extensions.ts
-index e487ff5c..ec0f5734 100644
+index e487ff5c..778c3de9 100644
 --- a/build/lib/extensions.ts
 +++ b/build/lib/extensions.ts
 @@ -461,26 +461,12 @@ function doPackageLocalExtensionsStream(forWeb: boolean, disableMangle: boolean,
@@ -51,8 +51,38 @@ index e487ff5c..ec0f5734 100644
  }
  
  export function packageMarketplaceExtensionsStream(forWeb: boolean): Stream {
+diff --git a/src/vs/workbench/browser/actions/helpActions.ts b/src/vs/workbench/browser/actions/helpActions.ts
+index 8251c4a4..17562d4b 100644
+--- a/src/vs/workbench/browser/actions/helpActions.ts
++++ b/src/vs/workbench/browser/actions/helpActions.ts
+@@ -355,15 +355,9 @@ class AskVSCodeCopilot extends Action2 {
+ 	}
+ }
+ 
+-MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
+-	command: {
+-		id: AskVSCodeCopilot.ID,
+-		title: localize2('askVScode', 'Ask @vscode'),
+-	},
+-	order: 7,
+-	group: '1_welcome',
+-	when: ContextKeyExpr.and(ContextKeyExpr.equals('chatSetupHidden', false), ContextKeyExpr.equals('chatSetupDisabledInWorkspace', false), IsSessionsWindowContext.negate())
+-});
++// [LevelCode] Removed the "Ask @vscode" Help menu item — it opened the Copilot `@vscode` chat
++// participant, and Copilot is not shipped in LevelCode. (The dead AskVSCodeCopilot class above is
++// left unregistered; it's tree-shaken from the build.)
+ 
+ // --- Actions Registration
+ 
+@@ -405,4 +399,5 @@ if (OpenPrivacyStatementUrlAction.AVAILABLE) {
+ 
+ registerAction2(GetStartedWithAccessibilityFeatures);
+ 
+-registerAction2(AskVSCodeCopilot);
++// [LevelCode] "Ask @vscode" (Copilot participant) not registered — Copilot is not shipped.
++// registerAction2(AskVSCodeCopilot);
 diff --git a/src/vs/workbench/contrib/files/browser/files.contribution.ts b/src/vs/workbench/contrib/files/browser/files.contribution.ts
-index 574c2d8e..398873be 100644
+index 574c2d8e..f6b8c7af 100644
 --- a/src/vs/workbench/contrib/files/browser/files.contribution.ts
 +++ b/src/vs/workbench/contrib/files/browser/files.contribution.ts
 @@ -125,7 +125,7 @@ const hotExitConfiguration: IConfigurationPropertySchema = isNative ?
@@ -64,3 +94,120 @@ index 574c2d8e..398873be 100644
  		'markdownEnumDescriptions': [
  			nls.localize('hotExit.off', 'Disable hot exit. A prompt will show when attempting to close a window with editors that have unsaved changes.'),
  			nls.localize('hotExit.onExit', 'Hot exit will be triggered when the last window is closed on Windows/Linux or when the `workbench.action.quit` command is triggered (command palette, keybinding, menu). All windows without folders opened will be restored upon next launch. A list of previously opened windows with unsaved files can be accessed via `File > Open Recent > More...`'),
+diff --git a/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts b/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts
+index 835f4980..f452db2c 100644
+--- a/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts
++++ b/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts
+@@ -91,6 +91,15 @@ export class ReleaseNotesManager extends Disposable {
+ 	}
+ 
+ 	public async show(version: string, useCurrentFile: boolean): Promise<boolean> {
++		// [LevelCode] Never render Microsoft's hosted VS Code release notes in-editor (loadReleaseNotes
++		// hardcodes code.visualstudio.com/raw/v{ver}.md → showed "Visual Studio Code 1.126"). Open our own
++		// releases page (product.releaseNotesUrl) in the browser instead. The `useCurrentFile` dev command
++		// (Developer: Open Current File as Release Notes) still renders the local .md below.
++		if (!useCurrentFile && this._productService.releaseNotesUrl) {
++			await this._openerService.open(URI.parse(this._productService.releaseNotesUrl));
++			return true;
++		}
++
+ 		const releaseNoteText = await this.loadReleaseNotes(version, useCurrentFile);
+ 		const base = await this.getBase(useCurrentFile);
+ 		this._lastMeta = { text: releaseNoteText, base };
+diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
+index 067580a4..92e3a697 100644
+--- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
++++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
+@@ -50,7 +50,7 @@ registerAction2(class extends Action2 {
+ 				order: 1,
+ 			},
+ 			metadata: {
+-				description: localize2('minWelcomeDescription', 'Opens a Walkthrough to help you get started in VS Code.')
++				description: localize2('minWelcomeDescription', 'Opens a Walkthrough to help you get started in LevelCode.')
+ 			}
+ 		});
+ 	}
+@@ -320,7 +320,7 @@ configurationRegistry.registerConfiguration({
+ 			'enum': ['none', 'welcomePage', 'readme', 'newUntitledFile', 'welcomePageInEmptyWorkbench', 'terminal', 'agentSessionsWelcomePage'],
+ 			'enumDescriptions': [
+ 				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.none' }, "Start without an editor."),
+-				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.welcomePage' }, "Open the Welcome page, with content to aid in getting started with VS Code and extensions."),
++				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.welcomePage' }, "Open the Welcome page, with content to aid in getting started with LevelCode and extensions."),
+ 				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.readme' }, "Open the README when opening a folder that contains one, fallback to 'welcomePage' otherwise. Note: This is only observed as a global configuration, it will be ignored if set in a workspace or folder configuration."),
+ 				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.newUntitledFile' }, "Open a new untitled text file (only applies when opening an empty window)."),
+ 				localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'workbench.startupEditor.welcomePageInEmptyWorkbench' }, "Open the Welcome page when opening an empty workbench."),
+@@ -342,12 +342,10 @@ configurationRegistry.registerConfiguration({
+ 		'workbench.welcomePage.experimentalOnboarding': {
+ 			scope: ConfigurationScope.APPLICATION,
+ 			type: 'boolean',
+-			default: true,
++			default: false, // [LevelCode] off by default — suppress the Copilot-centric "Welcome to VS Code" onboarding overlay
+ 			tags: ['experimental'],
+ 			description: localize('workbench.welcomePage.experimentalOnboarding', "When enabled, show the new onboarding experience instead of the classic walkthrough on first launch."),
+-			experiment: {
+-				mode: 'auto'
+-			}
++			// [LevelCode] removed `experiment: { mode: 'auto' }` so the experiment service can't silently re-enable the upstream onboarding
+ 		}
+ 	}
+ });
+diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts
+index ac89ae8e..5303ca2e 100644
+--- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts
++++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts
+@@ -180,6 +180,11 @@ export class WalkthroughsService extends Disposable implements IWalkthroughsServ
+ 	}
+ 
+ 	private registerWalkthroughs() {
++		// [LevelCode] Do not register the built-in VS Code walkthroughs (Setup / VS Code for the Web /
++		// Accessibility — all VS-Code-branded, with code.visualstudio.com + aka.ms links). LevelCode ships
++		// its own "Welcome to LevelCode" walkthrough via the levelcode-ai extension, which registers through
++		// the extension-contribution path (registerExtensionWalkthroughContributions) and is unaffected.
++		return;
+ 
+ 		walkthroughs.forEach(async (category, index) => {
+ 
+diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/startupPage.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/startupPage.ts
+index 777f3ad8..eb15caf5 100644
+--- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/startupPage.ts
++++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/startupPage.ts
+@@ -234,6 +234,11 @@ export class StartupPageRunnerContribution extends Disposable implements IWorkbe
+ 	}
+ 
+ 	private tryShowOnboarding(): void {
++		// [LevelCode] Never show the upstream AI onboarding overlay ("Welcome to VS Code" / "Sign in to
++		// use GitHub Copilot") — it's off-brand and Copilot-centric; LevelCode ships its own welcome.
++		// Guaranteed kill switch (the config default is also flipped off in gettingStarted.contribution.ts).
++		return;
++
+ 		if (this.environmentService.skipWelcome) {
+ 			return; // skip welcome flag is set
+ 		}
+diff --git a/src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts b/src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts
+index 1a1f1e1d..3bb6a0c8 100644
+--- a/src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts
++++ b/src/vs/workbench/contrib/welcomeWalkthrough/browser/walkThrough.contribution.ts
+@@ -25,7 +25,9 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane)
+ 	),
+ 		[new SyncDescriptor(WalkThroughInput)]);
+ 
+-registerAction2(EditorWalkThroughAction);
++// [LevelCode] Editor Playground unregistered — its content (vs_code_editor_walkthrough.ts) is 100%
++// Microsoft "VS Code" copy with code.visualstudio.com / go.microsoft.com links.
++// registerAction2(EditorWalkThroughAction);
+ 
+ Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(EditorWalkThroughInputSerializer.ID, EditorWalkThroughInputSerializer);
+ 
+@@ -39,11 +41,4 @@ KeybindingsRegistry.registerCommandAndKeybindingRule(WalkThroughPageUp);
+ 
+ KeybindingsRegistry.registerCommandAndKeybindingRule(WalkThroughPageDown);
+ 
+-MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
+-	group: '1_welcome',
+-	command: {
+-		id: 'workbench.action.showInteractivePlayground',
+-		title: localize({ key: 'miPlayground', comment: ['&& denotes a mnemonic'] }, "Editor Playgrou&&nd")
+-	},
+-	order: 3
+-});
++// [LevelCode] Removed the Help ▸ "Editor Playground" menu item (its walkthrough is Microsoft VS Code content).

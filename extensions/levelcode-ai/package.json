@@ -31,9 +31,10 @@
           {
             "id": "ai",
             "title": "Connect your AI",
-            "description": "Sign in to LevelCode and you're on your plan — AI runs through your subscription automatically, with no API key to manage. Prefer your own key? BYOK works too: LevelCode speaks every major provider — Claude (the default, and what powers the agent), plus OpenAI, OpenRouter, Groq, Mistral, DeepSeek, local Ollama and more. Then open the chat.\n[Sign in to LevelCode](command:levelcode.ai.account)\n[Set your API key (BYOK)](command:levelcode.ai.setApiKey)\n[Pick a model / provider](command:levelcode.ai.pickModel)\n[Open the chat](command:levelcode.ai.focus)",
+            "description": "Native Claude, built into the editor — chat with your files as context, inline completions as you type, and an agent that reads, edits, and runs commands across your project. **Sign in and you're on your plan** — no API key to manage. Prefer your own? BYOK speaks Claude, OpenAI, Groq, Mistral, Ollama and more.\n[Sign in to LevelCode](command:levelcode.ai.account)\n[Use your own key (BYOK)](command:levelcode.ai.setApiKey)\n[Pick a model](command:levelcode.ai.pickModel)\n[Open the chat](command:levelcode.ai.focus)",
             "media": {
-              "markdown": "media/walkthrough/ai.md"
+              "svg": "media/walkthrough/ai.svg",
+              "altText": "Native AI chat, inline completions, and an agent built into the editor"
             },
             "completionEvents": [
               "onCommand:levelcode.ai.setApiKey",
@@ -43,9 +44,10 @@
           {
             "id": "look",
             "title": "Make it yours",
-            "description": "Pick a theme and an editing keymap — Atom, Notepad++, or Sublime muscle memory are built in.\n[Choose a theme](command:workbench.action.selectTheme)\n[Apply a keymap preset](command:levelcode.keymap.apply)",
+            "description": "Signature **One Dark / One Light** themes, **Atom · Notepad++ · Sublime** keymaps so your muscle memory just works, and Notepad++ power-editing — macros, column edit, big-file mode. Make it feel like home.\n[Choose a theme](command:workbench.action.selectTheme)\n[Apply a keymap preset](command:levelcode.keymap.apply)",
             "media": {
-              "markdown": "media/walkthrough/look.md"
+              "svg": "media/walkthrough/look.svg",
+              "altText": "Signature themes, keymap presets, and Notepad++ power-editing"
             },
             "completionEvents": [
               "onCommand:levelcode.keymap.apply"
@@ -54,9 +56,10 @@
           {
             "id": "updates",
             "title": "Stay up to date",
-            "description": "LevelCode checks for new releases and tells you when one is ready to download.\n[Check for updates](command:levelcode.update.check)",
+            "description": "LevelCode checks for new releases in the background and tells you the moment one's ready — one click to download. That's the tour. Happy hacking.\n[Check for updates](command:levelcode.update.check)",
             "media": {
-              "markdown": "media/walkthrough/updates.md"
+              "svg": "media/walkthrough/updates.svg",
+              "altText": "LevelCode checks for new releases and downloads them in one click"
             },
             "completionEvents": [
               "onCommand:levelcode.update.check"

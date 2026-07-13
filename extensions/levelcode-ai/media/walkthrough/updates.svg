@@ -1,0 +1,18 @@
+<svg viewBox="0 0 720 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LevelCode checks for new releases and downloads them in one click" style="color: var(--vscode-foreground, #b9b7b1); max-width: 100%; height: auto;">
+  <!-- version pills: current -> new -->
+  <rect x="112" y="184" width="150" height="52" rx="26" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.22" stroke-width="2"/>
+  <text x="187" y="217" font-family="var(--vscode-font-family, ui-monospace, monospace)" font-size="22" font-weight="600" fill="currentColor" fill-opacity="0.5" text-anchor="middle">v0.4</text>
+
+  <path d="M286 210 h56 m0 0 l-14 -11 m14 11 l-14 11" stroke="currentColor" stroke-opacity="0.4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="360" y="184" width="150" height="52" rx="26" fill="#7C5CD6" fill-opacity="0.14" stroke="#7C5CD6" stroke-opacity="0.55" stroke-width="2"/>
+  <text x="435" y="217" font-family="var(--vscode-font-family, ui-monospace, monospace)" font-size="22" font-weight="700" fill="#7C5CD6" text-anchor="middle">v0.5</text>
+
+  <!-- download / up-chevron badge (LevelCode chevron motif) -->
+  <circle cx="588" cy="210" r="44" fill="#7C5CD6" fill-opacity="0.10" stroke="#7C5CD6" stroke-opacity="0.5" stroke-width="2"/>
+  <path d="M568 216 l20 -20 20 20" stroke="#7C5CD6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M568 232 l20 -20 20 20" stroke="#7C5CD6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.45"/>
+
+  <!-- sparkle -->
+  <path d="M300 120 l5 13 13 5 -13 5 -5 13 -5 -13 -13 -5 13 -5 z" fill="#7C5CD6" opacity="0.5"/>
+</svg>

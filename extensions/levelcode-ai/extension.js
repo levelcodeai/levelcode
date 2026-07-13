@@ -1548,10 +1548,16 @@ function activate(context) {
 		}
 	}
 
-	// First-launch onboarding: open the Welcome walkthrough once.
+	// First-launch onboarding: open the "Welcome to LevelCode" walkthrough once. Only mark it shown
+	// AFTER it actually opens (previously the flag was set up-front, so a first-launch race that failed
+	// to open the walkthrough would suppress onboarding forever). Retry once at a longer delay so a slow
+	// startup still gets it; give up quietly otherwise and try again next launch.
 	if (!context.globalState.get('levelcode.ai.didShowWelcome')) {
-		context.globalState.update('levelcode.ai.didShowWelcome', true);
-		setTimeout(() => { vscode.commands.executeCommand('workbench.action.openWalkthrough', 'levelcode.levelcode-ai#welcome', false).then(undefined, () => {}); }, 900);
+		const openWelcome = () => vscode.commands.executeCommand('workbench.action.openWalkthrough', 'levelcode.levelcode-ai#welcome', false);
+		const markShown = () => context.globalState.update('levelcode.ai.didShowWelcome', true);
+		setTimeout(() => {
+			openWelcome().then(markShown, () => setTimeout(() => openWelcome().then(markShown, () => {}), 1500));
+		}, 900);
 	}
 }
 
