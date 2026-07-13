@@ -66,6 +66,56 @@ index 5d89e0be..18d3b47b 100644
  }
  
  .monaco-enable-motion .monaco-workbench .open-in-vscode-titlebar-widget > .open-in-vscode-titlebar-widget-icon,
+diff --git a/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts b/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
+index 0c0965d3..aa17d72f 100644
+--- a/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
++++ b/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
+@@ -959,8 +959,8 @@ class ExtensionsContributions extends Disposable implements IWorkbenchContributi
+ 				if (requireReload) {
+ 					notificationService.prompt(
+ 						Severity.Info,
+-						vsixs.length > 1 ? localize('InstallVSIXs.successReload', "Completed installing extensions. Please reload Visual Studio Code to enable them.")
+-							: localize('InstallVSIXAction.successReload', "Completed installing extension. Please reload Visual Studio Code to enable it."),
++						vsixs.length > 1 ? localize('InstallVSIXs.successReload', "Completed installing extensions. Please reload LevelCode to enable them.") // [LevelCode] rebrand
++							: localize('InstallVSIXAction.successReload', "Completed installing extension. Please reload LevelCode to enable it."), // [LevelCode] rebrand
+ 						[{
+ 							label: localize('InstallVSIXAction.reloadNow', "Reload Now"),
+ 							run: () => hostService.reload()
+diff --git a/src/vs/workbench/contrib/extensions/browser/extensionsActions.ts b/src/vs/workbench/contrib/extensions/browser/extensionsActions.ts
+index 452db88d..27a9c8c7 100644
+--- a/src/vs/workbench/contrib/extensions/browser/extensionsActions.ts
++++ b/src/vs/workbench/contrib/extensions/browser/extensionsActions.ts
+@@ -940,7 +940,7 @@ export class UninstallAction extends ExtensionAction {
+ 
+ 		try {
+ 			await this.extensionsWorkbenchService.uninstall(this.extension);
+-			alert(localize('uninstallExtensionComplete', "Please reload Visual Studio Code to complete the uninstallation of the extension {0}.", this.extension.displayName));
++			alert(localize('uninstallExtensionComplete', "Please reload LevelCode to complete the uninstallation of the extension {0}.", this.extension.displayName)); // [LevelCode] rebrand
+ 		} catch (error) {
+ 			if (!isCancellationError(error)) {
+ 				this.dialogService.error(getErrorMessage(error));
+diff --git a/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts b/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts
+index a58d77d1..e6059a4b 100644
+--- a/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts
++++ b/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts
+@@ -477,7 +477,7 @@ export class Extension implements IExtension {
+ 
+ 		if (this.type === ExtensionType.System) {
+ 			return Promise.resolve(`# ${this.displayName || this.name}
+-**Notice:** This extension is bundled with Visual Studio Code. It can be disabled but not uninstalled.
++**Notice:** This extension is bundled with LevelCode. It can be disabled but not uninstalled.
+ ## Features
+ ${this.description}
+ `);
+@@ -515,7 +515,7 @@ ${this.description}
+ 		}
+ 
+ 		if (this.type === ExtensionType.System) {
+-			return Promise.resolve(`Please check the [VS Code Release Notes](command:${ShowCurrentReleaseNotesActionId}) for changes to the built-in extensions.`);
++			return Promise.resolve(`Please check the [LevelCode Release Notes](command:${ShowCurrentReleaseNotesActionId}) for changes to the built-in extensions.`);
+ 		}
+ 
+ 		return Promise.reject(new Error('not available'));
 diff --git a/src/vs/workbench/contrib/files/browser/files.contribution.ts b/src/vs/workbench/contrib/files/browser/files.contribution.ts
 index 574c2d8e..f6b8c7af 100644
 --- a/src/vs/workbench/contrib/files/browser/files.contribution.ts
@@ -79,6 +129,19 @@ index 574c2d8e..f6b8c7af 100644
  		'markdownEnumDescriptions': [
  			nls.localize('hotExit.off', 'Disable hot exit. A prompt will show when attempting to close a window with editors that have unsaved changes.'),
  			nls.localize('hotExit.onExit', 'Hot exit will be triggered when the last window is closed on Windows/Linux or when the `workbench.action.quit` command is triggered (command palette, keybinding, menu). All windows without folders opened will be restored upon next launch. A list of previously opened windows with unsaved files can be accessed via `File > Open Recent > More...`'),
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalView.ts b/src/vs/workbench/contrib/terminal/browser/terminalView.ts
+index 9a745727..a0f7b147 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalView.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalView.ts
+@@ -208,7 +208,7 @@ export class TerminalViewPane extends ViewPane {
+ 						label: nls.localize('terminal.useMonospace', "Use 'monospace'"),
+ 						run: () => this.configurationService.updateValue(TerminalSettingId.FontFamily, 'monospace'),
+ 					}];
+-					this._notificationService.prompt(Severity.Warning, nls.localize('terminal.monospaceOnly', "The terminal only supports monospace fonts. Be sure to restart VS Code if this is a newly installed font."), choices);
++					this._notificationService.prompt(Severity.Warning, nls.localize('terminal.monospaceOnly', "The terminal only supports monospace fonts. Be sure to restart LevelCode if this is a newly installed font."), choices);
+ 				}
+ 			}
+ 		}));
 diff --git a/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts b/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts
 index 835f4980..f452db2c 100644
 --- a/src/vs/workbench/contrib/update/browser/releaseNotesEditor.ts
