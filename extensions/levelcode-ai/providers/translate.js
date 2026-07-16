@@ -54,9 +54,17 @@ function toolResultText(content) {
  * (OpenAI requires the tool responses to immediately follow the assistant's tool_calls), then a
  * trailing {role:'user'} for any plain text in the same message.
  */
-function toOpenAIMessages(system, messages) {
+function toOpenAIMessages(system, messages, opts) {
+	// [LevelCode] opts.cache adds Anthropic-style cache_control breakpoints (system + last message). Only
+	// set for Anthropic-family upstreams (see openaiCompat.isAnthropicFamily) — OpenRouter/the gateway
+	// forward it to Claude; other providers auto-cache and would ignore or reject it.
+	const cache = !!(opts && opts.cache);
 	const out = [];
-	if (system) { out.push({ role: 'system', content: system }); }
+	if (system) {
+		out.push(cache
+			? { role: 'system', content: [{ type: 'text', text: String(system), cache_control: { type: 'ephemeral' } }] }
+			: { role: 'system', content: system });
+	}
 	for (const m of (messages || [])) {
 		if (!m) { continue; }
 		if (m.role === 'assistant') {
@@ -94,7 +102,30 @@ function toOpenAIMessages(system, messages) {
 		}
 		if (trailingText) { out.push({ role: 'user', content: trailingText }); }
 	}
+	if (cache) { markLastOpenAICacheable(out); }
 	return out;
+}
+
+/**
+ * [LevelCode] Put a cache_control breakpoint on the last cacheable message so the transcript prefix is
+ * cached on the next turn. Converts string content to a single text block; skips assistant messages that
+ * carry only tool_calls (content:null). Mutates `out` (freshly built here, so safe).
+ */
+function markLastOpenAICacheable(out) {
+	for (let i = out.length - 1; i >= 0; i--) {
+		const m = out[i];
+		if (!m) { continue; }
+		if (typeof m.content === 'string' && m.content) {
+			m.content = [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }];
+			return;
+		}
+		if (Array.isArray(m.content) && m.content.length) {
+			const last = m.content.length - 1;
+			m.content[last] = { ...m.content[last], cache_control: { type: 'ephemeral' } };
+			return;
+		}
+		// content:null (assistant tool_calls-only) → fall through to the previous message
+	}
 }
 
 /** OpenAI finish_reason → Anthropic stop_reason. */

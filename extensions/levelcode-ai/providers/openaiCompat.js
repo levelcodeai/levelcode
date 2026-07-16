@@ -19,6 +19,14 @@ const translate = require('./translate');
 /** Trim a trailing slash so `${base}/chat/completions` is always well-formed. */
 function baseUrl(opts) { return String(opts.baseURL || '').replace(/\/+$/, ''); }
 
+/**
+ * [LevelCode] Is this an Anthropic/Claude model reached through an OpenAI-shaped endpoint (OpenRouter
+ * `anthropic/claude-…`, the LevelCode Cloud gateway, or a bare `claude-…`)? Only these honor an explicit
+ * cache_control breakpoint; every other provider auto-caches and would ignore or reject the field, so we
+ * gate the prefix-caching write on this. Cache-hit READ accounting (cached_tokens) is done regardless.
+ */
+function isAnthropicFamily(model) { return /(?:^|\/)claude|(?:^|\/)anthropic\//i.test(String(model || '')); }
+
 /** Auth + content-type + any per-provider headers (e.g. OpenRouter's HTTP-Referer / X-Title). */
 function authHeaders(opts) {
 	const h = Object.assign({ 'content-type': 'application/json' }, opts.headers || {});
@@ -154,7 +162,10 @@ async function listOpenAIModels(opts) {
  */
 async function streamOpenAIAgentTurn(opts) {
 	const label = opts.label || 'OpenAI-compatible';
-	const messages = translate.toOpenAIMessages(opts.system, opts.messages);
+	// [LevelCode] Prompt caching. Only Claude-family upstreams honor cache_control (via OpenRouter / the
+	// LevelCode Cloud gateway); GPT/Gemini/DeepSeek/etc. auto-cache server-side and would ignore or reject
+	// the field, so we gate it strictly on the model id. cached_tokens is still read for ALL providers below.
+	const messages = translate.toOpenAIMessages(opts.system, opts.messages, { cache: isAnthropicFamily(opts.model) });
 	const tools = translate.toOpenAITools(opts.tools);
 	const body = buildChatBody({ model: opts.model, messages, maxTokens: opts.maxTokens, stream: true });
 	if (tools) { body.tools = tools; }
@@ -186,7 +197,14 @@ async function streamOpenAIAgentTurn(opts) {
 		try { ev = JSON.parse(data); } catch { return; }
 		if (ev.error) { const _e = new Error((ev.error && ev.error.message) ? ev.error.message : (label + ' stream error')); if (ev.error && ev.error.code) { _e.code = ev.error.code; } throw _e; }
 		if (ev.usage) {   // opportunistic — only some providers include usage in the stream
-			if (ev.usage.prompt_tokens) { usage.input_tokens = ev.usage.prompt_tokens; }
+			// [LevelCode] Surface prompt caching. OpenAI-shaped providers (OpenAI auto-cache, Claude/Gemini
+			// via OpenRouter, the LevelCode Cloud gateway) report cache hits under prompt_tokens_details.
+			// cached_tokens, and it is INCLUDED in prompt_tokens — so split it out (fresh = prompt - cached)
+			// to mirror Anthropic's disjoint fields and keep the context meter's input+cache_read total exact.
+			const det = ev.usage.prompt_tokens_details || {};
+			const cached = det.cached_tokens || 0;
+			if (ev.usage.prompt_tokens) { usage.input_tokens = Math.max(0, ev.usage.prompt_tokens - cached); }
+			if (cached) { usage.cache_read_input_tokens = cached; }
 			if (ev.usage.completion_tokens) { usage.output_tokens = ev.usage.completion_tokens; }
 		}
 		const c = ev.choices && ev.choices[0];
@@ -203,4 +221,4 @@ async function streamOpenAIAgentTurn(opts) {
 	return { content, stop_reason: stopReason, usage, malformed };
 }
 
-module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel };
+module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily };
