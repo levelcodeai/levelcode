@@ -135,7 +135,9 @@ done
 
 # 3. Verify (§3), then attach the dmgs, drop the unsigned zips, and publish
 gh release upload v0.1.0 LevelCode-arm64.dmg LevelCode-x64.dmg
-gh release delete-asset v0.1.0 UNSIGNED-LevelCode-arm64.app.zip UNSIGNED-LevelCode-x64.app.zip
+# `gh release delete-asset` takes ONE asset per call — drop each unsigned zip separately (`-y` skips the prompt).
+gh release delete-asset v0.1.0 UNSIGNED-LevelCode-arm64.app.zip -y
+gh release delete-asset v0.1.0 UNSIGNED-LevelCode-x64.app.zip -y
 gh release edit v0.1.0 --draft=false --notes-file RELEASE-NOTES.md
 ```
 
