@@ -16,7 +16,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { makeDiff } = require('./agent');
+const { makeDiff, resolveWorkspacePath } = require('./agent');
 
 const PERSIST_KEY = 'levelcode.ai.pendingReviews';
 
@@ -105,10 +105,11 @@ function registerReview(context, post, dbg, recordTouch) {
 
 	/** Apply an edit to the real file (and save), then register it for review. Returns true on success. */
 	async function applyEdit(req) {
-		const root = workspaceRoot();
-		if (!root) { return false; }
-		const abs = path.resolve(root, req.path || '');
-		if (abs !== root && !abs.startsWith(root + path.sep)) { return false; }
+		if (!workspaceRoot()) { return false; }
+		// Multi-root aware — MUST resolve exactly like the agent's tool layer (same resolver), or an
+		// edit the agent computed against folder N would be applied into folder 0.
+		const abs = resolveWorkspacePath(req.path || '', { mustExist: !!req.exists });
+		if (!abs) { return false; }
 		const uri = vscode.Uri.file(abs);
 		const key = uri.toString();
 		const proposed = String(req.proposed != null ? req.proposed : '');
@@ -176,11 +177,10 @@ function registerReview(context, post, dbg, recordTouch) {
 	/** Delete a file (and save), registering it for review so Keep confirms / Undo recreates it.
 	 *  The pre-image is snapshotted (and handed to the per-turn checkpoint) so it is always recoverable. */
 	async function applyDelete(req) {
-		const root = workspaceRoot();
-		if (!root) { return false; }
-		const abs = path.resolve(root, req.path || '');
-		if (abs !== root && !abs.startsWith(root + path.sep)) { return false; }
-		if (!fs.existsSync(abs)) { return false; }
+		if (!workspaceRoot()) { return false; }
+		// Multi-root aware — same resolver as the agent's tool layer (see applyEdit).
+		const abs = resolveWorkspacePath(req.path || '', { mustExist: true });
+		if (!abs) { return false; }
 		const uri = vscode.Uri.file(abs);
 		const key = uri.toString();
 		let snapshot;
