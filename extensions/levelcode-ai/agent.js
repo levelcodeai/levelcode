@@ -27,7 +27,7 @@ const SYSTEM_BASE = [
 	'- Use delete_file to remove an existing file (e.g. during a refactor). To RENAME/move a file, write_file the new path then delete_file the old one. Deletions are reviewable (Keep/Undo) and restorable from the per-turn checkpoint.',
 	'- Your file edits are APPLIED IMMEDIATELY and the user reviews them afterward in the editor with Keep/Undo — do NOT wait for approval, and do NOT re-edit a file you just edited. Only run_command still needs approval; if the user skips a command, adapt or stop.',
 	'- Commands that do NOT exit on their own (dev servers, file watchers, tail -f) MUST be run with run_command background:true — it returns immediately so you keep working instead of hanging. After starting one, call read_command_output with the returned id to watch for a readiness/port line (e.g. "listening on :3000") before you test against it. Use a normal foreground run_command for things that finish (builds, installs, tests, git, curl). This pairs with verification: bring the app up in the background, confirm it serves, fix, repeat.',
-	'- Paths are relative to the workspace root.',
+	'- Paths are relative to the workspace root. In a MULTI-ROOT workspace (several top-level folders), paths from list_files/search are prefixed with the folder name (e.g. "thin.ly/app/models/link.rb") — use them exactly as shown; an unprefixed path resolves against the first folder. To create a file in a specific folder, prefix its name. run_command accepts an optional "folder" to pick which folder it runs in.',
 	'- For a multi-step goal, call update_plan FIRST with a short checklist (3-8 short items, all "pending"), then call it again to set an item "in_progress" when you start it and "done" when finished. Skip the plan for trivial single-step goals.',
 	'- If the goal truly depends on a decision only the user can make (tech stack, scope, where to create files, must-have features), call ask_user ONCE with concise multiple-choice questions (a short header + 2-4 concrete options each) INSTEAD of writing the questions as prose. Then act on their answers and do not ask again. Do NOT ask about things you can reasonably decide yourself — prefer a sensible default and proceed.',
 	'- You have SKILLS — short expert playbooks for common task types, listed under "Available skills" below with a name and a one-line description. When the user\'s goal clearly matches a skill\'s description (e.g. reviewing a diff, fixing one reported bug, writing tests), call use_skill with that exact name FIRST, before other tools, and follow the steps it returns. Pick at most one; if nothing clearly fits, just proceed normally. Do not mention skills to the user.',
@@ -37,13 +37,13 @@ const SYSTEM_BASE = [
 
 const TOOLS = [
 	{ name: 'list_files', description: 'List workspace files (optional glob like "**/*.js"). Excludes node_modules/.git/build dirs.', input_schema: { type: 'object', properties: { glob: { type: 'string' } } } },
-	{ name: 'read_file', description: 'Read a workspace file (path relative to the workspace root).', input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
+	{ name: 'read_file', description: 'Read a workspace file (path relative to the workspace root; in a multi-root workspace use the folder-name prefix exactly as list_files shows it).', input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
 	{ name: 'search', description: 'Search file contents for a literal string. Returns file:line snippets.', input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
 	{ name: 'update_plan', description: 'Declare or update your task checklist for a multi-step goal. Pass the FULL list each time, each item with a status. Call it once up front (all pending), then again to mark an item in_progress when you start it and done when finished. Skip for trivial single-step goals.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, status: { type: 'string', enum: ['pending', 'in_progress', 'done'] } }, required: ['title', 'status'] } } }, required: ['todos'] } },
 	{ name: 'edit_file', description: 'Make a targeted edit to an EXISTING file: replace an exact, unique snippet (old_str) with new_str. Applied immediately; the user reviews it with Keep/Undo. old_str must appear exactly once — include enough surrounding context to be unique.', input_schema: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' } }, required: ['path', 'old_str', 'new_str'] } },
 	{ name: 'write_file', description: 'Create a new file (or fully overwrite a short one) with the COMPLETE content. For edits to existing files, prefer edit_file. Applied immediately; the user reviews it with Keep/Undo.', input_schema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
 	{ name: 'delete_file', description: 'Delete an EXISTING workspace file (e.g. removing a file during a refactor). Applied immediately; the user reviews it with Keep/Undo, and the per-turn checkpoint can restore it. To RENAME or move a file: write_file the new path, then delete_file the old one.', input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
-	{ name: 'run_command', description: 'Run a shell command in the workspace root. Requires approval. Pass background:true for commands that do not exit on their own (servers, watchers) so the agent is not blocked — it returns immediately and you read progress later with read_command_output.', input_schema: { type: 'object', properties: { command: { type: 'string' }, explanation: { type: 'string' }, background: { type: 'boolean', description: 'true = start it and keep working without waiting (dev servers, watchers, tail -f). Returns immediately with an id; poll read_command_output for its output/status.' } }, required: ['command'] } },
+	{ name: 'run_command', description: 'Run a shell command in the workspace root (or a named workspace folder via "folder" in multi-root workspaces). Requires approval. Pass background:true for commands that do not exit on their own (servers, watchers) so the agent is not blocked — it returns immediately and you read progress later with read_command_output.', input_schema: { type: 'object', properties: { command: { type: 'string' }, explanation: { type: 'string' }, folder: { type: 'string', description: 'multi-root workspaces only: the workspace folder NAME to run in; defaults to the first folder' }, background: { type: 'boolean', description: 'true = start it and keep working without waiting (dev servers, watchers, tail -f). Returns immediately with an id; poll read_command_output for its output/status.' } }, required: ['command'] } },
 	{ name: 'read_command_output', description: 'Read recent output + status of a command started with run_command background:true. Returns a status header ([running on :3000] / [exited 0] / [stopped]) followed by the latest output lines. Poll this to wait for a server to become ready before testing against it.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'the id returned by a background run_command' }, lines: { type: 'number', description: 'max recent output lines to return (default 80, max 400)' } }, required: ['id'] } },
 	{ name: 'ask_user', description: 'Ask the user one or more multiple-choice questions when the goal genuinely depends on a decision only they can make (tech stack, scope, where to put files, must-have features). The user picks by CLICKING — do NOT write questions as prose. Ask ONCE up front with all your questions, then proceed with the answers and never re-ask. Prefer sensible defaults over asking; only ask when a wrong guess would waste real work.', input_schema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'object', properties: { header: { type: 'string', description: 'a 1-3 word tag for the question' }, question: { type: 'string' }, multiSelect: { type: 'boolean', description: 'true if several options can be picked at once' }, options: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] } } }, required: ['question', 'options'] } } }, required: ['questions'] } },
 	{ name: 'use_skill', description: 'Load an expert playbook (SKILL.md) for a task type, chosen from the "Available skills" list in your system prompt. Returns the skill\'s step-by-step instructions as the tool result — then follow them. Read-only and instant (no approval). Call it once, early, when the goal matches a skill\'s description.', input_schema: { type: 'object', properties: { name: { type: 'string', description: 'the exact skill name from the Available skills list' } }, required: ['name'] } }
@@ -132,6 +132,11 @@ function makeDiff(oldStr, newStr) {
 }
 
 // ---- workspace helpers -----------------------------------------------------
+// Multi-root aware: helpers read vscode.workspace.workspaceFolders LIVE on every call, so a
+// folder added to the workspace mid-session is usable by the very next tool call.
+function workspaceFolderList() {
+	return (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath }));
+}
 function workspaceRoot() {
 	const f = vscode.workspace.workspaceFolders;
 	return f && f.length ? f[0].uri.fsPath : null;
@@ -140,6 +145,34 @@ function safeJoin(root, rel) {
 	const pth = path.resolve(root, rel);
 	if (pth !== root && !pth.startsWith(root + path.sep)) { return null; }
 	return pth;
+}
+/** Resolve a model-supplied workspace-relative path to an absolute path, multi-root aware.
+ *  Accepts VS Code's asRelativePath convention: in a multi-root workspace, paths are prefixed
+ *  with the folder NAME ("thin.ly/app/models/link.rb") — which is exactly what list_files
+ *  returns to the model. Containment is enforced per matched folder, so the sandbox is the
+ *  UNION of the workspace folders (never anything outside them).
+ *  mustExist=true (read/edit/delete): first existing candidate wins — folder-name prefix, then
+ *  the primary folder, then every other folder. Returns null if nowhere.
+ *  mustExist=false (create): the folder-name prefix targets that folder; else the primary. */
+function resolveWorkspacePath(rel, opts) {
+	const mustExist = !!(opts && opts.mustExist);
+	const folders = workspaceFolderList();
+	if (!folders.length) { return null; }
+	rel = String(rel || '');
+	const seg = rel.split(/[\\/]/)[0];
+	const named = folders.length > 1 ? folders.find((f) => f.name === seg) : null;
+	const namedAbs = named ? safeJoin(named.root, rel.slice(seg.length).replace(/^[\\/]+/, '')) : null;
+	const primaryAbs = safeJoin(folders[0].root, rel);
+	if (!mustExist) { return namedAbs || primaryAbs; }
+	const candidates = [namedAbs, primaryAbs];
+	for (const f of folders.slice(1)) { candidates.push(safeJoin(f.root, rel)); }
+	for (const c of candidates) { if (c && fs.existsSync(c)) { return c; } }
+	return null;
+}
+/** "file not found" help for the model — names the folders it can address in a multi-root workspace. */
+function whereHint() {
+	const folders = workspaceFolderList();
+	return folders.length > 1 ? ' (workspace folders: ' + folders.map((f) => f.name).join(', ') + ' — prefix the folder name)' : '';
 }
 
 /** EOL/BOM-tolerant edit. raw = file content (may have BOM + CRLF); old/new from the model (often LF).
@@ -239,8 +272,8 @@ async function runTool(tu, ctx) {
 		}
 		if (tu.name === 'read_file') {
 			ctx.post({ type: 'agentTool', icon: 'file', text: 'read ' + input.path });
-			const abs = safeJoin(root, input.path || '');
-			if (!abs || !fs.existsSync(abs)) { return 'ERROR: file not found: ' + input.path; }
+			const abs = resolveWorkspacePath(input.path || '', { mustExist: true });
+			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint(); }
 			if (isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — not reading it as text.'; }
 			let body = fs.readFileSync(abs, 'utf8').replace(/^﻿/, ''); // drop BOM so old_str matches cleanly
 			if (body.length > 100 * 1024) { body = body.slice(0, 100 * 1024) + '\n…(truncated)…'; }
@@ -248,7 +281,18 @@ async function runTool(tu, ctx) {
 		}
 		if (tu.name === 'search') {
 			ctx.post({ type: 'agentTool', icon: 'search', text: 'search "' + input.query + '"' });
-			return (await rgSearch(String(input.query || ''), root)) || '(no matches)';
+			// Multi-root: search EVERY workspace folder, prefixing hits with the folder name so the
+			// model can hand the paths straight back to read_file/edit_file.
+			const folders = workspaceFolderList();
+			let hits = '';
+			for (const f of folders) {
+				const r = await rgSearch(String(input.query || ''), f.root);
+				if (!r) { continue; }
+				hits += folders.length > 1
+					? r.split('\n').map((ln) => (ln ? f.name + '/' + ln.replace(/^\.\//, '') : ln)).join('\n')
+					: r;
+			}
+			return hits || '(no matches)';
 		}
 		if (tu.name === 'update_plan') {
 			const todos = Array.isArray(input.todos) ? input.todos.slice(0, 20) : [];
@@ -257,9 +301,8 @@ async function runTool(tu, ctx) {
 			return 'Plan updated (' + done + '/' + todos.length + ' done).';
 		}
 		if (tu.name === 'edit_file') {
-			const abs = safeJoin(root, input.path || '');
-			if (!abs) { return 'ERROR: path is outside the workspace'; }
-			if (!fs.existsSync(abs)) { return 'ERROR: file not found: ' + input.path + ' (use write_file to create it)'; }
+			const abs = resolveWorkspacePath(input.path || '', { mustExist: true });
+			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint() + ' (use write_file to create it)'; }
 			if (isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — refusing to edit it as text.'; }
 			const cur = fs.readFileSync(abs, 'utf8');
 			const oldStr = String(input.old_str || '');
@@ -273,8 +316,8 @@ async function runTool(tu, ctx) {
 			return 'Applied edit to ' + input.path + ' (the user is reviewing it with Keep/Undo; do not re-edit it).';
 		}
 		if (tu.name === 'write_file') {
-			const abs = safeJoin(root, input.path || '');
-			if (!abs) { return 'ERROR: path is outside the workspace'; }
+			const abs = resolveWorkspacePath(input.path || '');
+			if (!abs) { return 'ERROR: path is outside the workspace' + whereHint(); }
 			const existed = fs.existsSync(abs);
 			let newStr = String(input.content || '');
 			if (existed) {
@@ -289,9 +332,8 @@ async function runTool(tu, ctx) {
 			return 'Applied edit to ' + input.path + ' (pending the user\'s Keep/Undo review).';
 		}
 		if (tu.name === 'delete_file') {
-			const abs = safeJoin(root, input.path || '');
-			if (!abs) { return 'ERROR: path is outside the workspace'; }
-			if (!fs.existsSync(abs)) { return 'ERROR: file not found: ' + input.path; }
+			const abs = resolveWorkspacePath(input.path || '', { mustExist: true });
+			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint(); }
 			try { if (fs.statSync(abs).isDirectory()) { return 'ERROR: ' + input.path + ' is a directory — delete_file removes a single file.'; } } catch { /* */ }
 			const ok = ctx.applyDelete ? await ctx.applyDelete({ path: input.path }) : false;
 			if (!ok) { return 'ERROR: could not delete ' + input.path + '.'; }
@@ -302,10 +344,17 @@ async function runTool(tu, ctx) {
 		if (tu.name === 'run_command') {
 			const cmd = String(input.command || '');
 			const bg = input.background === true;
+			// Multi-root: optional input.folder picks WHICH workspace folder the command runs in.
+			let cwdRoot = root;
+			if (input.folder) {
+				const wf = workspaceFolderList().find((w) => w.name === String(input.folder));
+				if (!wf) { return 'ERROR: no workspace folder named "' + input.folder + '"' + whereHint(); }
+				cwdRoot = wf.root;
+			}
 			const approved = await ctx.approve({ kind: 'command', command: cmd, explanation: input.explanation || '' });
 			if (!approved) { return 'User skipped this command. Do not retry it.'; }
 			const runId = tu.id || ('run-' + Date.now());
-			ctx.post({ type: 'termRun', id: runId, command: cmd, cwd: path.basename(root) || 'workspace', background: bg, explanation: input.explanation || '' });
+			ctx.post({ type: 'termRun', id: runId, command: cmd, cwd: path.basename(cwdRoot) || 'workspace', background: bg, explanation: input.explanation || '' });
 			const stops = ctx.commandStops;   // shared registry so the Stop button / ■ can kill the process group
 			// Only BACKGROUND commands get a registry entry (read_command_output reads it). Foreground
 			// one-shots keep their old behavior + don't accumulate — the model already gets their output.
@@ -330,10 +379,10 @@ async function runTool(tu, ctx) {
 				// Fire-and-forget: keep streaming + tracking, but return NOW so the agent loop isn't blocked.
 				// No timeout — a background server is meant to run long (Stop / New Chat reap it).
 				ctx.post({ type: 'bgTask', id: runId, command: cmd, status: 'running' });   // add to the Background tasks tray
-				(async () => { try { await runCommand(root, cmd, onChunk, onExit, onStart, 0); } catch (e) { entry.status = 'error'; entry.how = 'error'; ctx.post({ type: 'bgTask', id: runId, status: 'error', done: true }); dbg('bg.error', { id: runId, msg: String((e && e.message) || e) }); } })();
+				(async () => { try { await runCommand(cwdRoot, cmd, onChunk, onExit, onStart, 0); } catch (e) { entry.status = 'error'; entry.how = 'error'; ctx.post({ type: 'bgTask', id: runId, status: 'error', done: true }); dbg('bg.error', { id: runId, msg: String((e && e.message) || e) }); } })();
 				return 'Started in the background as id "' + runId + '" — it keeps running while you continue. Use read_command_output with this id to watch its output; wait for a readiness/port line before testing against it. Do not start it again.';
 			}
-			return await runCommand(root, cmd, onChunk, onExit, onStart, ctx.commandTimeout);
+			return await runCommand(cwdRoot, cmd, onChunk, onExit, onStart, ctx.commandTimeout);
 		}
 		if (tu.name === 'read_command_output') {
 			const runs = ctx.commandRuns;
@@ -405,7 +454,12 @@ async function runAgent(ctx) {
 	if (!root) { ctx.post({ type: 'agentError', message: 'Open a folder first — the agent works on your workspace.' }); ctx.post({ type: 'agentDone', reason: 'error' }); return; }
 	ctx.root = root;
 	// M6.5 implicit skills: build the system prompt ONCE per run — append the tiny name+description menu.
-	const system = ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE;
+	// Multi-root: name every workspace folder so the model addresses them by prefix from turn one.
+	const wsFolders = workspaceFolderList();
+	const multiRootNote = wsFolders.length > 1
+		? '\n\nWorkspace folders (multi-root — prefix paths with the folder name): ' + wsFolders.map((f) => f.name).join(', ') + '. The first folder ("' + wsFolders[0].name + '") is the default for unprefixed paths and run_command.'
+		: '';
+	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote;
 	const systemTokensEst = Math.round(system.length / 4);
 
 	const dbg = ctx.dbg || (() => {});
@@ -647,4 +701,4 @@ async function runAgent(ctx) {
 	}
 }
 
-module.exports = { runAgent, makeDiff };
+module.exports = { runAgent, makeDiff, resolveWorkspacePath };
