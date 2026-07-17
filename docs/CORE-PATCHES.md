@@ -95,7 +95,24 @@ regex/callback: link text is `[^\[\]\r\n]+` (can't span an `= [` array bracket t
 **`.d.ts` are included on purpose** — `monaco.d.ts` copies JSDoc (incl. these links) verbatim from the
 editor source, and the build fails ("monaco.d.ts is no longer up to date") unless both sides are stripped.
 
+**Also pass 1 — the aquarium easter egg (not a *name* swap).** `sessions/contrib/aquarium/**` renders the
+Agents-window "fish" as live SVG: upstream they are the **VS Code logo silhouette** (`vscodeLogoPath.ts`)
+tinted with **VS Code's three release-channel colors** (`#007ACC` / `#24bfa5` / `#E04F00`). We keep the
+easter egg and make it ours — the LevelCode **double chevron** in our brand-gradient stops
+(`#6a3fe0` / `#7069ff` / `#4fb2ff`). Three things to know if you touch it:
+- The path `from` is a **RegExp** (`export const VSCODE_LOGO_PATH = '…';`) so an upstream tweak to the
+  silhouette can't silently leave Microsoft's logo in place — it still matches and re-swaps.
+- The mark is **filled, not stroked**, and sized to the symbol's `0 0 96 96` viewBox spanning
+  `BODY_X_START..BODY_X_END` (5..90) — each fish is drawn as clipped vertical slices, so a thin stroke
+  would shred into disconnected segments and a narrower path would leave the head/tail strips empty.
+- It is two **overlapping** subpaths, so `fill-rule` is flipped `evenodd`→`nonzero` (evenodd would knock
+  the overlap out as a hole). Upstream file/const names (`vscodeLogoPath.ts`, `VSCODE_LOGO_PATH`,
+  `FishSpecies.Insiders`…) are deliberately left alone — internal identifiers, never user-visible.
+
 - **KEPT** (intentional): `sessions/contrib/applyCommitsToParentRepo/.../applyChangesToParentRepo.ts` "Open in VS Code" — a real hand-off to *external* VS Code via the `vscode://` scheme. And the `{Locked=…}` NLS annotations (translator metadata, never user-visible) keep their MS URLs.
+- **NOT a de-brand issue** (checked, left alone): the empty-editor **letterpress watermark**
+  (`parts/editor/media/letterpress-*.svg`) — it renders a generic editor pane with a sidebar and text
+  lines. No VS Code logo, wordmark, or brand colour; replacing it would be taste, not de-branding.
 - **SKIPPED**: M13 quality-switch dialogs — dormant (no Insiders LevelCode build); rebranding would imply a false "Insiders LevelCode".
 - **EXCLUDED**: `platform/agentHost/**` — its ~631 "VS Code" hits are all `test/` files + vendored proprietary Copilot/MS SDK (stripped from the shipped app by `strip-proprietary.mjs`).
 
