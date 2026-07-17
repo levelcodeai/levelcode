@@ -207,6 +207,14 @@ async function streamOpenAIAgentTurn(opts) {
 			if (cached) { usage.cache_read_input_tokens = cached; }
 			if (ev.usage.completion_tokens) { usage.output_tokens = ev.usage.completion_tokens; }
 		}
+		// [LevelCode] The Cloud gateway's final credits frame, emitted just before [DONE]: what THIS turn
+		// cost and what's left, in retail micro-$ (the same basis as GET /account/models). Namespaced and
+		// choice-less, so every other OpenAI-shaped provider simply never sends it and this stays inert.
+		if (ev.levelcode) {
+			if (ev.levelcode.cost_micros != null) { usage.cost_micros = ev.levelcode.cost_micros; }
+			if (ev.levelcode.credits_remaining_micros != null) { usage.credits_remaining_micros = ev.levelcode.credits_remaining_micros; }
+			return;
+		}
 		const c = ev.choices && ev.choices[0];
 		if (!c) { return; }
 		const d = c.delta || {};

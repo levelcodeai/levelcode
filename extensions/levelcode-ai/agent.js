@@ -474,6 +474,9 @@ async function runAgent(ctx) {
 	const perTurnMax = Math.max(1024, Math.min(32768, ctx.maxTokens || 8192));
 	const OUTPUT_TOKEN_BUDGET = perTurnMax * 8;
 	let cumulativeOutputTokens = 0;
+	// [LevelCode] Gateway turns report real money: this run's cost + the wallet balance, both RETAIL
+	// micro-$ (what the customer paid). BYOK turns never report them and these stay 0/null.
+	let runCostMicros = 0;
 
 	// --- M5 auto-verify loop ------------------------------------------------
 	// When the model wants to finish AND it edited files this run, check its work before handing back:
@@ -578,7 +581,11 @@ async function runAgent(ctx) {
 			// Report real context usage (input_tokens = how full the transcript is) so the UI can meter + warn.
 			if (turn.usage) {
 				cumulativeOutputTokens += (turn.usage.output_tokens || 0);
-				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens, cumulativeOutput: cumulativeOutputTokens });
+				// [LevelCode] The Cloud gateway's credits frame (retail micro-$): accumulate what the RUN
+				// cost and keep the latest remaining balance for the response bar.
+				if (turn.usage.cost_micros != null) { runCostMicros += turn.usage.cost_micros; }
+				if (turn.usage.credits_remaining_micros != null) { ctx.credits = turn.usage.credits_remaining_micros; }
+				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens, cumulativeOutput: cumulativeOutputTokens, costMicros: turn.usage.cost_micros, creditsLeftMicros: turn.usage.credits_remaining_micros });
 				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: TOOLS_TOKENS_EST });
 			}
 
@@ -695,9 +702,14 @@ async function runAgent(ctx) {
 		}
 		else { ctx.post({ type: 'agentError', message: msg, code }); reason = 'error'; }
 	} finally {
-		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, credits: ctx.credits != null ? ctx.credits : null });
-		// credits: null until the M10 gateway returns real usage; the response bar shows it when present.
-		ctx.post({ type: 'agentDone', reason, edits: ctx.editCount || 0, credits: ctx.credits != null ? ctx.credits : null, maxSteps: ctx.maxSteps });
+		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, costMicros: runCostMicros, creditsLeftMicros: ctx.credits != null ? ctx.credits : null });
+		// [LevelCode] Gateway runs now carry real money: costMicros = what THIS run cost, credits = the
+		// remaining balance — both RETAIL micro-$. BYOK runs send neither (null/0) and the bar omits them.
+		ctx.post({
+			type: 'agentDone', reason, edits: ctx.editCount || 0, maxSteps: ctx.maxSteps,
+			costMicros: runCostMicros > 0 ? runCostMicros : null,
+			credits: ctx.credits != null ? ctx.credits : null
+		});
 	}
 }
 
