@@ -95,32 +95,63 @@ index 8251c4a4..d2da153b 100644
  });
  
  // --- Actions Registration
-diff --git a/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts b/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts
-index 883dab9e..99861bde 100644
---- a/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts
-+++ b/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts
-@@ -2440,6 +2440,21 @@ registerWorkbenchContribution2(ChatSlashCommandsContribution.ID, ChatSlashComman
- registerWorkbenchContribution2(ChatSessionOptionSlashCommandsContribution.ID, ChatSessionOptionSlashCommandsContribution, WorkbenchPhase.Eventually);
- 
- registerWorkbenchContribution2(ChatExtensionPointHandler.ID, ChatExtensionPointHandler, WorkbenchPhase.BlockStartup);
-+
-+// [LevelCode] Hide the GitHub Copilot sign-in call-to-actions. product.json keeps `defaultChatAgent`
-+// (it is assertDefined-d and consumed across ~15 core files, so it can't be removed), which leaves
-+// ChatEntitlement's Setup.hidden = false — so a signed-out user still sees "Sign in to use GitHub
-+// Copilot" in the Accounts menu, the title bar, and the Chat status dashboard: a dead funnel for an
-+// extension LevelCode does not ship. setForceHidden(true) flips ONLY that Setup.hidden gate. Unlike
-+// `chat.disableAIFeatures: true`, it does not disable AI/inline suggestions and does not suppress the
-+// secondary-sidebar auto-open where LevelCode's own AI panel lives (layout.ts first-run behaviour).
-+class LevelCodeHideCopilotSetupContribution implements IWorkbenchContribution {
-+	static readonly ID = 'workbench.contrib.levelcode.hideCopilotSetup';
-+	constructor(@IChatEntitlementService chatEntitlementService: IChatEntitlementService) {
-+		chatEntitlementService.setForceHidden(true);
-+	}
-+}
-+registerWorkbenchContribution2(LevelCodeHideCopilotSetupContribution.ID, LevelCodeHideCopilotSetupContribution, WorkbenchPhase.BlockRestore);
- registerWorkbenchContribution2(LanguageModelToolsExtensionPointHandler.ID, LanguageModelToolsExtensionPointHandler, WorkbenchPhase.BlockRestore);
- registerWorkbenchContribution2(ChatPromptFilesExtensionPointHandler.ID, ChatPromptFilesExtensionPointHandler, WorkbenchPhase.BlockRestore);
- registerWorkbenchContribution2(ChatCompatibilityNotifier.ID, ChatCompatibilityNotifier, WorkbenchPhase.Eventually);
+diff --git a/src/vs/workbench/contrib/chat/browser/chatSetup/chatSetupContributions.ts b/src/vs/workbench/contrib/chat/browser/chatSetup/chatSetupContributions.ts
+index ac91175c..883a7ed6 100644
+--- a/src/vs/workbench/contrib/chat/browser/chatSetup/chatSetupContributions.ts
++++ b/src/vs/workbench/contrib/chat/browser/chatSetup/chatSetupContributions.ts
+@@ -38,13 +38,12 @@ import { ITelemetryService } from '../../../../../platform/telemetry/common/tele
+ import { ToggleTitleBarConfigAction } from '../../../../browser/parts/titlebar/titlebarActions.js';
+ import { IWorkbenchContribution } from '../../../../common/contributions.js';
+ import { IViewDescriptorService, ViewContainerLocation } from '../../../../common/views.js';
+-import { ChatEntitlement, ChatEntitlementContext, ChatEntitlementContextKeys, ChatEntitlementRequests, ChatEntitlementService, IChatEntitlementService, isProUser } from '../../../../services/chat/common/chatEntitlementService.js';
++import { ChatEntitlement, ChatEntitlementContext, ChatEntitlementRequests, ChatEntitlementService, IChatEntitlementService, isProUser } from '../../../../services/chat/common/chatEntitlementService.js';
+ import { EnablementState, IWorkbenchExtensionEnablementService } from '../../../../services/extensionManagement/common/extensionManagement.js';
+ import { ExtensionUrlHandlerOverrideRegistry, IExtensionUrlHandlerOverride } from '../../../../services/extensions/browser/extensionUrlHandler.js';
+ import { IExtensionService } from '../../../../services/extensions/common/extensions.js';
+ import { IHostService } from '../../../../services/host/browser/host.js';
+ import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
+-import { InEditorZenModeContext } from '../../../../common/contextkeys.js';
+ import { ILifecycleService } from '../../../../services/lifecycle/common/lifecycle.js';
+ import { IPreferencesService } from '../../../../services/preferences/common/preferences.js';
+ import { IExtension, IExtensionsWorkbenchService } from '../../../extensions/common/extensions.js';
+@@ -367,12 +366,10 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
+ 					menu: {
+ 						id: MenuId.AccountsContext,
+ 						group: '2_copilot',
+-						when: ContextKeyExpr.and(
+-							ChatContextKeys.Setup.hidden.negate(),
+-							ChatContextKeys.Setup.disabledInWorkspace.negate(),
+-							ChatContextKeys.Setup.completed.negate(),
+-							ChatContextKeys.Entitlement.signedOut
+-						)
++						// [LevelCode] Hidden: a GitHub Copilot sign-in funnel for an extension we do not ship. Gated on
++						// THIS MENU ITEM, deliberately not via ChatEntitlement's Setup.hidden — that flag also gates the
++						// Agents window, the Agent Plugins view and chat participants, and forcing it hid all of them.
++						when: ContextKeyExpr.false()
+ 					}
+ 				});
+ 			}
+@@ -399,16 +396,10 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
+ 					menu: [{
+ 						id: MenuId.TitleBarAdjacentCenter,
+ 						order: 0, // same position as the update button
+-						when: ContextKeyExpr.and(
+-							IsWebContext.negate(),
+-							ChatContextKeys.Entitlement.signedOut,
+-							ChatEntitlementContextKeys.hasByokModels.negate(),
+-							ChatContextKeys.Setup.hidden.negate(),
+-							ChatContextKeys.Setup.disabledInWorkspace.negate(),
+-							ContextKeyExpr.equals(`config.${ChatConfiguration.TitleBarSignInEnabled}`, true),
+-							ContextKeyExpr.has('updateTitleBar').negate(),
+-							InEditorZenModeContext.negate(),
+-						),
++						// [LevelCode] Hidden: a GitHub Copilot sign-in funnel for an extension we do not ship. Gated on
++						// THIS MENU ITEM, deliberately not via ChatEntitlement's Setup.hidden — that flag also gates the
++						// Agents window, the Agent Plugins view and chat participants, and forcing it hid all of them.
++						when: ContextKeyExpr.false(),
+ 					}]
+ 				});
+ 			}
 diff --git a/src/vs/workbench/contrib/files/browser/files.contribution.ts b/src/vs/workbench/contrib/files/browser/files.contribution.ts
 index 574c2d8e..f6b8c7af 100644
 --- a/src/vs/workbench/contrib/files/browser/files.contribution.ts
