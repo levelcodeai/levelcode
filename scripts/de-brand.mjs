@@ -43,6 +43,14 @@ const vscodeDir = process.argv[2] || join(repoRoot, "vscode");
 // display string (settings descriptions, notifications) — verified by diff review.
 const G = [["Visual Studio Code", "LevelCode"], ["VS Code", "LevelCode"]];
 
+// The LevelCode double-chevron mark (branding/icons/code-icon.svg) as a FILLED silhouette in the
+// aquarium symbol's `0 0 96 96` viewBox, spanning the sliced body region (x 5..90, see fish.ts
+// BODY_X_START/END). Two overlapping subpaths — they union only under fill-rule:nonzero (the rule
+// below flips it; evenodd would knock the overlap out as a hole). Filled, not stroked: each fish is
+// rendered as clipped vertical slices, and a thin stroke would shred into disconnected segments.
+const LEVELCODE_FISH_CHEVRON =
+  "M6 47L48 12L90 47L78 57L48 32L18 57ZM6 79L48 44L90 79L78 89L48 64L18 89Z";
+
 // Each rule: { f: <path under vscode/>, subs: [[from, to], ...], extra?: [[from, to], ...] }.
 // `subs === G` is a whole-file name sweep; otherwise it's a TARGETED rule (explicit strings) — used for
 // files that contain a "VS Code" which must STAY (e.g. a real external-VS-Code reference) or where
@@ -116,6 +124,26 @@ const RULES = [
   ] },
   { f: "src/vs/sessions/contrib/policyBlocked/browser/sessionsPolicyBlocked.ts", subs: [
     ['"Open VS Code"', '"Open LevelCode"'],
+  ] },
+
+  // ---- Agents-window "aquarium" easter egg: the fish were literally the VS Code logo silhouette,
+  //      tinted with VS Code's three RELEASE-CHANNEL colors, swimming across our UI. Keep the joy,
+  //      make it ours — our double-chevron in the brand-gradient stops. Pure content swaps, no patch.
+  //      The path `from` is a REGEX so an upstream tweak to the silhouette can't silently leave
+  //      Microsoft's logo in place; it still re-matches (and the file/const names are upstream's). ----
+  { f: "src/vs/sessions/contrib/aquarium/browser/vscodeLogoPath.ts", subs: [
+    [/export const VSCODE_LOGO_PATH = '[^']*';/, `export const VSCODE_LOGO_PATH = '${LEVELCODE_FISH_CHEVRON}';`],
+    ["// VS Code logo silhouette path, extracted from sessions/contrib/chat/browser/media/vscode-icon.svg.",
+      "// [LevelCode] The LevelCode double-chevron mark (branding/icons/code-icon.svg) as a filled silhouette."],
+  ] },
+  { f: "src/vs/sessions/contrib/aquarium/browser/fish.ts", subs: [
+    ['/** The three VS Code release channel colors used as fish "species". */',
+      '/** [LevelCode] The three brand-gradient stops as fish "species" (upstream: VS Code release channels). */'],
+    ["[FishSpecies.Stable]: '#007ACC'", "[FishSpecies.Stable]: '#6a3fe0'"],
+    ["[FishSpecies.Insiders]: '#24bfa5'", "[FishSpecies.Insiders]: '#7069ff'"],
+    ["[FishSpecies.Exploration]: '#E04F00'", "[FishSpecies.Exploration]: '#4fb2ff'"],
+    // Our mark is two OVERLAPPING subpaths; evenodd would knock the overlap out as a hole.
+    ["logoPath.setAttribute('fill-rule', 'evenodd');", "logoPath.setAttribute('fill-rule', 'nonzero');"],
   ] },
 
   // ---- WS-D pairing: the Agents "Open in VS Code" button OPENS real VS Code, so it must show the VS
