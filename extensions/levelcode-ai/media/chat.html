@@ -1863,8 +1863,16 @@
   function modelLabel(){
     try { const t = (document.getElementById('model').textContent || 'Auto').replace('▾', '').trim(); return t || 'Auto'; } catch(e){ return 'Auto'; }
   }
-  // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · credits.
-  function addAgentDone(reason, edits, credits, maxSteps){
+  // [LevelCode] Retail micro-$ → a human figure. Sub-cent turns are common once prompt caching kicks
+  // in, and "$0.00" would read as free/broken — so floor them at "<$0.01" instead of rounding away.
+  function money(micros){
+    const d = Number(micros) / 1e6;
+    if (!isFinite(d) || d <= 0) { return '$0.00'; }
+    return d < 0.01 ? '<$0.01' : '$' + d.toFixed(2);
+  }
+
+  // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · $cost · $left.
+  function addAgentDone(reason, edits, credits, maxSteps, costMicros){
     const bar = document.createElement('div'); bar.className = 'agentbar';
     // Stamp the model that produced THIS turn, so a later reaction is attributed to it
     // (not whatever the plan is entitled to at click time — models can change mid-session).
@@ -1880,7 +1888,10 @@
     const meta = document.createElement('div'); meta.className = 'agentbar-meta';
     meta.innerHTML = (hint ? '<span class="abhint">' + esc(hint) + '</span>' : '')
       + '<span class="abmodel" title="Click to change model">' + esc(modelLabel()) + '</span>'
-      + (credits != null ? '<span class="abcredits">· ' + esc(String(credits)) + ' credit' + (Number(credits) === 1 ? '' : 's') + '</span>' : '');
+      // Gateway runs report real money (retail micro-$): what this run cost + what's left. BYOK runs
+      // report neither, so the bar stays exactly as it was.
+      + (costMicros != null ? '<span class="abcredits" title="What this run cost">· ' + esc(money(costMicros)) + '</span>' : '')
+      + (credits != null ? '<span class="abcredits" title="Credits remaining on your plan">· ' + esc(money(credits)) + ' left</span>' : '');
     bar.append(actions, meta);
     log.appendChild(bar); scrollIfStuck();
 
@@ -2288,7 +2299,7 @@
     else if (m.type === 'account'){ renderAccount(m); if (m.open) openAccount(); }
     else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
     else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); const cap = capReachedInfo(m.message); if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
-    else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps); setStreaming(false); }
+    else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps, m.costMicros); setStreaming(false); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
