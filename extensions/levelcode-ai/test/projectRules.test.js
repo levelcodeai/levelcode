@@ -93,4 +93,32 @@ test('a malformed folder entry is skipped', () => {
 	assert.deepStrictEqual(r.sources, ['AGENTS.md']);
 });
 
+test('multi-root: a folder with no name falls back to its basename (never "undefined/…")', () => {
+	const r = loadProjectRules([{ root: '/ws/app' }, F2], reader({
+		[at('/ws/app', 'AGENTS.md')]: 'a',
+		[at('/ws/api', 'AGENTS.md')]: 'b',
+	}));
+	assert.deepStrictEqual(r.sources, ['app/AGENTS.md', 'api/AGENTS.md']);
+	assert.ok(!r.text.includes('undefined/'), 'label leaked an undefined folder name');
+});
+
+// The cases above inject a fake reader; this one uses the real fs to prove the on-disk path works.
+test('real filesystem: discovers and reads an on-disk rules file (smoke)', () => {
+	const fs = require('fs');
+	const os = require('os');
+	const real = (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch { return null; } };
+	const withRules = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-rules-'));
+	const noRules = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-none-'));
+	try {
+		fs.writeFileSync(path.join(withRules, 'AGENTS.md'), '# Rules\n- Use 2-space indent');
+		const hit = loadProjectRules([{ name: 'app', root: withRules }], real);
+		assert.deepStrictEqual(hit.sources, ['AGENTS.md']);
+		assert.ok(hit.text.includes('Use 2-space indent'), 'on-disk rules content was not folded in');
+		assert.deepStrictEqual(loadProjectRules([{ name: 'empty', root: noRules }], real), { text: '', sources: [] });
+	} finally {
+		fs.rmSync(withRules, { recursive: true, force: true });
+		fs.rmSync(noRules, { recursive: true, force: true });
+	}
+});
+
 console.log(n + ' passing');

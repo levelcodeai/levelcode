@@ -36,7 +36,7 @@ function loadProjectRules(folders, readFile) {
 			let content = null;
 			try { content = readFile(path.join(f.root, name)); } catch { content = null; }
 			if (content && content.trim()) {
-				const label = multi ? f.name + '/' + name : name;
+				const label = multi ? (f.name || path.basename(f.root)) + '/' + name : name;   // never "undefined/AGENTS.md"
 				let body = content.trim();
 				if (body.length > PER_FILE_CAP) { body = body.slice(0, PER_FILE_CAP) + '\n\n…[' + label + ' truncated at ' + PER_FILE_CAP + ' chars]'; }
 				blocks.push('### ' + label + '\n' + body);

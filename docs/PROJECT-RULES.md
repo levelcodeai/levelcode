@@ -83,7 +83,7 @@ model as Cursor and Copilot rules files. Two things bound the risk:
 |------|------|
 | `extensions/levelcode-ai/projectRules.js` | Pure loader: `loadProjectRules(folders, readFile)` → `{ text, sources }`. File reading is injected as a callback, so it's testable without a filesystem. |
 | `extensions/levelcode-ai/agent.js` | Reads with `fs`, folds `rules.text` into the system prompt, posts the timeline chip, and `dbg('projectRules.loaded', …)`. |
-| `extensions/levelcode-ai/test/projectRules.test.js` | 10 unit cases (discovery, alias fallback, first-present-wins, multi-root, empty-skip, truncation, throwing reader) plus a real-filesystem smoke test. |
+| `extensions/levelcode-ai/test/projectRules.test.js` | Unit cases with an injected reader (discovery, alias fallback, first-present-wins, multi-root labelling incl. a name fallback, empty-skip, truncation, throwing reader) plus a real-filesystem smoke test that writes an on-disk `AGENTS.md` and reads it back. |
 
 ## Not yet (planned)
 
