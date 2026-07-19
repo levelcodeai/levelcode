@@ -16,6 +16,7 @@ const cp = require('child_process');
 const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
+const { loadProjectRules } = require('./projectRules');
 
 const SYSTEM_BASE = [
 	"You are LevelCode's built-in autonomous coding agent. You accomplish the user's goal in their",
@@ -477,10 +478,20 @@ async function runAgent(ctx) {
 	const autopilotNote = ctx.autopilot
 		? '\n\nAUTOPILOT IS ON. Work end-to-end without pausing for confirmation. Your run_command calls execute immediately (only irreversible ones — deleting files, sudo, force-push, piping a remote script to a shell, publishing — still ask the user). Do NOT call ask_user for anything you can reasonably decide; pick a sensible default and proceed. When you are unsure whether a change is correct, do not stop to ask — verify it: run the build/tests/linters via run_command and read editor diagnostics, then fix and re-verify until clean, and only then move on. Prefer doing and checking over asking.'
 		: '';
-	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote + autopilotNote;
+	// Project rules: fold a repo's own AGENTS.md (or CLAUDE.md / .cursorrules) into the cached system
+	// block so the agent follows the project's conventions from turn one. Read once per run — an edit is
+	// picked up on the next run.
+	const rules = loadProjectRules(wsFolders, (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch { return null; } });
+	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote + autopilotNote + rules.text;
 	const systemTokensEst = Math.round(system.length / 4);
 
 	const dbg = ctx.dbg || (() => {});
+	if (rules.sources.length) {
+		dbg('projectRules.loaded', { sources: rules.sources });
+		// Quiet timeline chip at the top of the run so the user can see their repo rules are in effect
+		// (mirrors the skill chip). Reuses the agentTool → addAgentLine rendering — no webview change.
+		ctx.post({ type: 'agentTool', icon: 'file', text: '📋 project rules · ' + rules.sources.join(', ') });
+	}
 	const messages = ctx.messages;
 	let step = 0;
 	let reason = 'done';
