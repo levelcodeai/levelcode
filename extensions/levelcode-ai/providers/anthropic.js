@@ -169,14 +169,12 @@ function withRollingCacheBreakpoint(messages) {
 		const m = arr[i];
 		if (!m) { continue; }
 		let content = m.content;
-		let hasUsableContent = false;
 		if (typeof content === 'string') {
 			if (!content) { continue; }
-			hasUsableContent = true;
 			content = [{ type: 'text', text: content, cache_control: { type: 'ephemeral' } }];
 		} else if (Array.isArray(content) && content.length) {
 			// Require at least one non-empty block to count this message as cacheable.
-			hasUsableContent = content.some((b) => {
+			const hasUsableContent = content.some((b) => {
 				if (!b) { return false; }
 				if (b.type === 'text') { return !!(b.text || '').trim(); }
 				return b.type === 'tool_result' || b.type === 'tool_use' || !!b.content;
