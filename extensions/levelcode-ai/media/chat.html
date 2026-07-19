@@ -152,6 +152,12 @@
   .agentstatus { font-size: 12px; margin: 5px 2px; opacity: .9; display: flex; gap: 7px; align-items: center; font-style: italic; }
   .agentstatus .spin { display: inline-block; font-style: normal; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* persistent working indicator above the composer — visible the whole time the agent runs */
+  #workbar { display: flex; align-items: center; gap: 8px; padding: 5px 4px 7px; }
+  #workbar[hidden] { display: none; }
+  #workbar .wspin { display: inline-flex; flex: 0 0 auto; }
+  #workbar .wspin .lc-spin { width: 18px; height: 18px; }
+  #workbar .wtext { font-size: 12px; }
   /* shimmering "glance" text while the agent is working (Cursor/Claude-Code style sweep) */
   .shimmer {
     background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 38%, var(--vscode-foreground) 50%, var(--muted) 62%, var(--muted) 100%);
@@ -891,6 +897,10 @@
     <button class="undoall">Undo all</button>
   </div>
 
+  <!-- persistent "agent is working" indicator: shown for the WHOLE run (tied to streaming), so there's
+       never a gap between actions where nothing shows. Its label tracks the current activity. -->
+  <div id="workbar" hidden><span class="wspin" aria-hidden="true"></span><span class="wtext shimmer">Working…</span></div>
+
   <div id="composer">
     <div id="chips"></div>
     <textarea id="input" rows="2" placeholder="Give the agent a goal…"></textarea>
@@ -1060,6 +1070,12 @@
     + '<path class="c1" d="M29,92 L60,70 L91,92"/>'
     + '<path class="c2" d="M29,71 L60,49 L91,71"/>'
     + '<path class="c3" d="M29,50 L60,28 L91,50"/></svg>';
+  // The persistent working bar (above the composer) reuses the same spinner. Its visibility is tied to
+  // `streaming` (setStreaming), so it can never fall into a gap between actions; setWork() updates its label.
+  const workbarEl = document.getElementById('workbar');
+  const workTextEl = workbarEl && workbarEl.querySelector('.wtext');
+  { const s = workbarEl && workbarEl.querySelector('.wspin'); if (s) { s.innerHTML = LC_SPIN_SVG; } }
+  function setWork(text){ if (workTextEl) { workTextEl.textContent = text || 'Working…'; } }
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
   // Inline VS Code codicons (MIT, @vscode/codicons) — replaces UI emojis, CSP/font-free.
@@ -1381,13 +1397,9 @@
       + '<div class="tl-body"><span class="toolt">' + esc(text || '') + '</span></div>';
     log.appendChild(d); scrollIfStuck();
   }
-  function setAgentStatus(text){
-    clearStatus();
-    const d = document.createElement('div'); d.className = 'agentstatus';
-    const t = (!text || text === 'thinking…') ? 'Thinking…' : text;   // shimmering label while the agent works
-    d.innerHTML = LC_SPIN_SVG + '<span class="shimmer">' + esc(t) + '</span>';
-    log.appendChild(d); agentStatusEl = d; scrollIfStuck();
-  }
+  // Drives the persistent working bar (not an inline log element), so the indicator can't be cleared into
+  // a gap by an intervening tool card or bubble. The bar's visibility is owned by setStreaming.
+  function setAgentStatus(text){ setWork((!text || text === 'thinking…') ? 'Thinking…' : text); }
   function applyMode(agent){
     agentMode = agent;
     document.getElementById('modeLabel').textContent = agent ? 'Agent' : 'Chat';
@@ -2094,6 +2106,8 @@
     sendBtn.classList.toggle('stop', on);
     sendBtn.innerHTML = on ? '&#9632;' : '&#8629;';     // ■ while streaming, ↵ otherwise
     sendBtn.title = on ? 'Stop' : 'Send (Enter)';
+    if (workbarEl){ workbarEl.hidden = !on; }           // the working bar is visible for the ENTIRE run
+    if (on){ setWork('Working…'); }
   }
   // Shell-style history recall in the composer: ↑ = previous sent message, ↓ = newer (back to your draft).
   // Session-only. In multiline text, ↑/↓ recall only when the caret is on the first/last line (arrows still move otherwise).
@@ -2456,7 +2470,7 @@
     else if (m.type === 'autopilot'){ applyAutopilot(!!m.on); }
     else if (m.type === 'agentStart'){ setStreaming(true); agentBubble = null; agentRaw = ''; renderPlan([]); setAgentStatus('thinking…'); }
     else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); }
-    else if (m.type === 'agentDelta'){ clearStatus(); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
+    else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
     else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
     else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text); }
     else if (m.type === 'agentApproval'){ addApproval(m); }
