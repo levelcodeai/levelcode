@@ -899,7 +899,7 @@
 
   <!-- persistent "agent is working" indicator: shown for the WHOLE run (tied to streaming), so there's
        never a gap between actions where nothing shows. Its label tracks the current activity. -->
-  <div id="workbar" hidden><span class="wspin" aria-hidden="true"></span><span class="wtext shimmer">Working…</span></div>
+  <div id="workbar" hidden role="status" aria-live="polite"><span class="wspin" aria-hidden="true"></span><span class="wtext shimmer">Working…</span></div>
 
   <div id="composer">
     <div id="chips"></div>
