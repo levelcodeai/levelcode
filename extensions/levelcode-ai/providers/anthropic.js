@@ -173,6 +173,13 @@ function withRollingCacheBreakpoint(messages) {
 			if (!content) { continue; }
 			content = [{ type: 'text', text: content, cache_control: { type: 'ephemeral' } }];
 		} else if (Array.isArray(content) && content.length) {
+			// Require at least one non-empty block to count this message as cacheable.
+			const hasUsableContent = content.some((b) => {
+				if (!b) { return false; }
+				if (b.type === 'text') { return !!(b.text || '').trim(); }
+				return b.type === 'tool_result' || b.type === 'tool_use' || !!b.content;
+			});
+			if (!hasUsableContent) { continue; }
 			content = content.slice();
 			content[content.length - 1] = { ...content[content.length - 1], cache_control: { type: 'ephemeral' } };
 		} else {
@@ -244,4 +251,4 @@ async function streamClaudeAgentTurn(opts) {
 	return { content: content, stop_reason: stopReason, usage: usage, malformed: malformed };
 }
 
-module.exports = { streamClaude, completeClaude, claudeAgentTurn, streamClaudeAgentTurn, finalizeAgentBlocks };
+module.exports = { streamClaude, completeClaude, claudeAgentTurn, streamClaudeAgentTurn, finalizeAgentBlocks, withRollingCacheBreakpoint };

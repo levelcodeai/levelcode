@@ -135,6 +135,21 @@ async function completeOpenAI(opts) {
  * @param {{baseURL:string, apiKey?:string, headers?:object}} opts
  * @returns {Promise<string[]>}
  */
+/**
+ * [LevelCode] Split OpenAI-style cached_tokens out of prompt_tokens so the agent's meter
+ * shows fresh input + cache_read exactly as Anthropic does. cached_tokens is included in
+ * prompt_tokens, so input_tokens = prompt_tokens - cached_tokens. Pure — unit-tested.
+ * @param {{input_tokens:number, output_tokens:number, cache_read_input_tokens:number}} usage
+ * @param {{usage:{prompt_tokens?:number, completion_tokens?:number, prompt_tokens_details?:{cached_tokens?:number}}}} ev
+ */
+function splitOutCachedTokens(usage, ev) {
+	const det = ev.usage.prompt_tokens_details || {};
+	const cached = det.cached_tokens || 0;
+	if (ev.usage.prompt_tokens != null) { usage.input_tokens = Math.max(0, ev.usage.prompt_tokens - cached); }
+	if (cached) { usage.cache_read_input_tokens = cached; }
+	if (ev.usage.completion_tokens != null) { usage.output_tokens = ev.usage.completion_tokens; }
+}
+
 async function listOpenAIModels(opts) {
 	try {
 		const ac = new AbortController();
@@ -201,11 +216,7 @@ async function streamOpenAIAgentTurn(opts) {
 			// via OpenRouter, the LevelCode Cloud gateway) report cache hits under prompt_tokens_details.
 			// cached_tokens, and it is INCLUDED in prompt_tokens — so split it out (fresh = prompt - cached)
 			// to mirror Anthropic's disjoint fields and keep the context meter's input+cache_read total exact.
-			const det = ev.usage.prompt_tokens_details || {};
-			const cached = det.cached_tokens || 0;
-			if (ev.usage.prompt_tokens) { usage.input_tokens = Math.max(0, ev.usage.prompt_tokens - cached); }
-			if (cached) { usage.cache_read_input_tokens = cached; }
-			if (ev.usage.completion_tokens) { usage.output_tokens = ev.usage.completion_tokens; }
+			splitOutCachedTokens(usage, ev);
 		}
 		// [LevelCode] The Cloud gateway's final credits frame, emitted just before [DONE]: what THIS turn
 		// cost and what's left, in retail micro-$ (the same basis as GET /account/models). Namespaced and
@@ -229,4 +240,4 @@ async function streamOpenAIAgentTurn(opts) {
 	return { content, stop_reason: stopReason, usage, malformed };
 }
 
-module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily };
+module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily, splitOutCachedTokens };

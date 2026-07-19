@@ -394,6 +394,11 @@
           "maximum": 32768,
           "description": "Maximum output tokens per agent turn (agent mode only; chat/completions use levelcode.ai.claude.maxTokens). If a turn hits this cap mid-output the agent automatically continues in the next turn (so long answers/files aren't truncated), but raising it lets more come out in one turn. Capped at 32768 to bound worst-case spend across continuation turns."
         },
+        "levelcode.ai.agent.autopilot": {
+          "type": "boolean",
+          "default": false,
+          "description": "Autopilot: let the agent run commands without asking, and prefer verifying its own work over pausing to ask you. It still stops and asks before anything hard to undo — deleting files, sudo, force-push / history rewrite, piping a remote script into a shell, publishing a package, or writing outside the project. File edits stay reviewable with Keep/Undo either way. Off by default."
+        },
         "levelcode.ai.skills.enabled": {
           "type": "boolean",
           "default": true,
