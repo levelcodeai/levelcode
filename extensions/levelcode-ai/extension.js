@@ -20,6 +20,7 @@ const { registerAiEdit } = require('./aiEdit');
 const { registerLmProvider } = require('./lmProvider');
 const { registerInlineComplete } = require('./inlineComplete');
 const { runAgent } = require('./agent');
+const { findCompactionCut, estimateMsgTokens } = require('./agentMemory');
 const { registerReview } = require('./reviewSession');
 const { formatDiagnosticLines, diagKey } = require('./verify');
 const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
@@ -50,6 +51,10 @@ let abort = null;
 let cloudSignedIn = false;
 /** Agent mode: sending runs the autonomous tool loop instead of plain chat. */
 let agentMode = true;
+/** Autopilot: the agent runs commands without asking (except the danger set — see commandSafety.js)
+ *  and prefers self-verifying over pausing to ask. Initialized from config on 'ready', toggled live,
+ *  and persisted so an explicit opt-in survives a restart. */
+let autopilot = false;
 /** Apply-then-review session (Keep/Undo for applied agent edits). Set in activate(). */
 let review;
 /** Persistent agent transcript for the session (tool calls + results), so follow-up goals
@@ -700,12 +705,10 @@ let approvalSeq = 0;
 /** Ask the webview to approve an action; resolves true/false. */
 function requestApproval(req) {
 	const id = String(++approvalSeq);
-	const wf = vscode.workspace.workspaceFolders;
-	const cwd = (wf && wf[0]) ? wf[0].name : '~';
 	dbg('approval.request', { id, kind: req.kind, cmd: req.command });
 	return new Promise((resolve) => {
 		pendingApprovals.set(id, resolve);
-		post(Object.assign({ type: 'agentApproval', id, cwd }, req));
+		post(Object.assign({ type: 'agentApproval', id }, req));
 	});
 }
 function resolveApproval(id, approved) {
@@ -809,6 +812,91 @@ function trimAgentMemory() {
 	if (cut > 0 && cut < agentMessages.length) { agentMessages.splice(0, cut); }
 }
 
+/** Flatten one transcript message to a compact plain-text line for the summarizer. Per-item caps keep
+ *  a single giant file read or command dump from dominating (or blowing) the summary call's own input. */
+function serializeMsgForSummary(m) {
+	const who = m.role === 'assistant' ? 'Assistant' : 'User';
+	if (typeof m.content === 'string') { return who + ': ' + m.content.slice(0, 4000); }
+	if (!Array.isArray(m.content)) { return who + ': ' + JSON.stringify(m.content).slice(0, 2000); }
+	const parts = [];
+	for (const c of m.content) {
+		if (c.type === 'text' && c.text) { parts.push(c.text.slice(0, 4000)); }
+		else if (c.type === 'tool_use') { parts.push('[calls ' + c.name + ' ' + JSON.stringify(c.input || {}).slice(0, 400) + ']'); }
+		else if (c.type === 'tool_result') { const t = typeof c.content === 'string' ? c.content : JSON.stringify(c.content); parts.push('[tool result: ' + String(t).slice(0, 800) + ']'); }
+	}
+	return who + ': ' + parts.join('\n');
+}
+
+const COMPACT_SYSTEM = 'You compress a coding-agent conversation into a durable briefing so the agent can continue in a fresh, shorter context. Preserve everything future work depends on; drop everything it does not.';
+const COMPACT_INSTRUCTIONS = [
+	'Summarize the conversation below into a compact briefing the agent will read INSTEAD of the full history.',
+	'Use tight bullet lists under clear headings, keeping:',
+	'- The user’s goal(s) and any explicit constraints or preferences.',
+	'- Decisions and approaches chosen — and rejected, with why.',
+	'- Files created/edited and what changed; key file/function names and paths.',
+	'- Commands run and their outcomes; anything currently broken or pending.',
+	'- The exact current task state — what is done, and what is next.',
+	'Omit chit-chat, resolved dead-ends, and raw file/command dumps. Be specific (names, paths, numbers). Invent nothing not present below.',
+	'',
+	'--- CONVERSATION ---',
+	''
+].join('\n');
+
+/** Manually compact the session transcript: summarize the bulky head (everything up to a recent goal
+ *  boundary) into one message and keep recent turns verbatim, so a long session can continue instead of
+ *  hitting the model’s context window. Provider-agnostic: it flattens the head to text and asks the model
+ *  for a briefing, so no tool_use/tool_result pairing or tool defs are involved. Cutting only at a goal
+ *  boundary (a user STRING message) is the one splice point that can’t orphan a tool_use/tool_result pair.
+ *  NOTE: rewriting the prefix invalidates prompt caching — the next turn pays one cache write. That is the
+ *  intended trade: a one-off rebuild on a much shorter base beats re-sending the whole transcript forever. */
+async function compactAgentMemory() {
+	if (abort) { return { ok: false, reason: 'running' }; }
+	const msgs = agentMessages;
+	const KEEP_RECENT = 8;
+	const beforeMsgTokens = estimateMsgTokens(msgs);
+	if (msgs.length <= KEEP_RECENT + 2) { return { ok: false, reason: 'small' }; }
+	const cut = findCompactionCut(msgs, KEEP_RECENT);
+	if (cut < 0) { return { ok: false, reason: 'noboundary' }; }
+
+	const flat = msgs.slice(0, cut).map(serializeMsgForSummary).join('\n\n').slice(0, 60000);
+	const anchor = msgs[cut];   // identity of the boundary we'll cut at — see the recheck after the await
+	const req = await prepProviderRequest({ prompt: true });
+	if (!req.ok) { return { ok: false, reason: 'provider' }; }
+
+	let summary;
+	try {
+		summary = await providers.complete({
+			providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL,
+			model: req.model, maxTokens: 1500,
+			system: COMPACT_SYSTEM,
+			messages: [{ role: 'user', content: COMPACT_INSTRUCTIONS + flat }]
+		});
+	} catch (e) { dbg('compact.error', { msg: String((e && e.message) || e) }); return { ok: false, reason: 'failed' }; }
+	if (!summary || !summary.trim()) { return { ok: false, reason: 'empty' }; }
+
+	// The summary call awaited for seconds; the transcript may have moved under us — refuse rather than
+	// splice at a stale place. Three ways it moves: New chat reassigns agentMessages; a checkpoint restore
+	// or a started turn's trimAgentMemory splices the HEAD (caught by the anchor identity check); and a
+	// turn STARTED mid-await (`abort` now set) may be streaming from this very array — splicing its prefix
+	// would inject this (billed) summary and blow its cache mid-run. In every case, yield: the transcript
+	// is unharmed and the user can compact again once the turn ends.
+	if (agentMessages !== msgs || msgs[cut] !== anchor || abort) { dbg('compact.stale', { cut, running: !!abort }); return { ok: false, reason: 'changed' }; }
+
+	// Replace the head with [summary(user) → ack(assistant)]; the kept tail begins with the user goal at
+	// `cut`, so role alternation (user → assistant → user …) holds across the seam.
+	msgs.splice(0, cut,
+		{ role: 'user', content: '[Summary of the earlier conversation, compacted to save context]\n\n' + summary.trim() },
+		{ role: 'assistant', content: 'Got it — I have that summary of the work so far and will continue from here.' }
+	);
+	// Drop checkpoints whose goal message was summarized away: restoreCheckpoint can no longer truncate the
+	// transcript for them (it guards on indexOf), so keeping them would offer a half-working rollback.
+	for (let i = checkpoints.length - 1; i >= 0; i--) { if (msgs.indexOf(checkpoints[i].goalMsg) < 0) { checkpoints.splice(i, 1); } }
+
+	const afterMsgTokens = estimateMsgTokens(msgs);
+	dbg('compact.done', { cut, beforeMsgTokens, afterMsgTokens, msgs: msgs.length });
+	return { ok: true, beforeMsgTokens, afterMsgTokens };
+}
+
 let lastAgentGoal = null;   // remembered so the response bar's Retry can re-run it
 async function agentFlow(text) {
 	if (text && text.trim()) { lastAgentGoal = text; }
@@ -863,6 +951,7 @@ async function agentFlow(text) {
 			maxSteps: Math.max(1, cfg.get('agent.maxSteps', 25)),
 			maxTokens: Math.max(1024, cfg.get('agent.maxTokens', 8192)),   // per-turn output cap; continued across turns if hit
 			post, dbg,
+			autopilot: autopilot,               // run commands without asking, except the danger set (commandSafety.js)
 			approve: requestApproval,           // run_command only
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
 			// Gateway-mode token refresh for the agent loop: on a mid-run 401 (expired access token)
@@ -1177,8 +1266,9 @@ class ChatViewProvider {
 		view.webview.html = getHtml();
 		view.webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
-				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } break;
+				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); autopilot = aiConfig().get('agent.autopilot', false); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); post({ type: 'autopilot', on: autopilot }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
+				case 'setAutopilot': autopilot = !!msg.on; aiConfig().update('agent.autopilot', autopilot, vscode.ConfigurationTarget.Global); dbg('autopilot.set', { on: autopilot }); post({ type: 'autopilot', on: autopilot }); break;
 				case 'send': await handleSend(msg.text); break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
@@ -1205,6 +1295,13 @@ class ChatViewProvider {
 				case 'addContext': await addContext(); break;
 				case 'removeContext': removeFileContext(msg.id); break;
 				case 'newChat': newChat(); break;
+				case 'compact': {
+					dbg('compact.clicked', { running: !!abort, transcriptMsgs: agentMessages.length });
+					post({ type: 'compactStart' });
+					const r = await compactAgentMemory();
+					post({ type: 'compactResult', ok: !!r.ok, reason: r.reason || null, beforeMsgTokens: r.beforeMsgTokens || 0, afterMsgTokens: r.afterMsgTokens || 0 });
+					break;
+				}
 				case 'setKey': await promptForKey(); break;
 				case 'pickModel': await pickModel(); break;
 				case 'openSettings': vscode.commands.executeCommand('workbench.action.openSettings', '@ext:levelcode.levelcode-ai'); break;

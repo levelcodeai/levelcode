@@ -15,6 +15,7 @@ const path = require('path');
 const cp = require('child_process');
 const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
+const { classifyCommand, dangerLabel } = require('./commandSafety');
 
 const SYSTEM_BASE = [
 	"You are LevelCode's built-in autonomous coding agent. You accomplish the user's goal in their",
@@ -335,6 +336,12 @@ async function runTool(tu, ctx) {
 			const abs = resolveWorkspacePath(input.path || '', { mustExist: true });
 			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint(); }
 			try { if (fs.statSync(abs).isDirectory()) { return 'ERROR: ' + input.path + ' is a directory — delete_file removes a single file.'; } } catch { /* */ }
+			// Deletion is in the autopilot danger set — ask even when autopilot runs everything else silently.
+			// (In manual mode nothing gates here: the edit is applied and reviewed with Keep/Undo as before.)
+			if (ctx.autopilot && typeof ctx.approve === 'function') {
+				const okDel = await ctx.approve({ kind: 'delete', path: input.path, danger: dangerLabel('deletion') });
+				if (!okDel) { return 'User skipped deleting ' + input.path + '. Do not retry it.'; }
+			}
 			const ok = ctx.applyDelete ? await ctx.applyDelete({ path: input.path }) : false;
 			if (!ok) { return 'ERROR: could not delete ' + input.path + '.'; }
 			ctx.editCount = (ctx.editCount || 0) + 1;
@@ -351,7 +358,12 @@ async function runTool(tu, ctx) {
 				if (!wf) { return 'ERROR: no workspace folder named "' + input.folder + '"' + whereHint(); }
 				cwdRoot = wf.root;
 			}
-			const approved = await ctx.approve({ kind: 'command', command: cmd, explanation: input.explanation || '' });
+			// Autopilot runs commands without asking — EXCEPT the danger set (deletion, sudo, force-push,
+			// remote|shell, publish, system writes), which always asks. Manual mode asks for everything.
+			const danger = ctx.autopilot ? classifyCommand(cmd) : { dangerous: true, category: null };
+			const approved = danger.dangerous
+				? await ctx.approve({ kind: 'command', command: cmd, explanation: input.explanation || '', danger: danger.category ? dangerLabel(danger.category) : null })
+				: true;
 			if (!approved) { return 'User skipped this command. Do not retry it.'; }
 			const runId = tu.id || ('run-' + Date.now());
 			ctx.post({ type: 'termRun', id: runId, command: cmd, cwd: path.basename(cwdRoot) || 'workspace', background: bg, explanation: input.explanation || '' });
@@ -459,7 +471,13 @@ async function runAgent(ctx) {
 	const multiRootNote = wsFolders.length > 1
 		? '\n\nWorkspace folders (multi-root — prefix paths with the folder name): ' + wsFolders.map((f) => f.name).join(', ') + '. The first folder ("' + wsFolders[0].name + '") is the default for unprefixed paths and run_command.'
 		: '';
-	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote;
+	// Autopilot: act decisively and self-verify rather than pausing. Commands run without approval (the
+	// host still gates the danger set — deletion, sudo, force-push, remote|shell, publish, system writes),
+	// so the model should lean on verification, not on asking, when it's unsure.
+	const autopilotNote = ctx.autopilot
+		? '\n\nAUTOPILOT IS ON. Work end-to-end without pausing for confirmation. Your run_command calls execute immediately (only irreversible ones — deleting files, sudo, force-push, piping a remote script to a shell, publishing — still ask the user). Do NOT call ask_user for anything you can reasonably decide; pick a sensible default and proceed. When you are unsure whether a change is correct, do not stop to ask — verify it: run the build/tests/linters via run_command and read editor diagnostics, then fix and re-verify until clean, and only then move on. Prefer doing and checking over asking.'
+		: '';
+	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote + autopilotNote;
 	const systemTokensEst = Math.round(system.length / 4);
 
 	const dbg = ctx.dbg || (() => {});
@@ -586,7 +604,7 @@ async function runAgent(ctx) {
 				if (turn.usage.cost_micros != null) { runCostMicros += turn.usage.cost_micros; }
 				if (turn.usage.credits_remaining_micros != null) { ctx.credits = turn.usage.credits_remaining_micros; }
 				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens, cumulativeOutput: cumulativeOutputTokens, costMicros: turn.usage.cost_micros, creditsLeftMicros: turn.usage.credits_remaining_micros });
-				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: TOOLS_TOKENS_EST });
+				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: TOOLS_TOKENS_EST, cacheRead: turn.usage.cache_read_input_tokens || 0, cacheWrite: turn.usage.cache_creation_input_tokens || 0 });
 			}
 
 			// Reasoning models (e.g. Kimi K2.7 Code) emit <think>…</think> inline in the text
