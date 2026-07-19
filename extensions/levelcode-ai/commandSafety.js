@@ -42,7 +42,9 @@ const RULES = [
 	['discard-changes', /\bgit\s+reset\s+--hard\b/i],          // discards the working tree
 	// `git checkout` that targets a path/HEAD/force (not a branch switch, which is safe):
 	['discard-changes', /\bgit\s+checkout\b[^&|;\n]*(\s--(\s|$)|\s\.(\s|$)|\bHEAD\b|--force\b|\s-f\b)/i],
-	// `git restore <path>` overwrites the working tree; `git restore --staged` only unstages (safe) → excluded:
+	// `git restore <path>` overwrites the working tree; `git restore --staged` only unstages (safe).
+	// But `--staged --worktree` (or `-W`) DOES write the working tree, so flag it before the exemption below.
+	['discard-changes', /\bgit\s+restore\b[^\n&|;]*(--worktree\b|\s-W\b)/i],
 	['discard-changes', /\bgit\s+restore\b(?![^\n&|;]*--staged)/i],
 
 	// --- irreversible / high blast radius ---

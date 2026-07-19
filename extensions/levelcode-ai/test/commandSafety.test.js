@@ -48,6 +48,9 @@ const DANGEROUS = [
 	'git checkout -f main',                     // -f discards local changes on switch
 	'git restore src/',                         // overwrites the working tree
 	'git restore .',
+	'git restore --staged --worktree .',        // --worktree writes the working tree despite --staged
+	'git restore --staged -W src/app.ts',       // -W is the short form of --worktree
+	'git restore -W config.json',
 	'git filter-branch --tree-filter "rm -f pw" HEAD',
 	'git filter-repo --path secrets --invert-paths',
 	'git reflog expire --expire=now --all',

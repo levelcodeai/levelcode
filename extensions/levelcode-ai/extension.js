@@ -858,7 +858,15 @@ async function compactAgentMemory() {
 	const cut = findCompactionCut(msgs, KEEP_RECENT);
 	if (cut < 0) { return { ok: false, reason: 'noboundary' }; }
 
-	const flat = msgs.slice(0, cut).map(serializeMsgForSummary).join('\n\n').slice(0, 60000);
+	// Cap the summarizer input, but keep BOTH ends when it's too long: the opening (the original goal +
+	// early constraints, first in the transcript) AND the most recent pre-cut decisions (closest to the
+	// kept tail). Those are the two highest-value regions — a plain head slice would drop the recent
+	// decisions. Only the lower-value middle is dropped, with a marker.
+	const flatFull = msgs.slice(0, cut).map(serializeMsgForSummary).join('\n\n');
+	const CAP = 60000, HEAD = 20000;
+	const flat = flatFull.length <= CAP
+		? flatFull
+		: flatFull.slice(0, HEAD) + '\n\n…[older turns omitted for length]…\n\n' + flatFull.slice(flatFull.length - (CAP - HEAD));
 	const anchor = msgs[cut];   // identity of the boundary we'll cut at — see the recheck after the await
 	const req = await prepProviderRequest({ prompt: true });
 	if (!req.ok) { return { ok: false, reason: 'provider' }; }
