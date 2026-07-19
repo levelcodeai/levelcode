@@ -959,7 +959,10 @@ async function agentFlow(text) {
 			maxSteps: Math.max(1, cfg.get('agent.maxSteps', 25)),
 			maxTokens: Math.max(1024, cfg.get('agent.maxTokens', 8192)),   // per-turn output cap; continued across turns if hit
 			post, dbg,
-			autopilot: autopilot,               // run commands without asking, except the danger set (commandSafety.js)
+			// LIVE, not a snapshot: agent.js reads ctx.autopilot at each run_command, so flipping the
+			// Autopilot toggle mid-run takes effect on the very next command (run commands without asking,
+			// except the danger set — commandSafety.js).
+			get autopilot() { return autopilot; },
 			approve: requestApproval,           // run_command only
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
 			// Gateway-mode token refresh for the agent loop: on a mid-run 401 (expired access token)
