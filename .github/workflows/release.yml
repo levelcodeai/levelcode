@@ -106,8 +106,9 @@ jobs:
             1. `gh release download ${{ github.ref_name }} --pattern 'UNSIGNED-*.app.zip'`
             2. For each arch — unzip into `VSCode-darwin-<arch>/`, then
                `CODESIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=levelcode-notary ./scripts/make-dmg.sh <arch>`
-               (signs → dmg → notarizes → staples → `LevelCode-<arch>.dmg`).
-            3. `gh release upload ${{ github.ref_name }} LevelCode-arm64.dmg LevelCode-x64.dmg`
+               (signs → notarizes → staples → `LevelCode-<arch>.dmg` **and** `LevelCode-<arch>.app.zip`).
+            3. `gh release upload ${{ github.ref_name }} LevelCode-arm64.dmg LevelCode-x64.dmg LevelCode-arm64.app.zip LevelCode-x64.app.zip`
+               — the `.dmg`s are for humans, the `.app.zip`s are the auto-update feed assets (`docs/AUTO-UPDATE.md`).
             4. **Delete the `UNSIGNED-*.app.zip` assets**, add real notes, and publish.
 
             Full runbook: `docs/RELEASING.md`.

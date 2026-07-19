@@ -11,6 +11,8 @@
 #   2. Ad-hoc code-signs it. arm64 macOS refuses to launch *unsigned* binaries at all,
 #      so even for personal use the app must carry at least an ad-hoc signature.
 #   3. Builds a compressed .dmg containing the app + an /Applications symlink.
+#   4. On the Developer ID path only, also emits LevelCode-<arch>.app.zip (+ .sha256) — the
+#      auto-update feed asset the built-in Squirrel updater installs. See docs/AUTO-UPDATE.md.
 #
 # The result is UNNOTARIZED. On another Mac, Gatekeeper will still warn on first launch:
 #   - Right-click the app > Open (once), OR
@@ -98,11 +100,28 @@ if [ "$NOTARIZE" = "1" ]; then
   "$SCRIPT_DIR/notarize.sh" submit "$DMG_OUT"
 fi
 
+# 5. Squirrel update asset — a .zip of the SIGNED + NOTARIZED + STAPLED .app.
+# The built-in updater (Squirrel.Mac) installs from a .zip, never a .dmg, and refuses an update whose
+# Developer ID doesn't match the running app — so this is produced ONLY on the signed path; an ad-hoc
+# build must never masquerade as an update asset. Use `ditto` (not `zip`): it preserves the stapled
+# notarization ticket, so the updated app still validates offline. Feed + rollout: docs/AUTO-UPDATE.md.
+ZIP_OUT=""
+if [ "$NOTARIZE" = "1" ]; then
+  ZIP_OUT="$ROOT_DIR/LevelCode-$ARCH.app.zip"
+  echo "[make-dmg] Creating the signed update asset (Squirrel .zip) …"
+  rm -f "$ZIP_OUT" "$ZIP_OUT.sha256"
+  ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP_OUT"
+  shasum -a 256 "$ZIP_OUT" | cut -d' ' -f1 > "$ZIP_OUT.sha256"
+fi
+
 SIZE="$(du -sh "$DMG_OUT" | cut -f1)"
 echo "[make-dmg] Done."
 echo "[make-dmg]   Output: $DMG_OUT  ($SIZE)"
 if [ "$NOTARIZE" = "1" ]; then
   echo "[make-dmg]   Signed + notarized — upload it; users just open the dmg and drag to Applications."
+  echo "[make-dmg]   Update asset: $ZIP_OUT  ($(du -sh "$ZIP_OUT" | cut -f1))"
+  echo "[make-dmg]   sha256: $(cat "$ZIP_OUT.sha256")"
+  echo "[make-dmg]   Upload BOTH: the .dmg (fresh installs) and the .app.zip (auto-update feed)."
 else
   echo "[make-dmg]   Upload this single file. On the other Mac: open the dmg, drag LevelCode to"
   echo "[make-dmg]   Applications, then right-click > Open the first time (it's unnotarized)."

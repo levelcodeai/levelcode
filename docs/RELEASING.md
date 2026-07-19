@@ -81,16 +81,36 @@ Build **both architectures** on matching hardware (Apple silicon → `arm64`, In
 
 ```bash
 gh release create v0.1.0 --title "LevelCode v0.1.0" --notes "First public build. …" \
-  LevelCode-arm64.dmg LevelCode-x64.dmg
+  LevelCode-arm64.dmg LevelCode-x64.dmg \
+  LevelCode-arm64.app.zip LevelCode-x64.app.zip
 ```
+Upload **both kinds**: the `.dmg` is what humans install; the `.app.zip` is what the built-in updater
+installs (Squirrel takes a zip, never a dmg). See §5.
 Stable URL: `https://github.com/levelcodeai/levelcode/releases/latest/download/LevelCode-arm64.dmg` — link it
 from **levelcode.ai/download**.
 
-## 5. Point the update feed at the release
+## 5. The update feed
 
-The notify-only updater (`extensions/levelcode-updater`) polls a feed from `tools/update-server`. After
-publishing, update the feed's release entry (version + the release-asset URLs above) so running installs
-see the new version. Keep the feed version in lockstep with the tag.
+Publishing the GitHub release **is** the announcement — `Levelcode::EditorReleaseFeed` (thin.ly) reads
+`releases/latest` and serves `/api/update/{target}/{quality}/{commit}`. There is no feed file to
+hand-maintain per release.
+
+Two assets, **not** interchangeable:
+
+| Asset | Consumer |
+| --- | --- |
+| `LevelCode-<arch>.dmg` | Humans — fresh install, drag to Applications. |
+| `LevelCode-<arch>.app.zip` | The built-in **Squirrel** updater — it installs from a zip, never a dmg. |
+
+`make-dmg.sh` emits the `.app.zip` (+ a `.sha256`) **only on the Developer-ID path**, because Squirrel
+refuses an update whose signing identity doesn't match the running app — an ad-hoc build must never be
+served as an update.
+
+`LEVELCODE_UPDATE_FEED` (env JSON on the server) overrides the GitHub lookup and is the **rollback pin**:
+point it at the previous commit to stop a bad release propagating. Note it can't un-update anyone who
+already took the release.
+
+Full contract, rollout order, and risks: **`docs/AUTO-UPDATE.md`**.
 
 ## 6. Troubleshooting *(the ones that actually bit us are marked ⚑)*
 
@@ -130,11 +150,12 @@ gh release download v0.1.0 --pattern 'UNSIGNED-*.app.zip'
 for A in arm64 x64; do
   rm -rf "VSCode-darwin-$A" && ditto -x -k "UNSIGNED-LevelCode-$A.app.zip" "VSCode-darwin-$A"
   CODESIGN_IDENTITY="Developer ID Application: SERGII DEMIANCHUK (AJ27Y4Z2HS)" \
-    NOTARY_PROFILE=levelcode-notary ./scripts/make-dmg.sh "$A"     # → LevelCode-$A.dmg (signed+notarized+stapled)
+    NOTARY_PROFILE=levelcode-notary ./scripts/make-dmg.sh "$A"     # → LevelCode-$A.dmg + LevelCode-$A.app.zip
 done
 
-# 3. Verify (§3), then attach the dmgs, drop the unsigned zips, and publish
-gh release upload v0.1.0 LevelCode-arm64.dmg LevelCode-x64.dmg
+# 3. Verify (§3), then attach the dmgs AND the update zips, drop the unsigned zips, and publish
+gh release upload v0.1.0 LevelCode-arm64.dmg LevelCode-x64.dmg \
+                         LevelCode-arm64.app.zip LevelCode-x64.app.zip
 # `gh release delete-asset` takes ONE asset per call — drop each unsigned zip separately (`-y` skips the prompt).
 gh release delete-asset v0.1.0 UNSIGNED-LevelCode-arm64.app.zip -y
 gh release delete-asset v0.1.0 UNSIGNED-LevelCode-x64.app.zip -y
