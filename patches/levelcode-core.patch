@@ -291,10 +291,10 @@ index 1a1f1e1d..56af75ac 100644
 -});
 +// [LevelCode] Removed the Help ▸ "Editor Playground" menu item (Microsoft VS Code walkthrough content).
 diff --git a/src/vs/base/common/product.ts b/src/vs/base/common/product.ts
-index 5a1a2018..36b7c03a 100644
+index 5a1a2018..7d238537 100644
 --- a/src/vs/base/common/product.ts
 +++ b/src/vs/base/common/product.ts
-@@ -89,6 +89,23 @@ export interface IProductConfiguration {
+@@ -89,6 +89,25 @@ export interface IProductConfiguration {
  	readonly quality?: string;
  	readonly commit?: string;
  
@@ -309,7 +309,9 @@ index 5a1a2018..36b7c03a 100644
 +	readonly levelcodeVersion?: string;
 +
 +	/**
-+	 * [LevelCode] When this build's commit was authored (ISO 8601), stamped alongside `levelcodeVersion`.
++	 * [LevelCode] When this build's commit was COMMITTED (ISO 8601, git `%cI`), stamped alongside
++	 * `levelcodeVersion`. Committer date, not author date: "Released" means when the build's commit
++	 * landed, and a cherry-picked or rebased commit's author date can predate the release by weeks.
 +	 * `date` is the Code-OSS build date and is misleading in release UI — it reflects the upstream base,
 +	 * not when this LevelCode release shipped.
 +	 */

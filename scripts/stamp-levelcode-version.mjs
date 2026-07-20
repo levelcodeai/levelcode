@@ -12,7 +12,7 @@
  *
  *  So we add SEPARATE, human-facing fields rather than overloading `version`:
  *    levelcodeVersion      "0.8.0"                 ← from the git tag
- *    levelcodeReleaseDate  "2026-07-20T02:51:22Z"  ← when this build's commit was authored
+ *    levelcodeReleaseDate  "2026-07-20T02:51:22Z"  ← when this build's commit was COMMITTED (%cI)
  *
  *  Compatibility checks keep reading `version`; humans read these. Both are optional in the type,
  *  so a dev build with neither still renders (it falls back to `version`).
@@ -35,11 +35,19 @@ if (!fs.existsSync(appDir)) {
 	process.exit(1);
 }
 
-// A release version, not a tag: "v0.8.0" would render as "Current Version: v0.8.0". Reject anything
-// that isn't a plain dotted version so a bad --describe result can't ship as the product version.
+// A release version, not a tag: "v0.8.0" would render as "Current Version: v0.8.0".
+//
+// Accepted: X.Y.Z, optionally followed by a `-` or `+` suffix. The suffix is REQUIRED, not tolerated —
+// build-macos.sh runs `git describe --tags` without --abbrev=0, so an off-tag build passes
+// "v0.8.0-1-g404ef20" and must keep that suffix: it is exactly what stops a dev build from
+// impersonating the release it happens to sit after. An exact-tag build (what CI does for a release)
+// passes a clean "v0.8.0" and gets a clean "0.8.0".
+//
+// Rejected: anything else — "v0.8", a branch name, an empty describe. Those exit non-zero so the build
+// fails rather than shipping a nonsense product version.
 const clean = String(version).replace(/^v/, "");
 if (!/^\d+\.\d+\.\d+([-+].+)?$/.test(clean)) {
-	console.error(`[stamp] ERROR: "${version}" is not a version like 0.8.0 — refusing to stamp.`);
+	console.error(`[stamp] ERROR: "${version}" is not X.Y.Z or X.Y.Z-<suffix> — refusing to stamp.`);
 	process.exit(1);
 }
 
