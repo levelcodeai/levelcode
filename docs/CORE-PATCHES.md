@@ -26,7 +26,7 @@ So a full rebuild from nothing is: `bootstrap.sh` (clone → brand → extension
 To re-create the core patch after changing core files in `vscode/`:
 
 ```bash
-# STRUCTURAL patch only (11 files). Display-string rebrands are NOT here — they live in scripts/de-brand.mjs.
+# STRUCTURAL patch only (14 files). Display-string rebrands are NOT here — they live in scripts/de-brand.mjs.
 git -C vscode diff HEAD -- \
   src/vs/workbench/contrib/files/browser/files.contribution.ts \
   build/lib/extensions.ts build/lib/copilot.ts \
@@ -38,12 +38,22 @@ git -C vscode diff HEAD -- \
   src/vs/workbench/contrib/welcomeOnboarding/browser/welcomeOnboarding.contribution.ts \
   src/vs/workbench/api/node/loopbackServer.ts \
   src/vs/workbench/contrib/chat/browser/chatSetup/chatSetupContributions.ts \
+  src/vs/base/common/product.ts \
+  src/vs/platform/dialogs/electron-browser/dialog.ts \
+  src/vs/workbench/contrib/update/browser/updateTooltip.ts \
   > patches/levelcode-core.patch
 # NOTE 1: use `diff HEAD` (not plain `diff`) — bootstrap's `git apply` may leave these STAGED,
 # and plain `git diff` shows only UNSTAGED changes, silently dropping the staged patches.
 # NOTE 2: regenerate BEFORE running de-brand.mjs. de-brand's global MS-doc-link sweep (pass 2) also
 # strips links from `files.contribution.ts` (a patched file); if you regen after de-brand, those
 # link-strips leak into the patch. Order: patch → regen → de-brand (this is also bootstrap's order).
+# NOTE 3: if the checkout is ALREADY de-branded (the usual case after a build) do NOT regen wholesale —
+# it silently fattened `files.contribution.ts` by ~95 lines of link-strips the one time we tried. Instead
+# APPEND only the new file's entry to the existing patch, which stays valid because bootstrap applies it
+# to a fresh, pre-de-brand checkout:
+#     git -C vscode diff HEAD -- <only/the/new/file.ts> >> patches/levelcode-core.patch
+# Then verify: the pre-existing entries are byte-identical to before, the appended entry contains no
+# `aka.ms`/`code.visualstudio.com` strips, and `git -C vscode apply --check --reverse` accepts it.
 ```
 
 To find every core touch in the checkout:
@@ -73,6 +83,10 @@ compile-client` after touching a core file.**
 | 9 | `welcomeOnboarding/browser/welcomeOnboarding.contribution.ts` | Developer command **"Welcome Onboarding 2026"** → `f1: false`. | De-brand (WS-A/B3). That command calls `onboardingService.show()`, which renders the verbatim **"Welcome to VS Code — Sign in to use GitHub Copilot"** modal. Patch #4 blocks it on *first run*; this hides the one remaining Command-Palette path to it. `f1:false` (not removal) keeps the action + its imports used. |
 | 10 | `api/node/loopbackServer.ts` (`getHtml`) | Replace the `this._appName === 'Visual Studio Code'` / `'… - Insiders'` branches (which embedded the VS Code stable/Insiders **shields**, falling through to the blue VS Code **"book"** default) with a single **LevelCode chevron** data-URI. | De-brand (WS-C/L5). A latent bug **and** a leak: `appName` is now "LevelCode" so no branch matched → every GitHub OAuth success page flashed a VS Code logo. `this._appName` is still used in the page text, so no unused-field error. |
 | 11 | `chat/browser/chatSetup/chatSetupContributions.ts` | **Hide** the two GitHub Copilot sign-in call-to-actions (Accounts menu + title bar) with `when: ContextKeyExpr.false()`, and drop the two imports that becomes unused (`ChatEntitlementContextKeys`, `InEditorZenModeContext` — strict build). | De-brand (WS-A/B4). A sign-in funnel for an extension we don't ship. **Gated per MENU ITEM on purpose.** The previous attempt forced `IChatEntitlementService.setForceHidden(true)` instead — but `Setup.hidden` is upstream's *hide-ALL-chat/agent-UI* flag, not a CTA gate: it also gates `OPEN_AGENTS_WINDOW_PRECONDITION` (constants.ts), the **Agent Plugins view**, chat participants and several chat/plugin actions. That shipped in v0.6.0–v0.7.0 and made **Open Agents Window disappear from the Command Palette**. Never gate a de-brand on `Setup.hidden`; gate the item. |
+
+| 12 | `src/vs/base/common/product.ts` | Add optional `levelcodeVersion` + `levelcodeReleaseDate` to `IProductConfiguration`. | `version` is the Code-OSS base (`1.126.0`) and **must stay 1.x** — it is what extensions' `engines.vscode` is validated against, so it cannot be renamed to the LevelCode release. These carry the human-facing release identity alongside it. Stamped into the built `product.json` by `scripts/stamp-levelcode-version.mjs` (run from `build-macos.sh`, tag-derived); both optional, so a dev build with no reachable tag still renders. |
+| 13 | `update/browser/updateTooltip.ts` | `Current Version:` shows `levelcodeVersion ?? version`; `Released` prefers `levelcodeReleaseDate`. | The update tooltip read **“Current Version: 1.126.0 (cdf2549)” — a Code-OSS version next to a LevelCode commit**, and a “Released” date from the upstream base's build (months before the build the user installed). Reported as counter-intuitive after the first real auto-update. `Latest Version:` already used the feed's `productVersion` and needed no change. |
+| 14 | `platform/dialogs/electron-browser/dialog.ts` | About shows `0.8.0 … — Code-OSS 1.126.0`, and the Date row prefers `levelcodeReleaseDate`. | Same root cause as #13, on the native About dialog. Keeps **both** here on purpose: About is pasted into bug reports, so the release version identifies the build while the base version explains extension-compatibility behaviour. |
 
 ## String + link rebrands — `scripts/de-brand.mjs` (NOT in the patch)
 
