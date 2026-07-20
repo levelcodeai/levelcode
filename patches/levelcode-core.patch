@@ -290,3 +290,102 @@ index 1a1f1e1d..56af75ac 100644
 -	order: 3
 -});
 +// [LevelCode] Removed the Help ▸ "Editor Playground" menu item (Microsoft VS Code walkthrough content).
+diff --git a/src/vs/base/common/product.ts b/src/vs/base/common/product.ts
+index 5a1a2018..36b7c03a 100644
+--- a/src/vs/base/common/product.ts
++++ b/src/vs/base/common/product.ts
+@@ -89,6 +89,23 @@ export interface IProductConfiguration {
+ 	readonly quality?: string;
+ 	readonly commit?: string;
+ 
++	/**
++	 * [LevelCode] The LevelCode RELEASE version ("0.8.0"), stamped at build time from the git tag.
++	 *
++	 * Distinct from `version`, which is and must remain the Code-OSS base ("1.126.0") — that is the
++	 * value extensions' `engines.vscode` is validated against, so renaming it would reject every
++	 * extension requiring ^1.x. Use this for anything a HUMAN reads (update UI, About); use `version`
++	 * for compatibility checks. Absent in dev builds, so always fall back to `version`.
++	 */
++	readonly levelcodeVersion?: string;
++
++	/**
++	 * [LevelCode] When this build's commit was authored (ISO 8601), stamped alongside `levelcodeVersion`.
++	 * `date` is the Code-OSS build date and is misleading in release UI — it reflects the upstream base,
++	 * not when this LevelCode release shipped.
++	 */
++	readonly levelcodeReleaseDate?: string;
++
+ 	readonly nameShort: string;
+ 	readonly nameLong: string;
+ 
+diff --git a/src/vs/platform/dialogs/electron-browser/dialog.ts b/src/vs/platform/dialogs/electron-browser/dialog.ts
+index ec26804c..766198c2 100644
+--- a/src/vs/platform/dialogs/electron-browser/dialog.ts
++++ b/src/vs/platform/dialogs/electron-browser/dialog.ts
+@@ -11,19 +11,33 @@ import { IProductService } from '../../product/common/productService.js';
+ import { process } from '../../../base/parts/sandbox/electron-browser/globals.js';
+ 
+ export function createNativeAboutDialogDetails(productService: IProductService, osProps: IOSProperties): { title: string; details: string; detailsToCopy: string } {
+-	let version = productService.version;
++	// [LevelCode] Lead with the RELEASE version — that is what a user installed and what the release,
++	// the update feed and the download page all call it. `productService.version` is the Code-OSS base
++	// ("1.126.0") and must stay 1.x for extensions' engines.vscode, so it cannot simply be renamed.
++	// About is a diagnostics surface people paste into bug reports, so keep BOTH: the release version
++	// identifies the build, the base version explains extension-compatibility behaviour. Dev builds
++	// carry no stamp and fall back to showing the base alone.
++	let version = productService.levelcodeVersion ?? productService.version;
+ 	if (productService.target) {
+ 		version = `${version} (${productService.target} setup)`;
+ 	} else if (productService.darwinUniversalAssetId) {
+ 		version = `${version} (Universal)`;
+ 	}
++	if (productService.levelcodeVersion) {
++		version = `${version} — Code-OSS ${productService.version}`;
++	}
+ 
+ 	const getDetails = (useAgo: boolean): string => {
+ 		return localize({ key: 'aboutDetail', comment: ['Electron, Chromium, Node.js and V8 are product names that need no translation'] },
+ 			"Version: {0}\nCommit: {1}\nDate: {2}\nElectron: {3}\nElectronBuildId: {4}\nChromium: {5}\nNode.js: {6}\nV8: {7}\nOS: {8}",
+ 			version,
+ 			productService.commit || 'Unknown',
+-			productService.date ? `${productService.date}${useAgo ? ' (' + fromNow(new Date(productService.date), true) + ')' : ''}` : 'Unknown',
++			// [LevelCode] Same reasoning as the version: `date` is the Code-OSS base's build date, reading as a
++			// release date months before the build the user actually installed.
++			(() => {
++				const d = productService.levelcodeReleaseDate ?? productService.date;
++				return d ? `${d}${useAgo ? ' (' + fromNow(new Date(d), true) + ')' : ''}` : 'Unknown';
++			})(),
+ 			process.versions['electron'],
+ 			process.versions['microsoft-build'],
+ 			process.versions['chrome'],
+diff --git a/src/vs/workbench/contrib/update/browser/updateTooltip.ts b/src/vs/workbench/contrib/update/browser/updateTooltip.ts
+index 85e34cca..3f9b67ba 100644
+--- a/src/vs/workbench/contrib/update/browser/updateTooltip.ts
++++ b/src/vs/workbench/contrib/update/browser/updateTooltip.ts
+@@ -137,7 +137,11 @@ export class UpdateTooltip extends Disposable {
+ 	}
+ 
+ 	private updateCurrentVersion() {
+-		const productVersion = this.productService.version;
++		// [LevelCode] Show the RELEASE version ("0.8.0"), never `version` — that is the Code-OSS base
++		// ("1.126.0"), which must stay 1.x for extensions' engines.vscode. Pairing it with a LevelCode
++		// commit made this read as a different product than the one that was installed. Dev builds carry
++		// no stamp, so fall back rather than showing nothing.
++		const productVersion = this.productService.levelcodeVersion ?? this.productService.version;
+ 		if (productVersion) {
+ 			const currentCommitId = this.productService.commit?.substring(0, 7);
+ 			this.currentVersionNode.textContent = currentCommitId
+@@ -381,8 +385,11 @@ export class UpdateTooltip extends Disposable {
+ 			this.latestVersionNode.parentElement!.style.display = 'none';
+ 		}
+ 
+-		// Release date
+-		const releaseDate = update?.timestamp ?? tryParseDate(this.productService.date);
++		// [LevelCode] Release date: for the running build prefer the LevelCode date — `date` is the Code-OSS
++		// base's build date, so it reported a "Released" months before the release the user installed.
++		const releaseDate = update?.timestamp
++			?? tryParseDate(this.productService.levelcodeReleaseDate)
++			?? tryParseDate(this.productService.date);
+ 		if (typeof releaseDate === 'number' && releaseDate > 0) {
+ 			this.releaseDateNode.textContent = localize('updateTooltip.releasedLabel', "Released {0}", formatDate(releaseDate));
+ 			this.releaseDateNode.style.display = '';

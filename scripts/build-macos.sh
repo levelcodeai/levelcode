@@ -85,6 +85,22 @@ node "$SCRIPT_DIR/strip-proprietary.mjs" "$BUILT_APP/LevelCode.app/Contents/Reso
 echo "[build] Hiding not-yet-ready features from the app (LevelCode Sync) …"
 node "$SCRIPT_DIR/strip-unreleased.mjs" "$BUILT_APP/LevelCode.app/Contents/Resources/app"
 
+# Stamp the LevelCode RELEASE version for anything a human reads (update tooltip, About). product.json
+# `version` deliberately stays the Code-OSS base — it is what extensions' engines.vscode is validated
+# against — so the release version rides ALONGSIDE it rather than replacing it. Without this the update
+# UI reports "1.126.0", the upstream base, next to a LevelCode commit. See stamp-levelcode-version.mjs.
+# Tag-derived, so a CI build at tag vX.Y.Z stamps X.Y.Z; a dev build with no reachable tag skips it and
+# the UI falls back to `version`.
+if LC_VERSION="$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null)" && [ -n "$LC_VERSION" ]; then
+  LC_DATE="$(git -C "$ROOT_DIR" log -1 --format=%cI HEAD 2>/dev/null || true)"
+  echo "[build] Stamping the LevelCode release version ($LC_VERSION) …"
+  node "$SCRIPT_DIR/stamp-levelcode-version.mjs" \
+    "$BUILT_APP/LevelCode.app/Contents/Resources/app" "$LC_VERSION" "$LC_DATE"
+else
+  echo "[build] WARN: no reachable git tag — skipping the release-version stamp. The update UI will"
+  echo "[build]       show the Code-OSS base version instead of a LevelCode one."
+fi
+
 # The .app inside is named from product.json nameLong -> "LevelCode.app".
 echo "[build] Done."
 echo "[build] Output folder: $BUILT_APP"
