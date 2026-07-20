@@ -29,6 +29,11 @@ jobs:
         with:
           node-version: "24"
       - name: Extension unit tests
+        # `shopt` is a bash builtin, so pin the shell instead of relying on the runner default (bash on
+        # Linux/macOS, but pwsh on Windows — where this step would break if the job were ever copied).
+        # Explicit `shell: bash` also upgrades the default `bash -e` to
+        # `bash --noprofile --norc -eo pipefail`, so a stray profile file can't perturb the gate either.
+        shell: bash
         # DISCOVERS suites — it used to `cd extensions/levelcode-ai`, so levelcode-updater's tests never
         # ran here, including the one guarding the updater's Download button against serving a raw
         # .app.zip. Globbing every extension means a new suite is gated the moment it is added, with no
@@ -38,7 +43,7 @@ jobs:
           count=0
           for t in extensions/*/test/*.test.js; do
             echo "── $t"
-            node "$t"          # `bash -e` (the Actions default) aborts the job on the first failure
+            node "$t"          # `-e` (from `shell: bash` above) aborts the job on the first failure
             count=$((count + 1))
           done
           # A zero-match glob would otherwise report success and gate nothing — the exact failure this
