@@ -93,7 +93,7 @@ async function check(explicit) {
 	actions.push('Later');
 	const choice = await vscode.window.showInformationMessage(U.releaseLabel(feed) + ' is available.', ...actions);
 	if (choice === 'Download') {
-		const dl = feed.url || product.downloadUrl || base;
+		const dl = U.downloadUrl(feed, product, base);
 		try { await vscode.env.openExternal(vscode.Uri.parse(dl)); } catch { /* */ }
 	} else if (choice === 'Release Notes') {
 		const rn = feed.releaseNotesUrl || product.releaseNotesUrl;

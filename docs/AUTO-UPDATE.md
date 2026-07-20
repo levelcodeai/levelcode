@@ -44,27 +44,40 @@ then lift the guard.
 3. **Arch mapping.** Feed targets are `darwin-arm64` and `darwin` (Intel). Map to the arm64 / x64 zips
    respectively — **never serve a cross-arch zip**.
 4. **Lift the guard.** Set `LEVELCODE_UPDATE_FEED_SIGNED=1` on Elastic Beanstalk — **only after 1–3**.
-5. **Notify-only Download button.** `extensions/levelcode-updater/extension.js:96` is
-   `feed.url || product.downloadUrl || base`. Once `feed.url` is a raw `.zip`, that button would hand
-   users a zip instead of the release page. Reorder to prefer `product.downloadUrl` / the release page.
+5. **Notify-only Download button.** `extensions/levelcode-updater/extension.js:96` *was*
+   `feed.url || product.downloadUrl || base`. Once `feed.url` is a raw `.zip`, that button hands users a
+   zip instead of a page. Now `U.downloadUrl(feed, product, base)` — `product.downloadUrl` →
+   `feed.releaseNotesUrl` → base, dropping `feed.url` from the human path entirely. See the Sequencing
+   risk below: this gated the next *release*, not the flag flip.
 
 ## Slices
 
-**S1 — publish the signed zip (client).** Add the `ditto` + `shasum` step to `make-dmg.sh` (or a
-`make-update-zip.sh`), update `docs/RELEASING.md`, and upload `LevelCode-<arch>.app.zip` with the dmg.
-*Ship this alone first — it is inert until the feed points at it.*
+**S1 — publish the signed zip (client). ✅ done.** Add the `ditto` step to `make-dmg.sh`, update
+`docs/RELEASING.md`, and upload `LevelCode-<arch>.app.zip` with the dmg.
+*Shipped alone first — it is inert until the feed points at it.*
 
-**S2 — serve it (server).** Teach `EditorReleaseFeed` to pick the arch-matched asset + hash. Guard stays
-on, so behaviour is unchanged; assert the new shape in `spec/requests/api/updates_spec.rb`.
+**S2 — serve it (server). ✅ done.** Teach `EditorReleaseFeed` to pick the arch-matched asset + hash.
+Guard stays on, so behaviour is unchanged; the new shape is asserted in `spec/requests/api/updates_spec.rb`.
 
-**S3 — extension URL fix.** Reorder the Download preference so it never opens a raw zip.
+**S3 — extension URL fix. ✅ done.** `U.downloadUrl()` in `extensions/levelcode-updater/update.js`, so
+the Download button can never open a raw zip.
 
 **S4 — flip the flag + verify.** Set `LEVELCODE_UPDATE_FEED_SIGNED=1`, then run the end-to-end test below.
+*Blocked until a release actually carries the S1 zips* — every release cut before S1 resolves to
+`installable: false`, so flipping the flag against today's releases is inert (Squirrel still gets 204).
 
 ## Risks (the ones that actually bite)
 
-- **Sequencing.** Flipping the flag before S1–S2 makes things *worse* — Squirrel would download a web
-  page and fail loudly. S4 must be last.
+- **Sequencing.** Two *independent* constraints — the second is easy to miss:
+  - Flipping the flag before S1–S2 makes things *worse*: Squirrel would download a web page and fail
+    loudly. S4 must be last. This is now enforced in code, not just documented — the controller requires
+    a resolved entry to be `installable`, so an early flip still serves 204.
+  - **S3 gated the next RELEASE, not S4.** The notify-only extension is served a 200 *regardless* of
+    `LEVELCODE_UPDATE_FEED_SIGNED` — see `updates_controller.rb`: `unless notify_only_client? ||
+    (signed_feed? && rel[:installable])`. So the moment any release carries an `.app.zip`, `feed.url`
+    becomes that zip for the extension too. Publishing an S1-asset release with S3 unshipped would have
+    pointed every "Download" button at a raw zip, flag or no flag. Unlike the constraint above, nothing
+    in the code would have stopped it — hence `U.downloadUrl()` and its regression test.
 - **Signing-identity continuity.** Squirrel.Mac refuses an update whose Developer ID doesn't match the
   running app. **Rotating or changing the signing cert breaks auto-update for every installed build**,
   with no in-app recovery — those users must re-download manually. Treat the identity as long-lived.
