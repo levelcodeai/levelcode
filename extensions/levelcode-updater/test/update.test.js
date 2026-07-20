@@ -58,4 +58,26 @@ test('releaseLabel prefers productVersion', () => {
 	assert.strictEqual(U.releaseLabel({ version: 'x' }), 'A new LevelCode build');
 });
 
+// The regression this guards: before auto-update S2 the feed's `url` was a release PAGE, so opening it
+// was fine. S2 made it the arch-matched LevelCode-<arch>.app.zip — an install artifact for Squirrel.
+// A notify-only "Download" button must never open that; it would start a raw zip download.
+test('downloadUrl NEVER returns feed.url — not even when it is a signed .app.zip', () => {
+	const feed = {
+		version: 'abc', productVersion: '0.7.3',
+		url: 'https://github.com/levelcodeai/levelcode/releases/download/v0.7.3/LevelCode-arm64.app.zip',
+		releaseNotesUrl: 'https://github.com/levelcodeai/levelcode/releases/tag/v0.7.3'
+	};
+	const product = { downloadUrl: 'https://levelcode.ai/download' };
+	assert.strictEqual(U.downloadUrl(feed, product, 'https://levelcode.ai'), 'https://levelcode.ai/download');
+	// and with no product download funnel configured, it falls back to a PAGE, still never the zip
+	assert.strictEqual(U.downloadUrl(feed, {}, 'https://levelcode.ai'), feed.releaseNotesUrl);
+	assert.strictEqual(U.downloadUrl(feed, {}, 'https://levelcode.ai').endsWith('.zip'), false);
+});
+
+test('downloadUrl degrades to the feed base, and tolerates null feed/product', () => {
+	assert.strictEqual(U.downloadUrl({ url: 'https://x/a.zip' }, {}, 'https://levelcode.ai'), 'https://levelcode.ai');
+	assert.strictEqual(U.downloadUrl(null, null, 'https://levelcode.ai'), 'https://levelcode.ai');
+	assert.strictEqual(U.downloadUrl(null, null, undefined), '');
+});
+
 console.log('\nupdate.js: ' + n + ' tests passed.');

@@ -46,4 +46,22 @@ function releaseLabel(feed) {
 	return feed.productVersion ? ('LevelCode ' + feed.productVersion) : 'A new LevelCode build';
 }
 
-module.exports = { platformTarget, buildFeedUrl, parseFeed, isNewer, releaseLabel };
+/**
+ * Where the "Download" button sends a human.
+ *
+ * Deliberately NOT `feed.url`. Since the signed-zip work (auto-update S2) that field is the
+ * arch-matched `LevelCode-<arch>.app.zip` — an artifact for the editor's built-in Squirrel updater to
+ * INSTALL, not a page to open. Opening it hands the user a raw zip download instead of a release page.
+ * This extension only ever NOTIFIES, so it points exclusively at human-facing pages: the download
+ * funnel first, then this release's notes, then the feed base as a last resort.
+ *
+ * Note the feed serves `url` unconditionally to this extension — the LEVELCODE_UPDATE_FEED_SIGNED
+ * guard gates Squirrel, not the notify-only client — so this must not depend on that flag being off.
+ * @param {any} feed @param {any} product @param {string} [base]
+ */
+function downloadUrl(feed, product, base) {
+	const f = feed || {}, p = product || {};
+	return p.downloadUrl || f.releaseNotesUrl || base || '';
+}
+
+module.exports = { platformTarget, buildFeedUrl, parseFeed, isNewer, releaseLabel, downloadUrl };
