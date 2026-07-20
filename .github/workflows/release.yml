@@ -29,9 +29,25 @@ jobs:
         with:
           node-version: "24"
       - name: Extension unit tests
+        # DISCOVERS suites — it used to `cd extensions/levelcode-ai`, so levelcode-updater's tests never
+        # ran here, including the one guarding the updater's Download button against serving a raw
+        # .app.zip. Globbing every extension means a new suite is gated the moment it is added, with no
+        # list here to keep in sync. Requires are file-relative, so running from the repo root is fine.
         run: |
-          cd extensions/levelcode-ai
-          for t in test/*.test.js; do node "$t"; done
+          shopt -s nullglob
+          count=0
+          for t in extensions/*/test/*.test.js; do
+            echo "── $t"
+            node "$t"          # `bash -e` (the Actions default) aborts the job on the first failure
+            count=$((count + 1))
+          done
+          # A zero-match glob would otherwise report success and gate nothing — the exact failure this
+          # step is fixing. Fail loudly instead.
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No suites matched extensions/*/test/*.test.js — the gate would pass vacuously."
+            exit 1
+          fi
+          echo "──────── $count test files passed ────────"
 
   build:
     name: Build ${{ matrix.arch }}
