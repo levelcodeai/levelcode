@@ -6,18 +6,24 @@
 # loose files and it can't be "installed". A .dmg wraps the whole app into one
 # compressed file you can upload, download, and drag-to-install.
 #
-# This script:
-#   1. Locates VSCode-darwin-<arch>/LevelCode.app (run ./scripts/build-macos.sh first).
-#   2. Ad-hoc code-signs it. arm64 macOS refuses to launch *unsigned* binaries at all,
-#      so even for personal use the app must carry at least an ad-hoc signature.
-#   3. Builds a compressed .dmg containing the app + an /Applications symlink.
-#   4. On the Developer ID path only, also emits LevelCode-<arch>.app.zip (+ .sha256) — the
-#      auto-update feed asset the built-in Squirrel updater installs. See docs/AUTO-UPDATE.md.
+# It operates on VSCode-darwin-<arch>/LevelCode.app (run ./scripts/build-macos.sh first).
+# Steps below are numbered to match the `# N.` markers in the script body:
+#   0. De-Microsoft the bundle + hide not-yet-ready features, before signing covers the result.
+#   1. Sign the app. Ad-hoc by default (arm64 macOS refuses to launch *unsigned* binaries at all);
+#      with CODESIGN_IDENTITY set, real Developer ID signing + notarize + staple.
+#   2. Stage a clean folder: the app + an /Applications symlink.
+#   3. Build the compressed .dmg from it.
+#   4. Developer ID path only — sign, notarize + staple the .dmg itself.
+#   5. Developer ID path only — emit LevelCode-<arch>.app.zip, the auto-update feed asset the
+#      built-in Squirrel updater installs. See docs/AUTO-UPDATE.md.
 #
-# The result is UNNOTARIZED. On another Mac, Gatekeeper will still warn on first launch:
+# Gatekeeper: on the DEFAULT (ad-hoc) path the result is UNNOTARIZED, so on another Mac Gatekeeper
+# warns on first launch:
 #   - Right-click the app > Open (once), OR
 #   - clear quarantine after copying out of the dmg:
 #       xattr -dr com.apple.quarantine "/Applications/LevelCode.app"
+# With CODESIGN_IDENTITY set, steps 1 + 4 notarize and staple both the app and the dmg — a plain
+# double-click then works on any Mac, offline, with no warning.
 #
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -105,6 +111,11 @@ fi
 # Developer ID doesn't match the running app — so this is produced ONLY on the signed path; an ad-hoc
 # build must never masquerade as an update asset. Use `ditto` (not `zip`): it preserves the stapled
 # notarization ticket, so the updated app still validates offline. Feed + rollout: docs/AUTO-UPDATE.md.
+#
+# The `.sha256` sidecar is LOCAL ONLY — do not upload it as a release asset. The update feed reads the
+# hash from GitHub's own API-computed asset `digest` ("sha256:<hex>"), not from a sidecar file; see
+# Levelcode::EditorReleaseFeed#build_assets in thin.ly. It exists so a releaser can verify by hand
+# that the zip they published is the zip they built.
 ZIP_OUT=""
 if [ "$NOTARIZE" = "1" ]; then
   ZIP_OUT="$ROOT_DIR/LevelCode-$ARCH.app.zip"
@@ -120,8 +131,9 @@ echo "[make-dmg]   Output: $DMG_OUT  ($SIZE)"
 if [ "$NOTARIZE" = "1" ]; then
   echo "[make-dmg]   Signed + notarized — upload it; users just open the dmg and drag to Applications."
   echo "[make-dmg]   Update asset: $ZIP_OUT  ($(du -sh "$ZIP_OUT" | cut -f1))"
-  echo "[make-dmg]   sha256: $(cat "$ZIP_OUT.sha256")"
-  echo "[make-dmg]   Upload BOTH: the .dmg (fresh installs) and the .app.zip (auto-update feed)."
+  echo "[make-dmg]   sha256: $(cat "$ZIP_OUT.sha256")  (local check only — the feed uses GitHub's own digest)"
+  echo "[make-dmg]   Upload EXACTLY these two: the .dmg (fresh installs) and the .app.zip (auto-update"
+  echo "[make-dmg]   feed). The .sha256 stays local — uploading it is harmless but pointless."
 else
   echo "[make-dmg]   Upload this single file. On the other Mac: open the dmg, drag LevelCode to"
   echo "[make-dmg]   Applications, then right-click > Open the first time (it's unnotarized)."

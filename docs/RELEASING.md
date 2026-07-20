@@ -85,7 +85,8 @@ gh release create v0.1.0 --title "LevelCode v0.1.0" --notes "First public build.
   LevelCode-arm64.app.zip LevelCode-x64.app.zip
 ```
 Upload **both kinds**: the `.dmg` is what humans install; the `.app.zip` is what the built-in updater
-installs (Squirrel takes a zip, never a dmg). See §5.
+installs (Squirrel takes a zip, never a dmg). `make-dmg.sh` also writes a `.app.zip.sha256` next to each
+zip — that one is **not** a release asset; it stays local. See §5.
 Stable URL: `https://github.com/levelcodeai/levelcode/releases/latest/download/LevelCode-arm64.dmg` — link it
 from **levelcode.ai/download**.
 
@@ -102,9 +103,18 @@ Two assets, **not** interchangeable:
 | `LevelCode-<arch>.dmg` | Humans — fresh install, drag to Applications. |
 | `LevelCode-<arch>.app.zip` | The built-in **Squirrel** updater — it installs from a zip, never a dmg. |
 
-`make-dmg.sh` emits the `.app.zip` (+ a `.sha256`) **only on the Developer-ID path**, because Squirrel
-refuses an update whose signing identity doesn't match the running app — an ad-hoc build must never be
-served as an update.
+`make-dmg.sh` emits the `.app.zip` **only on the Developer-ID path**, because Squirrel refuses an update
+whose signing identity doesn't match the running app — an ad-hoc build must never be served as an update.
+
+**Only those two files get uploaded per arch.** `make-dmg.sh` also writes `LevelCode-<arch>.app.zip.sha256`,
+but that is a **local verification convenience, not a release asset**: the feed reads `sha256hash` from
+GitHub's own API-computed asset `digest` (`"sha256:<hex>"`), so nothing ever fetches a sidecar file.
+Uploading one is harmless — `EditorReleaseFeed` matches assets by exact filename and ignores anything
+else — just unnecessary. Use it to confirm the zip you published is the zip you built:
+```bash
+Z=LevelCode-arm64.app.zip
+[ "$(shasum -a 256 "$Z" | cut -d' ' -f1)" = "$(cat "$Z.sha256")" ] && echo "$Z OK" || echo "$Z MISMATCH"
+```
 
 `LEVELCODE_UPDATE_FEED` (env JSON on the server) overrides the GitHub lookup and is the **rollback pin**:
 point it at the previous commit to stop a bad release propagating. Note it can't un-update anyone who
@@ -153,7 +163,8 @@ for A in arm64 x64; do
     NOTARY_PROFILE=levelcode-notary ./scripts/make-dmg.sh "$A"     # → LevelCode-$A.dmg + LevelCode-$A.app.zip
 done
 
-# 3. Verify (§3), then attach the dmgs AND the update zips, drop the unsigned zips, and publish
+# 3. Verify (§3), then attach the dmgs AND the update zips, drop the unsigned zips, and publish.
+#    The .app.zip.sha256 files stay local on purpose — the feed uses GitHub's own asset digest (§5).
 gh release upload v0.1.0 LevelCode-arm64.dmg LevelCode-x64.dmg \
                          LevelCode-arm64.app.zip LevelCode-x64.app.zip
 # `gh release delete-asset` takes ONE asset per call — drop each unsigned zip separately (`-y` skips the prompt).

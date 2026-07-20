@@ -32,11 +32,15 @@ then lift the guard.
 ## The gap
 
 1. **Release artifact.** Produce `LevelCode-<arch>.app.zip` from the **signed + notarized + stapled**
-   `.app` (a `ditto` after `make-dmg.sh`'s signing step) and publish it on the release, plus its
-   `shasum -a 256`. The `.dmg` stays — it remains the fresh-install path; the `.zip` is update-only.
+   `.app` (a `ditto` after `make-dmg.sh`'s signing step) and publish it on the release. The `.dmg` stays —
+   it remains the fresh-install path; the `.zip` is update-only.
+   *The zip is the only new release asset.* `make-dmg.sh` also writes a `.app.zip.sha256` beside it, but
+   that stays **local**: the feed's `sha256hash` comes from GitHub's API-computed asset `digest`
+   (`"sha256:<hex>"`), so no sidecar is ever fetched. The file is for verifying by hand that the zip you
+   published is the zip you built.
 2. **Feed asset resolution.** `EditorReleaseFeed#fetch_release` currently returns `url: rel["html_url"]`
    (the release page) and `sha256hash: nil`. It must select the **right asset** from `rel["assets"]` by
-   arch and return its `browser_download_url` + the real hash.
+   arch and return its `browser_download_url` plus the hash from that asset's own `digest` field.
 3. **Arch mapping.** Feed targets are `darwin-arm64` and `darwin` (Intel). Map to the arm64 / x64 zips
    respectively — **never serve a cross-arch zip**.
 4. **Lift the guard.** Set `LEVELCODE_UPDATE_FEED_SIGNED=1` on Elastic Beanstalk — **only after 1–3**.

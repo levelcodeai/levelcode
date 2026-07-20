@@ -109,6 +109,8 @@ jobs:
                (signs → notarizes → staples → `LevelCode-<arch>.dmg` **and** `LevelCode-<arch>.app.zip`).
             3. `gh release upload ${{ github.ref_name }} LevelCode-arm64.dmg LevelCode-x64.dmg LevelCode-arm64.app.zip LevelCode-x64.app.zip`
                — the `.dmg`s are for humans, the `.app.zip`s are the auto-update feed assets (`docs/AUTO-UPDATE.md`).
+               Upload exactly these four; the `.app.zip.sha256` files `make-dmg.sh` writes stay **local**
+               (the feed reads GitHub's own asset `digest`, never a sidecar).
             4. **Delete the `UNSIGNED-*.app.zip` assets**, add real notes, and publish.
 
             Full runbook: `docs/RELEASING.md`.
