@@ -59,6 +59,8 @@ test('contextWindowFor: known model wins; fallback then 200000 when unknown', ()
 	assert.strictEqual(C.contextWindowFor('openai', 'gpt-4o', 200000), 128000);
 	assert.strictEqual(C.contextWindowFor('openai', 'unknown-x', 55555), 55555);
 	assert.strictEqual(C.contextWindowFor('openai', 'unknown-x'), 200000);
+	// Gateway Kimi K3 — its 1M window must beat the 200000 fallback, or the meter warns 5× too early.
+	assert.strictEqual(C.contextWindowFor('openai', 'moonshotai/kimi-k3', 200000), 1048576);
 });
 
 // ---- fastCompletionModel ----
