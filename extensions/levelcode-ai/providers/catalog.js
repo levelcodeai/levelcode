@@ -52,7 +52,12 @@ const CAPS = {
 	'codestral-latest':     { context: 256000, tools: true, fast: true },
 	// LevelCode Cloud gateway engines (also reachable BYOK via OpenRouter)
 	'openai/gpt-oss-120b':       { context: 131072, tools: true },              // free tier
-	'moonshotai/kimi-k2.7-code': { context: 262144, tools: true, fast: true }   // Pro flagship
+	'moonshotai/kimi-k2.7-code': { context: 262144, tools: true, fast: true }, // Pro flagship
+	// Selectable Pro pick. 1M window — without this row the in-run context meter defaults to 200K and
+	// warns "full" 5× too early (the roster feeds the PICKER's ctx, but the meter reads this local CAPS).
+	// No `fast` (a 2.8T reasoning model is a poor ghost-text completer). tools:true matches its agentic
+	// intent; flip to false ONLY if the reasoning-loop spike (docs/KIMI-K3.md §3) shows it breaks the loop.
+	'moonshotai/kimi-k3':        { context: 1048576, tools: true, reasoning: true }
 };
 
 /** The basename of a model id ('openai/gpt-4o' → 'gpt-4o', 'gpt-4o' → 'gpt-4o'). */
