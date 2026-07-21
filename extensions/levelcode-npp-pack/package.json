@@ -397,6 +397,25 @@
           "type": "boolean",
           "default": true,
           "description": "Show a one-time notification when a file opens in Big-file mode."
+        },
+        "levelcode.jsonPaste.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Beautify JSON on paste. When the whole pasted text is valid JSON, it is pretty-printed in place — in any buffer, including untitled scratch tabs. Non-JSON pastes are unaffected."
+        },
+        "levelcode.jsonPaste.indent": {
+          "type": [
+            "string",
+            "number"
+          ],
+          "default": "editor",
+          "markdownDescription": "Indentation for JSON beautified on paste. `\"editor\"` follows the buffer's own `editor.tabSize` / `editor.insertSpaces`; a number sets that many spaces; `\"tab\"` uses a tab.",
+          "examples": [
+            "editor",
+            2,
+            4,
+            "tab"
+          ]
         }
       }
     }
