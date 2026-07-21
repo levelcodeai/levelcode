@@ -23,6 +23,7 @@ const { registerLineOps } = require('./lineOps');
 const { registerColumnOps } = require('./columnOps');
 const { registerEncodingEol } = require('./encodingEol');
 const { registerBigFile } = require('./bigFile');
+const { registerJsonPaste } = require('./jsonPaste');
 
 const CTX_RECORDING = 'levelcode.macroRecording';
 const KEY_LAST = 'levelcode.macros.last';
@@ -280,6 +281,9 @@ function activate(context) {
 
 	// Big-file mode (status badge + notice)
 	registerBigFile(context);
+
+	// Beautify JSON on paste (any buffer, incl. untitled scratch tabs)
+	registerJsonPaste(context);
 
 	// Make sure recording context starts false (also clears a stale state after reload).
 	setRecordingContext(false);
