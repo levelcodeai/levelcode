@@ -41,7 +41,7 @@ The gateway already ships a Moonshot flagship today — `GATEWAY_PRO_MODEL = 'mo
 | Model id | **`kimi-k3`** (canonical; "K3 Max" / "Swarm Max" are product names, not API strings) |
 | Streaming | Yes — emits **separate `reasoning_content` and `content`** deltas |
 | Tools | Yes — official tool-calling + dynamic-loading guides exist |
-| Context | 1,000,000 tokens |
+| Context | 1,048,576 tokens (2^20; Moonshot/OpenRouter market it as "1M") |
 | Pricing | ~$3 / M input, $15 / M output, $0.30 / M cached input *(secondary sources — confirm on the official pricing page before Path B billing)* |
 
 **Two corrections to watch for:**
@@ -121,7 +121,7 @@ reasoning model — a poor ghost-text completer), no `agent: true` (appears clau
 
 **A2 — per-model caps** · `providers/catalog.js` `CAPS` table (~`:27-56`):
 ```js
-'kimi-k3': { context: 1000000, tools: true, reasoning: true },
+'kimi-k3': { context: 1048576, tools: true, reasoning: true },   // 2^20 — match the shipped caps exactly
 ```
 `context` feeds the context meter; without it the agent falls back to 200 000 (`agent.js:618`) and would
 badly under-report K3's 1M window. Do **not** add `kimi-k3` to `FAST_COMPLETION` (`catalog.js:110-116`).

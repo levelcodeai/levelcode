@@ -71,30 +71,32 @@ async function stage1RawProbe() {
 	};
 	const tally = { content: 0, reasoning: 0, reasoning_content: 0, tool_calls: 0, thinkTag: false, sample: '' };
 	const to = withTimeout(60000);
-	let res;
 	try {
-		res = await fetch(BASE + '/chat/completions', {
+		const res = await fetch(BASE + '/chat/completions', {
 			method: 'POST', signal: to.signal,
 			headers: Object.assign({ 'content-type': 'application/json', authorization: 'Bearer ' + KEY }, HEADERS),
 			body: JSON.stringify(body)
 		});
-	} finally { /* keep timer until stream ends */ }
-	if (!res.ok) { to.done(); return { ok: false, status: res.status, text: await res.text().catch(() => '') }; }
-	await readLines(res, (line) => {
-		const s = line.trim();
-		if (!s.startsWith('data:')) { return; }
-		const data = s.slice(5).trim();
-		if (!data || data === '[DONE]') { return; }
-		let ev; try { ev = JSON.parse(data); } catch { return; }
-		const d = ev.choices && ev.choices[0] && ev.choices[0].delta;
-		if (!d) { return; }
-		if (typeof d.content === 'string' && d.content) { tally.content++; if (/<think\b/i.test(d.content)) { tally.thinkTag = true; } }
-		if (d.reasoning != null && d.reasoning !== '') { tally.reasoning++; if (!tally.sample) { tally.sample = String(d.reasoning).slice(0, 60); } }
-		if (d.reasoning_content != null && d.reasoning_content !== '') { tally.reasoning_content++; if (!tally.sample) { tally.sample = String(d.reasoning_content).slice(0, 60); } }
-		if (Array.isArray(d.tool_calls) && d.tool_calls.length) { tally.tool_calls++; }
-	});
-	to.done();
-	return { ok: true, tally };
+		if (!res.ok) { return { ok: false, status: res.status, text: await res.text().catch(() => '') }; }
+		await readLines(res, (line) => {
+			const s = line.trim();
+			if (!s.startsWith('data:')) { return; }
+			const data = s.slice(5).trim();
+			if (!data || data === '[DONE]') { return; }
+			let ev; try { ev = JSON.parse(data); } catch { return; }
+			const d = ev.choices && ev.choices[0] && ev.choices[0].delta;
+			if (!d) { return; }
+			if (typeof d.content === 'string' && d.content) { tally.content++; if (/<think\b/i.test(d.content)) { tally.thinkTag = true; } }
+			if (d.reasoning != null && d.reasoning !== '') { tally.reasoning++; if (!tally.sample) { tally.sample = String(d.reasoning).slice(0, 60); } }
+			if (d.reasoning_content != null && d.reasoning_content !== '') { tally.reasoning_content++; if (!tally.sample) { tally.sample = String(d.reasoning_content).slice(0, 60); } }
+			if (Array.isArray(d.tool_calls) && d.tool_calls.length) { tally.tool_calls++; }
+		});
+		return { ok: true, tally };
+	} finally {
+		// Always clear the 60s timer — on a fetch throw (DNS/auth), an early !ok return, or a normal end.
+		// Without this a pending timer could outlive the probe and its abort could fire spuriously.
+		to.done();
+	}
 }
 
 /**
@@ -144,13 +146,16 @@ async function stage2RoundTrip() {
 
 	const finalText = t2.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
 	console.log('  turn 2 stop_reason: ' + t2.stop_reason + ' · answer: ' + JSON.stringify((finalText || answer).slice(0, 80)));
-	const looksRight = /42/.test(finalText || answer);
+	// Exact numeric output, not a substring: the prompt asks for ONLY the number, so require 42 to be the
+	// sole number in the answer. `/42/` would false-positive on "142", "420", or "…in 42 steps"; `^\D*42\D*$`
+	// accepts "42", "42.", "= **42**" but rejects any answer containing a different digit.
+	const looksRight = /^\D*42\D*$/.test((finalText || answer).trim());
 	if (t2.stop_reason === 'tool_use') {
 		return { verdict: 'PASS*', code: 0, why: 'Turn 2 succeeded but called a tool again instead of answering — the loop is NOT rejected by the missing reasoning (the key §3 risk is cleared). Multi-step chains work; just noting it did not stop here.' };
 	}
 	return looksRight
 		? { verdict: 'PASS', code: 0, why: 'Turn 2 completed with the correct answer, with NO reasoning echoed back in the assistant turn. K3 does not require reasoning round-tripping → tools:true is safe.' }
-		: { verdict: 'PASS?', code: 0, why: 'Turn 2 completed without error (the §3 rejection did NOT happen), but the answer did not clearly contain "42". Loop mechanics are fine; eyeball the answer above.' };
+		: { verdict: 'PASS?', code: 0, why: 'Turn 2 completed without error (the §3 rejection did NOT happen), but the answer was not exactly "42" — likely right but verbose. Loop mechanics are fine; eyeball the answer above.' };
 }
 
 /** Distinguish the §3 failure (400 needing reasoning) from capacity (429) and other errors. */
