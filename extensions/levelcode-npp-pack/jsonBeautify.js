@@ -11,6 +11,8 @@
 
 // Don't parse a paste larger than this — JSON.parse + stringify on a huge blob would block the
 // extension host mid-paste. 5 MB is far past any hand-pasted JSON; bigger pastes just paste normally.
+// Measured in real UTF-8 BYTES (Buffer.byteLength), NOT String#length — a code-unit count undercounts
+// multibyte content (a CJK char is 1 code unit but 3 bytes), which would let a much bigger payload through.
 const MAX_BYTES = 5 * 1024 * 1024;
 
 /**
@@ -36,7 +38,7 @@ function analyzePaste(text, opts) {
 	// isn't JSON, and rules out bare scalars without parsing them.
 	if (trimmed.length < 2 || (trimmed[0] !== '{' && trimmed[0] !== '[')) { return { beautify: false, reason: 'not-container' }; }
 	const maxBytes = (opts && typeof opts.maxBytes === 'number') ? opts.maxBytes : MAX_BYTES;
-	if (trimmed.length > maxBytes) { return { beautify: false, reason: 'too-large' }; }
+	if (Buffer.byteLength(trimmed, 'utf8') > maxBytes) { return { beautify: false, reason: 'too-large' }; }
 	let parsed;
 	try { parsed = JSON.parse(trimmed); }
 	catch { return { beautify: false, reason: 'invalid-json' }; }

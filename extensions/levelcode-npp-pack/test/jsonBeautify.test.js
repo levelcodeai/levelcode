@@ -87,4 +87,17 @@ test('honors the size guard (parses nothing past maxBytes)', () => {
 	assert.ok(MAX_BYTES >= 1024 * 1024, 'default cap should be sizeable');
 });
 
+test('size guard counts UTF-8 BYTES, not code units — multibyte payloads cannot slip past', () => {
+	// A CJK char is 1 UTF-16 code unit but 3 UTF-8 bytes. Build JSON whose .length is UNDER the cap but
+	// whose byte size is OVER it — a String#length guard would wrongly allow it through and parse it.
+	const json = '{"k":"' + '実'.repeat(50) + '"}';
+	assert.ok(json.length < 100, 'precondition: under cap by code units');
+	assert.ok(Buffer.byteLength(json, 'utf8') > 100, 'precondition: over cap by bytes');
+	const r = analyzePaste(json, { maxBytes: 100 });
+	assert.strictEqual(r.beautify, false);
+	assert.strictEqual(r.reason, 'too-large');
+	// Sanity: the SAME payload beautifies when the cap is raised above its byte size.
+	assert.strictEqual(analyzePaste(json, { maxBytes: 1000 }).beautify, true);
+});
+
 console.log('\njsonBeautify.js: ' + n + ' tests passed.');
