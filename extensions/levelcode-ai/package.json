@@ -255,6 +255,12 @@
     "keybindings": [
       {
         "command": "levelcode.ai.focus",
+        "key": "ctrl+shift+i",
+        "mac": "shift+cmd+i",
+        "linux": "ctrl+alt+shift+i"
+      },
+      {
+        "command": "levelcode.ai.focus",
         "key": "ctrl+cmd+i"
       },
       {
