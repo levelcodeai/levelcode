@@ -282,6 +282,22 @@
   .tl-cmd .cmdstate .ci { width: 12px; height: 12px; }
   .tl-cmd .cmdstate.ok { color: var(--vscode-terminal-ansiBrightGreen, #4ec97a); }
   .tl-cmd .cmdstate.bad { color: var(--vscode-errorForeground, #f14c4c); }
+  /* ── Grouped activity (calm transcript) — consecutive tool actions fold into ONE collapsible card.
+     Open: the header shows the LIVE step (present-progressive) with a fixed vertical footprint; on
+     close it flips to a past-tense aggregate ("Ran 2 commands, read and edited chat.html +56 -0").
+     Members keep their own cards inside .groupbody; their rails hide so expanded rows read flat. */
+  .tl-group .grouplabel { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--vscode-foreground); }
+  .tl-group .grouphead:hover .grouplabel { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--muted); }
+  .tl-group .groupcounts { flex: 0 0 auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; }
+  .tl-group .groupcounts .a { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
+  .tl-group .groupcounts .d { color: var(--vscode-gitDecoration-deletedResourceForeground, #e06c75); }
+  .tl-group .groupstop { flex: 0 0 auto; display: inline-flex; align-items: center; border: none; background: none; color: var(--muted); cursor: pointer; padding: 2px; }
+  .tl-group .groupstop:hover { color: var(--vscode-errorForeground, #f14c4c); }
+  .tl-group .groupstop .ci { width: 12px; height: 12px; }
+  .tl-group .groupbody { padding: 2px 0 0 4px; }
+  .tl-group.collapsed .groupbody { display: none; }
+  .tl-group .groupbody > .tl > .tl-rail { display: none; }
+  .tl-group .groupbody > .tl { margin: 0; }
   /* Copilot-style falling-dots progress — a 2×3 dot grid cascading downward while a command runs */
   .lcdots { display: inline-grid; grid-template-columns: repeat(2, 3px); gap: 2px; color: var(--accent); align-self: center; }
   .lcdots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: lcdotfall 1.1s ease-in-out infinite; }
@@ -1369,6 +1385,7 @@
   })();
   function add(role, html){
     clearEmpty();
+    closeGroup();   // narration / user text ends the activity group (calm transcript)
     const d = document.createElement('div'); d.className = 'msg ' + role;
     d.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'LevelCode AI') + '</div><div class="body">' + html + '</div>';
     log.appendChild(d); scrollIfStuck(); return d.querySelector('.body');
@@ -1386,16 +1403,195 @@
     let data = '';
     if (m.data != null){ try { data = ' ' + JSON.stringify(m.data); } catch(e){ data = ' [unserializable]'; } }
     d.innerHTML = codicon('bug') + esc(' DEBUG [' + ts + '] ' + (m.label || '') + data);
-    log.appendChild(d); scrollIfStuck();
+    (groupsOn && curGroup ? curGroup.body : log).appendChild(d);   // ride inside an open activity group
+    scrollIfStuck();
   }
   function clearStatus(){ if (agentStatusEl){ agentStatusEl.remove(); agentStatusEl = null; } }
+
+  // ── Calm transcript (docs/CALM-TRANSCRIPT.md): consecutive tool activity folds into ONE
+  // collapsible group. The reducer lives entirely in the webview — the extension host posts the
+  // same events as ever; assistant/user text, approvals, questions, errors and run-end CLOSE the
+  // open group. While open the header shows the LIVE step; on close, a past-tense aggregate.
+  let groupsOn = true;              // levelcode.ai.chat.groupActivity (arrives on the config message)
+  let curGroup = null;              // open group state, or null
+  const termSteps = {};             // run id → step (a command's exit updates its group later)
+  const editSteps = {};             // edit id → step (re-renders update the counts in place)
+  const verifySteps = {};           // verify id → step
+
+  // Convert an imperative action label to present-progressive (form 0: "Verifying the edit and
+  // checking repo state") or past (form 1: "Verified the edit and checked repo state"). Verbs
+  // convert at the start and after "and"/"then"/a comma; unknown words pass through. Pure —
+  // unit-tested from the shipped file (test/narrativeUi.test.js), like shHighlight.
+  function tenseLabel(label, form){
+    const VERBS = {
+      run: ['Running', 'Ran'], read: ['Reading', 'Read'], edit: ['Editing', 'Edited'],
+      write: ['Writing', 'Wrote'], create: ['Creating', 'Created'], delete: ['Deleting', 'Deleted'],
+      search: ['Searching', 'Searched'], list: ['Listing', 'Listed'], verify: ['Verifying', 'Verified'],
+      check: ['Checking', 'Checked'], find: ['Finding', 'Found'], install: ['Installing', 'Installed'],
+      build: ['Building', 'Built'], test: ['Testing', 'Tested'], fix: ['Fixing', 'Fixed'],
+      update: ['Updating', 'Updated'], add: ['Adding', 'Added'], remove: ['Removing', 'Removed'],
+      start: ['Starting', 'Started'], stop: ['Stopping', 'Stopped'], apply: ['Applying', 'Applied'],
+      generate: ['Generating', 'Generated'], confirm: ['Confirming', 'Confirmed'], commit: ['Committing', 'Committed'],
+      push: ['Pushing', 'Pushed'], open: ['Opening', 'Opened'], compile: ['Compiling', 'Compiled'],
+      rename: ['Renaming', 'Renamed'], move: ['Moving', 'Moved'], count: ['Counting', 'Counted'],
+      grep: ['Grepping', 'Grepped'], clean: ['Cleaning', 'Cleaned'], download: ['Downloading', 'Downloaded']
+    };
+    const out = [];
+    let slot = true;
+    for (const w of String(label || '').split(' ')){
+      const bare = w.toLowerCase().replace(/[^a-z]/g, '');
+      const rep = slot && VERBS[bare] ? VERBS[bare][form] : null;
+      if (rep){ out.push(/^[a-z]/.test(w) ? rep.toLowerCase() : rep); slot = false; continue; }
+      out.push(w);
+      slot = bare === 'and' || bare === 'then' || /,$/.test(w);
+    }
+    return out.join(' ');
+  }
+
+  // One past-tense sentence for a finished group: "Ran 2 commands, read and edited PLAN.md".
+  // Verb-category counts, same-file read+edit folded, >2 files become "N files". Pure.
+  function groupAggregate(steps){
+    const uniq = (list) => list.filter((p, i) => list.indexOf(p) === i);
+    const short = (p) => String(p).split('/').pop();
+    const files = (list) => list.length > 2 ? (list.length + ' files') : list.map(short).join(', ');
+    const of = (kind) => uniq(steps.filter((s) => s.kind === kind && s.path).map((s) => s.path));
+    const cmds = steps.filter((s) => s.kind === 'cmd').length;
+    const searches = steps.filter((s) => s.kind === 'search' || s.kind === 'list').length;
+    const reads = of('read'), edits = of('edit'), creates = of('create'), dels = of('delete');
+    const parts = [];
+    if (cmds){ parts.push('ran ' + cmds + (cmds === 1 ? ' command' : ' commands')); }
+    if (searches){ parts.push('searched the workspace'); }
+    const readOnly = reads.filter((p) => edits.indexOf(p) < 0 && creates.indexOf(p) < 0);
+    const readEdited = edits.filter((p) => reads.indexOf(p) >= 0);
+    if (readEdited.length && !readOnly.length && readEdited.length === edits.length){
+      parts.push('read and edited ' + files(readEdited));
+    } else {
+      if (readOnly.length){ parts.push('read ' + files(readOnly)); }
+      if (edits.length){ parts.push('edited ' + files(edits)); }
+    }
+    if (creates.length){ parts.push('created ' + files(creates)); }
+    if (dels.length){ parts.push('deleted ' + files(dels)); }
+    if (steps.some((s) => s.kind === 'verify')){ parts.push('verified the edits'); }
+    if (!parts.length){ return steps.length === 1 ? '1 step' : steps.length + ' steps'; }
+    const sentence = parts.join(', ');
+    return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+  }
+
+  // Derive a step {kind, base, path} from an agentTool chip; anything unrecognized rides as a note.
+  function chipStep(icon, text){
+    const t = String(text || '');
+    if (icon === 'file' && /^read /.test(t)){ return { kind: 'read', base: 'Read ' + t.slice(5), path: t.slice(5) }; }
+    if (icon === 'search'){ return { kind: 'search', base: 'Search the workspace' }; }
+    if (icon === 'list-tree'){ return { kind: 'list', base: 'List files' }; }
+    return { kind: 'note', base: t };
+  }
+  // The label for a command step: the model's explanation (imperative, per the system prompt), or
+  // the command's first segment as a fallback for older transcripts / weaker models.
+  function cmdBase(m){
+    const ex = String(m.explanation || '').trim().replace(/\.+$/, '');
+    if (ex){ return ex.charAt(0).toUpperCase() + ex.slice(1); }
+    const seg = String(m.command || '').split(/\n+|\s*&&\s*|\s*;\s*/).map((s) => s.trim()).filter(Boolean)[0] || 'command';
+    return 'Run `' + (seg.length > 48 ? seg.slice(0, 48) + '…' : seg) + '`';
+  }
+  function groupCountsHtml(g){
+    let a = 0, d = 0;
+    for (const s of g.steps){ a += s.add || 0; d += s.del || 0; }
+    return (a || d) ? '<span class="a">+' + a + '</span> <span class="d">-' + d + '</span>' : '';
+  }
+  function openGroup(){
+    const wrap = document.createElement('div'); wrap.className = 'tl tl-cmd tl-group running collapsed';
+    wrap.innerHTML =
+      '<div class="tl-rail"><span class="tl-node">' + codicon('sync') + '</span></div>'
+      + '<div class="tl-body">'
+        + '<div class="grouphead cmdhead" title="Expand / collapse">'
+          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
+          + '<span class="grouplabel"></span>'
+          + '<span class="groupcounts"></span>'
+          + '<button class="groupstop" hidden title="Stop the running command">' + codicon('stop-circle') + '</button>'
+          + '<span class="cmdstate groupstate running">' + LC_DOTS + '</span>'
+        + '</div>'
+        + '<div class="groupbody"></div>'
+      + '</div>';
+    log.appendChild(wrap);
+    const g = {
+      el: wrap, body: wrap.querySelector('.groupbody'), label: wrap.querySelector('.grouplabel'),
+      counts: wrap.querySelector('.groupcounts'), state: wrap.querySelector('.groupstate'),
+      stopBtn: wrap.querySelector('.groupstop'), steps: [], failed: false, closed: false, userToggled: false
+    };
+    wrap.querySelector('.grouphead').onclick = (e) => {
+      if (e.target && e.target.closest && e.target.closest('.groupstop')) { return; }
+      g.userToggled = true; wrap.classList.toggle('collapsed');
+    };
+    curGroup = g;
+    return g;
+  }
+  // Append a timeline element into the open group (opening one if needed). step=null rides along
+  // without affecting the header (debug lines).
+  function groupAppend(el, step){
+    if (!groupsOn){ log.appendChild(el); return; }
+    const g = curGroup || openGroup();
+    g.body.appendChild(el);
+    if (step){ step.group = g; g.steps.push(step); refreshGroupHead(); }
+  }
+  function refreshGroupHead(){
+    const g = curGroup; if (!g){ return; }
+    let live = null;
+    for (let i = g.steps.length - 1; i >= 0; i--){ if (g.steps[i].status === 'running'){ live = g.steps[i]; break; } }
+    const s = live || g.steps[g.steps.length - 1];
+    if (s){ g.label.textContent = tenseLabel(s.base, s.status === 'running' ? 0 : 1); }
+    g.counts.innerHTML = groupCountsHtml(g);
+    const stopEl = live && live.card && live.card.querySelector('.termstop');
+    g.stopBtn.hidden = !stopEl;
+    g.stopBtn.onclick = stopEl ? ((e) => { e.stopPropagation(); stopEl.click(); }) : null;
+  }
+  // Finalize a group's header (aggregate label, ok/bad state). A single-member group unwraps —
+  // the member rejoins the timeline bare, no group chrome.
+  function finalizeGroup(g){
+    if (!g.el.isConnected){ return; }
+    if (!g.steps.length){ g.el.remove(); return; }
+    if (g.steps.length === 1){
+      while (g.body.firstChild){ log.insertBefore(g.body.firstChild, g.el); }
+      g.el.remove(); return;
+    }
+    g.closed = true;
+    g.el.classList.remove('running');
+    g.label.textContent = groupAggregate(g.steps);
+    g.counts.innerHTML = groupCountsHtml(g);
+    g.state.innerHTML = codicon(g.failed ? 'circle-slash' : 'check');
+    g.state.className = 'cmdstate groupstate ' + (g.failed ? 'bad' : 'ok');
+    g.stopBtn.hidden = true;
+    if (g.failed && !g.userToggled){ g.el.classList.remove('collapsed'); }
+  }
+  // Narration / user text / an interactive card ends the activity group.
+  function closeGroup(){ const g = curGroup; if (!g){ return; } curGroup = null; finalizeGroup(g); }
+  // A member finished after registration (command exit, verify done) — possibly after its group
+  // closed (background commands). Failures auto-expand: collapse is for success (D4).
+  function groupStepDone(step, failed){
+    if (!step){ return; }
+    step.status = failed ? 'fail' : 'done';
+    const g = step.group; if (!g){ return; }
+    if (failed){
+      g.failed = true;
+      if (g.el.isConnected && !g.userToggled){ g.el.classList.remove('collapsed'); }
+    }
+    if (g.closed){ finalizeGroup(g); } else if (g === curGroup){ refreshGroupHead(); }
+  }
+  function groupStepCounts(step, a, d){
+    if (!step){ return; }
+    step.add = a; step.del = d;
+    const g = step.group; if (!g){ return; }
+    if (g.closed){ finalizeGroup(g); } else if (g === curGroup){ refreshGroupHead(); }
+  }
+
   // A tool action (read / edit / search …) — rendered as a light node on the activity timeline rail.
   function addAgentLine(icon, text){
     clearEmpty(); clearStatus();
     const d = document.createElement('div'); d.className = 'tl tl-tool';
     d.innerHTML = '<div class="tl-rail"><span class="tl-node">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span></div>'
       + '<div class="tl-body"><span class="toolt">' + esc(text || '') + '</span></div>';
-    log.appendChild(d); scrollIfStuck();
+    const st = chipStep(icon, text); st.status = 'done';
+    groupAppend(d, st);
+    scrollIfStuck();
   }
   // Drives the persistent working bar (not an inline log element), so the indicator can't be cleared into
   // a gap by an intervening tool card or bubble. The bar's visibility is owned by setStreaming.
@@ -1435,6 +1631,7 @@
   let pendingApproval = null;   // { done } while a decision is awaited — Enter approves, Esc skips
   function addApproval(m){
     clearEmpty(); clearStatus(); agentBubble = null;
+    closeGroup();   // a blocking gate never hides inside a collapsed group (D4)
     const card = document.createElement('div'); card.className = 'tl tl-cmd tl-ask asking';
     const isDelete = m.kind === 'delete';
     const segs = String(m.command || '').split(/\n+|\s*&&\s*|\s*;\s*/).map(s => s.trim()).filter(Boolean);
@@ -1562,7 +1759,10 @@
         + '</div>'
         + (m.explanation ? '<div class="cmdwhy">' + esc(m.explanation) + '</div>' : '')
       + '</div>';
-    log.appendChild(card); scrollIfStuck();
+    const st = { kind: 'cmd', base: cmdBase(m), status: 'running', card: card };
+    termSteps[m.id] = st;
+    groupAppend(card, st);
+    scrollIfStuck();
     termCards[m.id] = card;
     card.querySelector('.cmdhead').onclick = () => card.classList.toggle('collapsed');
     const sb = card.querySelector('.termstop'); if (sb) { sb.onclick = () => { sb.disabled = true; sb.textContent = 'stopping…'; vscode.postMessage({ type: 'stopCommand', id: m.id }); }; }
@@ -1588,6 +1788,10 @@
     const verb = card.querySelector('.cmdverb'); if (verb) { verb.textContent = 'Ran'; }
     const state = card.querySelector('.cmdstate'); if (state) { state.innerHTML = codicon(icon); state.className = 'cmdstate ' + cls; }
     const sb = card.querySelector('.termstop'); if (sb) { sb.remove(); }
+    // Group bookkeeping: a user-stop is a choice, not a failure — only timeouts and nonzero exits
+    // mark the group failed (and auto-expand it).
+    groupStepDone(termSteps[m.id], m.how === 'timeout' || (m.how !== 'stopped' && m.code !== 0));
+    delete termSteps[m.id];
     delete termCards[m.id];
     scrollIfStuck();
   }
@@ -1608,7 +1812,10 @@
         + (m.command ? '<button class="termstop" title="Stop verification">' + codicon('stop-circle') + ' Stop</button>' : '')
         + '</div>'
       + '</div>';
-    log.appendChild(card); scrollIfStuck();
+    const st = { kind: 'verify', base: 'Verify the edits', status: 'running', card: card };
+    verifySteps[m.id] = st;
+    groupAppend(card, st);
+    scrollIfStuck();
     verifyCards[m.id] = card;
     const sb = card.querySelector('.termstop'); if (sb) { sb.onclick = () => { sb.disabled = true; sb.textContent = 'stopping…'; vscode.postMessage({ type: 'stopCommand', id: m.id }); }; }
   }
@@ -1638,6 +1845,10 @@
       st.innerHTML = codicon('circle-slash') + ' ' + (bits.join(' · ') || 'failed') + ' — fixing…';
       st.className = 'termstatus bad';
     }
+    // Group bookkeeping: ok and unrunnable (a config issue, not the agent's code) close clean;
+    // a real verify failure marks the group failed and auto-expands it.
+    groupStepDone(verifySteps[m.id], !(m.ok || m.unrunnable));
+    delete verifySteps[m.id];
     delete verifyCards[m.id];
     scrollIfStuck();
   }
@@ -1689,6 +1900,7 @@
   }
   function addQuestions(m){
     clearEmpty(); clearStatus(); agentBubble = null;
+    closeGroup();   // interactive questions render at top level, never inside a group (D4)
     const qs = m.questions || [];
     const state = qs.map((q) => ({ multi: !!q.multiSelect, sel: new Set() }));
     const card = document.createElement('div'); card.className = 'questions';
@@ -1747,10 +1959,18 @@
     let wasOpen = true;
     if (!card){
       card = document.createElement('div'); card.className = 'editcard';
-      editCards[m.id] = card; log.appendChild(card);
+      editCards[m.id] = card;
+      const st = {
+        kind: m.deleted ? 'delete' : (m.exists ? 'edit' : 'create'),
+        base: (m.deleted ? 'Delete ' : (m.exists ? 'Edit ' : 'Create ')) + m.path,
+        path: m.path, status: 'done'
+      };
+      editSteps[m.id] = st;
+      groupAppend(card, st);
     } else {
       const prev = card.querySelector('details.diffwrap'); if (prev) { wasOpen = prev.open; } // preserve user's collapse state
     }
+    groupStepCounts(editSteps[m.id], m.deleted ? 0 : (m.add || 0), m.del || 0);
     if (m.deleted){
       // A delete_file shows as its own card — not an all-red diff. Keep = confirm, Recreate = undo.
       const dn = m.del || 0;
@@ -2024,6 +2244,7 @@
 
   // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · $cost · $left.
   function addAgentDone(reason, edits, credits, maxSteps, costMicros){
+    closeGroup();   // the run is over — finalize any open activity group
     const bar = document.createElement('div'); bar.className = 'agentbar';
     // Stamp the model that produced THIS turn, so a later reaction is attributed to it
     // (not whatever the plan is entitled to at click time — models can change mid-session).
@@ -2446,6 +2667,7 @@
       if (typeof m.contextLimit === 'number'){ renderContext({ limit: m.contextLimit }); }
       lastProvider = m.provider || '';
       lastModelId = m.modelId || m.model || '';   // gateway sends modelId (the real id); BYOK model IS the id
+      if (typeof m.groupActivity === 'boolean'){ groupsOn = m.groupActivity; }   // calm-transcript toggle
       renderRouting();
     }
     else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
@@ -2468,7 +2690,7 @@
     else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
     else if (m.type === 'mode'){ applyMode(!!m.agent); }
     else if (m.type === 'autopilot'){ applyAutopilot(!!m.on); }
-    else if (m.type === 'agentStart'){ setStreaming(true); agentBubble = null; agentRaw = ''; renderPlan([]); setAgentStatus('thinking…'); }
+    else if (m.type === 'agentStart'){ closeGroup(); setStreaming(true); agentBubble = null; agentRaw = ''; renderPlan([]); setAgentStatus('thinking…'); }
     else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); }
     else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
     else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
@@ -2497,7 +2719,7 @@
     else if (m.type === 'debug'){ addDebug(m); }
     else if (m.type === 'account'){ renderAccount(m); if (m.open) openAccount(); }
     else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
-    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); const cap = capReachedInfo(m.message); if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
+    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); closeGroup(); const cap = capReachedInfo(m.message); if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
     else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps, m.costMicros); setStreaming(false); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }

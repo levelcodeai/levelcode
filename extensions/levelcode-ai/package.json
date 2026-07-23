@@ -349,6 +349,11 @@
           "default": false,
           "description": "Include a list of all project file paths with each chat message, so the AI knows the repo structure. Uses more tokens."
         },
+        "levelcode.ai.chat.groupActivity": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fold consecutive agent actions (reads, edits, commands) into one collapsible activity card in the chat — the header shows the live step while running and a summary when done. Turn off for the flat, ungrouped timeline."
+        },
         "levelcode.cloud.endpoint": {
           "type": "string",
           "default": "https://levelcode.ai",
