@@ -31,7 +31,7 @@ const SYSTEM_BASE = [
 	'- Use delete_file to remove an existing file (e.g. during a refactor). To RENAME/move a file, write_file the new path then delete_file the old one. Deletions are reviewable (Keep/Undo) and restorable from the per-turn checkpoint.',
 	'- Your file edits are APPLIED IMMEDIATELY and the user reviews them afterward in the editor with Keep/Undo — do NOT wait for approval, and do NOT re-edit a file you just edited. Only run_command still needs approval; if the user skips a command, adapt or stop.',
 	'- Commands that do NOT exit on their own (dev servers, file watchers, tail -f) MUST be run with run_command background:true — it returns immediately so you keep working instead of hanging. After starting one, call read_command_output with the returned id to watch for a readiness/port line (e.g. "listening on :3000") before you test against it. Use a normal foreground run_command for things that finish (builds, installs, tests, git, curl). This pairs with verification: bring the app up in the background, confirm it serves, fix, repeat.',
-	'- EVERY run_command MUST include "explanation": 5-10 words, active voice, imperative, saying what the command does ("Run the extension unit tests", "Find the insertion point in section 10"). It becomes this action\'s label in the user\'s activity view — never omit it.',
+	'- EVERY run_command, read_file and search MUST include "explanation": 3-10 words, active voice, imperative, saying what you are doing and why ("Run the extension unit tests", "Find the insertion point in section 10", "Read the runAgent call site"). It becomes that action\'s label in the user\'s activity view — never omit it.',
 	'- Paths are relative to the workspace root. In a MULTI-ROOT workspace (several top-level folders), paths from list_files/search are prefixed with the folder name (e.g. "thin.ly/app/models/link.rb") — use them exactly as shown; an unprefixed path resolves against the first folder. To create a file in a specific folder, prefix its name. run_command accepts an optional "folder" to pick which folder it runs in.',
 	'- For a multi-step goal, call update_plan FIRST with a short checklist (3-8 short items, all "pending"), then call it again to set an item "in_progress" when you start it and "done" when finished. Skip the plan for trivial single-step goals.',
 	'- If the goal truly depends on a decision only the user can make (tech stack, scope, where to create files, must-have features), call ask_user ONCE with concise multiple-choice questions (a short header + 2-4 concrete options each) INSTEAD of writing the questions as prose. Put your RECOMMENDED option FIRST and use its description to say why — and, when it matters, what would change your mind. Then act on their answers and do not ask again. Do NOT ask about things you can reasonably decide yourself — prefer a sensible default and proceed.',
@@ -42,8 +42,8 @@ const SYSTEM_BASE = [
 
 const TOOLS = [
 	{ name: 'list_files', description: 'List workspace files (optional glob like "**/*.js"). Excludes node_modules/.git/build dirs.', input_schema: { type: 'object', properties: { glob: { type: 'string' } } } },
-	{ name: 'read_file', description: 'Read a workspace file (path relative to the workspace root; in a multi-root workspace use the folder-name prefix exactly as list_files shows it).', input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
-	{ name: 'search', description: 'Search file contents for a literal string. Returns file:line snippets.', input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+	{ name: 'read_file', description: 'Read a workspace file (path relative to the workspace root; in a multi-root workspace use the folder-name prefix exactly as list_files shows it).', input_schema: { type: 'object', properties: { path: { type: 'string' }, explanation: { type: 'string', description: 'ALWAYS provide: 3-8 words, active voice, imperative — WHY you are reading this ("Read the runAgent call site", "Read agent.js tool definitions"). Shown to the user as this action\'s label.' } }, required: ['path'] } },
+	{ name: 'search', description: 'Search file contents for a literal string. Returns file:line snippets.', input_schema: { type: 'object', properties: { query: { type: 'string' }, explanation: { type: 'string', description: 'ALWAYS provide: 3-8 words, active voice, imperative — what you are looking for ("Find every postMessage call site"). Shown to the user as this action\'s label.' } }, required: ['query'] } },
 	{ name: 'update_plan', description: 'Declare or update your task checklist for a multi-step goal. Pass the FULL list each time, each item with a status. Call it once up front (all pending), then again to mark an item in_progress when you start it and done when finished. Skip for trivial single-step goals.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, status: { type: 'string', enum: ['pending', 'in_progress', 'done'] } }, required: ['title', 'status'] } } }, required: ['todos'] } },
 	{ name: 'edit_file', description: 'Make a targeted edit to an EXISTING file: replace an exact, unique snippet (old_str) with new_str. Applied immediately; the user reviews it with Keep/Undo. old_str must appear exactly once — include enough surrounding context to be unique.', input_schema: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' } }, required: ['path', 'old_str', 'new_str'] } },
 	{ name: 'write_file', description: 'Create a new file (or fully overwrite a short one) with the COMPLETE content. For edits to existing files, prefer edit_file. Applied immediately; the user reviews it with Keep/Undo.', input_schema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
@@ -276,7 +276,9 @@ async function runTool(tu, ctx) {
 			return uris.map((u) => vscode.workspace.asRelativePath(u)).join('\n') || '(no files)';
 		}
 		if (tu.name === 'read_file') {
-			ctx.post({ type: 'agentTool', icon: 'file', text: 'read ' + input.path });
+			// label/path ride alongside the legacy `text` so the chat can title this action with the
+			// model's own words ("Read the runAgent call site") and still attribute it to a file.
+			ctx.post({ type: 'agentTool', icon: 'file', text: 'read ' + input.path, label: input.explanation || '', path: input.path, kind: 'read' });
 			const abs = resolveWorkspacePath(input.path || '', { mustExist: true });
 			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint(); }
 			if (isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — not reading it as text.'; }
@@ -285,7 +287,7 @@ async function runTool(tu, ctx) {
 			return body;
 		}
 		if (tu.name === 'search') {
-			ctx.post({ type: 'agentTool', icon: 'search', text: 'search "' + input.query + '"' });
+			ctx.post({ type: 'agentTool', icon: 'search', text: 'search "' + input.query + '"', label: input.explanation || '', kind: 'search' });
 			// Multi-root: search EVERY workspace folder, prefixing hits with the folder name so the
 			// model can hand the paths straight back to read_file/edit_file.
 			const folders = workspaceFolderList();

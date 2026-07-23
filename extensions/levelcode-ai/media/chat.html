@@ -1458,9 +1458,9 @@
     const cmds = steps.filter((s) => s.kind === 'cmd').length;
     const searches = steps.filter((s) => s.kind === 'search' || s.kind === 'list').length;
     const reads = of('read'), edits = of('edit'), creates = of('create'), dels = of('delete');
+    // File work leads, commands trail ("Read and edited extension.js, ran a command") — the reference
+    // ordering: what changed matters more than how many shells it took.
     const parts = [];
-    if (cmds){ parts.push('ran ' + cmds + (cmds === 1 ? ' command' : ' commands')); }
-    if (searches){ parts.push('searched the workspace'); }
     const readOnly = reads.filter((p) => edits.indexOf(p) < 0 && creates.indexOf(p) < 0);
     const readEdited = edits.filter((p) => reads.indexOf(p) >= 0);
     if (readEdited.length && !readOnly.length && readEdited.length === edits.length){
@@ -1471,19 +1471,28 @@
     }
     if (creates.length){ parts.push('created ' + files(creates)); }
     if (dels.length){ parts.push('deleted ' + files(dels)); }
+    if (searches){ parts.push('searched the workspace'); }
+    if (cmds){ parts.push('ran ' + (cmds === 1 ? 'a command' : cmds + ' commands')); }
     if (steps.some((s) => s.kind === 'verify')){ parts.push('verified the edits'); }
     if (!parts.length){ return steps.length === 1 ? '1 step' : steps.length + ' steps'; }
     const sentence = parts.join(', ');
     return sentence.charAt(0).toUpperCase() + sentence.slice(1);
   }
 
-  // Derive a step {kind, base, path} from an agentTool chip; anything unrecognized rides as a note.
-  function chipStep(icon, text){
+  // Derive a step {kind, base, path} from an agentTool chip. The host now sends `kind`/`path` and the
+  // model's own `label` (read_file/search explanation) — prefer that; fall back to parsing the legacy
+  // `text` so an older transcript (or a model that skipped the field) still groups sensibly.
+  function chipStep(icon, text, label, kind, path){
     const t = String(text || '');
-    if (icon === 'file' && /^read /.test(t)){ return { kind: 'read', base: 'Read ' + t.slice(5), path: t.slice(5) }; }
-    if (icon === 'search'){ return { kind: 'search', base: 'Search the workspace' }; }
-    if (icon === 'list-tree'){ return { kind: 'list', base: 'List files' }; }
-    return { kind: 'note', base: t };
+    const said = String(label || '').trim().replace(/\.+$/, '');
+    const titled = said ? said.charAt(0).toUpperCase() + said.slice(1) : '';
+    if (kind === 'read' || (icon === 'file' && /^read /.test(t))){
+      const p = path || t.slice(5);
+      return { kind: 'read', base: titled || ('Read ' + p), path: p };
+    }
+    if (kind === 'search' || icon === 'search'){ return { kind: 'search', base: titled || 'Search the workspace' }; }
+    if (icon === 'list-tree'){ return { kind: 'list', base: titled || 'List files' }; }
+    return { kind: 'note', base: titled || t };
   }
   // The label for a command step: the model's explanation (imperative, per the system prompt), or
   // the command's first segment as a fallback for older transcripts / weaker models.
@@ -1499,7 +1508,7 @@
     return (a || d) ? '<span class="a">+' + a + '</span> <span class="d">-' + d + '</span>' : '';
   }
   function openGroup(){
-    const wrap = document.createElement('div'); wrap.className = 'tl tl-cmd tl-group running collapsed';
+    const wrap = document.createElement('div'); wrap.className = 'tl tl-cmd tl-group running';
     wrap.innerHTML =
       '<div class="tl-rail"><span class="tl-node">' + codicon('sync') + '</span></div>'
       + '<div class="tl-body">'
@@ -1525,11 +1534,20 @@
     curGroup = g;
     return g;
   }
+  // Inside a group every member renders as a ONE-LINE row — its output/diff sits behind its own
+  // chevron, exactly like the reference. Ungrouped cards keep today's expanded-by-default behavior.
+  function collapseMember(el){
+    if (!el || !el.classList){ return; }
+    if (el.classList.contains('tl-cmd')){ el.classList.add('collapsed'); return; }
+    const det = el.querySelector && el.querySelector('details.diffwrap');
+    if (det){ det.open = false; }
+  }
   // Append a timeline element into the open group (opening one if needed). step=null rides along
   // without affecting the header (debug lines).
   function groupAppend(el, step){
     if (!groupsOn){ log.appendChild(el); return; }
     const g = curGroup || openGroup();
+    collapseMember(el);
     g.body.appendChild(el);
     if (step){ step.group = g; g.steps.push(step); refreshGroupHead(); }
   }
@@ -1550,7 +1568,13 @@
     if (!g.el.isConnected){ return; }
     if (!g.steps.length){ g.el.remove(); return; }
     if (g.steps.length === 1){
-      while (g.body.firstChild){ log.insertBefore(g.body.firstChild, g.el); }
+      // Degenerate group: hand the member back to the timeline bare — and un-collapse it, since a
+      // standalone card is expanded by default (it was only a one-line row for the group's sake).
+      while (g.body.firstChild){
+        const child = g.body.firstChild;
+        if (child.classList){ child.classList.remove('collapsed'); }
+        log.insertBefore(child, g.el);
+      }
       g.el.remove(); return;
     }
     g.closed = true;
@@ -1560,7 +1584,7 @@
     g.state.innerHTML = codicon(g.failed ? 'circle-slash' : 'check');
     g.state.className = 'cmdstate groupstate ' + (g.failed ? 'bad' : 'ok');
     g.stopBtn.hidden = true;
-    if (g.failed && !g.userToggled){ g.el.classList.remove('collapsed'); }
+    if (g.failed){ g.el.classList.remove('collapsed'); }
   }
   // Narration / user text / an interactive card ends the activity group.
   function closeGroup(){ const g = curGroup; if (!g){ return; } curGroup = null; finalizeGroup(g); }
@@ -1572,7 +1596,10 @@
     const g = step.group; if (!g){ return; }
     if (failed){
       g.failed = true;
-      if (g.el.isConnected && !g.userToggled){ g.el.classList.remove('collapsed'); }
+      // Collapse is for success (D4): surface the failing row's own output, and re-open the group
+      // if the user had collapsed it — a hidden failure is the one thing this UI must never do.
+      if (step.card && step.card.classList){ step.card.classList.remove('collapsed'); }
+      if (g.el.isConnected){ g.el.classList.remove('collapsed'); }
     }
     if (g.closed){ finalizeGroup(g); } else if (g === curGroup){ refreshGroupHead(); }
   }
@@ -1584,12 +1611,15 @@
   }
 
   // A tool action (read / edit / search …) — rendered as a light node on the activity timeline rail.
-  function addAgentLine(icon, text){
+  function addAgentLine(icon, text, label, kind, path){
     clearEmpty(); clearStatus();
+    const st = chipStep(icon, text, label, kind, path); st.status = 'done';
     const d = document.createElement('div'); d.className = 'tl tl-tool';
+    // Inside a group the row reads as the model's sentence ("Read the runAgent call site"); the raw
+    // tool text stays as the tooltip so the underlying path/query is never lost.
+    const shown = (groupsOn && st.base) ? st.base : String(text || '');
     d.innerHTML = '<div class="tl-rail"><span class="tl-node">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span></div>'
-      + '<div class="tl-body"><span class="toolt">' + esc(text || '') + '</span></div>';
-    const st = chipStep(icon, text); st.status = 'done';
+      + '<div class="tl-body"><span class="toolt" title="' + esc(text || '') + '">' + esc(shown) + '</span></div>';
     groupAppend(d, st);
     scrollIfStuck();
   }
@@ -2694,7 +2724,7 @@
     else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); }
     else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
     else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
-    else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text); }
+    else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text, m.label, m.kind, m.path); }
     else if (m.type === 'agentApproval'){ addApproval(m); }
     else if (m.type === 'agentQuestions'){ addQuestions(m); }
     else if (m.type === 'termRun'){ addTermRun(m); }

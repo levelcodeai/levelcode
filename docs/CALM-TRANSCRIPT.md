@@ -1,9 +1,13 @@
 # LevelCode — Calm narrative transcript (voice + grouped activity) — scope & plan
 
 The goal, in one sentence: make an agent run read like a colleague narrating their work — short
-prose between actions, and consecutive actions folded into one collapsed, expandable card whose
-header shows the *live* step while running and a past-tense aggregate ("Ran 2 commands, read and
-edited PLAN.md +56 −0") when done — instead of a flat scroll of chips and cards.
+prose between actions, and consecutive actions folded into one expandable card whose header shows
+the *live* step while running and a past-tense aggregate ("Read and edited PLAN.md +56 −0, ran 2
+commands") when done — instead of a flat scroll of chips and cards.
+
+The group card itself is never collapsed while it runs: its *members* collapse to one-line rows as
+they finish, so the live step's output stays readable at a fixed vertical footprint. Clause order
+in the aggregate is files first, commands last, matching the reference transcript.
 
 Reference behavior: Claude Code's transcript (screenshots in the design discussion, 2026-07-23).
 Two halves, shipped as separate slices: the **voice** (system prompt) and the **grouping** (webview).
@@ -77,17 +81,19 @@ rebase-safe, and revertable (one function + CSS).
 
 ### D5 — Two header states, exactly like the reference.
 While the group is open (agent still acting, no closing event yet): header = the **live** step's
-label in present-progressive + the working spinner; completed members are folded away — fixed
-vertical footprint while running. When the group closes: header flips to the past-tense
-**aggregate**: verb-category counts, same-file read+edit merged ("read and edited PLAN.md"),
-summed diffstat, fallback "N steps" when the sentence would get awkward. A single-member group
-renders the member bare — no group chrome.
+label in present-progressive + the working spinner. The *members* fold: each finished step
+collapses to a one-line row while the running one keeps its body open, so the footprint stays
+fixed without hiding the output the user is watching. The group card itself is never born
+collapsed. When the group closes: header flips to the past-tense **aggregate** — file clauses
+first, then searches, then commands ("Read and edited PLAN.md, ran 2 commands"), same-file
+read+edit merged, summed diffstat, fallback "N steps" when the sentence would get awkward. A
+single-member group unwraps and hands the card back **expanded** — no group chrome.
 
-### D6 — Labels: derived for file ops, model-written for commands.
-File ops derive labels from args + result ("Read PLAN.md", "Edited PLAN.md +56 −0"). For
-commands, `explanation` becomes effectively mandatory: schema text specifies "5–10 words, active
+### D6 — Labels: model-written, for every tool that has a story to tell.
+`run_command`, `read_file` and `search` all take a required `explanation`: "5–10 words, active
 voice, what it does — e.g. 'Find the insertion point in section 10'", and the voice rules require
-it. UI falls back to the first command segment when absent (older transcripts, weaker models).
+it. That sentence titles the row; the raw tool text (`read src/agent.js`) becomes the tooltip. UI
+falls back to deriving a label from the arguments when absent (older transcripts, weaker models).
 Tense: a small verb map (Run/Ran/Running, Read, Edit, Verify, Search, Create, Delete, Install,
 Check ~a dozen) converts imperative → progressive/past; unknown verbs render as-is. No grammar
 engine.
@@ -110,18 +116,19 @@ Rewrite `SYSTEM_BASE`'s communication rules in `agent.js`:
   change it — never a decision buried in prose.
 - Finish: a `Done:` line followed by a short structured wrap-up (what landed / how verified /
   what's next) for substantial runs; one line stays enough for trivial ones.
-- `run_command` MUST carry `explanation` (D6 wording).
+- `run_command`, `read_file` and `search` MUST carry `explanation` (D6 wording).
 Keep verbatim: decisiveness, words-are-not-edits, same-turn action, skills/plan/multi-root/
-autopilot blocks. Update `run_command`'s schema `explanation` description (D6).
+autopilot blocks. Update those three schemas' `explanation` descriptions (D6).
 *Test:* existing suites green (prompt text is data); manual acceptance below.
 
 **S2 — The group reducer (webview).** *(M)*
-In `chat.html`: `openGroup()/routeToGroup(el, meta)/closeGroup()`; route `addAgentLine`,
+In `chat.html`: `openGroup()/groupAppend(el, step)/closeGroup()`; route `addAgentLine`,
 `addTermRun`, `addEditCard`, verify cards through it; close on text bubble / approval / questions
 / error / `agentDone`. Group DOM: `.tl.tl-group` → header (chevron · label · Σdiffstat · state) +
-body (existing cards unchanged). D4 rules (breakout + auto-expand-on-failure). CSS for header +
-collapsed body.
-*Test:* extraction-pattern unit tests for the routing decisions where practical; manual.
+body (existing cards unchanged, each collapsed to a row by `collapseMember` once finished).
+D4 rules (breakout + auto-expand-on-failure). CSS for header + collapsed member rows.
+*Test:* `test/groupReducer.test.js` drives the real reducer functions against a zero-dep fake DOM —
+header states, member collapse, failure re-open, unwrap, late background exit, grouping-off.
 
 **S3 — Labels, aggregate, tense (pure functions + wiring).** *(M)*
 `stepLabel(meta)`, `groupAggregate(steps)`, `verbForms(label)` as extractable pure functions in
@@ -152,10 +159,11 @@ detail); single-member degenerate case; a settings escape hatch
 
 Run the acceptance task on a real repo (Claude model, agent mode, autopilot on):
 "add a section to docs/X.md, verify the edit landed cleanly, and check repo state".
-Pass when the transcript reads: short narration → **one collapsed card** titled with the live step
-while running ("Verifying the edit and checking repo state ⟳"), flipping on completion to
-"Ran 2 commands, read and edited X.md +N −0" → narration continues → a `Done:` wrap-up — and
-expanding the card shows the individual rows (semantic command labels, per-file diffstat), with
+Pass when the transcript reads: short narration → **one card** titled with the live step while
+running ("Verifying the edit and checking repo state ⟳"), its finished members folded to one-line
+rows beneath it while the running step's output stays visible, flipping on completion to
+"Read and edited X.md +N −0, ran 2 commands" → narration continues → a `Done:` wrap-up — and
+expanding a folded row shows its full output (semantic labels, per-file diffstat), with
 any approval card rendered outside the group and any failing step auto-expanded.
 Then re-run with grouping toggled off and confirm the flat timeline is unchanged.
 

@@ -70,13 +70,20 @@ test('lowercase labels keep their case', () => {
 
 // ── 2. groupAggregate: the collapsed summary sentence.
 const S = (kind, path) => ({ kind, path, base: '', status: 'done' });
-test('the reference sentence: commands + read-and-edited same file', () => {
+// Clause ORDER is load-bearing: file work leads, commands trail — matching the reference transcript
+// ("Read and edited extension.js, ran a command"). An earlier build inverted it and read wrong.
+test('the reference sentence: read-and-edited same file, then commands', () => {
 	assert.strictEqual(
 		groupAggregate([S('cmd'), S('cmd'), S('read', 'docs/PLAN.md'), S('edit', 'docs/PLAN.md')]),
-		'Ran 2 commands, read and edited PLAN.md');
+		'Read and edited PLAN.md, ran 2 commands');
 });
-test('singular command', () => {
-	assert.strictEqual(groupAggregate([S('cmd')]), 'Ran 1 command');
+test('the other reference sentence: 4 files then a single command', () => {
+	assert.strictEqual(
+		groupAggregate([S('read', 'a.js'), S('read', 'b.js'), S('read', 'c.js'), S('read', 'd.js'), S('cmd')]),
+		'Read 4 files, ran a command');
+});
+test('a lone command reads "a command", not "1 command"', () => {
+	assert.strictEqual(groupAggregate([S('cmd')]), 'Ran a command');
 });
 test('different files split into read/edited clauses', () => {
 	assert.strictEqual(groupAggregate([S('read', 'a.md'), S('edit', 'b.md')]), 'Read a.md, edited b.md');
@@ -91,19 +98,25 @@ test('repeat reads dedupe before folding', () => {
 });
 test('creates, deletes and verify get their clauses', () => {
 	assert.strictEqual(groupAggregate([S('create', 'x.js'), S('delete', 'y.js')]), 'Created x.js, deleted y.js');
-	assert.strictEqual(groupAggregate([S('cmd'), S('verify')]), 'Ran 1 command, verified the edits');
+	assert.strictEqual(groupAggregate([S('cmd'), S('verify')]), 'Ran a command, verified the edits');
 });
 test('searches summarize; notes alone fall back to a step count', () => {
-	assert.strictEqual(groupAggregate([S('search'), S('cmd')]), 'Ran 1 command, searched the workspace');
+	assert.strictEqual(groupAggregate([S('search'), S('cmd')]), 'Searched the workspace, ran a command');
 	assert.strictEqual(groupAggregate([S('note'), S('note')]), '2 steps');
 });
 
-// ── 3. chipStep: chips → steps.
-test('read chip carries its path', () => {
+// ── 3. chipStep: chips → steps. The model's own label wins; parsing `text` is the fallback.
+test('the model label titles the row (and carries the path for the aggregate)', () => {
+	assert.deepStrictEqual(
+		chipStep('file', 'read src/agent.js', 'read the runAgent call site.', 'read', 'src/agent.js'),
+		{ kind: 'read', base: 'Read the runAgent call site', path: 'src/agent.js' });
+});
+test('no label → derive from the legacy text (older transcripts still group)', () => {
 	assert.deepStrictEqual(chipStep('file', 'read docs/PLAN.md'), { kind: 'read', base: 'Read docs/PLAN.md', path: 'docs/PLAN.md' });
 });
 test('search and list chips get canonical bases; anything else is a note', () => {
 	assert.strictEqual(chipStep('search', 'search "foo"').kind, 'search');
+	assert.strictEqual(chipStep('search', 'search "foo"', 'find every postMessage call site').base, 'Find every postMessage call site');
 	assert.strictEqual(chipStep('list-tree', 'list_files **/*.js').base, 'List files');
 	assert.deepStrictEqual(chipStep('warning', 'response was cut off'), { kind: 'note', base: 'response was cut off' });
 });
