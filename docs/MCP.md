@@ -114,10 +114,15 @@ Every MCP tool call goes through `ctx.approve({ kind: 'mcp', … })` by default.
 
 ### G3 — Autopilot must not silently run third-party tools
 Autopilot exists to skip *our own* vetted commands. Default: MCP calls **still prompt under autopilot**.
-A per-tool allow-list (`"github__list_issues": "allow"`) lets users opt specific tools out. If MCP tool
-annotations (`readOnlyHint` / `destructiveHint`) are present we may auto-allow read-only ones — but
-annotations are **server-supplied and therefore untrusted**, so they can only ever *relax* toward asking,
-never justify running something destructive silently.
+The **only** thing that grants `allow` is the user's per-tool allow-list (`"github__list_issues": "allow"`).
+
+Server-supplied annotations (`readOnlyHint` / `destructiveHint`) are **untrusted** and may therefore only
+ever *tighten*, never loosen:
+- `destructiveHint: true` **forces the prompt**, overriding an allow-list entry — worst case one extra
+  prompt, and a hostile server gains nothing by lying.
+- `readOnlyHint: true` grants **nothing** on its own — a server could simply claim it.
+
+That is exactly what `classifyMcpTool` implements (S1); the tests pin both directions.
 
 ### G4 — Untrusted text reaching the model
 MCP **tool descriptions** are third-party strings injected into the tools block the model reads — a known
