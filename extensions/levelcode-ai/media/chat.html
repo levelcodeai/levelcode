@@ -76,6 +76,11 @@
   #jumpLatest:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.25)); }
   .msg { white-space: normal; word-wrap: break-word; line-height: 1.5; }
   .msg .role { font-size: 11px; opacity: .55; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+  /* a quiet remind-me line: a soft accent rule, small label, the words in a calm serif italic */
+  .rme { margin: 0 4px; padding: 10px 0 10px 14px; border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .rme .rme-tag { display: flex; align-items: center; gap: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 5px; }
+  .rme .rme-tag .ci { width: 12px; height: 12px; }
+  .rme .rme-body { font-family: Georgia, 'Times New Roman', ui-serif, serif; font-style: italic; font-size: 14.5px; line-height: 1.6; color: var(--vscode-foreground); }
   /* continuation narration: no second speaker label, and pulled up against the 12px log gap so the
      prose reads as one voice continuing rather than a fresh announcement */
   .msg.cont { margin-top: -5px; }
@@ -1437,6 +1442,21 @@
       + '<div class="body">' + html + '</div>';
     log.appendChild(d); scrollIfStuck(); return d.querySelector('.body');
   }
+  // A remind-me line. The words are kept out of the source as base64 and decoded only here, so
+  // they surface only when someone runs /rme — not to anyone scanning the file. UTF-8 aware decode
+  // (the text is Cyrillic), so atob's byte string is run back through TextDecoder.
+  var RME_B64 = '0KHQsNC80L7QtNC+0YHRgtCw0YLQvdGW0YHRgtGMLCDQt9Cx0YPQtNC+0LLQsNC90LAsINGJ0L7QsSDRg9C90LjQutC90YPRgtC4INC/0L7QutC40L3Rg9GC0L7RgdGC0ZYsIOKAlCDRhtC1INGB0LDQvNC1INGC0LUsINGJ0L4g0YLRgNC40LzQsNGUINC70Y7QtNC10Lkg0L3QsCDQstGW0LTRgdGC0LDQvdGWLg==';
+  function rmeText(){
+    try { return new TextDecoder().decode(Uint8Array.from(atob(RME_B64), function(c){ return c.charCodeAt(0); })); }
+    catch (e) { return ''; }
+  }
+  function addReminder(){
+    clearEmpty();
+    var d = document.createElement('div'); d.className = 'rme';
+    d.innerHTML = '<div class="rme-tag">' + codicon('sparkle') + ' Remind me</div>'
+                + '<div class="rme-body">' + esc(rmeText()) + '</div>';
+    log.appendChild(d); scrollIfStuck();
+  }
   function addAutoCtx(names){
     if (!names || !names.length) { return; }
     clearEmpty();
@@ -2461,6 +2481,7 @@
     histIdx = -1; histDraft = '';
     // Slash commands — handled locally (deterministic, no LLM call).
     if (/^\/skills\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); vscode.postMessage({ type: 'listSkills' }); return; }
+    if (/^\/rme\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); addReminder(); return; }
     add('user', render(t)); forceStick(); input.value = ''; auto();
     vscode.postMessage({ type: 'send', text: t });
   }
