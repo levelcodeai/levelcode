@@ -83,4 +83,33 @@ test('collapsing the ask_user card outranks the wizard rule that reveals a quest
 	assert.ok(override > wizardRule, 'the override must come later to win at equal specificity');
 });
 
+// The circle-check glyph is one icon shared by every "done" tick and the menu's selected mark.
+// Pin its shape and its reach so a refactor can't quietly drop it back to a bare check.
+test('the check-circle glyph is an outline: a ring AND a stroked tick', () => {
+	const m = /'check-circle':\s*\{[^}]*p:\s*'([^']*)'/.exec(html);
+	assert.ok(m, "IC no longer defines 'check-circle'");
+	const p = m[1];
+	assert.ok(/<circle[^>]*stroke="currentColor"/.test(p), 'the ring is drawn as a stroke');
+	assert.ok(/<path[^>]*fill="none"[^>]*stroke="currentColor"/.test(p), 'the tick is a stroked path, not a fill');
+});
+
+test('the menu selected-tick uses the circle-check, not a literal ✓', () => {
+	const ticks = html.match(/<span class="mocheck"[^>]*>/g) || [];
+	assert.ok(ticks.length >= 2, 'menu tick spans still present');
+	assert.ok(ticks.every((t) => /data-ico="check-circle"/.test(t)), 'every mocheck is painted from the glyph');
+	assert.ok(!/mocheck[^>]*>&#10003;/.test(html) && !/mocheck[^>]*>\s*✓/.test(html), 'no literal check left in the menu');
+	// and the paint pass is broad enough to reach them (not just .moico)
+	assert.ok(/querySelectorAll\('\[data-ico\]'\)[\s\S]{0,80}codicon\(/.test(html),
+		'the [data-ico] paint pass must cover .mocheck, not only .moico');
+});
+
+test('every status tick migrated — the only bare codicon(\'check\') left is the group rail node', () => {
+	// The group node is intentionally a bare check inside .tl-node (already a ring); a glyph-ring
+	// there would double up. Everything else must be the circle-check.
+	const bare = [...html.matchAll(/codicon\('check'\)/g)].length;
+	const nodeLine = /g\.node\.innerHTML = codicon\(g\.failed \? 'circle-slash' : 'check'\)/.test(html);
+	assert.strictEqual(bare, 0, "no plain codicon('check') should remain — use codicon('check-circle')");
+	assert.ok(nodeLine, 'the group rail node keeps its ternary check (it supplies its own ring)');
+});
+
 console.log('webviewCss: ' + n + ' tests passed');
