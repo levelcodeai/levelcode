@@ -76,6 +76,14 @@
   #jumpLatest:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.25)); }
   .msg { white-space: normal; word-wrap: break-word; line-height: 1.5; }
   .msg .role { font-size: 11px; opacity: .55; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+  /* a quiet remind-me line: a soft accent rule, small label, the words in a calm serif italic */
+  .rme { margin: 0 4px; padding: 10px 0 10px 14px; border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .rme .rme-tag { display: flex; align-items: center; gap: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 5px; }
+  .rme .rme-tag .ci { width: 12px; height: 12px; }
+  .rme .rme-body { font-family: Georgia, 'Times New Roman', ui-serif, serif; font-style: italic; font-size: 14.5px; line-height: 1.6; color: var(--vscode-foreground); }
+  /* continuation narration: no second speaker label, and pulled up against the 12px log gap so the
+     prose reads as one voice continuing rather than a fresh announcement */
+  .msg.cont { margin-top: -5px; }
   /* rendered-markdown block elements inside a message body */
   .msg .body p { margin: 0 0 8px; }
   .msg .body ul, .msg .body ol { margin: 0 0 8px; padding-left: 22px; }
@@ -93,12 +101,14 @@
   .msg .body th { background: var(--vscode-editorWidget-background, rgba(127,127,127,.1)); font-weight: 600; }
   .msg .body del { opacity: .65; }
   /* clickable file chips (mentions of real project files) */
-  .filechip { display: inline-flex; align-items: center; gap: 4px; vertical-align: -2px; margin: 0 1px; padding: 0 6px 0 3px; border: 1px solid var(--border); border-radius: 5px; background: var(--vscode-editorWidget-background, rgba(127,127,127,.1)); cursor: pointer; font-size: .92em; line-height: 1.7; }
+  /* vertical-align: middle centres the pill on the text's midline; the old -2px + line-height 1.7
+     dropped it below the baseline and inflated the line box, so it read as sitting too low. */
+  .filechip { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; margin: 0 1px; padding: 0 6px 0 3px; border: 1px solid var(--border); border-radius: 5px; background: var(--vscode-editorWidget-background, rgba(127,127,127,.1)); cursor: pointer; font-size: .92em; line-height: 1.2; }
   .filechip:hover { border-color: var(--accent); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.2)); }
   .filechip .fcname { color: var(--accent); }
   .filechip:hover .fcname { text-decoration: underline; }
   .filechip:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
-  .ficon { font-size: 8.5px; font-weight: 700; line-height: 1; padding: 2px 3px; border-radius: 3px; letter-spacing: .02em; color: #1f1f1f; background: #9aa0a6; }
+  .ficon { font-size: 8.5px; font-weight: 700; line-height: 1; padding: 1px 3px; border-radius: 3px; letter-spacing: .02em; color: #1f1f1f; background: #9aa0a6; }
   .ficon-js, .ficon-mjs, .ficon-cjs, .ficon-jsx { background: #f0db4f; color: #323330; }
   .ficon-ts, .ficon-tsx { background: #3178c6; color: #fff; }
   .ficon-css, .ficon-scss { background: #2965f1; color: #fff; }
@@ -107,6 +117,9 @@
   .ficon-json, .ficon-yml, .ficon-yaml { background: #cbcb41; color: #323330; }
   .ficon-py { background: #3572a5; color: #fff; }
   .ficon-rb { background: #cc342d; color: #fff; }
+  /* HTML files wear the HTML5 shield itself, not a text pill — so no pill chrome, just the mark */
+  .ficon.fhtml5 { background: none; padding: 0; border-radius: 0; display: inline-flex; }
+  .ficon.fhtml5 svg { display: block; width: 14px; height: 14px; }
   .msg .body > div > :last-child, .msg .body > p:last-child, .msg .body > ul:last-child, .msg .body > ol:last-child { margin-bottom: 0; }
   .msg.user .body { background: var(--field-bg); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
   .msg.assistant .body { padding: 1px 2px; }
@@ -261,11 +274,23 @@
   .tl-body { flex: 1 1 auto; min-width: 0; padding: 3px 0 8px; }
   /* light tool action (read / edit / search …) — a one-liner node */
   .tl-tool .tl-body { padding: 4px 0 6px; }
-  .tl-tool .toolt { display: block; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; color: var(--muted); line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* UI font, not the editor font: these rows carry the model's own sentence ("Understand how levels
+     are authored"), and monospace made prose read like a command line. */
+  .tl-tool .toolt { display: block; font-size: 12px; color: var(--muted); line-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* heavier command action — collapsible boxed card: header (chevron · verb · chips · state)
      → highlighted command → streamed output → status foot → italic why */
   .tl-cmd .tl-node { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--vscode-editor-background, var(--field-bg))); }
   .tl-cmd.running .tl-node { animation: nodepulse 2s ease-out infinite; }
+  /* A FINISHED group's node stops shouting: the accent fill was the "running" identity. Success
+     speaks the same quiet green as every other done tick (Kept, verified, command-ok); failure
+     takes the error colour. The ring goes neutral either way — no coloured circle competing with
+     the check inside it. */
+  /* the finished node's glyph (check-circle / circle-slash) brings its OWN ring, so drop the node's
+     border to avoid a double ring. The background stays to mask the rail line behind the node, and
+     the glyph grows to fill it. */
+  .tl-group.gok .tl-node { color: var(--vscode-terminal-ansiBrightGreen, #4ec97a); border-color: transparent; background: var(--vscode-editor-background, var(--field-bg)); }
+  .tl-group.gfailed .tl-node { color: var(--vscode-errorForeground, #f14c4c); border-color: transparent; background: var(--vscode-editor-background, var(--field-bg)); }
+  .tl-group.gok .tl-node .ci, .tl-group.gfailed .tl-node .ci { width: 18px; height: 18px; }
   @keyframes nodepulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
   .tl-cmd .cmdhead { display: flex; align-items: center; gap: 7px; min-width: 0; cursor: pointer; user-select: none; padding: 2px 0; }
   .tl-cmd .cmdchev { flex: 0 0 auto; display: inline-flex; color: var(--muted); }
@@ -282,6 +307,26 @@
   .tl-cmd .cmdstate .ci { width: 12px; height: 12px; }
   .tl-cmd .cmdstate.ok { color: var(--vscode-terminal-ansiBrightGreen, #4ec97a); }
   .tl-cmd .cmdstate.bad { color: var(--vscode-errorForeground, #f14c4c); }
+  /* ── Grouped activity (calm transcript) — consecutive tool actions fold into ONE collapsible card.
+     Open: the header shows the LIVE step (present-progressive) with a fixed vertical footprint; on
+     close it flips to a past-tense aggregate ("Ran 2 commands, read and edited chat.html +56 -0").
+     Members keep their own cards inside .groupbody; their rails hide so expanded rows read flat. */
+  .tl-group .grouplabel { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--vscode-foreground); }
+  .tl-group .grouphead:hover .grouplabel { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--muted); }
+  .tl-group .groupcounts { flex: 0 0 auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; }
+  .tl-group .groupcounts .a { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
+  .tl-group .groupcounts .d { color: var(--vscode-gitDecoration-deletedResourceForeground, #e06c75); }
+  .tl-group .groupstop { flex: 0 0 auto; display: inline-flex; align-items: center; border: none; background: none; color: var(--muted); cursor: pointer; padding: 2px; }
+  /* an explicit display beats the UA's [hidden] rule, so .hidden = true is inert without this —
+     same escape as #workbar[hidden] / .modemenu[hidden] above. A stop button that outlives its
+     command is worse than no button: it offers to stop something that already finished. */
+  .tl-group .groupstop[hidden] { display: none; }
+  .tl-group .groupstop:hover { color: var(--vscode-errorForeground, #f14c4c); }
+  .tl-group .groupstop .ci { width: 12px; height: 12px; }
+  .tl-group .groupbody { padding: 2px 0 0 4px; }
+  .tl-group.collapsed .groupbody { display: none; }
+  .tl-group .groupbody > .tl > .tl-rail { display: none; }
+  .tl-group .groupbody > .tl { margin: 0; }
   /* Copilot-style falling-dots progress — a 2×3 dot grid cascading downward while a command runs */
   .lcdots { display: inline-grid; grid-template-columns: repeat(2, 3px); gap: 2px; color: var(--accent); align-self: center; }
   .lcdots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: lcdotfall 1.1s ease-in-out infinite; }
@@ -397,6 +442,28 @@
   .questions .qsend:hover { background: var(--vscode-button-hoverBackground); }
   .questions .qverdict { font-size: 12px; font-weight: 600; color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
   .questions.answered { opacity: .92; }
+  /* ---- one question at a time ----
+     Several questions stacked in one card made it far too easy to answer the first, miss the rest
+     and hit send. In wizard mode exactly one block is on screen and the send button only appears on
+     the last one, so skipping a question has to be deliberate (the button says so). On submit the
+     wizard class comes off and every question + answer is revealed as a permanent record. */
+  .questions.wizard .qblock { display: none; }
+  .questions.wizard .qblock.cur { display: block; }
+  .questions.wizard .qnotes { display: none; }
+  .questions.wizard.laststep .qnotes { display: block; }
+  .questions .qstep { flex: 0 0 auto; font-size: 11px; font-weight: 600; opacity: .6; font-variant-numeric: tabular-nums; }
+  .questions .qback { cursor: pointer; border: 1px solid var(--border); border-radius: 6px; padding: 5px 11px; font-size: 12px;
+    background: transparent; color: var(--vscode-foreground); }
+  .questions .qback:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
+  .questions .qback[hidden] { display: none; }      /* explicit display above would defeat [hidden] */
+  /* nothing picked yet: the primary button steps down to a quiet "skip", so moving on is a choice */
+  .questions .qsend.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .questions .qsend.ghost:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); color: var(--vscode-foreground); }
+  .questions .qspacer { flex: 1 1 auto; }
+  /* Collapsing wins over the two rules above. `.questions.collapsed .qblock` is three classes and
+     would lose to `.questions.wizard .qblock.cur`, so the current question would survive a collapse.
+     These match at equal weight and come later, which settles it. */
+  .questions.collapsed .qblock.cur, .questions.collapsed.laststep .qnotes { display: none; }
 
   /* ---- applied-edit review (apply-then-review) ---- */
   /* Sits between the message log and the composer — sticky review summary for applied edits. */
@@ -916,12 +983,12 @@
             <button type="button" class="modeopt" role="option" data-agent="1">
               <span class="moico mono">&lt;/&gt;</span>
               <span class="motext"><span class="moname">Agent</span><span class="modesc">Edits files across your workspace</span></span>
-              <span class="mocheck">&#10003;</span>
+              <span class="mocheck" data-ico="check-circle"></span>
             </button>
             <button type="button" class="modeopt" role="option" data-agent="0">
               <span class="moico" aria-hidden="true"><svg class="ci" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2c3.31 0 6 2.24 6 5s-2.69 5-6 5c-.6 0-1.19-.07-1.74-.2L3.5 13.5l.66-2.3C3.13 10.3 2 8.77 2 7c0-2.76 2.69-5 6-5Z"/></svg></span>
               <span class="motext"><span class="moname">Chat</span><span class="modesc">Ask questions — no file edits</span></span>
-              <span class="mocheck">&#10003;</span>
+              <span class="mocheck" data-ico="check-circle"></span>
             </button>
           </div>
         </span>
@@ -948,12 +1015,12 @@
         <button type="button" class="modeopt" role="option" data-autopilot="0">
           <span class="moico" data-ico="shield" aria-hidden="true"></span>
           <span class="motext"><span class="moname">Default Approvals</span><span class="modesc">Asks before running each command</span></span>
-          <span class="mocheck">&#10003;</span>
+          <span class="mocheck" data-ico="check-circle"></span>
         </button>
         <button type="button" class="modeopt" role="option" data-autopilot="1">
           <span class="moico" data-ico="rocket" aria-hidden="true"></span>
           <span class="motext"><span class="moname">Autopilot</span><span class="modesc">Runs commands for you — only irreversible ones ask</span></span>
-          <span class="mocheck">&#10003;</span>
+          <span class="mocheck" data-ico="check-circle"></span>
         </button>
       </div>
     </span>
@@ -1089,6 +1156,10 @@
     'warning': { vb: '0 0 16 16', p: '<path d="M14.831 11.965L9.206 1.714C8.965 1.274 8.503 1 8 1C7.497 1 7.035 1.274 6.794 1.714L1.169 11.965C1.059 12.167 1 12.395 1 12.625C1 13.383 1.617 14 2.375 14H13.625C14.383 14 15 13.383 15 12.625C15 12.395 14.941 12.167 14.831 11.965ZM13.625 13H2.375C2.168 13 2 12.832 2 12.625C2 12.561 2.016 12.5 2.046 12.445L7.671 2.195C7.736 2.075 7.863 2 8 2C8.137 2 8.264 2.075 8.329 2.195L13.954 12.445C13.984 12.501 14 12.561 14 12.625C14 12.832 13.832 13 13.625 13ZM8.75 11.25C8.75 11.664 8.414 12 8 12C7.586 12 7.25 11.664 7.25 11.25C7.25 10.836 7.586 10.5 8 10.5C8.414 10.5 8.75 10.836 8.75 11.25ZM7.5 9V5.5C7.5 5.224 7.724 5 8 5C8.276 5 8.5 5.224 8.5 5.5V9C8.5 9.276 8.276 9.5 8 9.5C7.724 9.5 7.5 9.276 7.5 9Z"/>' },
     'edit': { vb: '0 0 16 16', p: '<path d="M14.236 1.76386C13.2123 0.740172 11.5525 0.740171 10.5289 1.76386L2.65722 9.63549C2.28304 10.0097 2.01623 10.4775 1.88467 10.99L1.01571 14.3755C0.971767 14.5467 1.02148 14.7284 1.14646 14.8534C1.27144 14.9783 1.45312 15.028 1.62432 14.9841L5.00978 14.1151C5.52234 13.9836 5.99015 13.7168 6.36433 13.3426L14.236 5.47097C15.2596 4.44728 15.2596 2.78755 14.236 1.76386ZM11.236 2.47097C11.8691 1.8378 12.8957 1.8378 13.5288 2.47097C14.162 3.10413 14.162 4.1307 13.5288 4.76386L12.75 5.54269L10.4571 3.24979L11.236 2.47097ZM9.75002 3.9569L12.0429 6.24979L5.65722 12.6355C5.40969 12.883 5.10023 13.0595 4.76117 13.1465L2.19447 13.8053L2.85327 11.2386C2.9403 10.8996 3.1168 10.5901 3.36433 10.3426L9.75002 3.9569Z"/>' },
     'check': { vb: '0 0 16 16', p: '<path d="M13.6572 3.13573C13.8583 2.9465 14.175 2.95614 14.3643 3.15722C14.5535 3.35831 14.5438 3.675 14.3428 3.86425L5.84277 11.8642C5.64597 12.0494 5.33756 12.0446 5.14648 11.8535L1.64648 8.35351C1.45121 8.15824 1.45121 7.84174 1.64648 7.64647C1.84174 7.45121 2.15825 7.45121 2.35351 7.64647L5.50976 10.8027L13.6572 3.13573Z"/>' },
+    // check-in-a-ring, drawn as strokes (fill:none overrides the svg-level fill=currentColor) — the
+    // outline look from the design: a thin ring with a rounded, slightly bolder tick. currentColor,
+    // so it inherits green in "done" contexts and the accent in the menu.
+    'check-circle': { vb: '0 0 16 16', p: '<circle cx="8" cy="8" r="6.35" fill="none" stroke="currentColor" stroke-width="1"/><path d="M5.05 8.25 L7 10.2 L11.15 5.85" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>' },
     'circle-slash': { vb: '0 0 16 16', p: '<path d="M11.8746 3.41833C9.51718 1.42026 5.98144 1.53327 3.75736 3.75736C1.53327 5.98144 1.42026 9.51719 3.41833 11.8746L11.8746 3.41833ZM12.5817 4.12543L4.12543 12.5817C6.48282 14.5797 10.0186 14.4667 12.2426 12.2426C14.4667 10.0186 14.5797 6.48282 12.5817 4.12543ZM3.05025 3.05025C5.78392 0.316582 10.2161 0.316582 12.9497 3.05025C15.6834 5.78392 15.6834 10.2161 12.9497 12.9497C10.2161 15.6834 5.78392 15.6834 3.05025 12.9497C0.316583 10.2161 0.316582 5.78392 3.05025 3.05025Z"/>' },
     'stop-circle': { vb: '0 0 16 16', p: '<path d="M6 5C5.44772 5 5 5.44772 5 6V10C5 10.5523 5.44772 11 6 11H10C10.5523 11 11 10.5523 11 10V6C11 5.44772 10.5523 5 10 5H6ZM1 8C1 4.13401 4.13401 1 8 1C11.866 1 15 4.13401 15 8C15 11.866 11.866 15 8 15C4.13401 15 1 11.866 1 8ZM8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14C11.3137 14 14 11.3137 14 8C14 4.68629 11.3137 2 8 2Z"/>' },
     'shield': { vb: '0 0 16 16', p: '<path d="M9.25 7.25C9.25 7.76258 8.94148 8.2031 8.5 8.39599V9.50358C8.5 9.77973 8.27614 10.0036 8 10.0036C7.72386 10.0036 7.5 9.77973 7.5 9.50358V8.39599C7.05852 8.2031 6.75 7.76258 6.75 7.25C6.75 6.55964 7.30964 6 8 6C8.69036 6 9.25 6.55964 9.25 7.25ZM7.14309 2.04175C6.78097 2.2883 6.21583 2.61563 5.42482 2.91681C4.6399 3.21566 3.90375 3.36204 3.36353 3.43333C3.09405 3.46889 2.87509 3.48554 2.72547 3.49331C2.6507 3.49719 2.5934 3.49885 2.55593 3.49954L2.50489 3.50003C2.37157 3.49872 2.24323 3.55072 2.14842 3.64449C2.05344 3.73841 2 3.86643 2 4V6.75508C2 9.40779 3.4013 11.8632 5.68525 13.2124L7.74707 14.4305C7.90399 14.5232 8.09891 14.5232 8.2558 14.4304L10.3162 13.2126C12.5993 11.8632 14 9.40823 14 6.7561V4C14 3.86598 13.9462 3.73757 13.8507 3.64358C13.7552 3.54964 13.626 3.49794 13.4921 3.50007L13.4421 3.49981C13.4048 3.49928 13.3478 3.49787 13.2735 3.49426C13.1246 3.48705 12.9066 3.47109 12.6384 3.43602C12.1006 3.36573 11.3679 3.21959 10.5869 2.91771C9.79733 2.61248 9.22913 2.28442 8.86335 2.03774C8.68039 1.91435 8.54795 1.81124 8.46371 1.74141C8.4256 1.70981 8.38768 1.6777 8.35191 1.64343C8.2576 1.55073 8.13037 1.49913 7.99807 1.50001C7.86585 1.50089 7.73916 1.55434 7.64611 1.64819L7.53744 1.74536C7.45475 1.81517 7.32423 1.91842 7.14309 2.04175ZM3 6.75508V4.47725C3.14066 4.46608 3.30705 4.44945 3.49436 4.42473C4.09055 4.34605 4.90577 4.18447 5.78065 3.85136C6.64943 3.52057 7.28362 3.15585 7.70588 2.86835C7.82102 2.78996 7.92034 2.71735 8.00434 2.65277C8.08878 2.71677 8.18861 2.78886 8.30421 2.86682C8.72757 3.15233 9.362 3.51631 10.2264 3.85045C11.0994 4.18794 11.9134 4.34976 12.5088 4.42759C12.6947 4.45189 12.86 4.46809 13 4.47888V6.7561C13 9.05461 11.7861 11.1822 9.80736 12.3518L8.00133 13.4192L6.19388 12.3515C4.21446 11.1821 3 9.0541 3 6.75508Z"/>' },
@@ -1186,9 +1257,17 @@
     if (t.indexOf('/') >= 0){ const hit = list.find(function(r){ return r === t || r.endsWith('/' + t); }); return hit || null; }
     return list[0];   // bare basename → first known path (click still resolves the real one)
   }
+  // The HTML5 shield — the two-tone orange badge with the white "5". Its own colours, so it doesn't
+  // sit inside a coloured pill; used for .html/.htm in place of the "HTML" text badge.
+  const HTML5_SHIELD = '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    + '<path d="M2.4 1.3 13.6 1.3 12.58 13.1 7.99 14.7 3.42 13.1Z" fill="#e44d26"/>'
+    + '<path d="M8 2.55 8 13.62 11.7 12.32 12.55 2.55Z" fill="#f16529"/>'
+    + '<path d="M4.36 3.9 11.64 3.9 11.5 5.4 5.86 5.4 5.98 6.85 11.37 6.85 10.98 11.15 8 12.0 5.02 11.15 4.82 9.0 6.28 9.0 6.38 10.1 8 10.55 9.62 10.1 9.79 8.25 4.72 8.25Z" fill="#fff"/>'
+    + '</svg>';
   function fileIcon(rel){
     const ext = (rel.split('.').pop() || '').toLowerCase();
-    const map = { js:'JS', mjs:'JS', cjs:'JS', jsx:'JS', ts:'TS', tsx:'TS', css:'CSS', scss:'CSS', html:'HTML', htm:'HTML', md:'MD', json:'JSON', py:'PY', rb:'RB', sh:'SH', go:'GO', rs:'RS', yml:'YML', yaml:'YML' };
+    if (ext === 'html' || ext === 'htm'){ return '<span class="ficon fhtml5" title="HTML" aria-label="HTML">' + HTML5_SHIELD + '</span>'; }
+    const map = { js:'JS', mjs:'JS', cjs:'JS', jsx:'JS', ts:'TS', tsx:'TS', css:'CSS', scss:'CSS', md:'MD', json:'JSON', py:'PY', rb:'RB', sh:'SH', go:'GO', rs:'RS', yml:'YML', yaml:'YML' };
     const lbl = map[ext] || (ext ? ext.toUpperCase().slice(0, 4) : 'FILE');
     return '<span class="ficon ficon-' + esc(ext) + '">' + esc(lbl) + '</span>';
   }
@@ -1348,7 +1427,7 @@
     btn.title = 'Copy this response'; btn.innerHTML = codicon('copy') + ' Copy';
     btn.onclick = () => {
       vscode.postMessage({ type: 'copy', text: raw });
-      btn.innerHTML = codicon('check') + ' Copied'; btn.classList.add('done');
+      btn.innerHTML = codicon('check-circle') + ' Copied'; btn.classList.add('done');
       try { clearTimeout(btn._t); } catch(e){}
       btn._t = setTimeout(() => { btn.innerHTML = codicon('copy') + ' Copy'; btn.classList.remove('done'); }, 1200);
     };
@@ -1367,11 +1446,35 @@
       b.onclick = () => { const inp = document.getElementById('input'); if (!inp) { return; } inp.value = b.dataset.q || ''; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.focus(); };
     });
   })();
+  // ONE speaker label per turn. A run narrates several times around its tool cards; stamping
+  // "LEVELCODE AI" over each block chopped one train of thought into four announcements. The
+  // continuation blocks flow as prose (tighter gap, no label) — the way a person keeps talking.
+  let turnLabeled = false;
   function add(role, html){
     clearEmpty();
-    const d = document.createElement('div'); d.className = 'msg ' + role;
-    d.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'LevelCode AI') + '</div><div class="body">' + html + '</div>';
+    closeGroup();   // narration / user text ends the activity group (calm transcript)
+    if (role === 'user'){ turnLabeled = false; }
+    const cont = role !== 'user' && turnLabeled;
+    if (role !== 'user'){ turnLabeled = true; }
+    const d = document.createElement('div'); d.className = 'msg ' + role + (cont ? ' cont' : '');
+    d.innerHTML = (cont ? '' : '<div class="role">' + (role === 'user' ? 'You' : 'LevelCode AI') + '</div>')
+      + '<div class="body">' + html + '</div>';
     log.appendChild(d); scrollIfStuck(); return d.querySelector('.body');
+  }
+  // A remind-me line. The words are kept out of the source as base64 and decoded only here, so
+  // they surface only when someone runs /rme — not to anyone scanning the file. UTF-8 aware decode
+  // (the text is Cyrillic), so atob's byte string is run back through TextDecoder.
+  var RME_B64 = '0KHQsNC80L7QtNC+0YHRgtCw0YLQvdGW0YHRgtGMLCDQt9Cx0YPQtNC+0LLQsNC90LAsINGJ0L7QsSDRg9C90LjQutC90YPRgtC4INC/0L7QutC40L3Rg9GC0L7RgdGC0ZYsIOKAlCDRhtC1INGB0LDQvNC1INGC0LUsINGJ0L4g0YLRgNC40LzQsNGUINC70Y7QtNC10Lkg0L3QsCDQstGW0LTRgdGC0LDQvdGWLg==';
+  function rmeText(){
+    try { return new TextDecoder().decode(Uint8Array.from(atob(RME_B64), function(c){ return c.charCodeAt(0); })); }
+    catch (e) { return ''; }
+  }
+  function addReminder(){
+    clearEmpty();
+    var d = document.createElement('div'); d.className = 'rme';
+    d.innerHTML = '<div class="rme-tag">' + codicon('sparkle') + ' Remind me</div>'
+                + '<div class="rme-body">' + esc(rmeText()) + '</div>';
+    log.appendChild(d); scrollIfStuck();
   }
   function addAutoCtx(names){
     if (!names || !names.length) { return; }
@@ -1386,16 +1489,251 @@
     let data = '';
     if (m.data != null){ try { data = ' ' + JSON.stringify(m.data); } catch(e){ data = ' [unserializable]'; } }
     d.innerHTML = codicon('bug') + esc(' DEBUG [' + ts + '] ' + (m.label || '') + data);
-    log.appendChild(d); scrollIfStuck();
+    (groupsOn && curGroup ? curGroup.body : log).appendChild(d);   // ride inside an open activity group
+    scrollIfStuck();
   }
   function clearStatus(){ if (agentStatusEl){ agentStatusEl.remove(); agentStatusEl = null; } }
+
+  // ── Calm transcript (docs/CALM-TRANSCRIPT.md): consecutive tool activity folds into ONE
+  // collapsible group. The reducer lives entirely in the webview — the extension host posts the
+  // same events as ever; assistant/user text, approvals, questions, errors and run-end CLOSE the
+  // open group. While open the header shows the LIVE step; on close, a past-tense aggregate.
+  let groupsOn = true;              // levelcode.ai.chat.groupActivity (arrives on the config message)
+  let curGroup = null;              // open group state, or null
+  const termSteps = {};             // run id → step (a command's exit updates its group later)
+  const editSteps = {};             // edit id → step (re-renders update the counts in place)
+  const verifySteps = {};           // verify id → step
+
+  // Convert an imperative action label to present-progressive (form 0: "Verifying the edit and
+  // checking repo state") or past (form 1: "Verified the edit and checked repo state"). Verbs
+  // convert at the start and after "and"/"then"/a comma; unknown words pass through. Pure —
+  // unit-tested from the shipped file (test/narrativeUi.test.js), like shHighlight.
+  function tenseLabel(label, form){
+    const VERBS = {
+      run: ['Running', 'Ran'], read: ['Reading', 'Read'], edit: ['Editing', 'Edited'],
+      write: ['Writing', 'Wrote'], create: ['Creating', 'Created'], delete: ['Deleting', 'Deleted'],
+      search: ['Searching', 'Searched'], list: ['Listing', 'Listed'], verify: ['Verifying', 'Verified'],
+      check: ['Checking', 'Checked'], find: ['Finding', 'Found'], install: ['Installing', 'Installed'],
+      build: ['Building', 'Built'], test: ['Testing', 'Tested'], fix: ['Fixing', 'Fixed'],
+      update: ['Updating', 'Updated'], add: ['Adding', 'Added'], remove: ['Removing', 'Removed'],
+      start: ['Starting', 'Started'], stop: ['Stopping', 'Stopped'], apply: ['Applying', 'Applied'],
+      generate: ['Generating', 'Generated'], confirm: ['Confirming', 'Confirmed'], commit: ['Committing', 'Committed'],
+      push: ['Pushing', 'Pushed'], open: ['Opening', 'Opened'], compile: ['Compiling', 'Compiled'],
+      rename: ['Renaming', 'Renamed'], move: ['Moving', 'Moved'], count: ['Counting', 'Counted'],
+      grep: ['Grepping', 'Grepped'], clean: ['Cleaning', 'Cleaned'], download: ['Downloading', 'Downloaded']
+    };
+    const out = [];
+    let slot = true;
+    for (const w of String(label || '').split(' ')){
+      const bare = w.toLowerCase().replace(/[^a-z]/g, '');
+      const rep = slot && VERBS[bare] ? VERBS[bare][form] : null;
+      if (rep){ out.push(/^[a-z]/.test(w) ? rep.toLowerCase() : rep); slot = false; continue; }
+      out.push(w);
+      slot = bare === 'and' || bare === 'then' || /,$/.test(w);
+    }
+    return out.join(' ');
+  }
+
+  // One past-tense sentence for a finished group: "Ran 2 commands, read and edited PLAN.md".
+  // Verb-category counts, same-file read+edit folded, >2 files become "N files". Pure.
+  function groupAggregate(steps){
+    const uniq = (list) => list.filter((p, i) => list.indexOf(p) === i);
+    const short = (p) => String(p).split('/').pop();
+    const files = (list) => list.length > 2 ? (list.length + ' files') : list.map(short).join(', ');
+    const of = (kind) => uniq(steps.filter((s) => s.kind === kind && s.path).map((s) => s.path));
+    const cmds = steps.filter((s) => s.kind === 'cmd').length;
+    const searches = steps.filter((s) => s.kind === 'search').length;
+    const lists = steps.filter((s) => s.kind === 'list').length;   // listing files ≠ searching content
+    const reads = of('read'), edits = of('edit'), creates = of('create'), dels = of('delete');
+    // File work leads, commands trail ("Read and edited extension.js, ran a command") — the reference
+    // ordering: what changed matters more than how many shells it took.
+    const parts = [];
+    const readOnly = reads.filter((p) => edits.indexOf(p) < 0 && creates.indexOf(p) < 0);
+    const readEdited = edits.filter((p) => reads.indexOf(p) >= 0);
+    if (readEdited.length && !readOnly.length && readEdited.length === edits.length){
+      parts.push('read and edited ' + files(readEdited));
+    } else {
+      if (readOnly.length){ parts.push('read ' + files(readOnly)); }
+      if (edits.length){ parts.push('edited ' + files(edits)); }
+    }
+    if (creates.length){ parts.push('created ' + files(creates)); }
+    if (dels.length){ parts.push('deleted ' + files(dels)); }
+    if (searches){ parts.push('searched the workspace'); }
+    if (lists){ parts.push('listed files'); }
+    if (cmds){ parts.push('ran ' + (cmds === 1 ? 'a command' : cmds + ' commands')); }
+    if (steps.some((s) => s.kind === 'verify')){ parts.push('verified the edits'); }
+    if (!parts.length){ return steps.length === 1 ? '1 step' : steps.length + ' steps'; }
+    const sentence = parts.join(', ');
+    return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+  }
+
+  // Derive a step {kind, base, path} from an agentTool chip. The host now sends `kind`/`path` and the
+  // model's own `label` (read_file/search explanation) — prefer that; fall back to parsing the legacy
+  // `text` so an older transcript (or a model that skipped the field) still groups sensibly.
+  function chipStep(icon, text, label, kind, path){
+    const t = String(text || '');
+    const said = String(label || '').trim().replace(/\.+$/, '');
+    const titled = said ? said.charAt(0).toUpperCase() + said.slice(1) : '';
+    if (kind === 'read' || (icon === 'file' && /^read /.test(t))){
+      const p = path || t.slice(5);
+      return { kind: 'read', base: titled || ('Read ' + p), path: p };
+    }
+    if (kind === 'search' || icon === 'search'){ return { kind: 'search', base: titled || 'Search the workspace' }; }
+    if (icon === 'list-tree'){ return { kind: 'list', base: titled || 'List files' }; }
+    return { kind: 'note', base: titled || t };
+  }
+  // The label for a command step: the model's explanation (imperative, per the system prompt), or
+  // the command's first segment as a fallback for older transcripts / weaker models.
+  function cmdBase(m){
+    const ex = String(m.explanation || '').trim().replace(/\.+$/, '');
+    if (ex){ return ex.charAt(0).toUpperCase() + ex.slice(1); }
+    const seg = String(m.command || '').split(/\n+|\s*&&\s*|\s*;\s*/).map((s) => s.trim()).filter(Boolean)[0] || 'command';
+    return 'Run `' + (seg.length > 48 ? seg.slice(0, 48) + '…' : seg) + '`';
+  }
+  function groupCountsHtml(g){
+    let a = 0, d = 0;
+    for (const s of g.steps){ a += s.add || 0; d += s.del || 0; }
+    return (a || d) ? '<span class="a">+' + a + '</span> <span class="d">-' + d + '</span>' : '';
+  }
+  function openGroup(){
+    const wrap = document.createElement('div'); wrap.className = 'tl tl-cmd tl-group running';
+    wrap.innerHTML =
+      '<div class="tl-rail"><span class="tl-node">' + codicon('sync') + '</span></div>'
+      + '<div class="tl-body">'
+        + '<div class="grouphead cmdhead" title="Expand / collapse">'
+          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
+          + '<span class="grouplabel"></span>'
+          + '<span class="groupcounts"></span>'
+          + '<button class="groupstop" hidden title="Stop the running command">' + codicon('stop-circle') + '</button>'
+          + '<span class="cmdstate groupstate running">' + LC_DOTS + '</span>'
+        + '</div>'
+        + '<div class="groupbody"></div>'
+      + '</div>';
+    log.appendChild(wrap);
+    const g = {
+      el: wrap, body: wrap.querySelector('.groupbody'), label: wrap.querySelector('.grouplabel'),
+      counts: wrap.querySelector('.groupcounts'), state: wrap.querySelector('.groupstate'),
+      node: wrap.querySelector('.tl-node'),
+      stopBtn: wrap.querySelector('.groupstop'), steps: [], failed: false, closed: false, userToggled: false
+    };
+    wrap.querySelector('.grouphead').onclick = (e) => {
+      if (e.target && e.target.closest && e.target.closest('.groupstop')) { return; }
+      g.userToggled = true; wrap.classList.toggle('collapsed');
+    };
+    curGroup = g;
+    return g;
+  }
+  // Inside a group every member renders as a ONE-LINE row — its output/diff sits behind its own
+  // chevron, exactly like the reference. Ungrouped cards keep today's expanded-by-default behavior.
+  function collapseMember(el){
+    if (!el || !el.classList){ return; }
+    if (el.classList.contains('tl-cmd')){ el.classList.add('collapsed'); return; }
+    const det = el.querySelector && el.querySelector('details.diffwrap');
+    if (det){ det.open = false; }
+  }
+  // Append a timeline element into the open group (opening one if needed). step=null rides along
+  // without affecting the header (debug lines).
+  function groupAppend(el, step){
+    if (!groupsOn){ log.appendChild(el); return; }
+    const g = curGroup || openGroup();
+    // A RUNNING member stays expanded so its live output is readable — that is the whole point of
+    // the fixed-footprint header. Finished/instantaneous members (chips, an already-exited command)
+    // fold to a one-line row now; a running one folds later, in groupStepDone, once it completes.
+    if (!step || step.status !== 'running'){ collapseMember(el); }
+    g.body.appendChild(el);
+    if (step){ step.group = g; g.steps.push(step); refreshGroupHead(); }
+  }
+  function refreshGroupHead(){
+    const g = curGroup; if (!g){ return; }
+    let live = null;
+    for (let i = g.steps.length - 1; i >= 0; i--){ if (g.steps[i].status === 'running'){ live = g.steps[i]; break; } }
+    const s = live || g.steps[g.steps.length - 1];
+    if (s){ g.label.textContent = tenseLabel(s.base, s.status === 'running' ? 0 : 1); }
+    g.counts.innerHTML = groupCountsHtml(g);
+    const stopEl = live && live.card && live.card.querySelector('.termstop');
+    g.stopBtn.hidden = !stopEl;
+    g.stopBtn.onclick = stopEl ? ((e) => { e.stopPropagation(); stopEl.click(); }) : null;
+  }
+  // Finalize a group's header (aggregate label, ok/bad state). A single-member group unwraps —
+  // the member rejoins the timeline bare, no group chrome.
+  function finalizeGroup(g){
+    if (!g.el.isConnected){ return; }
+    if (!g.steps.length){ g.el.remove(); return; }
+    if (g.steps.length === 1){
+      // Degenerate group: hand the member back to the timeline bare — and un-collapse it, since a
+      // standalone card is expanded by default (it was only a one-line row for the group's sake).
+      while (g.body.firstChild){
+        const child = g.body.firstChild;
+        if (child.classList){ child.classList.remove('collapsed'); }
+        log.insertBefore(child, g.el);
+      }
+      g.el.remove(); return;
+    }
+    g.closed = true;
+    // A member may still be running when narration closes the group (a background command). Don't
+    // claim the group is finished or hide the Stop control — keep the live chrome and let that
+    // member's own groupStepDone re-enter here to complete the group once it actually exits.
+    if (g.steps.some((s) => s.status === 'running')){
+      g.el.classList.remove('collapsed');   // never hide a command that is still going
+      refreshGroupHead();
+      return;
+    }
+    g.el.classList.remove('running');
+    g.el.classList.add(g.failed ? 'gfailed' : 'gok');   // recolours the rail node — see .tl-group.gok
+    g.label.textContent = groupAggregate(g.steps);
+    g.counts.innerHTML = groupCountsHtml(g);
+    // ONE outcome glyph, in the rail. While running the rail carried a spinner and the head carried
+    // dots; a finished group must not go on wearing either. The rail states the outcome, so the
+    // trailing state clears on success and speaks up only when something failed.
+    if (g.node){ g.node.innerHTML = codicon(g.failed ? 'circle-slash' : 'check-circle'); }
+    g.state.innerHTML = g.failed ? codicon('circle-slash') : '';
+    g.state.className = 'cmdstate groupstate ' + (g.failed ? 'bad' : 'ok');
+    g.stopBtn.hidden = true;
+    // A finished, successful group folds to its one-line summary — that fold IS the calm payoff.
+    // It was born expanded so the running step stayed readable; nobody needs the finished rows in
+    // the way afterwards. Failures stay open, and a group the user opened by hand keeps their choice.
+    if (g.failed){ g.el.classList.remove('collapsed'); }
+    else if (!g.userToggled){ g.el.classList.add('collapsed'); }
+  }
+  // Narration / user text / an interactive card ends the activity group.
+  function closeGroup(){ const g = curGroup; if (!g){ return; } curGroup = null; finalizeGroup(g); }
+  // A member finished after registration (command exit, verify done) — possibly after its group
+  // closed (background commands). Failures auto-expand: collapse is for success (D4).
+  function groupStepDone(step, failed){
+    if (!step){ return; }
+    step.status = failed ? 'fail' : 'done';
+    const g = step.group; if (!g){ return; }
+    if (failed){
+      g.failed = true;
+      // Collapse is for success (D4): surface the failing row's own output, and re-open the group
+      // if the user had collapsed it — a hidden failure is the one thing this UI must never do.
+      if (step.card && step.card.classList){ step.card.classList.remove('collapsed'); }
+      if (g.el.isConnected){ g.el.classList.remove('collapsed'); }
+    } else {
+      // Success: the step is done, so it folds to a one-line row (it stayed expanded while running).
+      collapseMember(step.card);
+    }
+    if (g.closed){ finalizeGroup(g); } else if (g === curGroup){ refreshGroupHead(); }
+  }
+  function groupStepCounts(step, a, d){
+    if (!step){ return; }
+    step.add = a; step.del = d;
+    const g = step.group; if (!g){ return; }
+    if (g.closed){ finalizeGroup(g); } else if (g === curGroup){ refreshGroupHead(); }
+  }
+
   // A tool action (read / edit / search …) — rendered as a light node on the activity timeline rail.
-  function addAgentLine(icon, text){
+  function addAgentLine(icon, text, label, kind, path){
     clearEmpty(); clearStatus();
+    const st = chipStep(icon, text, label, kind, path); st.status = 'done';
     const d = document.createElement('div'); d.className = 'tl tl-tool';
+    // Inside a group the row reads as the model's sentence ("Read the runAgent call site"); the raw
+    // tool text stays as the tooltip so the underlying path/query is never lost.
+    const shown = (groupsOn && st.base) ? st.base : String(text || '');
     d.innerHTML = '<div class="tl-rail"><span class="tl-node">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span></div>'
-      + '<div class="tl-body"><span class="toolt">' + esc(text || '') + '</span></div>';
-    log.appendChild(d); scrollIfStuck();
+      + '<div class="tl-body"><span class="toolt" title="' + escAttr(text || '') + '">' + esc(shown) + '</span></div>';
+    groupAppend(d, st);
+    scrollIfStuck();
   }
   // Drives the persistent working bar (not an inline log element), so the indicator can't be cleared into
   // a gap by an intervening tool card or bubble. The bar's visibility is owned by setStreaming.
@@ -1435,6 +1773,7 @@
   let pendingApproval = null;   // { done } while a decision is awaited — Enter approves, Esc skips
   function addApproval(m){
     clearEmpty(); clearStatus(); agentBubble = null;
+    closeGroup();   // a blocking gate never hides inside a collapsed group (D4)
     const card = document.createElement('div'); card.className = 'tl tl-cmd tl-ask asking';
     const isDelete = m.kind === 'delete';
     const segs = String(m.command || '').split(/\n+|\s*&&\s*|\s*;\s*/).map(s => s.trim()).filter(Boolean);
@@ -1473,7 +1812,7 @@
       card.querySelector('.tl-body').innerHTML =
         '<div class="cmdhead"><span class="cmdverb">' + (approved ? 'Approved' : 'Skipped') + '</span>'
         + '<span class="cmdchips">' + chips + '</span>'
-        + '<span class="cmdstate ' + (approved ? 'ok' : 'bad') + '">' + codicon(approved ? 'check' : 'circle-slash') + '</span></div>';
+        + '<span class="cmdstate ' + (approved ? 'ok' : 'bad') + '">' + codicon(approved ? 'check-circle' : 'circle-slash') + '</span></div>';
       // Deciding is user intent to continue (like send), so re-engage auto-scroll for the run output
       // that follows — by here `stuck` is usually false, since reading the command scrolls the log up.
       // Must run after the collapse above, not before: that shrink clamps scrollTop down on its own,
@@ -1562,7 +1901,10 @@
         + '</div>'
         + (m.explanation ? '<div class="cmdwhy">' + esc(m.explanation) + '</div>' : '')
       + '</div>';
-    log.appendChild(card); scrollIfStuck();
+    const st = { kind: 'cmd', base: cmdBase(m), status: 'running', card: card };
+    termSteps[m.id] = st;
+    groupAppend(card, st);
+    scrollIfStuck();
     termCards[m.id] = card;
     card.querySelector('.cmdhead').onclick = () => card.classList.toggle('collapsed');
     const sb = card.querySelector('.termstop'); if (sb) { sb.onclick = () => { sb.disabled = true; sb.textContent = 'stopping…'; vscode.postMessage({ type: 'stopCommand', id: m.id }); }; }
@@ -1575,19 +1917,30 @@
     scrollIfStuck();
   }
   function termExitFinish(m){
-    const card = termCards[m.id]; if (!card) { return; }
-    const st = card.querySelector('.termstatus'); if (!st) { return; }
+    // Even if the card is gone (checkpoint restore / prune), still settle the group step and drop
+    // the step map entry — otherwise termSteps leaks and holds a stale group reference all session.
+    const card = termCards[m.id];
+    if (!card || !card.querySelector('.termstatus')){
+      if (termSteps[m.id]){ groupStepDone(termSteps[m.id], m.how === 'timeout' || (m.how !== 'stopped' && m.code !== 0)); delete termSteps[m.id]; }
+      delete termCards[m.id];
+      return;
+    }
+    const st = card.querySelector('.termstatus');
     const dur = (typeof m.ms === 'number') ? (m.ms >= 1000 ? (m.ms / 1000).toFixed(1) + 's' : m.ms + 'ms') : '';
     let icon, text, cls;
     if (m.how === 'stopped'){ icon = 'circle-slash'; text = 'stopped'; cls = 'bad'; }
     else if (m.how === 'timeout'){ icon = 'warning'; text = 'timed out'; cls = 'bad'; }
-    else { const ok = m.code === 0; icon = ok ? 'check' : 'circle-slash'; text = 'exit ' + m.code; cls = ok ? 'ok' : 'bad'; }
+    else { const ok = m.code === 0; icon = ok ? 'check-circle' : 'circle-slash'; text = 'exit ' + m.code; cls = ok ? 'ok' : 'bad'; }
     st.innerHTML = codicon(icon) + ' ' + text + (dur ? ' · ' + dur : '');
     st.className = 'termstatus ' + cls;
     card.classList.remove('running');                     // stops the node pulse
     const verb = card.querySelector('.cmdverb'); if (verb) { verb.textContent = 'Ran'; }
     const state = card.querySelector('.cmdstate'); if (state) { state.innerHTML = codicon(icon); state.className = 'cmdstate ' + cls; }
     const sb = card.querySelector('.termstop'); if (sb) { sb.remove(); }
+    // Group bookkeeping: a user-stop is a choice, not a failure — only timeouts and nonzero exits
+    // mark the group failed (and auto-expand it).
+    groupStepDone(termSteps[m.id], m.how === 'timeout' || (m.how !== 'stopped' && m.code !== 0));
+    delete termSteps[m.id];
     delete termCards[m.id];
     scrollIfStuck();
   }
@@ -1608,7 +1961,10 @@
         + (m.command ? '<button class="termstop" title="Stop verification">' + codicon('stop-circle') + ' Stop</button>' : '')
         + '</div>'
       + '</div>';
-    log.appendChild(card); scrollIfStuck();
+    const st = { kind: 'verify', base: 'Verify the edits', status: 'running', card: card };
+    verifySteps[m.id] = st;
+    groupAppend(card, st);
+    scrollIfStuck();
     verifyCards[m.id] = card;
     const sb = card.querySelector('.termstop'); if (sb) { sb.onclick = () => { sb.disabled = true; sb.textContent = 'stopping…'; vscode.postMessage({ type: 'stopCommand', id: m.id }); }; }
   }
@@ -1626,7 +1982,7 @@
       st.innerHTML = codicon('warning') + ' verify command couldn’t run — check settings';
       st.className = 'termstatus';   // neutral: it’s a config issue, not a code failure
     } else if (m.ok){
-      st.innerHTML = codicon('check') + ' verified — no problems';
+      st.innerHTML = codicon('check-circle') + ' verified — no problems';
       st.className = 'termstatus ok';
     } else if (m.exhausted){
       st.innerHTML = codicon('warning') + ' still failing — left for you to review';
@@ -1638,6 +1994,10 @@
       st.innerHTML = codicon('circle-slash') + ' ' + (bits.join(' · ') || 'failed') + ' — fixing…';
       st.className = 'termstatus bad';
     }
+    // Group bookkeeping: ok and unrunnable (a config issue, not the agent's code) close clean;
+    // a real verify failure marks the group failed and auto-expands it.
+    groupStepDone(verifySteps[m.id], !(m.ok || m.unrunnable));
+    delete verifySteps[m.id];
     delete verifyCards[m.id];
     scrollIfStuck();
   }
@@ -1689,13 +2049,18 @@
   }
   function addQuestions(m){
     clearEmpty(); clearStatus(); agentBubble = null;
+    closeGroup();   // interactive questions render at top level, never inside a group (D4)
     const qs = m.questions || [];
     const state = qs.map((q) => ({ multi: !!q.multiSelect, sel: new Set() }));
-    const card = document.createElement('div'); card.className = 'questions';
+    // One question on screen at a time. Stacked, they invited answering the first and sending with
+    // the rest untouched. A single question needs no step chrome, so it keeps the plain card.
+    const wizard = qs.length > 1;
+    let step = 0;
+    const card = document.createElement('div'); card.className = 'questions' + (wizard ? ' wizard' : '');
     let h = '<div class="qhead"><span class="qtoggle" title="Collapse / expand">' + codicon('chevron-down') + '</span>'
           + '<span class="qtitle">' + codicon('question') + ' A few quick decisions — click to choose</span></div>';
     qs.forEach((q, qi) => {
-      h += '<div class="qblock">';
+      h += '<div class="qblock' + (wizard && qi === 0 ? ' cur' : '') + '" data-qi="' + qi + '">';
       if (q.header){ h += '<div class="qtag">' + esc(q.header) + (q.multiSelect ? ' · pick any' : '') + '</div>'; }
       h += '<div class="qtext">' + esc(q.question || '') + '</div><div class="qopts">';
       (q.options || []).forEach((o, oi) => {
@@ -1708,13 +2073,31 @@
       h += '</div></div>';
     });
     h += '<textarea class="qnotes" rows="2" placeholder="Anything else? (optional)"></textarea>';
-    h += '<div class="qbtns"><button class="qsend">Send answers</button></div>';
+    h += '<div class="qbtns"><button class="qback" hidden>Back</button><button class="qsend">Send answers</button>'
+       + '<span class="qspacer"></span><span class="qstep"></span></div>';
     card.innerHTML = h;
     log.appendChild(card); scrollIfStuck();
 
     // Collapse/expand the whole panel by clicking its header (chevron rotates).
     const qhead = card.querySelector('.qhead');
     if (qhead) { qhead.onclick = () => card.classList.toggle('collapsed'); }
+
+    const sendBtn = card.querySelector('.qsend');
+    const backBtn = card.querySelector('.qback');
+    const stepEl = card.querySelector('.qstep');
+    // Only the last step sends. Before that the primary button advances — and when nothing is
+    // picked it says so plainly, so a question is never passed over by accident.
+    function render(){
+      if (!wizard){ return; }
+      card.querySelectorAll('.qblock').forEach((b) => { b.classList.toggle('cur', +b.dataset.qi === step); });
+      const last = step === qs.length - 1;
+      card.classList.toggle('laststep', last);
+      backBtn.hidden = step === 0;
+      stepEl.textContent = (step + 1) + ' of ' + qs.length;
+      const picked = state[step].sel.size > 0;
+      sendBtn.textContent = last ? 'Send answers' : (picked ? 'Next question' : 'Skip this one');
+      sendBtn.classList.toggle('ghost', !last && !picked);
+    }
 
     card.querySelectorAll('.qopt').forEach((btn) => {
       btn.onclick = () => {
@@ -1724,33 +2107,54 @@
         card.querySelectorAll('.qopt[data-q="' + qi + '"]').forEach((b) => {
           b.classList.toggle('sel', st.sel.has(+b.dataset.o));
         });
+        render();
       };
     });
-    card.querySelector('.qsend').onclick = () => {
+    backBtn.onclick = () => { if (step > 0){ step--; render(); } };
+    sendBtn.onclick = () => {
+      if (wizard && step < qs.length - 1){ step++; render(); scrollIfStuck(); return; }
       const answers = qs.map((q, qi) => ({
         header: q.header || '', question: q.question || '',
         selected: [...state[qi].sel].sort((a, b) => a - b).map((oi) => ((q.options || [])[oi] || {}).label || '')
       }));
       const notes = card.querySelector('.qnotes').value.trim();
       vscode.postMessage({ type: 'questionsResponse', id: m.id, answers, notes });
-      card.classList.add('answered');                                   // freeze as a visible record
+      // Answered and out of the way: the card folds to a single "Answers recorded" line so the
+      // transcript moves on, and unfolds to the full record — every question with what was picked.
+      card.classList.add('answered', 'collapsed');
+      card.classList.remove('wizard');
       card.querySelectorAll('.qopt').forEach((b) => { b.disabled = true; });
       card.querySelector('.qnotes').disabled = true;
-      card.querySelector('.qbtns').innerHTML = '<span class="qverdict">' + codicon('check') + ' Answers recorded</span>';
+      const title = card.querySelector('.qtitle');
+      if (title){ title.innerHTML = codicon('check-circle') + ' Answers recorded — click to review'; }
+      card.querySelector('.qbtns').innerHTML = '<span class="qverdict">' + codicon('check-circle') + ' Answers recorded</span>';
     };
+    render();
   }
 
   // Non-blocking applied-edit card (the agent already changed the file; you review after).
   function addEditCard(m){
     clearEmpty(); clearStatus(); agentBubble = null;
     let card = editCards[m.id];
-    let wasOpen = true;
+    // A NEW edit card inside a group starts as a one-line row (diff closed); ungrouped it keeps
+    // today's open-diff default. (collapseMember can't close the diff at groupAppend time because the
+    // card's innerHTML isn't built yet, so the default has to be right here.) A re-render preserves
+    // whatever open/closed state the user last left it in.
+    let wasOpen = !groupsOn;
     if (!card){
       card = document.createElement('div'); card.className = 'editcard';
-      editCards[m.id] = card; log.appendChild(card);
+      editCards[m.id] = card;
+      const st = {
+        kind: m.deleted ? 'delete' : (m.exists ? 'edit' : 'create'),
+        base: (m.deleted ? 'Delete ' : (m.exists ? 'Edit ' : 'Create ')) + m.path,
+        path: m.path, status: 'done'
+      };
+      editSteps[m.id] = st;
+      groupAppend(card, st);
     } else {
       const prev = card.querySelector('details.diffwrap'); if (prev) { wasOpen = prev.open; } // preserve user's collapse state
     }
+    groupStepCounts(editSteps[m.id], m.deleted ? 0 : (m.add || 0), m.del || 0);
     if (m.deleted){
       // A delete_file shows as its own card — not an all-red diff. Keep = confirm, Recreate = undo.
       const dn = m.del || 0;
@@ -1791,12 +2195,13 @@
     const isDel = card.classList.contains('deletedcard');
     const map = isDel
       ? { kept: codicon('trash') + ' Deleted', undone: codicon('circle-slash') + ' Recreated' }
-      : { kept: codicon('check') + ' Kept', undone: codicon('circle-slash') + ' Undid', 'kept-user-edited': codicon('edit') + ' Kept (you edited it)' };
+      : { kept: codicon('check-circle') + ' Kept', undone: codicon('circle-slash') + ' Undid', 'kept-user-edited': codicon('edit') + ' Kept (you edited it)' };
     const btns = card.querySelector('.abtns');
-    if (btns){ btns.innerHTML = '<span class="verdict">' + (map[m.verdict] || (isDel ? codicon('trash') + ' Deleted' : codicon('check') + ' Kept')) + '</span>'; }
+    if (btns){ btns.innerHTML = '<span class="verdict">' + (map[m.verdict] || (isDel ? codicon('trash') + ' Deleted' : codicon('check-circle') + ' Kept')) + '</span>'; }
     const det = card.querySelector('details.diffwrap'); if (det) { det.open = false; } // collapse so resolved cards don't stack tall
     card.classList.add('resolved');
     delete editCards[m.id];
+    delete editSteps[m.id];   // release the group step ref alongside the card (no unbounded growth)
   }
   // ---- context-window usage: always-visible footer stat + a warning bar when it fills ----
   const ctxBar = document.getElementById('ctxBar');
@@ -1980,7 +2385,7 @@
     let items = '';
     for (const t of todos){
       const st = t.status === 'done' ? 'done' : t.status === 'in_progress' ? 'doing' : 'todo';
-      const ic = st === 'done' ? codicon('check') : st === 'doing' ? codicon('sync') : codicon('circle');
+      const ic = st === 'done' ? codicon('check-circle') : st === 'doing' ? codicon('sync') : codicon('circle');
       items += '<div class="pitem ' + st + '"><span class="pic">' + ic + '</span><span class="ptitle">' + esc(t.title) + '</span></div>';
     }
     const head = '<div class="phead"><span class="ptoggle">' + codicon('chevron-down') + '</span>'
@@ -2024,6 +2429,7 @@
 
   // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · $cost · $left.
   function addAgentDone(reason, edits, credits, maxSteps, costMicros){
+    closeGroup();   // the run is over — finalize any open activity group
     const bar = document.createElement('div'); bar.className = 'agentbar';
     // Stamp the model that produced THIS turn, so a later reaction is attributed to it
     // (not whatever the plan is entitled to at click time — models can change mid-session).
@@ -2122,6 +2528,7 @@
     histIdx = -1; histDraft = '';
     // Slash commands — handled locally (deterministic, no LLM call).
     if (/^\/skills\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); vscode.postMessage({ type: 'listSkills' }); return; }
+    if (/^\/rme\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); addReminder(); return; }
     add('user', render(t)); forceStick(); input.value = ''; auto();
     vscode.postMessage({ type: 'send', text: t });
   }
@@ -2137,8 +2544,9 @@
   const approvalsLabel = document.getElementById('approvalsLabel');
   const approvalsIco = document.getElementById('approvalsIco');
   let autopilotOn = false;
-  // Paint the menu option glyphs from the codicon set once (shield / rocket).
-  approvalsMenu.querySelectorAll('.moico[data-ico]').forEach((s) => { s.innerHTML = codicon(s.getAttribute('data-ico')); });
+  // Paint every menu glyph from the codicon set once — option icons (shield / rocket) and the
+  // selected-tick (check-circle) in both the approvals and mode menus.
+  document.querySelectorAll('[data-ico]').forEach((s) => { s.innerHTML = codicon(s.getAttribute('data-ico')); });
   function syncApprovalsMenu(){
     approvalsMenu.querySelectorAll('.modeopt').forEach((b) => {
       b.classList.toggle('active', (b.getAttribute('data-autopilot') === '1') === autopilotOn);
@@ -2267,7 +2675,7 @@
         + upgradeBtn
         + '<button class="abtn" data-act="manage">Manage account</button>'
         + '<button class="abtn" data-act="signout">Sign out</button>'
-        + '<div class="synced">' + codicon('check') + ' Synced: settings · skills · keymaps</div>'
+        + '<div class="synced">' + codicon('check-circle') + ' Synced: settings · skills · keymaps</div>'
         + privacyNote(gateway);
     } else {
       acctCard.classList.add('lc-modal'); // signed-out → the calm LevelCode sign-in modal
@@ -2406,12 +2814,16 @@
     let wrap = u.querySelector('.ckwrap'); if (!wrap){ wrap = document.createElement('div'); wrap.className = 'ckwrap'; u.appendChild(wrap); }
     renderRestoreIdle(wrap, turnId, fileCount);
   }
-  function pruneDetached(map){ for (const k in map){ const el = map[k]; if (el && !log.contains(el)){ delete map[k]; } } }
+  // Drop entries whose DOM is gone. Works for card maps (value IS the element) and step maps (value
+  // is a {card} object) — a checkpoint restore removes the cards, so their step state must go too.
+  function pruneDetached(map){ for (const k in map){ const v = map[k]; const el = (v && v.nodeType) ? v : (v && v.card); if (!el || !log.contains(el)){ delete map[k]; } } }
   function applyCheckpointRestored(m){
     const u = ckBubble(m.turnId); if (!u){ return; }
     let n = u.nextSibling; while (n){ const next = n.nextSibling; n.remove(); n = next; }   // drop this turn's output + every later turn
     const wrap = u.querySelector('.ckwrap'); if (wrap){ wrap.innerHTML = '<span class="ckmuted">' + REVERT + ' Restored to here · ' + (m.filesRestored || 0) + ' file' + (m.filesRestored === 1 ? '' : 's') + ' reverted</span>'; }
     pruneDetached(editCards); pruneDetached(termCards); pruneDetached(verifyCards);
+    pruneDetached(editSteps); pruneDetached(termSteps); pruneDetached(verifySteps);
+    if (curGroup && !log.contains(curGroup.el)){ curGroup = null; }   // don't append into a removed group
     agentBubble = null; agentRaw = ''; setStreaming(false); forceStick();
   }
   function checkpointBusyNotice(m){
@@ -2446,6 +2858,9 @@
       if (typeof m.contextLimit === 'number'){ renderContext({ limit: m.contextLimit }); }
       lastProvider = m.provider || '';
       lastModelId = m.modelId || m.model || '';   // gateway sends modelId (the real id); BYOK model IS the id
+      // calm-transcript toggle. Turning it OFF mid-run closes any open group first, so the timeline
+      // returns to fully flat immediately instead of leaving one stray group behind.
+      if (typeof m.groupActivity === 'boolean'){ if (!m.groupActivity){ closeGroup(); } groupsOn = m.groupActivity; }
       renderRouting();
     }
     else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
@@ -2468,11 +2883,11 @@
     else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
     else if (m.type === 'mode'){ applyMode(!!m.agent); }
     else if (m.type === 'autopilot'){ applyAutopilot(!!m.on); }
-    else if (m.type === 'agentStart'){ setStreaming(true); agentBubble = null; agentRaw = ''; renderPlan([]); setAgentStatus('thinking…'); }
+    else if (m.type === 'agentStart'){ closeGroup(); setStreaming(true); agentBubble = null; agentRaw = ''; turnLabeled = false; renderPlan([]); setAgentStatus('thinking…'); }
     else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); }
     else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
     else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
-    else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text); }
+    else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text, m.label, m.kind, m.path); }
     else if (m.type === 'agentApproval'){ addApproval(m); }
     else if (m.type === 'agentQuestions'){ addQuestions(m); }
     else if (m.type === 'termRun'){ addTermRun(m); }
@@ -2497,14 +2912,20 @@
     else if (m.type === 'debug'){ addDebug(m); }
     else if (m.type === 'account'){ renderAccount(m); if (m.open) openAccount(); }
     else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
-    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); const cap = capReachedInfo(m.message); if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
+    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); closeGroup(); const cap = capReachedInfo(m.message); if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
     else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps, m.costMicros); setStreaming(false); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
+      // Wiping the log detaches any open group; drop the dangling refs so the next run starts clean —
+      // otherwise groupAppend() appends into a disconnected .groupbody (nothing shows), and a stale
+      // turnLabeled makes the first assistant line render as an unlabeled continuation.
+      curGroup = null; turnLabeled = false;
       selLabel = null; ctxFiles = []; renderChips();
-      for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } for (const k in verifyCards) { delete verifyCards[k]; } for (const k in bgTasks) { delete bgTasks[k]; } renderBgTasks(); updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
+      for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } for (const k in verifyCards) { delete verifyCards[k]; } for (const k in bgTasks) { delete bgTasks[k]; }
+      for (const k in editSteps) { delete editSteps[k]; } for (const k in termSteps) { delete termSteps[k]; } for (const k in verifySteps) { delete verifySteps[k]; }   // step maps ride with their cards
+      renderBgTasks(); updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
       pending = ''; shown = ''; doneSignaled = false; flushAll = false; current = null; setStreaming(false);
       forceStick();
     }
