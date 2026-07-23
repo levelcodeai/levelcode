@@ -88,6 +88,7 @@ function newHarness(groupsOn) {
 	log.__root = true;
 	const sandbox = {};
 	const preamble = 'let curGroup = null; let groupsOn = ' + (groupsOn === false ? 'false' : 'true') + ';\n'
+		+ 'let turnLabeled = false;\n'
 		+ 'const LC_DOTS = "<dots>";\n'
 		+ 'const codicon = (n) => "<i:" + n + ">";\n'
 		+ 'const esc = (s) => String(s == null ? "" : s);\n'
@@ -97,9 +98,9 @@ function newHarness(groupsOn) {
 		+ [
 			'tenseLabel', 'groupAggregate', 'chipStep', 'cmdBase', 'groupCountsHtml', 'openGroup',
 			'collapseMember', 'groupAppend', 'refreshGroupHead', 'finalizeGroup', 'closeGroup',
-			'groupStepDone', 'groupStepCounts', 'addAgentLine'
+			'groupStepDone', 'groupStepCounts', 'addAgentLine', 'add'
 		].map(extract).join('\n')
-		+ '\nthis.api = { openGroup, groupAppend, closeGroup, groupStepDone, groupStepCounts, addAgentLine, get curGroup(){ return curGroup; } };';
+		+ '\nthis.api = { openGroup, groupAppend, closeGroup, groupStepDone, groupStepCounts, addAgentLine, add, get curGroup(){ return curGroup; } };';
 	new Function('document', 'log', src).call(sandbox, { createElement: (t) => new El(t) }, log);
 	return { log, api: /** @type {any} */ (sandbox).api };
 }
@@ -129,9 +130,38 @@ test('header flips to the past-tense aggregate when the group closes', () => {
 	const g = h.api.curGroup;
 	h.api.groupStepCounts(g.steps[1], 3, 1);
 	h.api.groupStepDone(g.steps[2], false);
+	assert.ok(!g.el.classList.contains('collapsed'), 'stays open while it runs');
 	h.api.closeGroup();
 	assert.strictEqual(g.label.textContent, 'Read and edited extension.js, ran a command');
 	assert.ok(/\+3/.test(g.counts.innerHTML) && /-1/.test(g.counts.innerHTML), 'summed diffstat in the header');
+	// The fold IS the payoff: a finished group is ONE line, not a header plus every finished row.
+	assert.ok(g.el.classList.contains('collapsed'), 'a successful group folds to its summary line');
+	assert.ok(/i:check/.test(g.node.innerHTML), 'rail states the outcome');
+	assert.ok(!/i:sync/.test(g.node.innerHTML), 'and stops wearing the running spinner');
+});
+
+test('a group the user opened by hand keeps their choice when it closes', () => {
+	const h = newHarness();
+	const a = card('tl tl-cmd'), b = card('tl tl-cmd');
+	h.api.groupAppend(a, { kind: 'cmd', base: 'Run one', status: 'done', card: a });
+	h.api.groupAppend(b, { kind: 'cmd', base: 'Run two', status: 'done', card: b });
+	const g = h.api.curGroup;
+	g.userToggled = true;                       // they clicked the header mid-run
+	h.api.closeGroup();
+	assert.ok(!g.el.classList.contains('collapsed'), 'auto-fold never overrides a deliberate click');
+});
+
+test('a FAILED group closes open, so the problem is on screen', () => {
+	const h = newHarness();
+	const a = card('tl tl-cmd'), b = card('tl tl-cmd');
+	h.api.groupAppend(a, { kind: 'cmd', base: 'Run one', status: 'done', card: a });
+	const step = { kind: 'cmd', base: 'Run two', status: 'running', card: b };
+	h.api.groupAppend(b, step);
+	const g = h.api.curGroup;
+	h.api.groupStepDone(step, true);
+	h.api.closeGroup();
+	assert.ok(!g.el.classList.contains('collapsed'), 'failures never fold away');
+	assert.ok(/circle-slash/.test(g.node.innerHTML), 'rail marks the failure');
 });
 
 // ── 2. members are one-line rows; a failure re-opens its row ───────────────────────────────────
@@ -167,7 +197,8 @@ test('a user-stopped command is NOT a failure', () => {
 	const g = h.api.curGroup;
 	h.api.groupStepDone(step, false);           // termExitFinish passes false for how === 'stopped'
 	h.api.closeGroup();
-	assert.ok(/i:check/.test(g.state.innerHTML), 'group still closes clean');
+	assert.ok(/i:check/.test(g.node.innerHTML), 'group still closes clean');
+	assert.strictEqual(g.state.innerHTML, '', 'no second glyph trailing the header');
 });
 
 // ── 3. degenerate + late-exit lifecycles ───────────────────────────────────────────────────────
@@ -224,6 +255,36 @@ test('the model label titles the row; the raw tool text stays as the tooltip', (
 	const row = h.api.curGroup.body.children[0];
 	assert.ok(/Read the runAgent call site/.test(row.innerHTML), 'row shows the model sentence');
 	assert.ok(/title="read src\/agent\.js"/.test(row.innerHTML), 'raw text preserved as the tooltip');
+});
+
+// ── 5. one speaker label per turn ──────────────────────────────────────────────────────────────
+// A run narrates repeatedly around its tool cards. Re-stamping "LEVELCODE AI" over every block is
+// what made the transcript read as four announcements instead of one person thinking out loud.
+const roleOf = (el) => (/class="role">([^<]*)</.exec(el.innerHTML) || [, null])[1];
+
+test('the first narration of a turn is labelled; the rest flow as prose', () => {
+	const h = newHarness();
+	h.api.add('user', 'do the thing');
+	h.api.add('assistant', 'Let me look at the repo first.');
+	h.api.add('assistant', 'I have enough context now.');
+	h.api.add('assistant', 'Done: created the file.');
+	const [u, first, second, third] = h.log.children;
+	assert.strictEqual(roleOf(u), 'You');
+	assert.strictEqual(roleOf(first), 'LevelCode AI', 'the turn announces itself once');
+	assert.strictEqual(roleOf(second), null, 'continuation carries no second label');
+	assert.strictEqual(roleOf(third), null);
+	assert.ok(!first.classList.contains('cont') && second.classList.contains('cont'),
+		'continuations are marked so CSS can tighten the gap');
+});
+
+test('a new user message re-arms the label', () => {
+	const h = newHarness();
+	h.api.add('user', 'first ask');
+	h.api.add('assistant', 'working…');
+	h.api.add('assistant', 'still working…');
+	h.api.add('user', 'second ask');
+	h.api.add('assistant', 'on it');
+	assert.strictEqual(roleOf(h.log.children[4]), 'LevelCode AI', 'the next turn is labelled again');
 });
 
 console.log('groupReducer: ' + n + ' tests passed');

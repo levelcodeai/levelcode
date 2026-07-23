@@ -76,6 +76,9 @@
   #jumpLatest:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.25)); }
   .msg { white-space: normal; word-wrap: break-word; line-height: 1.5; }
   .msg .role { font-size: 11px; opacity: .55; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+  /* continuation narration: no second speaker label, and pulled up against the 12px log gap so the
+     prose reads as one voice continuing rather than a fresh announcement */
+  .msg.cont { margin-top: -5px; }
   /* rendered-markdown block elements inside a message body */
   .msg .body p { margin: 0 0 8px; }
   .msg .body ul, .msg .body ol { margin: 0 0 8px; padding-left: 22px; }
@@ -261,7 +264,9 @@
   .tl-body { flex: 1 1 auto; min-width: 0; padding: 3px 0 8px; }
   /* light tool action (read / edit / search …) — a one-liner node */
   .tl-tool .tl-body { padding: 4px 0 6px; }
-  .tl-tool .toolt { display: block; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; color: var(--muted); line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* UI font, not the editor font: these rows carry the model's own sentence ("Understand how levels
+     are authored"), and monospace made prose read like a command line. */
+  .tl-tool .toolt { display: block; font-size: 12px; color: var(--muted); line-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* heavier command action — collapsible boxed card: header (chevron · verb · chips · state)
      → highlighted command → streamed output → status foot → italic why */
   .tl-cmd .tl-node { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--vscode-editor-background, var(--field-bg))); }
@@ -1383,11 +1388,19 @@
       b.onclick = () => { const inp = document.getElementById('input'); if (!inp) { return; } inp.value = b.dataset.q || ''; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.focus(); };
     });
   })();
+  // ONE speaker label per turn. A run narrates several times around its tool cards; stamping
+  // "LEVELCODE AI" over each block chopped one train of thought into four announcements. The
+  // continuation blocks flow as prose (tighter gap, no label) — the way a person keeps talking.
+  let turnLabeled = false;
   function add(role, html){
     clearEmpty();
     closeGroup();   // narration / user text ends the activity group (calm transcript)
-    const d = document.createElement('div'); d.className = 'msg ' + role;
-    d.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'LevelCode AI') + '</div><div class="body">' + html + '</div>';
+    if (role === 'user'){ turnLabeled = false; }
+    const cont = role !== 'user' && turnLabeled;
+    if (role !== 'user'){ turnLabeled = true; }
+    const d = document.createElement('div'); d.className = 'msg ' + role + (cont ? ' cont' : '');
+    d.innerHTML = (cont ? '' : '<div class="role">' + (role === 'user' ? 'You' : 'LevelCode AI') + '</div>')
+      + '<div class="body">' + html + '</div>';
     log.appendChild(d); scrollIfStuck(); return d.querySelector('.body');
   }
   function addAutoCtx(names){
@@ -1525,6 +1538,7 @@
     const g = {
       el: wrap, body: wrap.querySelector('.groupbody'), label: wrap.querySelector('.grouplabel'),
       counts: wrap.querySelector('.groupcounts'), state: wrap.querySelector('.groupstate'),
+      node: wrap.querySelector('.tl-node'),
       stopBtn: wrap.querySelector('.groupstop'), steps: [], failed: false, closed: false, userToggled: false
     };
     wrap.querySelector('.grouphead').onclick = (e) => {
@@ -1581,10 +1595,18 @@
     g.el.classList.remove('running');
     g.label.textContent = groupAggregate(g.steps);
     g.counts.innerHTML = groupCountsHtml(g);
-    g.state.innerHTML = codicon(g.failed ? 'circle-slash' : 'check');
+    // ONE outcome glyph, in the rail. While running the rail carried a spinner and the head carried
+    // dots; a finished group must not go on wearing either. The rail states the outcome, so the
+    // trailing state clears on success and speaks up only when something failed.
+    if (g.node){ g.node.innerHTML = codicon(g.failed ? 'circle-slash' : 'check'); }
+    g.state.innerHTML = g.failed ? codicon('circle-slash') : '';
     g.state.className = 'cmdstate groupstate ' + (g.failed ? 'bad' : 'ok');
     g.stopBtn.hidden = true;
+    // A finished, successful group folds to its one-line summary — that fold IS the calm payoff.
+    // It was born expanded so the running step stayed readable; nobody needs the finished rows in
+    // the way afterwards. Failures stay open, and a group the user opened by hand keeps their choice.
     if (g.failed){ g.el.classList.remove('collapsed'); }
+    else if (!g.userToggled){ g.el.classList.add('collapsed'); }
   }
   // Narration / user text / an interactive card ends the activity group.
   function closeGroup(){ const g = curGroup; if (!g){ return; } curGroup = null; finalizeGroup(g); }
@@ -2720,7 +2742,7 @@
     else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
     else if (m.type === 'mode'){ applyMode(!!m.agent); }
     else if (m.type === 'autopilot'){ applyAutopilot(!!m.on); }
-    else if (m.type === 'agentStart'){ closeGroup(); setStreaming(true); agentBubble = null; agentRaw = ''; renderPlan([]); setAgentStatus('thinking…'); }
+    else if (m.type === 'agentStart'){ closeGroup(); setStreaming(true); agentBubble = null; agentRaw = ''; turnLabeled = false; renderPlan([]); setAgentStatus('thinking…'); }
     else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); }
     else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
     else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
