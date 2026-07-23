@@ -26,6 +26,8 @@ const { formatDiagnosticLines, diagKey } = require('./verify');
 const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
+const { reapMcp } = require('./mcpClient');
+const { userScopedSetting } = require('./mcpConfig');
 
 const SECRET_KEY = 'levelcode.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -618,6 +620,7 @@ function newChat() {
 	contextFiles = [];
 	if (abort) { abort.abort(); }
 	reapCommands();                        // kill any background servers/watchers from the old session
+	reapMcp();                             // …and any MCP servers: they are detached children too
 	if (review) { review.finalizeAll(); } // drop review UI without reverting the user's files
 	post({ type: 'reset' });
 	postContextFiles();
@@ -973,6 +976,16 @@ async function agentFlow(text) {
 				return (await refreshGatewayToken()) ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
 			},
 			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
+			// MCP (docs/MCP.md S3). Config is read HERE and handed in, like verify/commandTimeout, so
+			// agent.js keeps doing the loading + connecting + naming without reaching for the editor API.
+			// SECURITY (PR #31 review): these two settings name processes to spawn and tools to auto-allow,
+			// so they must be USER-authored only — read via inspect() and take the global tier alone, never
+			// the workspace/folder tier a repo's .vscode/settings.json could supply. They are also declared
+			// application-scoped in package.json; this is the defense-in-depth half. See userScopedSetting.
+			mcp: {
+				servers: userScopedSetting(cfg.inspect('mcp.servers'), {}),
+				toolPolicy: userScopedSetting(cfg.inspect('mcp.toolPolicy'), {})
+			},
 			contextLimit: contextLimitFor(req.providerId, capsModel(req.model)), // Auto → flagship window; the model SENT stays req.model
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
 			commandRuns: bgRuns,                // runId → background-process registry (read_command_output reads it)
@@ -1672,6 +1685,6 @@ function activate(context) {
 	}
 }
 
-function deactivate() { if (abort) { abort.abort(); } reapCommands(); }
+function deactivate() { if (abort) { abort.abort(); } reapCommands(); reapMcp(); }
 
 module.exports = { activate, deactivate };

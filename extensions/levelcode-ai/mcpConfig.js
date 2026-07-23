@@ -44,6 +44,9 @@ const WORKSPACE_CONFIG_PATH = ['.levelcode', 'mcp.json'];
 // window; and a config with 500 servers is a mistake, not a use case.
 const MAX_SERVERS = 20;
 const MAX_TOOLS_PER_SERVER = 64;
+// A tool DESCRIPTION is a third-party string that rides every turn and is read by the model — both a
+// context cost and the prompt-injection surface of docs/MCP.md G4. Bound it; we cannot sanitize meaning.
+const MAX_TOOL_DESC = 1024;
 
 // ---- 1. server config ------------------------------------------------------------------------
 
@@ -55,23 +58,29 @@ function serverMapOf(parsed) {
 	return parsed;
 }
 
-// Keys that must never be copied out of an untrusted config: assigning `__proto__` invokes the
-// prototype setter rather than creating a property, and `constructor`/`prototype` are the usual
-// companions. See safeEnvCopy.
+// Keys that must never be copied out of untrusted JSON: assigning `__proto__` invokes the prototype
+// setter rather than creating a property, and `constructor`/`prototype` are the usual companions.
+// See safeCopy.
 const UNSAFE_KEYS = ['__proto__', 'constructor', 'prototype'];
 
 /**
- * Copy an untrusted env map. `.levelcode/mcp.json` is repo-authored, and JSON.parse creates a REAL own
- * `__proto__` key, so a plain Object.assign would hand it to the prototype setter instead of copying it.
- * The string-value check in normalizeServer already rejects the classic object-valued payload, which
- * makes today's safety incidental — this makes it structural, and stops an env var named `__proto__`
- * from silently vanishing into a setter. Deliberately a normal object, not Object.create(null): later
- * code (and tests) may reasonably call hasOwnProperty on it.
+ * Shallow-copy a map that came from untrusted JSON — a repo-authored `.levelcode/mcp.json` env block,
+ * or a server-supplied `inputSchema`. JSON.parse creates a REAL own `__proto__` key, so a plain
+ * Object.assign would hand it to the prototype setter instead of copying it. The string-value check in
+ * normalizeServer already rejects the classic object-valued payload, which makes today's safety
+ * incidental — this makes it structural.
+ *
+ * The unsafe keys (`__proto__`/`constructor`/`prototype`) are DROPPED outright — never copied to the
+ * output — so none can reach the prototype setter. Note this is a drop, not a rescue: a key literally
+ * named `__proto__` does not survive into the result. That is deliberate. Such a name is meaningless as
+ * an env var and unused as a top-level JSON-Schema keyword, so losing it costs nothing, whereas copying
+ * it would be exactly the pollution we are guarding against. Deliberately a normal object, not
+ * Object.create(null): later code (and tests) may reasonably call hasOwnProperty on it.
  */
-function safeEnvCopy(raw) {
+function safeCopy(raw) {
 	const out = {};
 	for (const k of Object.keys(raw || {})) {
-		if (UNSAFE_KEYS.indexOf(k) !== -1) { continue; }
+		if (UNSAFE_KEYS.indexOf(k) !== -1) { continue; }   // dropped, not copied — see the doc above
 		out[k] = raw[k];
 	}
 	return out;
@@ -93,7 +102,7 @@ function normalizeServer(name, raw, source, origin) {
 		name: name,
 		command: raw.command,
 		args: raw.args ? raw.args.slice() : [],
-		env: raw.env ? safeEnvCopy(raw.env) : {},
+		env: raw.env ? safeCopy(raw.env) : {},
 		source: source,     // 'settings' (user-authored) | 'workspace' (repo-authored, untrusted)
 		origin: origin      // human label for the consent card / problem messages
 	};
@@ -153,6 +162,30 @@ function loadServerConfig(opts) {
 	}
 
 	return { servers, problems };
+}
+
+/**
+ * The value of a VS Code setting as authored BY THE USER — its global (user-settings) tier only,
+ * deliberately ignoring the workspace and workspace-folder tiers.
+ *
+ * The whole MCP trust model rests on "user-authored = trusted, repo-authored = untrusted", and I had it
+ * half-right: `.levelcode/mcp.json` is gated, but I missed that VS Code SETTINGS have a repo-authored
+ * tier too — a committed `.vscode/settings.json` (or a folder in a `.code-workspace`) can set
+ * `levelcode.ai.mcp.servers`, and a plain `cfg.get()` returns that merged value. Trusting it would spawn
+ * arbitrary processes on clone-and-open — the exact RCE the model exists to prevent (PR #31 review).
+ *
+ * These settings are ALSO declared `application`-scoped in package.json, which already makes VS Code drop
+ * any workspace value. This is the belt to that suspenders: the spawn decision is too dangerous to rest
+ * on a declarative manifest guard alone, so the trust boundary is enforced here too, at the point of use,
+ * and survives a scope regression. Takes a `getConfiguration().inspect(key)` result so it stays pure and
+ * unit-testable off the editor.
+ *
+ * @param {{globalValue?:any}|undefined|null} info  a VS Code inspect() result
+ * @param {any} fallback  returned when the user has not set it (workspace/folder values are NOT a fallback)
+ */
+function userScopedSetting(info, fallback) {
+	if (!info || info.globalValue === undefined) { return fallback; }
+	return info.globalValue;
 }
 
 // ---- 2. tool naming --------------------------------------------------------------------------
@@ -226,6 +259,101 @@ function assignToolNames(pairs, opts) {
 	return { tools, problems };
 }
 
+/**
+ * A tool schema the providers will actually accept. MCP says `inputSchema` is a JSON Schema of type
+ * "object", but a server can send anything; a non-object top-level schema is a provider 400, which the
+ * agent would surface as an opaque failure on turn one. Normalize rather than trust, and copy safely —
+ * this is server-supplied JSON, same reasoning as safeCopy's other caller.
+ */
+function schemaOf(raw) {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { return { type: 'object', properties: {} }; }
+	const out = safeCopy(raw);
+	out.type = 'object';
+	if (!out.properties || typeof out.properties !== 'object' || Array.isArray(out.properties)) { out.properties = {}; }
+	return out;
+}
+
+/**
+ * A description the model can decide on, ALWAYS within MAX_TOOL_DESC. The cap is applied to the final
+ * string — the server's own text AND the fallback — because the fallback embeds `tool`, which is the
+ * server-chosen (untrusted) tool name: a server could send a giant name with a blank description and,
+ * if only the real-description branch were capped, blow past the bound anyway (PR #31 review). One cap
+ * at the exit covers every branch.
+ */
+function describeTool(spec, server, tool) {
+	const raw = typeof spec.description === 'string' ? spec.description.trim() : '';
+	const desc = raw || ('The "' + tool + '" tool from the "' + server + '" MCP server (no description provided).');
+	return desc.length > MAX_TOOL_DESC ? desc.slice(0, MAX_TOOL_DESC - 1) + '…' : desc;
+}
+
+/**
+ * Turn the tool lists of connected servers into (a) agent TOOLS entries and (b) the routing table the
+ * agent uses to send a call back to the right server. This is the whole translation layer: MCP's
+ * `{name, description, inputSchema}` is our `{name, description, input_schema}` — a field rename, per
+ * docs/MCP.md — plus the naming/capping that makes it safe to put on the wire.
+ *
+ * Pure: takes plain data (`{name, tools}`), not live handles, so it is unit-testable without spawning.
+ *
+ * @param {Array<{name:string, tools:Array<object>}>} servers
+ * @returns {{ tools: Array<object>, routes: Map<string,{server:string, tool:string, annotations:object|null}>,
+ *             problems: Array<object> }}
+ */
+function buildAgentTools(servers, opts) {
+	const specs = new Map();
+	const pairs = [];
+	for (const s of (Array.isArray(servers) ? servers : [])) {
+		if (!s || typeof s.name !== 'string' || !s.name || !Array.isArray(s.tools)) { continue; }
+		for (const t of s.tools) {
+			if (!t || typeof t.name !== 'string' || !t.name) { continue; }
+			const key = s.name + '\u0000' + t.name;
+			if (specs.has(key)) { continue; }   // a server that lists the same tool twice
+			specs.set(key, t);
+			pairs.push({ server: s.name, tool: t.name });
+		}
+	}
+
+	// assignToolNames may DROP entries (the per-server cap) so its output is a subsequence, not a 1:1
+	// row-for-row mapping — correlate by (server, tool) rather than by index.
+	const assigned = assignToolNames(pairs, opts);
+	const tools = [];
+	const routes = new Map();
+	for (const a of assigned.tools) {
+		const spec = specs.get(a.server + '\u0000' + a.tool) || {};
+		tools.push({
+			name: a.name,
+			description: describeTool(spec, a.server, a.tool),
+			input_schema: schemaOf(spec.inputSchema)
+		});
+		routes.set(a.name, {
+			server: a.server,
+			tool: a.tool,
+			// Kept for classifyMcpTool, which may only ever TIGHTEN on them (they are server-supplied).
+			annotations: (spec.annotations && typeof spec.annotations === 'object') ? spec.annotations : null
+		});
+	}
+	return { tools, routes, problems: assigned.problems };
+}
+
+/**
+ * Per-server counts of the tools ACTUALLY exposed, taken from the routes buildAgentTools emitted — i.e.
+ * AFTER the per-server cap and junk-skipping. The startup chip uses this rather than the raw tools/list
+ * length, so its per-server numbers reflect what the agent can really call and SUM to the run's real
+ * total: a server that lists 100 tools but is capped to 64 must read `(64)`, not `(100)`, or the chip
+ * contradicts its own allowed/total denominator (PR #31 review).
+ *
+ * @param {Map<string,{server:string}>} routes  the routes map from buildAgentTools
+ * @returns {Map<string, number>} server name → exposed tool count
+ */
+function toolCountsByServer(routes) {
+	const counts = new Map();
+	if (!routes || typeof routes.values !== 'function') { return counts; }
+	for (const r of routes.values()) {
+		if (!r || typeof r.server !== 'string') { continue; }
+		counts.set(r.server, (counts.get(r.server) || 0) + 1);
+	}
+	return counts;
+}
+
 // ---- 3. approval policy ----------------------------------------------------------------------
 
 /**
@@ -236,25 +364,53 @@ function assignToolNames(pairs, opts) {
  * only push toward asking, never toward allowing: a `destructiveHint` overrides an allow-list entry
  * (worst case, one extra prompt), while a `readOnlyHint` grants nothing on its own.
  *
+ * `policyCanAllow` answers a question the callers kept getting wrong (PR #31 review): would adding
+ * this tool to the allow-list actually grant it? For every ordinary refusal, yes. For a `destructiveHint`
+ * refusal, NO — a server hint may only tighten, so the allow-list cannot override it. Callers use this to
+ * avoid (a) counting a destructive-but-allow-listed tool as "allow-listed" in the startup chip, and
+ * (b) telling the model to allow-list a tool that allow-listing can never enable.
+ *
  * @param {string} name       the namespaced tool name (server__tool)
  * @param {object} [policy]   user map, e.g. { 'github__list_issues': 'allow', '*': 'ask' }
  * @param {object} [annotations]  the server's own hints for this tool (untrusted)
- * @returns {{ approve: 'ask'|'allow', reason: string }}
+ * @returns {{ approve: 'ask'|'allow', reason: string, policyCanAllow: boolean }}
  */
 function classifyMcpTool(name, policy, annotations) {
 	if (annotations && annotations.destructiveHint === true) {
-		return { approve: 'ask', reason: 'the server marks this tool destructive' };
+		return { approve: 'ask', reason: 'the server marks this tool destructive', policyCanAllow: false };
 	}
 	const p = policy || {};
 	const exact = p[name];
-	if (exact === 'allow') { return { approve: 'allow', reason: 'allow-listed by you' }; }
-	if (exact === 'ask') { return { approve: 'ask', reason: 'set to ask by you' }; }
+	if (exact === 'allow') { return { approve: 'allow', reason: 'allow-listed by you', policyCanAllow: true }; }
+	if (exact === 'ask') { return { approve: 'ask', reason: 'set to ask by you', policyCanAllow: true }; }
 	const star = p['*'];
-	if (star === 'allow') { return { approve: 'allow', reason: 'allow-listed by you (*)' }; }
-	return { approve: 'ask', reason: 'third-party tool (default)' };
+	if (star === 'allow') { return { approve: 'allow', reason: 'allow-listed by you (*)', policyCanAllow: true }; }
+	return { approve: 'ask', reason: 'third-party tool (default)', policyCanAllow: true };
+}
+
+/**
+ * The agent-facing explanation for a refused MCP call in a build with no approval card (S3). It lives
+ * HERE, beside classifyMcpTool, on purpose: the PR #31 review caught this message telling the model to
+ * allow-list a destructive tool that allow-listing can never enable — the message had drifted from the
+ * policy. Keeping both in one module (and unit-testing this off the editor) is what stops the drift
+ * recurring. Branches solely on the verdict, so it cannot disagree with the classifier.
+ *
+ * @param {string} name  the namespaced tool name
+ * @param {{reason:string, policyCanAllow:boolean}} verdict  from classifyMcpTool (a non-'allow' one)
+ * @returns {string}
+ */
+function explainMcpRefusal(name, verdict) {
+	const head = 'ERROR: the MCP tool "' + name + '" is not approved to run (' + verdict.reason + '). ';
+	const fix = verdict.policyCanAllow
+		? 'This build has no per-call approval prompt, so the only way to permit it is for the USER to add '
+			+ '"' + name + '": "allow" to the "levelcode.ai.mcp.toolPolicy" setting. '
+		: 'Such tools always require per-call approval — which this build does not yet provide — so it '
+			+ 'CANNOT be enabled through the allow-list. ';
+	return head + fix + 'Do NOT retry it in this run — continue without it, or tell the user what you needed it for.';
 }
 
 module.exports = {
-	loadServerConfig, namespaceToolName, assignToolNames, classifyMcpTool,
-	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
+	loadServerConfig, userScopedSetting, namespaceToolName, assignToolNames, buildAgentTools,
+	toolCountsByServer, classifyMcpTool, explainMcpRefusal,
+	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };

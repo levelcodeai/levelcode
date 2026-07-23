@@ -17,6 +17,8 @@ const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
 const { loadProjectRules } = require('./projectRules');
+const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal } = require('./mcpConfig');
+const { connectAll, getServer } = require('./mcpClient');
 
 const SYSTEM_BASE = [
 	"You are LevelCode's built-in autonomous coding agent. You accomplish the user's goal in their",
@@ -203,12 +205,19 @@ function applyStringEdit(raw, oldStr, newStr) {
 	return { proposed };
 }
 
-/** Compact summary of a tool's input for debug logs (truncate long strings). */
-function inputPreview(input) {
+/**
+ * Compact summary of a tool's input for debug logs (truncate long strings).
+ *
+ * `redact` is for MCP calls (docs/MCP.md G4): those arguments are headed for a third-party server and
+ * routinely carry API tokens, record ids, and private query text — and this debug line is POSTED INTO
+ * THE CHAT when levelcode.ai.debug is on. Log the shape, never the values.
+ */
+function inputPreview(input, redact) {
 	if (!input || typeof input !== 'object') { return input; }
 	const out = {};
 	for (const k of Object.keys(input)) {
 		const v = input[k];
+		if (redact) { out[k] = '‹' + (Array.isArray(v) ? 'array' : typeof v) + '›'; continue; }
 		out[k] = typeof v === 'string' ? (v.length > 60 ? v.slice(0, 60) + '…(' + v.length + 'ch)' : v) : v;
 	}
 	return out;
@@ -444,6 +453,27 @@ async function runTool(tu, ctx) {
 			ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🧩 using skill: ' + name });   // quiet chip — only on success (🧩 is the marker; 'sparkle' falls back cleanly)
 			return body;                                                                       // SKILL.md body → tool_result, steers the next turns
 		}
+		// MCP tools (docs/MCP.md S3). An MCP name matches none of the built-in branches above, so every
+		// MCP call necessarily arrives HERE — which is why the router is one block at one line rather
+		// than a dispatch scattered through runTool.
+		const route = ctx.mcpRoutes && ctx.mcpRoutes.get(tu.name);
+		if (route) {
+			const verdict = classifyMcpTool(tu.name, ctx.mcp && ctx.mcp.toolPolicy, route.annotations);
+			if (verdict.approve !== 'allow') {
+				// S3 deliberately ships no approval CARD (S4 owns it), so anything the user has not
+				// explicitly allow-listed is REFUSED rather than run — the alternative would be silently
+				// executing third-party code on the user's behalf with no way to say no. The explanation
+				// lives in mcpConfig beside the classifier so it can't drift from it (PR #31 review): a
+				// destructive tool is refused for a reason the allow-list cannot fix, and must not be
+				// described as allow-listable.
+				ctx.post({ type: 'agentTool', icon: 'shield', text: '🔌 mcp · refused ' + tu.name + ' — ' + verdict.reason });
+				return explainMcpRefusal(tu.name, verdict);
+			}
+			const server = getServer(route.server);
+			if (!server || !server.alive) { return 'ERROR: the MCP server "' + route.server + '" is not running.'; }
+			ctx.post({ type: 'agentTool', icon: 'plug', text: '🔌 ' + route.server + ' · ' + route.tool });
+			return await server.call(route.tool, input);   // never throws — failures come back as `ERROR: …`
+		}
 		return 'ERROR: unknown tool ' + tu.name;
 	} catch (e) {
 		return 'ERROR: ' + ((e && e.message) || e);
@@ -465,6 +495,79 @@ async function runTool(tu, ctx) {
 // the chat path's refresh-on-401 — see extension.js isAuthError).
 function isAgentAuthError(e) {
 	return /\bAPI 401\b|signature has expired/i.test(String((e && e.message) || e));
+}
+
+/**
+ * Connect the user's MCP servers and turn their tools into this run's extra TOOLS entries (docs/MCP.md
+ * S3). Returns `{tools, routes}` — empty when MCP is unconfigured, which is the overwhelming common case
+ * and must cost nothing.
+ *
+ * TRUST: only `source:'settings'` servers are started. A `.levelcode/mcp.json` is REPO-authored — i.e.
+ * attacker-controlled for any repo you clone — and a server entry names a process to spawn, so starting
+ * one here would make this slice exactly the RCE-on-clone hole that the S4 launch gate exists to close.
+ * They are reported, not silently skipped, so the gap looks like a missing feature rather than a bug.
+ *
+ * Never throws: MCP is an enhancement, and no server misconfiguration may take down an agent run.
+ */
+async function setupMcp(ctx, wsFolders, dbg) {
+	const empty = { tools: [], routes: null };
+	const cfg = ctx.mcp || {};
+	try {
+		const { servers, problems } = loadServerConfig({
+			settings: cfg.servers,
+			folders: wsFolders,
+			readFile: (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch { return null; } }
+		});
+		for (const p of problems) { dbg('mcp.config', p); }
+		if (!servers.length) { return empty; }
+
+		const deferred = servers.filter((s) => s.source !== 'settings');
+		if (deferred.length) {
+			ctx.post({ type: 'agentTool', icon: 'shield', text: '🔌 mcp · ' + deferred.length + ' workspace server(s) not started — repo-defined servers need an approval step that ships later' });
+		}
+		const trusted = servers.filter((s) => s.source === 'settings');
+		if (!trusted.length) { return empty; }
+
+		// Connecting is up-front work: the tool list must be complete before turn one, so there is no
+		// lazy option. Only the FIRST run of a session pays it — mcpClient keeps handles in a module
+		// registry, and connectAll reuses a live one.
+		ctx.post({ type: 'agentStatus', text: 'starting MCP servers…' });
+		const { handles, problems: connectProblems } = await connectAll(trusted, { cwd: ctx.root });
+		for (const p of connectProblems) {
+			dbg('mcp.connect', p);
+			ctx.post({ type: 'agentTool', icon: 'warning', text: '🔌 mcp · "' + p.server + '" failed to start — ' + p.message });
+		}
+		if (!handles.length) { return empty; }
+
+		const built = buildAgentTools(handles.map((h) => ({ name: h.name, tools: h.tools })));
+		for (const p of built.problems) {
+			dbg('mcp.tools', p);
+			ctx.post({ type: 'agentTool', icon: 'warning', text: '🔌 mcp · ' + p.message });
+		}
+		if (!built.tools.length) { return empty; }
+
+		// Show the allow-listed count up front: with no policy set it reads "0/12 allow-listed", which is
+		// what makes a later refusal legible instead of looking broken. Pass the SAME annotations runTool
+		// will (PR #31 review) — otherwise a destructive-but-allow-listed tool is counted here yet refused
+		// there, and the chip lies. The route always exists for a built tool; guard defensively anyway.
+		const allowed = built.tools.filter((t) => {
+			const route = built.routes.get(t.name);
+			return classifyMcpTool(t.name, cfg.toolPolicy, route && route.annotations).approve === 'allow';
+		}).length;
+		// Per-server counts come from what was actually EXPOSED (built.routes), not the raw tools/list
+		// length — a server capped at MAX_TOOLS_PER_SERVER or listing junk exposes fewer than it
+		// advertised, and showing the raw number would contradict the allowed/total denominator below
+		// (PR #31 review). A server that exposed nothing still shows "(0)": honest, and a useful signal.
+		const perServer = toolCountsByServer(built.routes);
+		const summary = handles.map((h) => h.name + ' (' + (perServer.get(h.name) || 0) + ')').join(', ');
+		dbg('mcp.ready', { servers: handles.map((h) => h.name), tools: built.tools.length, allowed });
+		ctx.post({ type: 'agentTool', icon: 'plug', text: '🔌 mcp · ' + summary + ' · ' + allowed + '/' + built.tools.length + ' allow-listed' });
+		return built;
+	} catch (e) {
+		dbg('mcp.failed', { error: (e && e.message) || String(e) });
+		ctx.post({ type: 'agentTool', icon: 'warning', text: '🔌 mcp · setup failed — ' + ((e && e.message) || e) });
+		return empty;
+	}
 }
 
 async function runAgent(ctx) {
@@ -497,6 +600,17 @@ async function runAgent(ctx) {
 		// (mirrors the skill chip). Reuses the agentTool → addAgentLine rendering — no webview change.
 		ctx.post({ type: 'agentTool', icon: 'file', text: '📋 project rules · ' + rules.sources.join(', ') });
 	}
+
+	// MCP (docs/MCP.md S3): the tool list becomes PER-RUN. It was a module constant only because it was
+	// the same every time; a run's servers are whatever is configured and reachable right now. Same shape
+	// as `system`/`systemTokensEst` two lines up — built once per run, then used for every turn.
+	const mcp = await setupMcp(ctx, wsFolders, dbg);
+	ctx.mcpRoutes = mcp.routes;                                        // runTool's router reads this
+	const tools = mcp.tools.length ? TOOLS.concat(mcp.tools) : TOOLS;
+	// Recomputed only when MCP actually contributed tools, so the no-MCP path keeps the module constant
+	// and pays nothing for a feature it isn't using.
+	const toolsTokensEst = mcp.tools.length ? Math.round(JSON.stringify(tools).length / 4) : TOOLS_TOKENS_EST;
+
 	const messages = ctx.messages;
 	let step = 0;
 	let reason = 'done';
@@ -582,7 +696,7 @@ async function runAgent(ctx) {
 			const turnOpts = {
 				providerId: ctx.providerId, baseURL: ctx.baseURL,
 				apiKey: ctx.apiKey, model: ctx.model, maxTokens: perTurnMax, system: system,
-				messages, tools: TOOLS, signal: ctx.signal,
+				messages, tools: tools, signal: ctx.signal,
 				onText: (t) => { streamed = true; textChars += t.length; ctx.post({ type: 'agentDelta', text: t }); },
 				onToolStart: (name) => {
 					dbg('tool.start', { name });
@@ -620,7 +734,7 @@ async function runAgent(ctx) {
 				if (turn.usage.cost_micros != null) { runCostMicros += turn.usage.cost_micros; }
 				if (turn.usage.credits_remaining_micros != null) { ctx.credits = turn.usage.credits_remaining_micros; }
 				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens, cumulativeOutput: cumulativeOutputTokens, costMicros: turn.usage.cost_micros, creditsLeftMicros: turn.usage.credits_remaining_micros });
-				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: TOOLS_TOKENS_EST, cacheRead: turn.usage.cache_read_input_tokens || 0, cacheWrite: turn.usage.cache_creation_input_tokens || 0 });
+				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: toolsTokensEst, cacheRead: turn.usage.cache_read_input_tokens || 0, cacheWrite: turn.usage.cache_creation_input_tokens || 0 });
 			}
 
 			// Reasoning models (e.g. Kimi K2.7 Code) emit <think>…</think> inline in the text
@@ -659,7 +773,7 @@ async function runAgent(ctx) {
 				for (const tu of toolUses) {
 					if (cancelled || ctx.signal.aborted) { cancelled = true; dbg('tool.cancelled', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'Cancelled by the user.' }); continue; }
 					if (turn.malformed && turn.malformed.has(tu.id)) { dbg('tool.malformed', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'ERROR: your tool arguments were cut off (truncated JSON). Retry with smaller input — for edits use edit_file with a short snippet.' }); continue; }
-					dbg('tool.call', { name: tu.name, input: inputPreview(tu.input) });
+					dbg('tool.call', { name: tu.name, input: inputPreview(tu.input, !!(ctx.mcpRoutes && ctx.mcpRoutes.has(tu.name))) });
 					const out = await runTool(tu, ctx);
 					dbg('tool.result', { name: tu.name, chars: String(out).length, error: String(out).startsWith('ERROR') });
 					results.push({ type: 'tool_result', tool_use_id: tu.id, content: String(out) });
