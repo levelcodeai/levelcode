@@ -55,6 +55,28 @@ function serverMapOf(parsed) {
 	return parsed;
 }
 
+// Keys that must never be copied out of an untrusted config: assigning `__proto__` invokes the
+// prototype setter rather than creating a property, and `constructor`/`prototype` are the usual
+// companions. See safeEnvCopy.
+const UNSAFE_KEYS = ['__proto__', 'constructor', 'prototype'];
+
+/**
+ * Copy an untrusted env map. `.levelcode/mcp.json` is repo-authored, and JSON.parse creates a REAL own
+ * `__proto__` key, so a plain Object.assign would hand it to the prototype setter instead of copying it.
+ * The string-value check in normalizeServer already rejects the classic object-valued payload, which
+ * makes today's safety incidental — this makes it structural, and stops an env var named `__proto__`
+ * from silently vanishing into a setter. Deliberately a normal object, not Object.create(null): later
+ * code (and tests) may reasonably call hasOwnProperty on it.
+ */
+function safeEnvCopy(raw) {
+	const out = {};
+	for (const k of Object.keys(raw || {})) {
+		if (UNSAFE_KEYS.indexOf(k) !== -1) { continue; }
+		out[k] = raw[k];
+	}
+	return out;
+}
+
 /** Validate one entry. Returns a server object, or a string describing why it was rejected. */
 function normalizeServer(name, raw, source, origin) {
 	if (!name || typeof name !== 'string') { return 'server name must be a non-empty string'; }
@@ -71,7 +93,7 @@ function normalizeServer(name, raw, source, origin) {
 		name: name,
 		command: raw.command,
 		args: raw.args ? raw.args.slice() : [],
-		env: raw.env ? Object.assign({}, raw.env) : {},
+		env: raw.env ? safeEnvCopy(raw.env) : {},
 		source: source,     // 'settings' (user-authored) | 'workspace' (repo-authored, untrusted)
 		origin: origin      // human label for the consent card / problem messages
 	};
