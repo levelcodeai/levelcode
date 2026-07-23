@@ -136,7 +136,7 @@ test('header flips to the past-tense aggregate when the group closes', () => {
 	assert.ok(/\+3/.test(g.counts.innerHTML) && /-1/.test(g.counts.innerHTML), 'summed diffstat in the header');
 	// The fold IS the payoff: a finished group is ONE line, not a header plus every finished row.
 	assert.ok(g.el.classList.contains('collapsed'), 'a successful group folds to its summary line');
-	assert.ok(/i:check/.test(g.node.innerHTML), 'rail states the outcome');
+	assert.ok(/i:check-circle/.test(g.node.innerHTML), 'rail states the outcome with the ring-check');
 	assert.ok(!/i:sync/.test(g.node.innerHTML), 'and stops wearing the running spinner');
 	assert.ok(g.el.classList.contains('gok') && !g.el.classList.contains('gfailed'),
 		'success recolours the node to the quiet-green done state, not the accent running one');

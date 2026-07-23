@@ -117,6 +117,9 @@
   .ficon-json, .ficon-yml, .ficon-yaml { background: #cbcb41; color: #323330; }
   .ficon-py { background: #3572a5; color: #fff; }
   .ficon-rb { background: #cc342d; color: #fff; }
+  /* HTML files wear the HTML5 shield itself, not a text pill — so no pill chrome, just the mark */
+  .ficon.fhtml5 { background: none; padding: 0; border-radius: 0; display: inline-flex; }
+  .ficon.fhtml5 svg { display: block; width: 14px; height: 14px; }
   .msg .body > div > :last-child, .msg .body > p:last-child, .msg .body > ul:last-child, .msg .body > ol:last-child { margin-bottom: 0; }
   .msg.user .body { background: var(--field-bg); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
   .msg.assistant .body { padding: 1px 2px; }
@@ -282,8 +285,12 @@
      speaks the same quiet green as every other done tick (Kept, verified, command-ok); failure
      takes the error colour. The ring goes neutral either way — no coloured circle competing with
      the check inside it. */
-  .tl-group.gok .tl-node { color: var(--vscode-terminal-ansiBrightGreen, #4ec97a); border-color: var(--border); background: var(--vscode-editor-background, var(--field-bg)); }
-  .tl-group.gfailed .tl-node { color: var(--vscode-errorForeground, #f14c4c); border-color: var(--border); background: var(--vscode-editor-background, var(--field-bg)); }
+  /* the finished node's glyph (check-circle / circle-slash) brings its OWN ring, so drop the node's
+     border to avoid a double ring. The background stays to mask the rail line behind the node, and
+     the glyph grows to fill it. */
+  .tl-group.gok .tl-node { color: var(--vscode-terminal-ansiBrightGreen, #4ec97a); border-color: transparent; background: var(--vscode-editor-background, var(--field-bg)); }
+  .tl-group.gfailed .tl-node { color: var(--vscode-errorForeground, #f14c4c); border-color: transparent; background: var(--vscode-editor-background, var(--field-bg)); }
+  .tl-group.gok .tl-node .ci, .tl-group.gfailed .tl-node .ci { width: 18px; height: 18px; }
   @keyframes nodepulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
   .tl-cmd .cmdhead { display: flex; align-items: center; gap: 7px; min-width: 0; cursor: pointer; user-select: none; padding: 2px 0; }
   .tl-cmd .cmdchev { flex: 0 0 auto; display: inline-flex; color: var(--muted); }
@@ -1250,9 +1257,17 @@
     if (t.indexOf('/') >= 0){ const hit = list.find(function(r){ return r === t || r.endsWith('/' + t); }); return hit || null; }
     return list[0];   // bare basename → first known path (click still resolves the real one)
   }
+  // The HTML5 shield — the two-tone orange badge with the white "5". Its own colours, so it doesn't
+  // sit inside a coloured pill; used for .html/.htm in place of the "HTML" text badge.
+  const HTML5_SHIELD = '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    + '<path d="M2.4 1.3 13.6 1.3 12.58 13.1 7.99 14.7 3.42 13.1Z" fill="#e44d26"/>'
+    + '<path d="M8 2.55 8 13.62 11.7 12.32 12.55 2.55Z" fill="#f16529"/>'
+    + '<path d="M4.36 3.9 11.64 3.9 11.5 5.4 5.86 5.4 5.98 6.85 11.37 6.85 10.98 11.15 8 12.0 5.02 11.15 4.82 9.0 6.28 9.0 6.38 10.1 8 10.55 9.62 10.1 9.79 8.25 4.72 8.25Z" fill="#fff"/>'
+    + '</svg>';
   function fileIcon(rel){
     const ext = (rel.split('.').pop() || '').toLowerCase();
-    const map = { js:'JS', mjs:'JS', cjs:'JS', jsx:'JS', ts:'TS', tsx:'TS', css:'CSS', scss:'CSS', html:'HTML', htm:'HTML', md:'MD', json:'JSON', py:'PY', rb:'RB', sh:'SH', go:'GO', rs:'RS', yml:'YML', yaml:'YML' };
+    if (ext === 'html' || ext === 'htm'){ return '<span class="ficon fhtml5" title="HTML" aria-label="HTML">' + HTML5_SHIELD + '</span>'; }
+    const map = { js:'JS', mjs:'JS', cjs:'JS', jsx:'JS', ts:'TS', tsx:'TS', css:'CSS', scss:'CSS', md:'MD', json:'JSON', py:'PY', rb:'RB', sh:'SH', go:'GO', rs:'RS', yml:'YML', yaml:'YML' };
     const lbl = map[ext] || (ext ? ext.toUpperCase().slice(0, 4) : 'FILE');
     return '<span class="ficon ficon-' + esc(ext) + '">' + esc(lbl) + '</span>';
   }
@@ -1657,7 +1672,7 @@
     // ONE outcome glyph, in the rail. While running the rail carried a spinner and the head carried
     // dots; a finished group must not go on wearing either. The rail states the outcome, so the
     // trailing state clears on success and speaks up only when something failed.
-    if (g.node){ g.node.innerHTML = codicon(g.failed ? 'circle-slash' : 'check'); }
+    if (g.node){ g.node.innerHTML = codicon(g.failed ? 'circle-slash' : 'check-circle'); }
     g.state.innerHTML = g.failed ? codicon('circle-slash') : '';
     g.state.className = 'cmdstate groupstate ' + (g.failed ? 'bad' : 'ok');
     g.stopBtn.hidden = true;

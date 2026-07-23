@@ -103,13 +103,15 @@ test('the menu selected-tick uses the circle-check, not a literal ✓', () => {
 		'the [data-ico] paint pass must cover .mocheck, not only .moico');
 });
 
-test('every status tick migrated — the only bare codicon(\'check\') left is the group rail node', () => {
-	// The group node is intentionally a bare check inside .tl-node (already a ring); a glyph-ring
-	// there would double up. Everything else must be the circle-check.
+test('every check migrated to the ring-check — no bare codicon(\'check\') anywhere', () => {
+	// Including the group rail node: its own .tl-node border is dropped for the done state
+	// (.tl-group.gok/.gfailed border-color: transparent) so the glyph's ring is the only ring.
 	const bare = [...html.matchAll(/codicon\('check'\)/g)].length;
-	const nodeLine = /g\.node\.innerHTML = codicon\(g\.failed \? 'circle-slash' : 'check'\)/.test(html);
 	assert.strictEqual(bare, 0, "no plain codicon('check') should remain — use codicon('check-circle')");
-	assert.ok(nodeLine, 'the group rail node keeps its ternary check (it supplies its own ring)');
+	assert.ok(/g\.node\.innerHTML = codicon\(g\.failed \? 'circle-slash' : 'check-circle'\)/.test(html),
+		'the group node paints the ring-check');
+	assert.ok(/\.tl-group\.gok \.tl-node\b[^}]*border-color:\s*transparent/.test(css),
+		'and drops its own border so there is a single ring, not two');
 });
 
 console.log('webviewCss: ' + n + ' tests passed');
