@@ -87,14 +87,37 @@ test('ASSIGN: built-ins are reserved by default', () => {
 	assert.ok(!M.BUILTIN_TOOL_NAMES.includes(tools[0].name));
 });
 
-test('ASSIGN: two servers that sanitize alike still get distinct names', () => {
-	const { tools } = M.assignToolNames([
-		{ server: 'my-server', tool: 'go' },
-		{ server: 'my/server', tool: 'go' }   // sanitizes to my_server… as does the first? force the clash
+test('ASSIGN: two servers that sanitize to the SAME name still get distinct tool names', () => {
+	// 'my/server' and 'my:server' BOTH sanitize to 'my_server' — a genuine collision. An earlier version
+	// of this test paired 'my-server' with 'my/server', but '-' is already legal so they never collided:
+	// the test passed without ever entering the dedupe path. Assert the precondition so it can't rot again.
+	assert.strictEqual(
+		M.namespaceToolName('my/server', 'go'), M.namespaceToolName('my:server', 'go'),
+		'precondition: these inputs must actually collide, or this test proves nothing'
+	);
+	const { tools, problems } = M.assignToolNames([
+		{ server: 'my/server', tool: 'go' },
+		{ server: 'my:server', tool: 'go' }
 	]);
 	assert.strictEqual(tools.length, 2);
-	assert.notStrictEqual(tools[0].name, tools[1].name);
+	assert.notStrictEqual(tools[0].name, tools[1].name, 'the collision must be broken, not silently aliased');
+	assert.ok(problems.some((p) => /already taken/.test(p.message)), 'the dedupe path must report it');
 	for (const t of tools) { assert.ok(LEGAL.test(t.name)); }
+});
+
+test('TRUST: an untrusted env can never reach the prototype setter', () => {
+	// JSON.parse creates a REAL own "__proto__" key, so a plain Object.assign would hand it to the
+	// prototype setter instead of copying it. The string-value check already rejects the object-valued
+	// payload, but this makes the guarantee structural rather than incidental.
+	const raw = JSON.parse('{"evil":{"command":"x","env":{"__proto__":"pwned","constructor":"no","SAFE":"ok"}}}');
+	const { servers } = M.loadServerConfig({ settings: raw });
+	const env = servers[0].env;
+	assert.strictEqual(env.SAFE, 'ok', 'legitimate vars must survive');
+	assert.ok(!Object.prototype.hasOwnProperty.call(env, '__proto__'), '__proto__ must not be copied through');
+	assert.ok(!Object.prototype.hasOwnProperty.call(env, 'constructor'), 'constructor must not be copied through');
+	assert.strictEqual(Object.getPrototypeOf(env), Object.prototype, 'the copy\'s prototype must not be retargeted');
+	// @ts-expect-error — probing for global pollution
+	assert.strictEqual({}.pwned, undefined, 'global Object.prototype must be untouched');
 });
 
 test('ASSIGN: a server over the per-server tool cap has the surplus dropped, with a problem', () => {
