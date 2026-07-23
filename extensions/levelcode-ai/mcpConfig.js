@@ -159,6 +159,30 @@ function loadServerConfig(opts) {
 	return { servers, problems };
 }
 
+/**
+ * The value of a VS Code setting as authored BY THE USER — its global (user-settings) tier only,
+ * deliberately ignoring the workspace and workspace-folder tiers.
+ *
+ * The whole MCP trust model rests on "user-authored = trusted, repo-authored = untrusted", and I had it
+ * half-right: `.levelcode/mcp.json` is gated, but I missed that VS Code SETTINGS have a repo-authored
+ * tier too — a committed `.vscode/settings.json` (or a folder in a `.code-workspace`) can set
+ * `levelcode.ai.mcp.servers`, and a plain `cfg.get()` returns that merged value. Trusting it would spawn
+ * arbitrary processes on clone-and-open — the exact RCE the model exists to prevent (PR #31 review).
+ *
+ * These settings are ALSO declared `application`-scoped in package.json, which already makes VS Code drop
+ * any workspace value. This is the belt to that suspenders: the spawn decision is too dangerous to rest
+ * on a declarative manifest guard alone, so the trust boundary is enforced here too, at the point of use,
+ * and survives a scope regression. Takes a `getConfiguration().inspect(key)` result so it stays pure and
+ * unit-testable off the editor.
+ *
+ * @param {{globalValue?:any}|undefined|null} info  a VS Code inspect() result
+ * @param {any} fallback  returned when the user has not set it (workspace/folder values are NOT a fallback)
+ */
+function userScopedSetting(info, fallback) {
+	if (!info || info.globalValue === undefined) { return fallback; }
+	return info.globalValue;
+}
+
 // ---- 2. tool naming --------------------------------------------------------------------------
 
 /**
@@ -355,6 +379,7 @@ function explainMcpRefusal(name, verdict) {
 }
 
 module.exports = {
-	loadServerConfig, namespaceToolName, assignToolNames, buildAgentTools, classifyMcpTool, explainMcpRefusal,
+	loadServerConfig, userScopedSetting, namespaceToolName, assignToolNames, buildAgentTools,
+	classifyMcpTool, explainMcpRefusal,
 	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };
