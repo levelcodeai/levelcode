@@ -44,6 +44,9 @@ const WORKSPACE_CONFIG_PATH = ['.levelcode', 'mcp.json'];
 // window; and a config with 500 servers is a mistake, not a use case.
 const MAX_SERVERS = 20;
 const MAX_TOOLS_PER_SERVER = 64;
+// A tool DESCRIPTION is a third-party string that rides every turn and is read by the model — both a
+// context cost and the prompt-injection surface of docs/MCP.md G4. Bound it; we cannot sanitize meaning.
+const MAX_TOOL_DESC = 1024;
 
 // ---- 1. server config ------------------------------------------------------------------------
 
@@ -55,20 +58,21 @@ function serverMapOf(parsed) {
 	return parsed;
 }
 
-// Keys that must never be copied out of an untrusted config: assigning `__proto__` invokes the
-// prototype setter rather than creating a property, and `constructor`/`prototype` are the usual
-// companions. See safeEnvCopy.
+// Keys that must never be copied out of untrusted JSON: assigning `__proto__` invokes the prototype
+// setter rather than creating a property, and `constructor`/`prototype` are the usual companions.
+// See safeCopy.
 const UNSAFE_KEYS = ['__proto__', 'constructor', 'prototype'];
 
 /**
- * Copy an untrusted env map. `.levelcode/mcp.json` is repo-authored, and JSON.parse creates a REAL own
- * `__proto__` key, so a plain Object.assign would hand it to the prototype setter instead of copying it.
- * The string-value check in normalizeServer already rejects the classic object-valued payload, which
- * makes today's safety incidental — this makes it structural, and stops an env var named `__proto__`
- * from silently vanishing into a setter. Deliberately a normal object, not Object.create(null): later
- * code (and tests) may reasonably call hasOwnProperty on it.
+ * Shallow-copy a map that came from untrusted JSON — a repo-authored `.levelcode/mcp.json` env block,
+ * or a server-supplied `inputSchema`. JSON.parse creates a REAL own `__proto__` key, so a plain
+ * Object.assign would hand it to the prototype setter instead of copying it. The string-value check in
+ * normalizeServer already rejects the classic object-valued payload, which makes today's safety
+ * incidental — this makes it structural, and stops a key legitimately named `__proto__` from silently
+ * vanishing into a setter. Deliberately a normal object, not Object.create(null): later code (and
+ * tests) may reasonably call hasOwnProperty on it.
  */
-function safeEnvCopy(raw) {
+function safeCopy(raw) {
 	const out = {};
 	for (const k of Object.keys(raw || {})) {
 		if (UNSAFE_KEYS.indexOf(k) !== -1) { continue; }
@@ -93,7 +97,7 @@ function normalizeServer(name, raw, source, origin) {
 		name: name,
 		command: raw.command,
 		args: raw.args ? raw.args.slice() : [],
-		env: raw.env ? safeEnvCopy(raw.env) : {},
+		env: raw.env ? safeCopy(raw.env) : {},
 		source: source,     // 'settings' (user-authored) | 'workspace' (repo-authored, untrusted)
 		origin: origin      // human label for the consent card / problem messages
 	};
@@ -226,6 +230,75 @@ function assignToolNames(pairs, opts) {
 	return { tools, problems };
 }
 
+/**
+ * A tool schema the providers will actually accept. MCP says `inputSchema` is a JSON Schema of type
+ * "object", but a server can send anything; a non-object top-level schema is a provider 400, which the
+ * agent would surface as an opaque failure on turn one. Normalize rather than trust, and copy safely —
+ * this is server-supplied JSON, same reasoning as safeCopy's other caller.
+ */
+function schemaOf(raw) {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { return { type: 'object', properties: {} }; }
+	const out = safeCopy(raw);
+	out.type = 'object';
+	if (!out.properties || typeof out.properties !== 'object' || Array.isArray(out.properties)) { out.properties = {}; }
+	return out;
+}
+
+/** Capped description, with a fallback — the model needs *something* to decide with. */
+function describeTool(spec, server, tool) {
+	const raw = typeof spec.description === 'string' ? spec.description.trim() : '';
+	if (!raw) { return 'The "' + tool + '" tool from the "' + server + '" MCP server (no description provided).'; }
+	return raw.length > MAX_TOOL_DESC ? raw.slice(0, MAX_TOOL_DESC - 1) + '…' : raw;
+}
+
+/**
+ * Turn the tool lists of connected servers into (a) agent TOOLS entries and (b) the routing table the
+ * agent uses to send a call back to the right server. This is the whole translation layer: MCP's
+ * `{name, description, inputSchema}` is our `{name, description, input_schema}` — a field rename, per
+ * docs/MCP.md — plus the naming/capping that makes it safe to put on the wire.
+ *
+ * Pure: takes plain data (`{name, tools}`), not live handles, so it is unit-testable without spawning.
+ *
+ * @param {Array<{name:string, tools:Array<object>}>} servers
+ * @returns {{ tools: Array<object>, routes: Map<string,{server:string, tool:string, annotations:object|null}>,
+ *             problems: Array<object> }}
+ */
+function buildAgentTools(servers, opts) {
+	const specs = new Map();
+	const pairs = [];
+	for (const s of (Array.isArray(servers) ? servers : [])) {
+		if (!s || typeof s.name !== 'string' || !s.name || !Array.isArray(s.tools)) { continue; }
+		for (const t of s.tools) {
+			if (!t || typeof t.name !== 'string' || !t.name) { continue; }
+			const key = s.name + '\u0000' + t.name;
+			if (specs.has(key)) { continue; }   // a server that lists the same tool twice
+			specs.set(key, t);
+			pairs.push({ server: s.name, tool: t.name });
+		}
+	}
+
+	// assignToolNames may DROP entries (the per-server cap) so its output is a subsequence, not a 1:1
+	// row-for-row mapping — correlate by (server, tool) rather than by index.
+	const assigned = assignToolNames(pairs, opts);
+	const tools = [];
+	const routes = new Map();
+	for (const a of assigned.tools) {
+		const spec = specs.get(a.server + '\u0000' + a.tool) || {};
+		tools.push({
+			name: a.name,
+			description: describeTool(spec, a.server, a.tool),
+			input_schema: schemaOf(spec.inputSchema)
+		});
+		routes.set(a.name, {
+			server: a.server,
+			tool: a.tool,
+			// Kept for classifyMcpTool, which may only ever TIGHTEN on them (they are server-supplied).
+			annotations: (spec.annotations && typeof spec.annotations === 'object') ? spec.annotations : null
+		});
+	}
+	return { tools, routes, problems: assigned.problems };
+}
+
 // ---- 3. approval policy ----------------------------------------------------------------------
 
 /**
@@ -255,6 +328,6 @@ function classifyMcpTool(name, policy, annotations) {
 }
 
 module.exports = {
-	loadServerConfig, namespaceToolName, assignToolNames, classifyMcpTool,
-	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
+	loadServerConfig, namespaceToolName, assignToolNames, buildAgentTools, classifyMcpTool,
+	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };

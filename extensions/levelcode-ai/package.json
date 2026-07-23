@@ -431,6 +431,16 @@
           "default": false,
           "description": "Treat editor warnings (not just errors) as verification failures the agent must fix. Off by default — only errors block."
         },
+        "levelcode.ai.mcp.servers": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "MCP servers the agent may use, as `{ \"name\": { \"command\": \"…\", \"args\": […], \"env\": {…} } }` (a `mcpServers` wrapper is also accepted). Each entry names **a process LevelCode will run with your privileges**, so add only servers you trust.\n\nExample:\n```json\n{ \"filesystem\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"/path\"] } }\n```\n\nServers defined in a repo's `.levelcode/mcp.json` are read and listed but **never started** — repo-authored config is untrusted, and its approval step ships in a later release."
+        },
+        "levelcode.ai.mcp.toolPolicy": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Which MCP tools may run, as `{ \"server__tool\": \"allow\" | \"ask\" }` — use `\"*\": \"allow\"` for all of them. Tool names are namespaced `server__tool` exactly as they appear in the chat.\n\nAnything not allow-listed is **refused**, including under Autopilot: an MCP tool is third-party code, so Autopilot deliberately does not relax this. A server's own `destructiveHint` overrides an `allow` here — server hints may only ever tighten, never loosen."
+        },
         "levelcode.ai.completions.enabled": {
           "type": "boolean",
           "default": true,

@@ -975,6 +975,9 @@ async function agentFlow(text) {
 				return (await refreshGatewayToken()) ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
 			},
 			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
+			// MCP (docs/MCP.md S3). Config is read HERE and handed in, like verify/commandTimeout, so
+			// agent.js keeps doing the loading + connecting + naming without reaching for the editor API.
+			mcp: { servers: cfg.get('mcp.servers', {}), toolPolicy: cfg.get('mcp.toolPolicy', {}) },
 			contextLimit: contextLimitFor(req.providerId, capsModel(req.model)), // Auto → flagship window; the model SENT stays req.model
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
 			commandRuns: bgRuns,                // runId → background-process registry (read_command_output reads it)

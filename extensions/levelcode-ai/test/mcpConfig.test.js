@@ -256,4 +256,152 @@ test('POLICY: a readOnlyHint grants nothing on its own (annotations are untruste
 	assert.strictEqual(M.classifyMcpTool('gh__read', {}, { readOnlyHint: true }).approve, 'ask');
 });
 
+// ---- 4. buildAgentTools: MCP tool specs → agent descriptors + routing table (S3) --------------
+
+const SRV = (name, tools) => ({ name, tools });
+
+test('BUILD: the MCP→agent shape is a field rename, and the route round-trips', () => {
+	const b = M.buildAgentTools([SRV('github', [
+		{ name: 'create_issue', description: 'Open an issue.', inputSchema: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] } }
+	])]);
+	assert.strictEqual(b.tools.length, 1);
+	assert.deepStrictEqual(b.tools[0], {
+		name: 'github__create_issue',
+		description: 'Open an issue.',
+		input_schema: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] }
+	});
+	// The router's job: namespaced name → the (server, tool) the call must be sent back to.
+	assert.deepStrictEqual(b.routes.get('github__create_issue'), { server: 'github', tool: 'create_issue', annotations: null });
+});
+
+test('BUILD: every generated name is provider-legal, even from the nasty corpus', () => {
+	const b = M.buildAgentTools(NASTY.map(([s, t], i) => SRV(s + '#' + i, [{ name: t }])));
+	assert.ok(b.tools.length > 0);
+	for (const t of b.tools) { assert.ok(LEGAL.test(t.name), 'illegal name: ' + t.name); }
+});
+
+test('BUILD: a tool may never shadow a built-in (read_file stays OURS)', () => {
+	// A server literally named so that `server__tool` would collide is impossible (the separator makes
+	// that hard), so assert the real invariant instead: no emitted name is ever a built-in name.
+	const b = M.buildAgentTools([SRV('x', M.BUILTIN_TOOL_NAMES.map((nm) => ({ name: nm })))]);
+	for (const t of b.tools) {
+		assert.ok(M.BUILTIN_TOOL_NAMES.indexOf(t.name) === -1, t.name + ' shadows a built-in');
+	}
+});
+
+test('BUILD: a missing/garbage inputSchema becomes a valid object schema (never a provider 400)', () => {
+	const b = M.buildAgentTools([SRV('s', [
+		{ name: 'none' },
+		{ name: 'str', inputSchema: 'nope' },
+		{ name: 'arr', inputSchema: [1, 2] },
+		{ name: 'wrongtype', inputSchema: { type: 'string' } },
+		{ name: 'noprops', inputSchema: { type: 'object' } }
+	])]);
+	assert.strictEqual(b.tools.length, 5);
+	for (const t of b.tools) {
+		assert.strictEqual(t.input_schema.type, 'object', t.name + ' must have an object schema');
+		assert.strictEqual(typeof t.input_schema.properties, 'object');
+		assert.ok(!Array.isArray(t.input_schema.properties));
+	}
+});
+
+test('BUILD: an untrusted inputSchema cannot retarget the prototype', () => {
+	const raw = JSON.parse('{"type":"object","properties":{"a":{"type":"string"}},"__proto__":{"pwned":1}}');
+	const b = M.buildAgentTools([SRV('s', [{ name: 't', inputSchema: raw }])]);
+	const schema = b.tools[0].input_schema;
+	assert.ok(!Object.prototype.hasOwnProperty.call(schema, '__proto__'));
+	assert.strictEqual(Object.getPrototypeOf(schema), Object.prototype);
+	// @ts-expect-error — probing for global pollution
+	assert.strictEqual({}.pwned, undefined, 'global Object.prototype must be untouched');
+	assert.deepStrictEqual(schema.properties, { a: { type: 'string' } }, 'the real schema must survive');
+});
+
+test('BUILD: a description is capped, and a missing one still says something useful', () => {
+	const b = M.buildAgentTools([SRV('s', [
+		{ name: 'long', description: 'x'.repeat(5000) },
+		{ name: 'none' },
+		{ name: 'blank', description: '   ' }
+	])]);
+	const byName = new Map(b.tools.map((t) => [t.name, t]));
+	assert.ok(byName.get('s__long').description.length <= M.MAX_TOOL_DESC);
+	// The model must be able to tell what an undescribed tool IS, or it cannot choose it sensibly.
+	for (const nm of ['s__none', 's__blank']) {
+		const d = byName.get(nm).description;
+		assert.ok(d.includes('s') && d.length > 10, nm + ' needs a usable fallback description');
+	}
+});
+
+test('BUILD: annotations ride along so the policy can tighten on them', () => {
+	const b = M.buildAgentTools([SRV('s', [{ name: 'rm', annotations: { destructiveHint: true } }])]);
+	const route = b.routes.get('s__rm');
+	assert.deepStrictEqual(route.annotations, { destructiveHint: true });
+	// The whole point of carrying them: an allow-list entry must NOT beat a destructive hint.
+	assert.strictEqual(M.classifyMcpTool('s__rm', { 's__rm': 'allow' }, route.annotations).approve, 'ask');
+});
+
+test('BUILD: over-cap tools are dropped, and routes stay correlated to the RIGHT spec', () => {
+	// assignToolNames returns a SUBSEQUENCE (the per-server cap drops entries), so correlating its
+	// output back to the specs by index instead of by (server, tool) would attach descriptions and
+	// schemas to the wrong tools. A SECOND server after the over-cap one is what makes that visible:
+	// with a single server the drops are all at the tail, indices coincidentally still line up, and the
+	// test passes against the broken version — proving nothing. Overflow FIRST, then a second server.
+	const many = [];
+	for (let i = 0; i < M.MAX_TOOLS_PER_SERVER + 5; i++) { many.push({ name: 'big' + i, description: 'A-' + i }); }
+	const b = M.buildAgentTools([SRV('a', many), SRV('b', [
+		{ name: 'one', description: 'B-one' }, { name: 'two', description: 'B-two' }
+	])]);
+
+	assert.strictEqual(b.tools.length, M.MAX_TOOLS_PER_SERVER + 2, 'server a is capped; server b is not');
+	assert.ok(b.problems.some((p) => /more than/.test(p.message)), 'dropping must be reported, not silent');
+	// The load-bearing assertion: the tools that follow the dropped ones still carry THEIR OWN spec.
+	const byName = new Map(b.tools.map((t) => [t.name, t]));
+	assert.strictEqual(byName.get('b__one').description, 'B-one');
+	assert.strictEqual(byName.get('b__two').description, 'B-two');
+	assert.deepStrictEqual(b.routes.get('b__one'), { server: 'b', tool: 'one', annotations: null });
+	for (const t of b.tools) {
+		const route = b.routes.get(t.name);
+		const expected = route.server === 'b' ? 'B-' + route.tool : 'A-' + route.tool.slice(3);
+		assert.strictEqual(t.description, expected, t.name + ' got another tool\'s description');
+	}
+});
+
+test('BUILD: junk servers and junk tools are skipped without throwing', () => {
+	const b = M.buildAgentTools([
+		null, 'nope', { name: '', tools: [] }, { name: 'ok', tools: null },
+		SRV('good', [null, { name: '' }, { name: 42 }, { name: 'real' }])
+	]);
+	assert.deepStrictEqual(b.tools.map((t) => t.name), ['good__real']);
+});
+
+test('BUILD: nothing configured costs nothing', () => {
+	for (const input of [undefined, null, [], 'x']) {
+		const b = M.buildAgentTools(input);
+		assert.strictEqual(b.tools.length, 0);
+		assert.strictEqual(b.routes.size, 0);
+	}
+});
+
+// ---- 5. source hygiene -----------------------------------------------------------------------
+
+test('SOURCE: the mcp modules contain no raw control bytes', () => {
+	// This has now bitten twice. Both mcpConfig.js separators are deliberately NUL (a space would let
+	// server "a b" + tool "c" collide with server "a" + tool "b c"), but writing the byte RAW instead of
+	// as a backslash-u escape makes `file` report "data" and makes grep and diff skip the file
+	// silently: you stop being able to search your own source, and a reviewer just sees
+	// "Binary file … matches". The runtime value is identical either way, so no test, type-check or
+	// lint catches it — only a byte-level check like this one does. It bit this very file too, which
+	// is why the list below includes the test.
+	const fs = require('fs');
+	const path = require('path');
+	for (const f of ['mcpConfig.js', 'mcpClient.js', 'mcpProtocol.js', 'test/mcpConfig.test.js']) {
+		const buf = fs.readFileSync(path.join(__dirname, '..', f));
+		const bad = [];
+		for (let i = 0; i < buf.length; i++) {
+			const b = buf[i];
+			if (b < 9 || (b > 13 && b < 32)) { bad.push(i); }
+		}
+		assert.deepStrictEqual(bad, [], f + ' has raw control bytes at offsets ' + bad.slice(0, 5).join(', ') + ' — use an escape');
+	}
+});
+
 console.log('\nmcpConfig.js: ' + n + ' tests passed.');
