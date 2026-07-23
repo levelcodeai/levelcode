@@ -78,6 +78,12 @@ rebase-safe, and revertable (one function + CSS).
 - Edit cards DO collapse into groups (their Keep/Undo stays usable when expanded; the global
   review bar and editor-side review remain the primary review paths). Header shows the summed
   `+a −d` so the information isn't lost while collapsed.
+- `ask_user` asks **one question at a time** (`n of N`, Back, advance button). Stacked questions in
+  a single card invited answering the first, missing the rest and sending — the agent then acted on
+  defaults nobody chose. Nothing posts before the last question, and passing one over is deliberate:
+  with nothing picked the button reads "Skip this one" and the answer is recorded as empty. On send
+  the card collapses to `Answers recorded`, unfolding to the full question/answer record. A single
+  question keeps the plain card — no step chrome.
 
 ### D5 — Two header states, exactly like the reference.
 While the group is open (agent still acting, no closing event yet): header = the **live** step's

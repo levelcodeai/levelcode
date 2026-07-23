@@ -71,4 +71,16 @@ test('the group stop button is hideable, and the reducer hides it when the group
 	assert.ok(/g\.stopBtn\.hidden\s*=\s*true/.test(html), 'finalizeGroup still hides it');
 });
 
+// The other way CSS lies about state: a more specific rule quietly outranking the one that should
+// win. Collapsing the ask_user card must hide the question on screen, but `.questions.collapsed
+// .qblock` is three classes and `.questions.wizard .qblock.cur` is four — so the override has to
+// exist AND come later, or a collapsed card keeps showing its current question.
+test('collapsing the ask_user card outranks the wizard rule that reveals a question', () => {
+	const wizardRule = css.indexOf('.questions.wizard .qblock.cur');
+	const override = css.indexOf('.questions.collapsed .qblock.cur');
+	assert.ok(wizardRule >= 0, 'wizard reveal rule still present');
+	assert.ok(override >= 0, 'missing the collapsed override — collapsing mid-wizard would do nothing');
+	assert.ok(override > wizardRule, 'the override must come later to win at equal specificity');
+});
+
 console.log('webviewCss: ' + n + ' tests passed');

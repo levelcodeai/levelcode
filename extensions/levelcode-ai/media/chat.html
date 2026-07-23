@@ -422,6 +422,28 @@
   .questions .qsend:hover { background: var(--vscode-button-hoverBackground); }
   .questions .qverdict { font-size: 12px; font-weight: 600; color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
   .questions.answered { opacity: .92; }
+  /* ---- one question at a time ----
+     Several questions stacked in one card made it far too easy to answer the first, miss the rest
+     and hit send. In wizard mode exactly one block is on screen and the send button only appears on
+     the last one, so skipping a question has to be deliberate (the button says so). On submit the
+     wizard class comes off and every question + answer is revealed as a permanent record. */
+  .questions.wizard .qblock { display: none; }
+  .questions.wizard .qblock.cur { display: block; }
+  .questions.wizard .qnotes { display: none; }
+  .questions.wizard.laststep .qnotes { display: block; }
+  .questions .qstep { flex: 0 0 auto; font-size: 11px; font-weight: 600; opacity: .6; font-variant-numeric: tabular-nums; }
+  .questions .qback { cursor: pointer; border: 1px solid var(--border); border-radius: 6px; padding: 5px 11px; font-size: 12px;
+    background: transparent; color: var(--vscode-foreground); }
+  .questions .qback:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
+  .questions .qback[hidden] { display: none; }      /* explicit display above would defeat [hidden] */
+  /* nothing picked yet: the primary button steps down to a quiet "skip", so moving on is a choice */
+  .questions .qsend.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .questions .qsend.ghost:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); color: var(--vscode-foreground); }
+  .questions .qspacer { flex: 1 1 auto; }
+  /* Collapsing wins over the two rules above. `.questions.collapsed .qblock` is three classes and
+     would lose to `.questions.wizard .qblock.cur`, so the current question would survive a collapse.
+     These match at equal weight and come later, which settles it. */
+  .questions.collapsed .qblock.cur, .questions.collapsed.laststep .qnotes { display: none; }
 
   /* ---- applied-edit review (apply-then-review) ---- */
   /* Sits between the message log and the composer — sticky review summary for applied edits. */
@@ -1959,11 +1981,15 @@
     closeGroup();   // interactive questions render at top level, never inside a group (D4)
     const qs = m.questions || [];
     const state = qs.map((q) => ({ multi: !!q.multiSelect, sel: new Set() }));
-    const card = document.createElement('div'); card.className = 'questions';
+    // One question on screen at a time. Stacked, they invited answering the first and sending with
+    // the rest untouched. A single question needs no step chrome, so it keeps the plain card.
+    const wizard = qs.length > 1;
+    let step = 0;
+    const card = document.createElement('div'); card.className = 'questions' + (wizard ? ' wizard' : '');
     let h = '<div class="qhead"><span class="qtoggle" title="Collapse / expand">' + codicon('chevron-down') + '</span>'
           + '<span class="qtitle">' + codicon('question') + ' A few quick decisions — click to choose</span></div>';
     qs.forEach((q, qi) => {
-      h += '<div class="qblock">';
+      h += '<div class="qblock' + (wizard && qi === 0 ? ' cur' : '') + '" data-qi="' + qi + '">';
       if (q.header){ h += '<div class="qtag">' + esc(q.header) + (q.multiSelect ? ' · pick any' : '') + '</div>'; }
       h += '<div class="qtext">' + esc(q.question || '') + '</div><div class="qopts">';
       (q.options || []).forEach((o, oi) => {
@@ -1976,13 +2002,31 @@
       h += '</div></div>';
     });
     h += '<textarea class="qnotes" rows="2" placeholder="Anything else? (optional)"></textarea>';
-    h += '<div class="qbtns"><button class="qsend">Send answers</button></div>';
+    h += '<div class="qbtns"><button class="qback" hidden>Back</button><button class="qsend">Send answers</button>'
+       + '<span class="qspacer"></span><span class="qstep"></span></div>';
     card.innerHTML = h;
     log.appendChild(card); scrollIfStuck();
 
     // Collapse/expand the whole panel by clicking its header (chevron rotates).
     const qhead = card.querySelector('.qhead');
     if (qhead) { qhead.onclick = () => card.classList.toggle('collapsed'); }
+
+    const sendBtn = card.querySelector('.qsend');
+    const backBtn = card.querySelector('.qback');
+    const stepEl = card.querySelector('.qstep');
+    // Only the last step sends. Before that the primary button advances — and when nothing is
+    // picked it says so plainly, so a question is never passed over by accident.
+    function render(){
+      if (!wizard){ return; }
+      card.querySelectorAll('.qblock').forEach((b) => { b.classList.toggle('cur', +b.dataset.qi === step); });
+      const last = step === qs.length - 1;
+      card.classList.toggle('laststep', last);
+      backBtn.hidden = step === 0;
+      stepEl.textContent = (step + 1) + ' of ' + qs.length;
+      const picked = state[step].sel.size > 0;
+      sendBtn.textContent = last ? 'Send answers' : (picked ? 'Next question' : 'Skip this one');
+      sendBtn.classList.toggle('ghost', !last && !picked);
+    }
 
     card.querySelectorAll('.qopt').forEach((btn) => {
       btn.onclick = () => {
@@ -1992,20 +2036,29 @@
         card.querySelectorAll('.qopt[data-q="' + qi + '"]').forEach((b) => {
           b.classList.toggle('sel', st.sel.has(+b.dataset.o));
         });
+        render();
       };
     });
-    card.querySelector('.qsend').onclick = () => {
+    backBtn.onclick = () => { if (step > 0){ step--; render(); } };
+    sendBtn.onclick = () => {
+      if (wizard && step < qs.length - 1){ step++; render(); scrollIfStuck(); return; }
       const answers = qs.map((q, qi) => ({
         header: q.header || '', question: q.question || '',
         selected: [...state[qi].sel].sort((a, b) => a - b).map((oi) => ((q.options || [])[oi] || {}).label || '')
       }));
       const notes = card.querySelector('.qnotes').value.trim();
       vscode.postMessage({ type: 'questionsResponse', id: m.id, answers, notes });
-      card.classList.add('answered');                                   // freeze as a visible record
+      // Answered and out of the way: the card folds to a single "Answers recorded" line so the
+      // transcript moves on, and unfolds to the full record — every question with what was picked.
+      card.classList.add('answered', 'collapsed');
+      card.classList.remove('wizard');
       card.querySelectorAll('.qopt').forEach((b) => { b.disabled = true; });
       card.querySelector('.qnotes').disabled = true;
+      const title = card.querySelector('.qtitle');
+      if (title){ title.innerHTML = codicon('check') + ' Answers recorded — click to review'; }
       card.querySelector('.qbtns').innerHTML = '<span class="qverdict">' + codicon('check') + ' Answers recorded</span>';
     };
+    render();
   }
 
   // Non-blocking applied-edit card (the agent already changed the file; you review after).
