@@ -268,11 +268,17 @@ function schemaOf(raw) {
 	return out;
 }
 
-/** Capped description, with a fallback — the model needs *something* to decide with. */
+/**
+ * A description the model can decide on, ALWAYS within MAX_TOOL_DESC. The cap is applied to the final
+ * string — the server's own text AND the fallback — because the fallback embeds `tool`, which is the
+ * server-chosen (untrusted) tool name: a server could send a giant name with a blank description and,
+ * if only the real-description branch were capped, blow past the bound anyway (PR #31 review). One cap
+ * at the exit covers every branch.
+ */
 function describeTool(spec, server, tool) {
 	const raw = typeof spec.description === 'string' ? spec.description.trim() : '';
-	if (!raw) { return 'The "' + tool + '" tool from the "' + server + '" MCP server (no description provided).'; }
-	return raw.length > MAX_TOOL_DESC ? raw.slice(0, MAX_TOOL_DESC - 1) + '…' : raw;
+	const desc = raw || ('The "' + tool + '" tool from the "' + server + '" MCP server (no description provided).');
+	return desc.length > MAX_TOOL_DESC ? desc.slice(0, MAX_TOOL_DESC - 1) + '…' : desc;
 }
 
 /**

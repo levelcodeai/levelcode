@@ -386,6 +386,17 @@ test('BUILD: a description is capped, and a missing one still says something use
 	}
 });
 
+test('BUILD: the FALLBACK description is capped too — a giant tool name cannot defeat MAX_TOOL_DESC', () => {
+	// PR #31 review: the no-description fallback embeds `tool`, which is the SERVER-chosen (untrusted)
+	// tool name. A server could ship a huge name with a blank description to bloat every turn's prompt
+	// past the bound. Capping only the real-description branch would miss it — the cap must cover the
+	// fallback too. (The namespaced `name` is separately truncated to 64; this is about the DESCRIPTION.)
+	const b = M.buildAgentTools([SRV('s', [{ name: 'z'.repeat(6000) }])]);
+	assert.strictEqual(b.tools.length, 1);
+	assert.ok(b.tools[0].description.length <= M.MAX_TOOL_DESC, 'fallback must obey MAX_TOOL_DESC');
+	assert.ok(b.tools[0].name.length <= M.MAX_TOOL_NAME, 'and the name still stays legal');
+});
+
 test('BUILD: annotations ride along so the policy can tighten on them', () => {
 	const b = M.buildAgentTools([SRV('s', [{ name: 'rm', annotations: { destructiveHint: true } }])]);
 	const route = b.routes.get('s__rm');
