@@ -297,6 +297,10 @@
   .tl-group .groupcounts .a { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
   .tl-group .groupcounts .d { color: var(--vscode-gitDecoration-deletedResourceForeground, #e06c75); }
   .tl-group .groupstop { flex: 0 0 auto; display: inline-flex; align-items: center; border: none; background: none; color: var(--muted); cursor: pointer; padding: 2px; }
+  /* an explicit display beats the UA's [hidden] rule, so .hidden = true is inert without this —
+     same escape as #workbar[hidden] / .modemenu[hidden] above. A stop button that outlives its
+     command is worse than no button: it offers to stop something that already finished. */
+  .tl-group .groupstop[hidden] { display: none; }
   .tl-group .groupstop:hover { color: var(--vscode-errorForeground, #f14c4c); }
   .tl-group .groupstop .ci { width: 12px; height: 12px; }
   .tl-group .groupbody { padding: 2px 0 0 4px; }
