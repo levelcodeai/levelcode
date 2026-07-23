@@ -105,16 +105,23 @@ test('ASSIGN: two servers that sanitize to the SAME name still get distinct tool
 	for (const t of tools) { assert.ok(LEGAL.test(t.name)); }
 });
 
-test('TRUST: an untrusted env can never reach the prototype setter', () => {
+test('TRUST: an untrusted env DROPS the unsafe keys and never reaches the prototype setter', () => {
 	// JSON.parse creates a REAL own "__proto__" key, so a plain Object.assign would hand it to the
-	// prototype setter instead of copying it. The string-value check already rejects the object-valued
-	// payload, but this makes the guarantee structural rather than incidental.
+	// prototype setter instead of copying it. safeCopy makes the guarantee structural — and it does so by
+	// DROPPING __proto__/constructor/prototype outright (not rescuing them): a key literally named
+	// __proto__ does not survive into the result. Assert both halves so the contract the JSDoc describes
+	// can't rot (PR #31 review flagged the doc implying preservation).
 	const raw = JSON.parse('{"evil":{"command":"x","env":{"__proto__":"pwned","constructor":"no","SAFE":"ok"}}}');
+	// Precondition: the input genuinely HAS these as own keys, so the drop path is actually exercised —
+	// otherwise the assertions below would pass vacuously.
+	assert.ok(Object.prototype.hasOwnProperty.call(raw.evil.env, '__proto__'), 'input must carry an own __proto__');
+	assert.ok(Object.prototype.hasOwnProperty.call(raw.evil.env, 'constructor'), 'input must carry an own constructor');
+
 	const { servers } = M.loadServerConfig({ settings: raw });
 	const env = servers[0].env;
 	assert.strictEqual(env.SAFE, 'ok', 'legitimate vars must survive');
-	assert.ok(!Object.prototype.hasOwnProperty.call(env, '__proto__'), '__proto__ must not be copied through');
-	assert.ok(!Object.prototype.hasOwnProperty.call(env, 'constructor'), 'constructor must not be copied through');
+	assert.ok(!Object.prototype.hasOwnProperty.call(env, '__proto__'), '__proto__ must be dropped, not copied through');
+	assert.ok(!Object.prototype.hasOwnProperty.call(env, 'constructor'), 'constructor must be dropped, not copied through');
 	assert.strictEqual(Object.getPrototypeOf(env), Object.prototype, 'the copy\'s prototype must not be retargeted');
 	// @ts-expect-error — probing for global pollution
 	assert.strictEqual({}.pwned, undefined, 'global Object.prototype must be untouched');

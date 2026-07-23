@@ -68,14 +68,19 @@ const UNSAFE_KEYS = ['__proto__', 'constructor', 'prototype'];
  * or a server-supplied `inputSchema`. JSON.parse creates a REAL own `__proto__` key, so a plain
  * Object.assign would hand it to the prototype setter instead of copying it. The string-value check in
  * normalizeServer already rejects the classic object-valued payload, which makes today's safety
- * incidental — this makes it structural, and stops a key legitimately named `__proto__` from silently
- * vanishing into a setter. Deliberately a normal object, not Object.create(null): later code (and
- * tests) may reasonably call hasOwnProperty on it.
+ * incidental — this makes it structural.
+ *
+ * The unsafe keys (`__proto__`/`constructor`/`prototype`) are DROPPED outright — never copied to the
+ * output — so none can reach the prototype setter. Note this is a drop, not a rescue: a key literally
+ * named `__proto__` does not survive into the result. That is deliberate. Such a name is meaningless as
+ * an env var and unused as a top-level JSON-Schema keyword, so losing it costs nothing, whereas copying
+ * it would be exactly the pollution we are guarding against. Deliberately a normal object, not
+ * Object.create(null): later code (and tests) may reasonably call hasOwnProperty on it.
  */
 function safeCopy(raw) {
 	const out = {};
 	for (const k of Object.keys(raw || {})) {
-		if (UNSAFE_KEYS.indexOf(k) !== -1) { continue; }
+		if (UNSAFE_KEYS.indexOf(k) !== -1) { continue; }   // dropped, not copied — see the doc above
 		out[k] = raw[k];
 	}
 	return out;
