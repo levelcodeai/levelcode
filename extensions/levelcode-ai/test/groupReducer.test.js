@@ -138,6 +138,8 @@ test('header flips to the past-tense aggregate when the group closes', () => {
 	assert.ok(g.el.classList.contains('collapsed'), 'a successful group folds to its summary line');
 	assert.ok(/i:check/.test(g.node.innerHTML), 'rail states the outcome');
 	assert.ok(!/i:sync/.test(g.node.innerHTML), 'and stops wearing the running spinner');
+	assert.ok(g.el.classList.contains('gok') && !g.el.classList.contains('gfailed'),
+		'success recolours the node to the quiet-green done state, not the accent running one');
 });
 
 test('a group the user opened by hand keeps their choice when it closes', () => {
@@ -162,6 +164,8 @@ test('a FAILED group closes open, so the problem is on screen', () => {
 	h.api.closeGroup();
 	assert.ok(!g.el.classList.contains('collapsed'), 'failures never fold away');
 	assert.ok(/circle-slash/.test(g.node.innerHTML), 'rail marks the failure');
+	assert.ok(g.el.classList.contains('gfailed') && !g.el.classList.contains('gok'),
+		'failure recolours the node to the error state');
 });
 
 // ── 2. members are one-line rows; a failure re-opens its row ───────────────────────────────────

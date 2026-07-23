@@ -96,12 +96,14 @@
   .msg .body th { background: var(--vscode-editorWidget-background, rgba(127,127,127,.1)); font-weight: 600; }
   .msg .body del { opacity: .65; }
   /* clickable file chips (mentions of real project files) */
-  .filechip { display: inline-flex; align-items: center; gap: 4px; vertical-align: -2px; margin: 0 1px; padding: 0 6px 0 3px; border: 1px solid var(--border); border-radius: 5px; background: var(--vscode-editorWidget-background, rgba(127,127,127,.1)); cursor: pointer; font-size: .92em; line-height: 1.7; }
+  /* vertical-align: middle centres the pill on the text's midline; the old -2px + line-height 1.7
+     dropped it below the baseline and inflated the line box, so it read as sitting too low. */
+  .filechip { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; margin: 0 1px; padding: 0 6px 0 3px; border: 1px solid var(--border); border-radius: 5px; background: var(--vscode-editorWidget-background, rgba(127,127,127,.1)); cursor: pointer; font-size: .92em; line-height: 1.2; }
   .filechip:hover { border-color: var(--accent); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.2)); }
   .filechip .fcname { color: var(--accent); }
   .filechip:hover .fcname { text-decoration: underline; }
   .filechip:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
-  .ficon { font-size: 8.5px; font-weight: 700; line-height: 1; padding: 2px 3px; border-radius: 3px; letter-spacing: .02em; color: #1f1f1f; background: #9aa0a6; }
+  .ficon { font-size: 8.5px; font-weight: 700; line-height: 1; padding: 1px 3px; border-radius: 3px; letter-spacing: .02em; color: #1f1f1f; background: #9aa0a6; }
   .ficon-js, .ficon-mjs, .ficon-cjs, .ficon-jsx { background: #f0db4f; color: #323330; }
   .ficon-ts, .ficon-tsx { background: #3178c6; color: #fff; }
   .ficon-css, .ficon-scss { background: #2965f1; color: #fff; }
@@ -271,6 +273,12 @@
      → highlighted command → streamed output → status foot → italic why */
   .tl-cmd .tl-node { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--vscode-editor-background, var(--field-bg))); }
   .tl-cmd.running .tl-node { animation: nodepulse 2s ease-out infinite; }
+  /* A FINISHED group's node stops shouting: the accent fill was the "running" identity. Success
+     speaks the same quiet green as every other done tick (Kept, verified, command-ok); failure
+     takes the error colour. The ring goes neutral either way — no coloured circle competing with
+     the check inside it. */
+  .tl-group.gok .tl-node { color: var(--vscode-terminal-ansiBrightGreen, #4ec97a); border-color: var(--border); background: var(--vscode-editor-background, var(--field-bg)); }
+  .tl-group.gfailed .tl-node { color: var(--vscode-errorForeground, #f14c4c); border-color: var(--border); background: var(--vscode-editor-background, var(--field-bg)); }
   @keyframes nodepulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
   .tl-cmd .cmdhead { display: flex; align-items: center; gap: 7px; min-width: 0; cursor: pointer; user-select: none; padding: 2px 0; }
   .tl-cmd .cmdchev { flex: 0 0 auto; display: inline-flex; color: var(--muted); }
@@ -1619,6 +1627,7 @@
     }
     g.closed = true;
     g.el.classList.remove('running');
+    g.el.classList.add(g.failed ? 'gfailed' : 'gok');   // recolours the rail node — see .tl-group.gok
     g.label.textContent = groupAggregate(g.steps);
     g.counts.innerHTML = groupCountsHtml(g);
     // ONE outcome glyph, in the rail. While running the rail carried a spinner and the head carried
