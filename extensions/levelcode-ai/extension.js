@@ -26,6 +26,7 @@ const { formatDiagnosticLines, diagKey } = require('./verify');
 const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
+const { reapMcp } = require('./mcpClient');
 
 const SECRET_KEY = 'levelcode.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -618,6 +619,7 @@ function newChat() {
 	contextFiles = [];
 	if (abort) { abort.abort(); }
 	reapCommands();                        // kill any background servers/watchers from the old session
+	reapMcp();                             // …and any MCP servers: they are detached children too
 	if (review) { review.finalizeAll(); } // drop review UI without reverting the user's files
 	post({ type: 'reset' });
 	postContextFiles();
@@ -1669,6 +1671,6 @@ function activate(context) {
 	}
 }
 
-function deactivate() { if (abort) { abort.abort(); } reapCommands(); }
+function deactivate() { if (abort) { abort.abort(); } reapCommands(); reapMcp(); }
 
 module.exports = { activate, deactivate };
