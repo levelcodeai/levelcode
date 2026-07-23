@@ -1542,7 +1542,8 @@
     const files = (list) => list.length > 2 ? (list.length + ' files') : list.map(short).join(', ');
     const of = (kind) => uniq(steps.filter((s) => s.kind === kind && s.path).map((s) => s.path));
     const cmds = steps.filter((s) => s.kind === 'cmd').length;
-    const searches = steps.filter((s) => s.kind === 'search' || s.kind === 'list').length;
+    const searches = steps.filter((s) => s.kind === 'search').length;
+    const lists = steps.filter((s) => s.kind === 'list').length;   // listing files ≠ searching content
     const reads = of('read'), edits = of('edit'), creates = of('create'), dels = of('delete');
     // File work leads, commands trail ("Read and edited extension.js, ran a command") — the reference
     // ordering: what changed matters more than how many shells it took.
@@ -1558,6 +1559,7 @@
     if (creates.length){ parts.push('created ' + files(creates)); }
     if (dels.length){ parts.push('deleted ' + files(dels)); }
     if (searches){ parts.push('searched the workspace'); }
+    if (lists){ parts.push('listed files'); }
     if (cmds){ parts.push('ran ' + (cmds === 1 ? 'a command' : cmds + ' commands')); }
     if (steps.some((s) => s.kind === 'verify')){ parts.push('verified the edits'); }
     if (!parts.length){ return steps.length === 1 ? '1 step' : steps.length + ' steps'; }
@@ -1634,7 +1636,10 @@
   function groupAppend(el, step){
     if (!groupsOn){ log.appendChild(el); return; }
     const g = curGroup || openGroup();
-    collapseMember(el);
+    // A RUNNING member stays expanded so its live output is readable — that is the whole point of
+    // the fixed-footprint header. Finished/instantaneous members (chips, an already-exited command)
+    // fold to a one-line row now; a running one folds later, in groupStepDone, once it completes.
+    if (!step || step.status !== 'running'){ collapseMember(el); }
     g.body.appendChild(el);
     if (step){ step.group = g; g.steps.push(step); refreshGroupHead(); }
   }
@@ -1665,6 +1670,14 @@
       g.el.remove(); return;
     }
     g.closed = true;
+    // A member may still be running when narration closes the group (a background command). Don't
+    // claim the group is finished or hide the Stop control — keep the live chrome and let that
+    // member's own groupStepDone re-enter here to complete the group once it actually exits.
+    if (g.steps.some((s) => s.status === 'running')){
+      g.el.classList.remove('collapsed');   // never hide a command that is still going
+      refreshGroupHead();
+      return;
+    }
     g.el.classList.remove('running');
     g.el.classList.add(g.failed ? 'gfailed' : 'gok');   // recolours the rail node — see .tl-group.gok
     g.label.textContent = groupAggregate(g.steps);
@@ -1696,6 +1709,9 @@
       // if the user had collapsed it — a hidden failure is the one thing this UI must never do.
       if (step.card && step.card.classList){ step.card.classList.remove('collapsed'); }
       if (g.el.isConnected){ g.el.classList.remove('collapsed'); }
+    } else {
+      // Success: the step is done, so it folds to a one-line row (it stayed expanded while running).
+      collapseMember(step.card);
     }
     if (g.closed){ finalizeGroup(g); } else if (g === curGroup){ refreshGroupHead(); }
   }
@@ -1715,7 +1731,7 @@
     // tool text stays as the tooltip so the underlying path/query is never lost.
     const shown = (groupsOn && st.base) ? st.base : String(text || '');
     d.innerHTML = '<div class="tl-rail"><span class="tl-node">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span></div>'
-      + '<div class="tl-body"><span class="toolt" title="' + esc(text || '') + '">' + esc(shown) + '</span></div>';
+      + '<div class="tl-body"><span class="toolt" title="' + escAttr(text || '') + '">' + esc(shown) + '</span></div>';
     groupAppend(d, st);
     scrollIfStuck();
   }
@@ -1901,8 +1917,15 @@
     scrollIfStuck();
   }
   function termExitFinish(m){
-    const card = termCards[m.id]; if (!card) { return; }
-    const st = card.querySelector('.termstatus'); if (!st) { return; }
+    // Even if the card is gone (checkpoint restore / prune), still settle the group step and drop
+    // the step map entry — otherwise termSteps leaks and holds a stale group reference all session.
+    const card = termCards[m.id];
+    if (!card || !card.querySelector('.termstatus')){
+      if (termSteps[m.id]){ groupStepDone(termSteps[m.id], m.how === 'timeout' || (m.how !== 'stopped' && m.code !== 0)); delete termSteps[m.id]; }
+      delete termCards[m.id];
+      return;
+    }
+    const st = card.querySelector('.termstatus');
     const dur = (typeof m.ms === 'number') ? (m.ms >= 1000 ? (m.ms / 1000).toFixed(1) + 's' : m.ms + 'ms') : '';
     let icon, text, cls;
     if (m.how === 'stopped'){ icon = 'circle-slash'; text = 'stopped'; cls = 'bad'; }
@@ -2113,7 +2136,11 @@
   function addEditCard(m){
     clearEmpty(); clearStatus(); agentBubble = null;
     let card = editCards[m.id];
-    let wasOpen = true;
+    // A NEW edit card inside a group starts as a one-line row (diff closed); ungrouped it keeps
+    // today's open-diff default. (collapseMember can't close the diff at groupAppend time because the
+    // card's innerHTML isn't built yet, so the default has to be right here.) A re-render preserves
+    // whatever open/closed state the user last left it in.
+    let wasOpen = !groupsOn;
     if (!card){
       card = document.createElement('div'); card.className = 'editcard';
       editCards[m.id] = card;
@@ -2174,6 +2201,7 @@
     const det = card.querySelector('details.diffwrap'); if (det) { det.open = false; } // collapse so resolved cards don't stack tall
     card.classList.add('resolved');
     delete editCards[m.id];
+    delete editSteps[m.id];   // release the group step ref alongside the card (no unbounded growth)
   }
   // ---- context-window usage: always-visible footer stat + a warning bar when it fills ----
   const ctxBar = document.getElementById('ctxBar');
@@ -2826,7 +2854,9 @@
       if (typeof m.contextLimit === 'number'){ renderContext({ limit: m.contextLimit }); }
       lastProvider = m.provider || '';
       lastModelId = m.modelId || m.model || '';   // gateway sends modelId (the real id); BYOK model IS the id
-      if (typeof m.groupActivity === 'boolean'){ groupsOn = m.groupActivity; }   // calm-transcript toggle
+      // calm-transcript toggle. Turning it OFF mid-run closes any open group first, so the timeline
+      // returns to fully flat immediately instead of leaving one stray group behind.
+      if (typeof m.groupActivity === 'boolean'){ if (!m.groupActivity){ closeGroup(); } groupsOn = m.groupActivity; }
       renderRouting();
     }
     else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
@@ -2885,7 +2915,9 @@
     else if (m.type === 'reset'){
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
       selLabel = null; ctxFiles = []; renderChips();
-      for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } for (const k in verifyCards) { delete verifyCards[k]; } for (const k in bgTasks) { delete bgTasks[k]; } renderBgTasks(); updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
+      for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } for (const k in verifyCards) { delete verifyCards[k]; } for (const k in bgTasks) { delete bgTasks[k]; }
+      for (const k in editSteps) { delete editSteps[k]; } for (const k in termSteps) { delete termSteps[k]; } for (const k in verifySteps) { delete verifySteps[k]; }   // step maps ride with their cards
+      renderBgTasks(); updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
       pending = ''; shown = ''; doneSignaled = false; flushAll = false; current = null; setStreaming(false);
       forceStick();
     }

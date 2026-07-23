@@ -92,6 +92,7 @@ function newHarness(groupsOn) {
 		+ 'const LC_DOTS = "<dots>";\n'
 		+ 'const codicon = (n) => "<i:" + n + ">";\n'
 		+ 'const esc = (s) => String(s == null ? "" : s);\n'
+		+ 'const escAttr = (s) => esc(s).replace(/"/g, "&quot;");\n'
 		+ 'const IC = { file: 1, search: 1, "list-tree": 1 };\n'
 		+ 'const scrollIfStuck = () => {}; const clearEmpty = () => {}; const clearStatus = () => {};\n';
 	const src = preamble
@@ -217,7 +218,7 @@ test('a single-member group unwraps and hands the card back EXPANDED', () => {
 	assert.ok(!only.classList.contains('collapsed'), 'standalone card is expanded again');
 });
 
-test('a background command exiting AFTER its group closed still re-finalizes the header', () => {
+test('a still-running member keeps the group live when narration closes it; it settles on exit', () => {
 	const h = newHarness();
 	const a = card('tl tl-cmd'), bg = card('tl tl-cmd');
 	h.api.groupAppend(a, { kind: 'read', base: 'Read a.js', path: 'a.js', status: 'done' });
@@ -225,10 +226,26 @@ test('a background command exiting AFTER its group closed still re-finalizes the
 	h.api.groupAppend(bg, step);
 	const g = h.api.curGroup;
 	h.api.closeGroup();                          // narration arrived while the server still ran
-	assert.ok(/Starting the dev server/.test(g.label.textContent) === false, 'closed header is an aggregate, not the live step');
+	// It must NOT claim to be finished: the header still tracks the live step and no outcome is shown,
+	// so the group can't misrepresent a running background command as done.
+	assert.ok(/Starting the dev server/.test(g.label.textContent), 'header keeps the live step while a member runs');
+	assert.ok(!g.el.classList.contains('gok') && !g.el.classList.contains('gfailed'), 'not settled while still running');
 	h.api.groupStepDone(step, true);             // server later exits nonzero
-	assert.ok(/circle-slash/.test(g.state.innerHTML), 'late failure still marks the closed group');
-	assert.ok(!g.el.classList.contains('collapsed'), 'and re-opens it');
+	assert.ok(/circle-slash/.test(g.node.innerHTML), 'late exit settles the group: the node marks failure');
+	assert.ok(g.el.classList.contains('gfailed'), 'and it is now recorded as failed');
+	assert.ok(!g.el.classList.contains('collapsed'), 'a failure stays open');
+});
+
+test('a running member stays expanded on insert and folds only when it finishes', () => {
+	const h = newHarness();
+	const done = card('tl tl-cmd'), running = card('tl tl-cmd');
+	h.api.groupAppend(done, { kind: 'cmd', base: 'Run one', status: 'done', card: done });
+	assert.ok(done.classList.contains('collapsed'), 'an already-finished member folds to a row on insert');
+	const step = { kind: 'cmd', base: 'Run the tests', status: 'running', card: running };
+	h.api.groupAppend(running, step);
+	assert.ok(!running.classList.contains('collapsed'), 'a RUNNING member stays expanded so its live output shows');
+	h.api.groupStepDone(step, false);
+	assert.ok(running.classList.contains('collapsed'), 'and folds once it completes successfully');
 });
 
 test('closing twice is a no-op (idempotent)', () => {
@@ -259,6 +276,15 @@ test('the model label titles the row; the raw tool text stays as the tooltip', (
 	const row = h.api.curGroup.body.children[0];
 	assert.ok(/Read the runAgent call site/.test(row.innerHTML), 'row shows the model sentence');
 	assert.ok(/title="read src\/agent\.js"/.test(row.innerHTML), 'raw text preserved as the tooltip');
+});
+
+test('a search chip\'s quotes are escaped in the title so they cannot break the attribute', () => {
+	const h = newHarness();
+	// agent.js sends search text as: search "postMessage" — the raw quotes must not close title="…"
+	h.api.addAgentLine('search', 'search "postMessage"', 'Find every postMessage call site', 'search');
+	const row = h.api.curGroup.body.children[0];
+	assert.ok(/title="search &quot;postMessage&quot;"/.test(row.innerHTML), 'double quotes are entity-escaped');
+	assert.ok(!/title="search "postMessage""/.test(row.innerHTML), 'no raw quote leaks into the attribute');
 });
 
 // ── 5. one speaker label per turn ──────────────────────────────────────────────────────────────

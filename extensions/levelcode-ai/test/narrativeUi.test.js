@@ -104,6 +104,10 @@ test('searches summarize; notes alone fall back to a step count', () => {
 	assert.strictEqual(groupAggregate([S('search'), S('cmd')]), 'Searched the workspace, ran a command');
 	assert.strictEqual(groupAggregate([S('note'), S('note')]), '2 steps');
 });
+test('listing files is not the same clause as searching contents', () => {
+	assert.strictEqual(groupAggregate([S('list')]), 'Listed files');
+	assert.strictEqual(groupAggregate([S('list'), S('search')]), 'Searched the workspace, listed files');
+});
 
 // ── 3. chipStep: chips → steps. The model's own label wins; parsing `text` is the fallback.
 test('the model label titles the row (and carries the path for the aggregate)', () => {
