@@ -404,6 +404,33 @@ test('BUILD: the FALLBACK description is capped too — a giant tool name cannot
 	assert.ok(b.tools[0].name.length <= M.MAX_TOOL_NAME, 'and the name still stays legal');
 });
 
+test('BUILD: per-server exposed counts come from routes and SUM to the real total (chip honesty)', () => {
+	// PR #31 review: the startup chip must not show a raw tools/list length that a cap or junk-skip made
+	// untrue — e.g. "a (100)" next to a "/64 allow-listed" denominator. toolCountsByServer derives the
+	// per-server numbers from what was actually exposed, so they reflect reality and sum to the total.
+	const many = [];
+	for (let i = 0; i < M.MAX_TOOLS_PER_SERVER + 5; i++) { many.push({ name: 'a' + i }); }
+	const b = M.buildAgentTools([
+		{ name: 'a', tools: many },                                            // over the cap
+		{ name: 'b', tools: [{ name: 'one' }, null, { name: '' }, { name: 'two' }] }  // 2 real + junk
+	]);
+	const counts = M.toolCountsByServer(b.routes);
+	assert.strictEqual(counts.get('a'), M.MAX_TOOLS_PER_SERVER, 'a is capped, not its raw ' + many.length);
+	assert.strictEqual(counts.get('b'), 2, 'b exposes only its 2 valid tools');
+
+	// The load-bearing invariant: the per-server counts sum to built.tools.length — the chip denominator.
+	let sum = 0; for (const v of counts.values()) { sum += v; }
+	assert.strictEqual(sum, b.tools.length, 'per-server counts must sum to the real total');
+});
+
+test('BUILD: toolCountsByServer tolerates junk input without throwing', () => {
+	assert.strictEqual(M.toolCountsByServer(null).size, 0);
+	assert.strictEqual(M.toolCountsByServer(undefined).size, 0);
+	assert.strictEqual(M.toolCountsByServer(new Map()).size, 0);
+	// A routes-shaped map with a malformed entry is skipped, not counted.
+	assert.strictEqual(M.toolCountsByServer(new Map([['x', { server: 's' }], ['y', null], ['z', {}]])).get('s'), 1);
+});
+
 test('BUILD: annotations ride along so the policy can tighten on them', () => {
 	const b = M.buildAgentTools([SRV('s', [{ name: 'rm', annotations: { destructiveHint: true } }])]);
 	const route = b.routes.get('s__rm');

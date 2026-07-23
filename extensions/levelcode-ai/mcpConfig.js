@@ -334,6 +334,26 @@ function buildAgentTools(servers, opts) {
 	return { tools, routes, problems: assigned.problems };
 }
 
+/**
+ * Per-server counts of the tools ACTUALLY exposed, taken from the routes buildAgentTools emitted — i.e.
+ * AFTER the per-server cap and junk-skipping. The startup chip uses this rather than the raw tools/list
+ * length, so its per-server numbers reflect what the agent can really call and SUM to the run's real
+ * total: a server that lists 100 tools but is capped to 64 must read `(64)`, not `(100)`, or the chip
+ * contradicts its own allowed/total denominator (PR #31 review).
+ *
+ * @param {Map<string,{server:string}>} routes  the routes map from buildAgentTools
+ * @returns {Map<string, number>} server name → exposed tool count
+ */
+function toolCountsByServer(routes) {
+	const counts = new Map();
+	if (!routes || typeof routes.values !== 'function') { return counts; }
+	for (const r of routes.values()) {
+		if (!r || typeof r.server !== 'string') { continue; }
+		counts.set(r.server, (counts.get(r.server) || 0) + 1);
+	}
+	return counts;
+}
+
 // ---- 3. approval policy ----------------------------------------------------------------------
 
 /**
@@ -391,6 +411,6 @@ function explainMcpRefusal(name, verdict) {
 
 module.exports = {
 	loadServerConfig, userScopedSetting, namespaceToolName, assignToolNames, buildAgentTools,
-	classifyMcpTool, explainMcpRefusal,
+	toolCountsByServer, classifyMcpTool, explainMcpRefusal,
 	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };

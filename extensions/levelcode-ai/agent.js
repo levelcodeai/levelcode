@@ -17,7 +17,7 @@ const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
 const { loadProjectRules } = require('./projectRules');
-const { loadServerConfig, buildAgentTools, classifyMcpTool, explainMcpRefusal } = require('./mcpConfig');
+const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal } = require('./mcpConfig');
 const { connectAll, getServer } = require('./mcpClient');
 
 const SYSTEM_BASE = [
@@ -549,7 +549,12 @@ async function setupMcp(ctx, wsFolders, dbg) {
 			const route = built.routes.get(t.name);
 			return classifyMcpTool(t.name, cfg.toolPolicy, route && route.annotations).approve === 'allow';
 		}).length;
-		const summary = handles.map((h) => h.name + ' (' + h.tools.length + ')').join(', ');
+		// Per-server counts come from what was actually EXPOSED (built.routes), not the raw tools/list
+		// length — a server capped at MAX_TOOLS_PER_SERVER or listing junk exposes fewer than it
+		// advertised, and showing the raw number would contradict the allowed/total denominator below
+		// (PR #31 review). A server that exposed nothing still shows "(0)": honest, and a useful signal.
+		const perServer = toolCountsByServer(built.routes);
+		const summary = handles.map((h) => h.name + ' (' + (perServer.get(h.name) || 0) + ')').join(', ');
 		dbg('mcp.ready', { servers: handles.map((h) => h.name), tools: built.tools.length, allowed });
 		ctx.post({ type: 'agentTool', icon: 'plug', text: '🔌 mcp · ' + summary + ' · ' + allowed + '/' + built.tools.length + ' allow-listed' });
 		return built;
