@@ -109,8 +109,12 @@ function loadServerConfig(opts) {
 		}
 	};
 
-	// 1. User setting first — see the precedence note above.
-	add(serverMapOf({ mcpServers: o.settings }), 'settings', 'settings');
+	// 1. User setting first — see the precedence note above. A MISSING setting is an empty map, not an
+	// empty wrapper: {mcpServers: undefined} would fall through serverMapOf's bare-map branch and get
+	// reported as a phantom server literally named "mcpServers" — a spurious error for every user who
+	// has no MCP config at all.
+	const settingsRaw = (o.settings && typeof o.settings === 'object' && !Array.isArray(o.settings)) ? o.settings : null;
+	add(settingsRaw ? serverMapOf(settingsRaw) : {}, 'settings', 'settings');
 
 	// 2. Then each workspace folder's file.
 	for (const f of (Array.isArray(o.folders) ? o.folders : [])) {
@@ -156,7 +160,7 @@ function sanitizeSegment(raw, fallback) {
 function namespaceToolName(server, tool) {
 	const full = sanitizeSegment(server, 'server') + NAME_SEPARATOR + sanitizeSegment(tool, 'tool');
 	if (full.length <= MAX_TOOL_NAME) { return full; }
-	const tag = shortHash(String(server) + ' ' + String(tool));
+	const tag = shortHash(String(server) + '\u0000' + String(tool));
 	return full.slice(0, MAX_TOOL_NAME - tag.length - 1) + '_' + tag;
 }
 

@@ -185,6 +185,23 @@ test('CONFIG: a throwing readFile, absent file, and no config at all are all tol
 	assert.strictEqual(M.loadServerConfig().servers.length, 0);
 });
 
+test('CONFIG: no MCP config at all reports NO problems (the common case must be silent)', () => {
+	// Regression: a missing `settings` used to be wrapped as {mcpServers: undefined}, which fell through
+	// to the bare-map branch and reported a phantom server named "mcpServers" — an error for every user
+	// who has never configured MCP. Assert on problems, not just servers.
+	for (const arg of [undefined, {}, { settings: undefined }, { settings: null }, { settings: {} }]) {
+		const r = M.loadServerConfig(arg);
+		assert.deepStrictEqual(r.servers, [], JSON.stringify(arg));
+		assert.deepStrictEqual(r.problems, [], 'expected no problems for ' + JSON.stringify(arg) + ', got ' + JSON.stringify(r.problems));
+	}
+});
+
+test('CONFIG: a settings object may itself use the {mcpServers:…} wrapper', () => {
+	const { servers, problems } = M.loadServerConfig({ settings: { mcpServers: { wrapped: { command: 'x' } } } });
+	assert.deepStrictEqual(servers.map((s) => s.name), ['wrapped']);
+	assert.deepStrictEqual(problems, []);
+});
+
 test('CONFIG: the server cap is enforced', () => {
 	const settings = {};
 	for (let i = 0; i < M.MAX_SERVERS + 3; i++) { settings['s' + i] = { command: 'x' }; }
