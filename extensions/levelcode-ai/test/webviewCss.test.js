@@ -114,4 +114,21 @@ test('every check migrated to the ring-check — no bare codicon(\'check\') anyw
 		'and drops its own border so there is a single ring, not two');
 });
 
+// New calm-transcript state (curGroup, turnLabeled) must be torn down wherever the log is wiped,
+// or the next run appends into a detached group (nothing shows) and the first line renders unlabeled.
+test('the reset handler clears the group + speaker-label state, not just the card maps', () => {
+	const reset = html.slice(html.indexOf("m.type === 'reset'"), html.indexOf("m.type === 'reset'") + 900);
+	assert.ok(/curGroup = null/.test(reset), 'reset drops the open-group ref');
+	assert.ok(/turnLabeled = false/.test(reset), 'reset re-arms the speaker label');
+});
+
+test('a checkpoint restore prunes step maps and drops a group whose DOM was removed', () => {
+	const fn = html.slice(html.indexOf('function applyCheckpointRestored'), html.indexOf('function applyCheckpointRestored') + 900);
+	assert.ok(/pruneDetached\(editSteps\)/.test(fn) && /pruneDetached\(termSteps\)/.test(fn) && /pruneDetached\(verifySteps\)/.test(fn),
+		'the step maps are pruned alongside the card maps');
+	assert.ok(/curGroup && !log\.contains\(curGroup\.el\)/.test(fn), 'a stranded (detached) group is dropped');
+	// pruneDetached must handle both an element value and a {card} step value
+	assert.ok(/function pruneDetached\(map\)\{[^}]*\.card/.test(html), 'pruneDetached also follows step.card');
+});
+
 console.log('webviewCss: ' + n + ' tests passed');

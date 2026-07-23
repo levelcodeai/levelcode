@@ -2814,12 +2814,16 @@
     let wrap = u.querySelector('.ckwrap'); if (!wrap){ wrap = document.createElement('div'); wrap.className = 'ckwrap'; u.appendChild(wrap); }
     renderRestoreIdle(wrap, turnId, fileCount);
   }
-  function pruneDetached(map){ for (const k in map){ const el = map[k]; if (el && !log.contains(el)){ delete map[k]; } } }
+  // Drop entries whose DOM is gone. Works for card maps (value IS the element) and step maps (value
+  // is a {card} object) — a checkpoint restore removes the cards, so their step state must go too.
+  function pruneDetached(map){ for (const k in map){ const v = map[k]; const el = (v && v.nodeType) ? v : (v && v.card); if (!el || !log.contains(el)){ delete map[k]; } } }
   function applyCheckpointRestored(m){
     const u = ckBubble(m.turnId); if (!u){ return; }
     let n = u.nextSibling; while (n){ const next = n.nextSibling; n.remove(); n = next; }   // drop this turn's output + every later turn
     const wrap = u.querySelector('.ckwrap'); if (wrap){ wrap.innerHTML = '<span class="ckmuted">' + REVERT + ' Restored to here · ' + (m.filesRestored || 0) + ' file' + (m.filesRestored === 1 ? '' : 's') + ' reverted</span>'; }
     pruneDetached(editCards); pruneDetached(termCards); pruneDetached(verifyCards);
+    pruneDetached(editSteps); pruneDetached(termSteps); pruneDetached(verifySteps);
+    if (curGroup && !log.contains(curGroup.el)){ curGroup = null; }   // don't append into a removed group
     agentBubble = null; agentRaw = ''; setStreaming(false); forceStick();
   }
   function checkpointBusyNotice(m){
@@ -2914,6 +2918,10 @@
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
+      // Wiping the log detaches any open group; drop the dangling refs so the next run starts clean —
+      // otherwise groupAppend() appends into a disconnected .groupbody (nothing shows), and a stale
+      // turnLabeled makes the first assistant line render as an unlabeled continuation.
+      curGroup = null; turnLabeled = false;
       selLabel = null; ctxFiles = []; renderChips();
       for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } for (const k in verifyCards) { delete verifyCards[k]; } for (const k in bgTasks) { delete bgTasks[k]; }
       for (const k in editSteps) { delete editSteps[k]; } for (const k in termSteps) { delete termSteps[k]; } for (const k in verifySteps) { delete verifySteps[k]; }   // step maps ride with their cards
