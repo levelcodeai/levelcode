@@ -309,25 +309,52 @@ function buildAgentTools(servers, opts) {
  * only push toward asking, never toward allowing: a `destructiveHint` overrides an allow-list entry
  * (worst case, one extra prompt), while a `readOnlyHint` grants nothing on its own.
  *
+ * `policyCanAllow` answers a question the callers kept getting wrong (PR #31 review): would adding
+ * this tool to the allow-list actually grant it? For every ordinary refusal, yes. For a `destructiveHint`
+ * refusal, NO — a server hint may only tighten, so the allow-list cannot override it. Callers use this to
+ * avoid (a) counting a destructive-but-allow-listed tool as "allow-listed" in the startup chip, and
+ * (b) telling the model to allow-list a tool that allow-listing can never enable.
+ *
  * @param {string} name       the namespaced tool name (server__tool)
  * @param {object} [policy]   user map, e.g. { 'github__list_issues': 'allow', '*': 'ask' }
  * @param {object} [annotations]  the server's own hints for this tool (untrusted)
- * @returns {{ approve: 'ask'|'allow', reason: string }}
+ * @returns {{ approve: 'ask'|'allow', reason: string, policyCanAllow: boolean }}
  */
 function classifyMcpTool(name, policy, annotations) {
 	if (annotations && annotations.destructiveHint === true) {
-		return { approve: 'ask', reason: 'the server marks this tool destructive' };
+		return { approve: 'ask', reason: 'the server marks this tool destructive', policyCanAllow: false };
 	}
 	const p = policy || {};
 	const exact = p[name];
-	if (exact === 'allow') { return { approve: 'allow', reason: 'allow-listed by you' }; }
-	if (exact === 'ask') { return { approve: 'ask', reason: 'set to ask by you' }; }
+	if (exact === 'allow') { return { approve: 'allow', reason: 'allow-listed by you', policyCanAllow: true }; }
+	if (exact === 'ask') { return { approve: 'ask', reason: 'set to ask by you', policyCanAllow: true }; }
 	const star = p['*'];
-	if (star === 'allow') { return { approve: 'allow', reason: 'allow-listed by you (*)' }; }
-	return { approve: 'ask', reason: 'third-party tool (default)' };
+	if (star === 'allow') { return { approve: 'allow', reason: 'allow-listed by you (*)', policyCanAllow: true }; }
+	return { approve: 'ask', reason: 'third-party tool (default)', policyCanAllow: true };
+}
+
+/**
+ * The agent-facing explanation for a refused MCP call in a build with no approval card (S3). It lives
+ * HERE, beside classifyMcpTool, on purpose: the PR #31 review caught this message telling the model to
+ * allow-list a destructive tool that allow-listing can never enable — the message had drifted from the
+ * policy. Keeping both in one module (and unit-testing this off the editor) is what stops the drift
+ * recurring. Branches solely on the verdict, so it cannot disagree with the classifier.
+ *
+ * @param {string} name  the namespaced tool name
+ * @param {{reason:string, policyCanAllow:boolean}} verdict  from classifyMcpTool (a non-'allow' one)
+ * @returns {string}
+ */
+function explainMcpRefusal(name, verdict) {
+	const head = 'ERROR: the MCP tool "' + name + '" is not approved to run (' + verdict.reason + '). ';
+	const fix = verdict.policyCanAllow
+		? 'This build has no per-call approval prompt, so the only way to permit it is for the USER to add '
+			+ '"' + name + '": "allow" to the "levelcode.ai.mcp.toolPolicy" setting. '
+		: 'Such tools always require per-call approval — which this build does not yet provide — so it '
+			+ 'CANNOT be enabled through the allow-list. ';
+	return head + fix + 'Do NOT retry it in this run — continue without it, or tell the user what you needed it for.';
 }
 
 module.exports = {
-	loadServerConfig, namespaceToolName, assignToolNames, buildAgentTools, classifyMcpTool,
+	loadServerConfig, namespaceToolName, assignToolNames, buildAgentTools, classifyMcpTool, explainMcpRefusal,
 	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };

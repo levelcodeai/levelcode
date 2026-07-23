@@ -250,10 +250,41 @@ test('POLICY: a server destructiveHint OVERRIDES an allow-list entry (tighten-on
 	const r = M.classifyMcpTool('gh__nuke', { 'gh__nuke': 'allow' }, { destructiveHint: true });
 	assert.strictEqual(r.approve, 'ask');
 	assert.ok(/destructive/.test(r.reason));
+	// PR #31 review: the allow-list did not override it, so it must ALSO report that the allow-list
+	// cannot help — otherwise the chip counts it and the refusal message misdirects the model.
+	assert.strictEqual(r.policyCanAllow, false);
+});
+
+test('POLICY: policyCanAllow is true for every refusal the allow-list CAN fix', () => {
+	// Everything except a destructive hint is unblockable by editing the policy — the callers rely on
+	// this to decide whether to say "add it to the allow-list".
+	assert.strictEqual(M.classifyMcpTool('gh__x').policyCanAllow, true);                       // default ask
+	assert.strictEqual(M.classifyMcpTool('gh__x', { 'gh__x': 'ask' }).policyCanAllow, true);    // explicit ask
+	assert.strictEqual(M.classifyMcpTool('gh__x', { 'gh__x': 'allow' }).policyCanAllow, true);  // already allowed
+	assert.strictEqual(M.classifyMcpTool('gh__x', {}, { readOnlyHint: true }).policyCanAllow, true);
 });
 
 test('POLICY: a readOnlyHint grants nothing on its own (annotations are untrusted)', () => {
 	assert.strictEqual(M.classifyMcpTool('gh__read', {}, { readOnlyHint: true }).approve, 'ask');
+});
+
+test('REFUSAL: the message tells the model to allow-list ONLY when that would work', () => {
+	// The exact bug from the PR #31 review: a destructive tool was told to allow-list itself, which
+	// classifyMcpTool can never honour. Drive explainMcpRefusal off the real verdicts so the message
+	// and the policy cannot disagree.
+	const destructive = M.classifyMcpTool('gh__nuke', { 'gh__nuke': 'allow' }, { destructiveHint: true });
+	const mDestructive = M.explainMcpRefusal('gh__nuke', destructive);
+	assert.ok(!/toolPolicy/.test(mDestructive), 'must NOT point a destructive tool at the allow-list');
+	assert.ok(/destructive/.test(mDestructive) && /CANNOT/.test(mDestructive), 'must say why it is unfixable');
+
+	const plain = M.classifyMcpTool('gh__read');   // default ask, fixable
+	const mPlain = M.explainMcpRefusal('gh__read', plain);
+	assert.ok(/"gh__read": "allow"/.test(mPlain) && /toolPolicy/.test(mPlain), 'must name the exact setting to add');
+
+	for (const m of [mDestructive, mPlain]) {
+		assert.ok(/^ERROR:/.test(m), 'stays an ERROR string so the loop treats it as a tool failure');
+		assert.ok(/Do NOT retry/.test(m), 'must tell the model not to retry, or it loops');
+	}
 });
 
 // ---- 4. buildAgentTools: MCP tool specs → agent descriptors + routing table (S3) --------------

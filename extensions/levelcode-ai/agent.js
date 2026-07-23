@@ -17,7 +17,7 @@ const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
 const { loadProjectRules } = require('./projectRules');
-const { loadServerConfig, buildAgentTools, classifyMcpTool } = require('./mcpConfig');
+const { loadServerConfig, buildAgentTools, classifyMcpTool, explainMcpRefusal } = require('./mcpConfig');
 const { connectAll, getServer } = require('./mcpClient');
 
 const SYSTEM_BASE = [
@@ -457,13 +457,12 @@ async function runTool(tu, ctx) {
 			if (verdict.approve !== 'allow') {
 				// S3 deliberately ships no approval CARD (S4 owns it), so anything the user has not
 				// explicitly allow-listed is REFUSED rather than run — the alternative would be silently
-				// executing third-party code on the user's behalf with no way to say no. The message is
-				// addressed to the model but written for the user's benefit: it names the exact setting.
+				// executing third-party code on the user's behalf with no way to say no. The explanation
+				// lives in mcpConfig beside the classifier so it can't drift from it (PR #31 review): a
+				// destructive tool is refused for a reason the allow-list cannot fix, and must not be
+				// described as allow-listable.
 				ctx.post({ type: 'agentTool', icon: 'shield', text: '🔌 mcp · refused ' + tu.name + ' — ' + verdict.reason });
-				return 'ERROR: the MCP tool "' + tu.name + '" is not approved to run (' + verdict.reason + '), and '
-					+ 'approval prompts are not available in this build. To allow it, the USER must add '
-					+ '"' + tu.name + '": "allow" to the "levelcode.ai.mcp.toolPolicy" setting. Do NOT retry it in '
-					+ 'this run — continue without it, or tell the user what you needed it for.';
+				return explainMcpRefusal(tu.name, verdict);
 			}
 			const server = getServer(route.server);
 			if (!server || !server.alive) { return 'ERROR: the MCP server "' + route.server + '" is not running.'; }
@@ -543,8 +542,13 @@ async function setupMcp(ctx, wsFolders, dbg) {
 		if (!built.tools.length) { return empty; }
 
 		// Show the allow-listed count up front: with no policy set it reads "0/12 allow-listed", which is
-		// what makes a later refusal legible instead of looking broken.
-		const allowed = built.tools.filter((t) => classifyMcpTool(t.name, cfg.toolPolicy).approve === 'allow').length;
+		// what makes a later refusal legible instead of looking broken. Pass the SAME annotations runTool
+		// will (PR #31 review) — otherwise a destructive-but-allow-listed tool is counted here yet refused
+		// there, and the chip lies. The route always exists for a built tool; guard defensively anyway.
+		const allowed = built.tools.filter((t) => {
+			const route = built.routes.get(t.name);
+			return classifyMcpTool(t.name, cfg.toolPolicy, route && route.annotations).approve === 'allow';
+		}).length;
 		const summary = handles.map((h) => h.name + ' (' + h.tools.length + ')').join(', ');
 		dbg('mcp.ready', { servers: handles.map((h) => h.name), tools: built.tools.length, allowed });
 		ctx.post({ type: 'agentTool', icon: 'plug', text: '🔌 mcp · ' + summary + ' · ' + allowed + '/' + built.tools.length + ' allow-listed' });
