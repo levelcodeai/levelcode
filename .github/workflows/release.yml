@@ -73,6 +73,11 @@ jobs:
     # release days; GITHUB_TOKEN raises that to 5000/hr. Read-only default token — no extra perms needed.
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # No LevelCode build runs Playwright browser tests, but an upstream extension (copilot) pulls in
+      # playwright-core, whose postinstall downloads a Chromium from cdn.playwright.dev. That network hop
+      # flaked the x64 build (getaddrinfo ENOTFOUND) while arm64 passed the SAME commit — so skip it and
+      # the whole class of flake goes away. Same spirit as the GITHUB_TOKEN mitigation above.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
