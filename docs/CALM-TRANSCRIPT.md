@@ -37,7 +37,8 @@ Two halves, shipped as separate slices: the **voice** (system prompt) and the **
   subtitle and the run card's italic `cmdwhy`), but the schema text doesn't say what to write and
   the system prompt never asks for it — in practice it's often missing. File ops post derived
   chips ("read X", `search "q"`). There is nothing like Claude Code's semantic command label
-  ("Found exact insertion point in section 10") unless we make `explanation` effectively required.
+  ("Found exact insertion point in section 10") unless we make `explanation` required — which D6/S1
+  now do (schema-required on all three tools).
 - **Diffstat data exists everywhere we need it**: `editApplied` carries per-file `add`/`del`
   (rendered `+N −M` on the edit card); `reviewState` carries the run aggregate. A group header sum
   is arithmetic on data already in the webview.
@@ -63,10 +64,12 @@ stay verbatim. The voice rules are additive: *narrate briefly, then call the too
 turn*. A narration-only turn that promises action remains a stall and still gets nudged. This is
 the difference between "calm" and "chatty but idle".
 
-### D3 — Grouping is a webview-only reducer. The extension host keeps posting the same events.
-No event schema changes, no agent.js changes for grouping. `chat.html` gets a small router:
-consecutive tool-ish entries (`agentTool` chips, `termRun` cards, `editApplied` cards, verify
-cards) are appended into the open group's body instead of `log`; any assistant text bubble,
+### D3 — Grouping is a webview-only reducer; the host keeps posting the same event *types*.
+No new event types and no host-side grouping logic. The `agentTool` payload does gain optional
+metadata — `label` (the model's `explanation`), `kind`, and `path` — so the webview can title and
+categorise rows; `agent.js` fills those fields, but the grouping decisions all live in `chat.html`.
+The router appends consecutive tool-ish entries (`agentTool` chips, `termRun` cards, `editApplied`
+cards, verify cards) into the open group's body instead of `log`; any assistant text bubble,
 `ask_user` card, `agentError`, or `agentDone` **closes** the group. This keeps the diff small,
 rebase-safe, and revertable (one function + CSS).
 
@@ -96,9 +99,9 @@ read+edit merged, summed diffstat, fallback "N steps" when the sentence would ge
 single-member group unwraps and hands the card back **expanded** — no group chrome.
 
 ### D6 — Labels: model-written, for every tool that has a story to tell.
-`run_command`, `read_file` and `search` all take a required `explanation`: "5–10 words, active
-voice, what it does — e.g. 'Find the insertion point in section 10'", and the voice rules require
-it. That sentence titles the row; the raw tool text (`read src/agent.js`) becomes the tooltip. UI
+`run_command`, `read_file` and `search` all take a required `explanation`: "3–8 words, active
+voice, what it does — e.g. 'Find the insertion point in section 10'" (the same range in the prompt
+and all three schemas), and the voice rules require it. That sentence titles the row; the raw tool text (`read src/agent.js`) becomes the tooltip. UI
 falls back to deriving a label from the arguments when absent (older transcripts, weaker models).
 Tense: a small verb map (Run/Ran/Running, Read, Edit, Verify, Search, Create, Delete, Install,
 Check ~a dozen) converts imperative → progressive/past; unknown verbs render as-is. No grammar
@@ -175,8 +178,6 @@ Then re-run with grouping toggled off and confirm the flat timeline is unchanged
 
 ## 6. Not doing (yet)
 
-- Model-written labels for file reads/searches (derived-only is enough parity; revisit if reads
-  dominate groups).
 - Group state across webview rebuilds / session restore.
 - Per-model prompt forks for the voice.
 - Collapsing `ask_user`/approvals into groups — deliberately excluded (D4).
