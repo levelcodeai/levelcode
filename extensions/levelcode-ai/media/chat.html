@@ -2419,28 +2419,34 @@
   function modelLabel(){
     try { const t = (document.getElementById('model').textContent || 'Auto').replace('▾', '').trim(); return t || 'Auto'; } catch(e){ return 'Auto'; }
   }
-  // [LevelCode] Retail micro-$ → a human figure. Sub-cent turns are common once prompt caching kicks
-  // in, and "$0.00" would read as free/broken — so floor them at "<$0.01" instead of rounding away.
-  // Credits are the in-product spending unit: $1 = 100 credits, so 1 credit = 10_000 retail micro-$.
-  // The gateway sends RETAIL micro-$ (Levelcode.retail_micros), the same figures the account dashboard
-  // renders — so converting here with the same rule keeps the editor and the website in agreement.
+  // [LevelCode] Credits are the in-product spending unit: $1 = 100 credits, so 1 credit = 10_000
+  // retail micro-$. The gateway sends RETAIL micro-$ (Levelcode.retail_micros) — the same figures the
+  // account dashboard renders — so converting here with the same rule keeps the editor and the website
+  // showing one number. Pinned by test/creditFormat.test.js, which extracts these very functions.
   const MICROS_PER_CREDIT = 10000;
-  function toCredits(micros){ const c = Number(micros) / MICROS_PER_CREDIT; return isFinite(c) ? c : 0; }
-  // A balance reads as a whole credit count. A single run, though, can cost well under one credit (a
-  // cheap-model turn is ~0.4), and rounding that to "0" would read as free — so small costs keep one
-  // decimal until they're big enough not to need it.
-  function creditBalance(micros){ return Math.round(toCredits(micros)).toLocaleString(); }
+  function toCredits(micros){
+    const c = Number(micros) / MICROS_PER_CREDIT;
+    return isFinite(c) ? c : 0;
+  }
+  // A balance reads as a whole credit count. Clamped at zero: an overage can push the remaining
+  // balance negative, and "-2 left" is a worse thing to put in front of someone than "0 left" (the
+  // dollar formatter this replaced clamped the same way).
+  function creditBalance(micros){
+    const c = toCredits(micros);
+    return (c > 0 ? Math.round(c) : 0).toLocaleString();
+  }
+  // A single run can cost well under one credit (a cheap-model turn is ~0.4), so small costs keep one
+  // decimal, and anything under 0.05 floors to "<0.1" rather than rounding to "0" — a run that cost
+  // something must never read as free. Returns the FIXED string: wrapping it in a unary + to drop
+  // trailing zeros silently defeated both of those rules. Identical to the dashboard's rate().
   function creditCost(micros){
     const c = toCredits(micros);
     if (c <= 0) { return '0'; }
     if (c >= 10) { return Math.round(c).toLocaleString(); }
-    // Fixed string, not +String(...): the unary + dropped the decimal (7.0 -> "7") and collapsed
-    // anything under 0.05 to "0" — a run that cost something reading as free. Same fix as the
-    // dashboard's rate(), kept identical so the two surfaces render a cost the same way.
     return c < 0.05 ? '<0.1' : c.toFixed(1);
   }
 
-  // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · $cost · $left.
+  // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · cost · balance, in credits.
   function addAgentDone(reason, edits, credits, maxSteps, costMicros){
     closeGroup();   // the run is over — finalize any open activity group
     const bar = document.createElement('div'); bar.className = 'agentbar';
