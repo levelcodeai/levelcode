@@ -2424,6 +2424,11 @@
   // account dashboard renders — so converting here with the same rule keeps the editor and the website
   // showing one number. Pinned by test/creditFormat.test.js, which extracts these very functions.
   const MICROS_PER_CREDIT = 10000;
+  // Group digits with a FIXED locale, not the ambient one. The bar it replaced rendered plain US-style
+  // money strings, the account dashboard formats the same figure the same way, and an ambient locale
+  // would make one balance render differently per machine ("1,279" vs "1.279" vs "1 279") — including
+  // on a CI runner, which would make these tests environment-dependent.
+  const CREDIT_LOCALE = 'en-US';
   function toCredits(micros){
     const c = Number(micros) / MICROS_PER_CREDIT;
     return isFinite(c) ? c : 0;
@@ -2433,7 +2438,7 @@
   // dollar formatter this replaced clamped the same way).
   function creditBalance(micros){
     const c = toCredits(micros);
-    return (c > 0 ? Math.round(c) : 0).toLocaleString();
+    return (c > 0 ? Math.round(c) : 0).toLocaleString(CREDIT_LOCALE);
   }
   // A single run can cost well under one credit (a cheap-model turn is ~0.4), so small costs keep one
   // decimal, and anything under 0.05 floors to "<0.1" rather than rounding to "0" — a run that cost
@@ -2442,7 +2447,7 @@
   function creditCost(micros){
     const c = toCredits(micros);
     if (c <= 0) { return '0'; }
-    if (c >= 10) { return Math.round(c).toLocaleString(); }
+    if (c >= 10) { return Math.round(c).toLocaleString(CREDIT_LOCALE); }
     return c < 0.05 ? '<0.1' : c.toFixed(1);
   }
 

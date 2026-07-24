@@ -34,9 +34,15 @@ const rateMatch = /const MICROS_PER_CREDIT = (\d+);/.exec(html);
 assert.ok(rateMatch, 'chat.html no longer defines MICROS_PER_CREDIT');
 assert.strictEqual(rateMatch[1], '10000', '1 credit must stay $0.01 — the website converts identically');
 
+// Digit grouping must not depend on the machine's locale — otherwise the same balance renders "1,279"
+// for one user and "1.279" or "1 279" for another, and these very assertions become dependent on the
+// CI runner's locale. Pull the constant from source so the check below exercises the shipped value.
+const localeMatch = /const CREDIT_LOCALE = '([\w-]+)';/.exec(html);
+assert.ok(localeMatch, 'chat.html must pin an explicit CREDIT_LOCALE — a bare toLocaleString() varies by environment');
+
 const sandbox = /** @type {any} */ ({});
 new Function(
-	'const MICROS_PER_CREDIT = ' + rateMatch[1] + ';\n'
+	'const MICROS_PER_CREDIT = ' + rateMatch[1] + ";\nconst CREDIT_LOCALE = '" + localeMatch[1] + "';\n"
 	+ extract('toCredits') + '\n' + extract('creditBalance') + '\n' + extract('creditCost') + '\n'
 	+ 'this.toCredits = toCredits; this.creditBalance = creditBalance; this.creditCost = creditCost;'
 ).call(sandbox);
@@ -93,6 +99,15 @@ test('ROBUST: nullish and non-numeric input never render NaN', () => {
 		assert.strictEqual(creditCost(junk), '0', 'cost from ' + JSON.stringify(junk));
 	}
 	assert.strictEqual(toCredits(Infinity), 0, 'a non-finite figure must collapse to 0, not Infinity');
+});
+
+test('LOCALE: grouping is pinned, so the same balance renders identically everywhere', () => {
+	// Every grouped call must pass the explicit locale. A bare toLocaleString() would render "1.279"
+	// on a de-DE machine and "1 279" on fr-FR — the editor and the dashboard would then disagree about
+	// the same number, and this file's assertions would pass or fail depending on the CI runner.
+	const bare = /\.toLocaleString\(\s*\)/.exec(html);
+	assert.strictEqual(bare, null, 'found a bare toLocaleString() in chat.html — pass CREDIT_LOCALE');
+	assert.strictEqual(localeMatch[1], 'en-US', 'the dashboard groups with en-US; the bar must match');
 });
 
 test('CONVERSION: $1 is 100 credits, in both directions of the bar', () => {
