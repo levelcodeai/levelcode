@@ -11,7 +11,7 @@ LevelCode has always shipped a built-in browser — but you had to know the comm
 - **It updates as the agent works.** Edits land on disk immediately (that's the apply-then-review model — Keep/Undo comes *after*), so your dev server's watcher fires HMR and the preview refreshes before you click Keep. Ask for a page, watch it appear.
 - **It never steals your focus.** A server coming up mid-run doesn't yank the caret away from whatever you're typing.
 - **Closing it means closed.** Each address opens at most once per session, so a chatty server can't reopen the tab you just dismissed, and a restart-on-save server can't stack one tab per reload.
-- **Only local addresses, ever.** The address is read from the dev server's own output — which is whatever a project's start script chose to print. So only `localhost`, `127.0.0.1` and the IPv6 loopback are opened; a remote URL printed by a script is ignored. A hostile repo can't point your editor's browser somewhere else.
+- **Only local addresses, ever.** The address is read from the dev server's own output — which is whatever a project's start script chose to print. So only `localhost`, `127.0.0.1`, the IPv6 loopback `[::1]`, and the bind addresses `0.0.0.0` / `[::]` (treated as `localhost`) are opened; a remote URL printed by a script is ignored. A hostile repo can't point your editor's browser somewhere else.
 
 Turn it off with `levelcode.ai.preview.autoOpen`, or open previews yourself with **Simple Browser: Show**.
 
