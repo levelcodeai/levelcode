@@ -19,13 +19,24 @@ on:
 permissions:
   contents: write # create/update the draft release
 
+# Action pins run on the Node 24 runtime. GitHub deprecated Node 20 on the runners (2025-09-19) and
+# was force-running the old v4 pins on Node 24 with a warning per step; these majors target node24
+# natively, so the shim (and the warning) is gone. They need Actions Runner >= 2.327.1 — the hosted
+# images are well past that (2.335.1 as of the v0.9.2 build) and self-update, so no action needed.
+# The majors were chosen against how THIS workflow uses them, not blindly:
+#   · setup-node v6 limited automatic caching to npm — not used here; npm caching is the explicit
+#     actions/cache step below, so the change is a no-op for us.
+#   · checkout v7 blocks fork checkouts for pull_request_target/workflow_run — neither is a trigger.
+#   · upload-artifact v7 added unzipped "direct uploads" behind `archive:` — opt-in, default unchanged.
+#   · download-artifact v8 now ERRORS on a digest mismatch (was a warning). Deliberate: a corrupted
+#     app bundle must not reach a release we then sign and notarize. Recoverable by re-running the job.
 jobs:
   # Cheap gate: run the extension unit tests before spending ~1h of macOS build minutes.
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: Extension unit tests
@@ -79,12 +90,12 @@ jobs:
       # the whole class of flake goes away. Same spirit as the GITHUB_TOKEN mitigation above.
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24" # bootstrap.sh checks the .nvmrc major; 24.x satisfies the 1.126 pin
       - name: Cache npm downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.npm
           key: npm-${{ matrix.arch }}-${{ hashFiles('scripts/bootstrap.sh') }}
@@ -98,7 +109,7 @@ jobs:
       - name: Zip the unsigned app
         run: ditto -c -k --sequesterRsrc --keepParent "VSCode-darwin-${{ matrix.arch }}/LevelCode.app" "UNSIGNED-LevelCode-${{ matrix.arch }}.app.zip"
       - name: Upload app artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: UNSIGNED-LevelCode-${{ matrix.arch }}
           path: UNSIGNED-LevelCode-${{ matrix.arch }}.app.zip
@@ -111,7 +122,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: apps
           merge-multiple: true
