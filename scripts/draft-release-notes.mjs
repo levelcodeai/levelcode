@@ -25,13 +25,25 @@
  *  the draft. A tool that silently drops commits is worse than no tool — you cannot review an
  *  omission you never see. Delete that section once you have checked it.
  *--------------------------------------------------------------------------------------------*/
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const REPO = process.cwd();
-const sh = (cmd) => execSync(cmd, { cwd: REPO, encoding: 'utf8' }).trim();
 const die = (msg) => { console.error('draft-release-notes: ' + msg); process.exit(1); };
+
+// git via argv, never a shell string. A tag name is repo-controlled but still UNTRUSTED input here:
+// it is discovered at runtime and then used to build a revision range, so passing it through a shell
+// would make a tag containing metacharacters an injection. spawnSync with an array cannot be quoted
+// out of. (RELEASE_TAG below is the second half of that defence: shape, not just escaping.)
+const git = (...args) => {
+	const r = spawnSync('git', args, { cwd: REPO, encoding: 'utf8' });
+	if (r.status !== 0) { die(`git ${args.join(' ')} failed: ${(r.stderr || '').trim()}`); }
+	return r.stdout.trim();
+};
+
+// The ONLY tag shape this tool will measure a release against.
+const RELEASE_TAG = /^v\d+\.\d+\.\d+$/;
 
 // ---- arguments ---------------------------------------------------------------------------------
 
@@ -42,24 +54,27 @@ if (!version) { die('usage: node scripts/draft-release-notes.mjs <version> [--wr
 if (!/^\d+\.\d+\.\d+$/.test(version)) { die(`"${version}" is not a bare semver (expected e.g. 0.9.2, no leading v)`); }
 
 const tag = 'v' + version;
-if (sh('git tag --list ' + tag)) {
+if (git('tag', '--list', tag)) {
 	die(`${tag} already exists. Notes are written BEFORE tagging, so the tag contains them.`);
 }
 
 // ---- the range ---------------------------------------------------------------------------------
 
-// Newest existing release tag, which is what this release is measured against.
-const prevTag = sh("git tag --list 'v*' --sort=-v:refname").split('\n').filter(Boolean)[0];
-if (!prevTag) { die('no previous v* tag found — cannot compute a range or a compare link'); }
+// Newest existing RELEASE tag — filtered by shape, not merely by the 'v*' glob. A stray tag like
+// v0.9.2-rc1 or v-wip sorts into that glob and would silently produce the wrong range (and therefore
+// the wrong compare link and the wrong commit list), which is a subtler failure than any injection.
+const prevTag = git('tag', '--list', 'v*', '--sort=-v:refname')
+	.split('\n').map((t) => t.trim()).filter((t) => RELEASE_TAG.test(t))[0];
+if (!prevTag) { die('no previous vX.Y.Z release tag found — cannot compute a range or a compare link'); }
 
-const dirty = sh('git status --porcelain').split('\n').filter((l) => l && !l.startsWith('??'));
+const dirty = git('status', '--porcelain').split('\n').filter((l) => l && !l.startsWith('??'));
 const warnings = [];
 if (dirty.length) {
 	warnings.push(`working tree has ${dirty.length} uncommitted change(s) — the notes may describe code that is not in the tag`);
 }
 
 // %x1f separates fields, %x1e separates records: commit subjects contain almost anything else.
-const raw = sh(`git log --format=%H%x1f%s%x1f%an%x1e ${prevTag}..HEAD`);
+const raw = git('log', '--format=%H%x1f%s%x1f%an%x1e', `${prevTag}..HEAD`);
 const commits = raw.split('\x1e').map((r) => r.trim()).filter(Boolean).map((r) => {
 	const [hash, subject, author] = r.split('\x1f');
 	return { hash: hash.slice(0, 7), subject, author };
@@ -72,11 +87,19 @@ if (!commits.length) { die(`no commits between ${prevTag} and HEAD — nothing t
 // Merge commits are dropped (their PR title is already carried by the squashed/branch commits), but
 // their PR numbers are collected so the draft can cite them.
 
-const prNumbers = [];
+// PR numbers arrive in one of two shapes depending on the merge strategy, and a tool that only knows
+// one of them silently reports "no PRs" on a repo that squash-merges. Collect both:
+//   merge commit  -> "Merge pull request #37 from ..."
+//   squash commit -> "feat(ai): auto-open the browser (#35)"
+const prNumbers = new Set();
 const isMerge = (c) => {
 	const m = /^Merge pull request #(\d+)/.exec(c.subject);
-	if (m) { prNumbers.push(m[1]); return true; }
+	if (m) { prNumbers.add(m[1]); return true; }
 	return /^Merge branch /.test(c.subject);
+};
+const notePrInSubject = (c) => {
+	const m = /\(#(\d+)\)\s*$/.exec(c.subject);
+	if (m) { prNumbers.add(m[1]); }
 };
 
 const typeOf = (subject) => (/^(\w+)(\([^)]*\))?!?:/.exec(subject) || [])[1] || 'other';
@@ -84,6 +107,7 @@ const USER_FACING = new Set(['feat', 'fix', 'perf', 'revert']);
 const INTERNAL = new Set(['ci', 'build', 'chore', 'test', 'docs', 'refactor', 'style']);
 
 const kept = commits.filter((c) => !isMerge(c));
+kept.forEach(notePrInSubject);   // squash-merge repos carry the PR in the subject, not a merge commit
 const features = kept.filter((c) => typeOf(c.subject) === 'feat');
 const fixes = kept.filter((c) => ['fix', 'perf', 'revert'].includes(typeOf(c.subject)));
 const excluded = kept.filter((c) => INTERNAL.has(typeOf(c.subject)));
@@ -107,7 +131,9 @@ function measureSuites() {
 			const run = spawnSync('node', [rel], { cwd: REPO, encoding: 'utf8' });
 			if (run.status !== 0) { failed.push(rel); continue; }
 			const m = /(\d+) tests? passed/.exec(run.stdout || '');
-			suites.push({ file, cases: m ? Number(m[1]) : null });
+			// Keyed by RELATIVE PATH: two extensions may legitimately both have catalog.test.js, and a
+			// basename would make the "biggest suites" list ambiguous about which one it means.
+			suites.push({ file: rel, cases: m ? Number(m[1]) : null });
 		}
 	}
 	return { suites, failed };
@@ -118,9 +144,16 @@ if (failed.length) {
 	die(`these suites FAIL — fix before drafting notes:\n  ${failed.join('\n  ')}`);
 }
 const totalCases = suites.reduce((n, s) => n + (s.cases || 0), 0);
+// A suite whose summary line we could not parse contributes 0, so the total would quietly UNDER-report
+// coverage while sounding authoritative. Say which number we actually have.
+const uncounted = suites.filter((s) => s.cases == null);
 const biggest = [...suites].sort((a, b) => (b.cases || 0) - (a.cases || 0)).slice(0, 3);
 
 // ---- render -------------------------------------------------------------------------------------
+
+// Set -> sorted array. (A Set has .size, not .length; reading .length silently yields undefined,
+// which is how the PR list quietly emptied itself the first time.)
+const prList = [...prNumbers].sort((a, b) => Number(a) - Number(b));
 
 const bullet = (c) => `- \`${c.hash}\` ${c.subject}`;
 const section = (title, list) => (list.length ? `\n### ${title}\n${list.map(bullet).join('\n')}\n` : '');
@@ -131,7 +164,7 @@ const draft = `# LevelCode v${version}
      not the biggest diff. Two features is a fine release; say so plainly. -->
 
 ## Highlights
-${section('Candidates — feat (write these up, or move them down / delete)', features)}${section('Candidates — fix/perf (usually "Under the hood", unless a user hit the bug)', fixes)}
+${section('Candidates — feat (write these up, or move them down / delete)', features)}${section('Candidates — fix/perf/revert (usually "Under the hood", unless a user hit the bug)', fixes)}
 <!-- TODO For each thing you keep: say what it does, then the ONE non-obvious property a user should
      know (a bound, a tradeoff, a thing it deliberately will not do). That sentence is the whole
      value of hand-writing these. -->
@@ -142,7 +175,8 @@ ${section('Candidates — feat (write these up, or move them down / delete)', fe
 
 ## Test coverage
 
-- **${suites.length} suites** across the bundled extensions, ${totalCases} cases in total — all green.
+- **${suites.length} suites** across the bundled extensions — all green.
+- ${totalCases} cases counted${uncounted.length ? ` across ${suites.length - uncounted.length} of them; ${uncounted.length} suite(s) did not report a count (${uncounted.map((s) => s.file).join(', ')}), so the real total is higher` : ' in total'}.
 ${biggest.map((s) => `- \`${s.file}\`${s.cases != null ? ` (${s.cases} cases)` : ''} — <!-- TODO what does it guard? -->`).join('\n')}
 
 **Full changelog:** https://github.com/levelcodeai/levelcode/compare/${prevTag}...${tag}
@@ -151,7 +185,7 @@ ${biggest.map((s) => `- \`${s.file}\`${s.cases != null ? ` (${s.cases} cases)` :
      EVERYTHING BELOW IS SCAFFOLDING — delete it before committing.
 
      Range: ${prevTag}..HEAD (${commits.length} commits, ${kept.length} after dropping merges)
-     PRs merged: ${prNumbers.length ? prNumbers.map((n) => '#' + n).join(', ') : '(none detected)'}
+     PRs merged: ${prList.length ? prList.map((n) => '#' + n).join(', ') : '(none detected)'}
 ${warnings.length ? '\n     WARNINGS:\n' + warnings.map((w) => '       - ' + w).join('\n') + '\n' : ''}
      EXCLUDED as internal — check this list; anything user-visible in here belongs above:
 ${excluded.length ? excluded.map((c) => `       ${c.hash} ${c.subject}`).join('\n') : '       (none)'}
