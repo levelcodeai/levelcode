@@ -2433,7 +2433,11 @@
   function creditCost(micros){
     const c = toCredits(micros);
     if (c <= 0) { return '0'; }
-    return c < 10 ? String(+c.toFixed(1)) : Math.round(c).toLocaleString();
+    if (c >= 10) { return Math.round(c).toLocaleString(); }
+    // Fixed string, not +String(...): the unary + dropped the decimal (7.0 -> "7") and collapsed
+    // anything under 0.05 to "0" — a run that cost something reading as free. Same fix as the
+    // dashboard's rate(), kept identical so the two surfaces render a cost the same way.
+    return c < 0.05 ? '<0.1' : c.toFixed(1);
   }
 
   // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · $cost · $left.
