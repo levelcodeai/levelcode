@@ -769,6 +769,28 @@ async function restoreCheckpoint(turnId) {
 const pendingApprovals = new Map();
 let approvalSeq = 0;
 
+/**
+ * Persist an MCP tool to the allow-list (the ONLY thing that grants 'allow' — G3). Writes to the USER
+ * (Global) tier, matching the application scope the setting is declared with, so a repo can never flip
+ * it. Reads the current value the same user-scoped way it is read at run start. Idempotent, and refuses
+ * a tool name that is not a namespaced server__tool to avoid writing junk from a malformed message.
+ */
+async function mcpAllowAlways(name) {
+	if (typeof name !== 'string' || !/^[A-Za-z0-9_-]+__[A-Za-z0-9_-]+$/.test(name)) {
+		dbg('mcp.allow.reject', { name }); return;
+	}
+	try {
+		const cfg = aiConfig();
+		const cur = userScopedSetting(cfg.inspect('mcp.toolPolicy'), {}) || {};
+		if (cur[name] === 'allow') { return; }
+		await cfg.update('mcp.toolPolicy', Object.assign({}, cur, { [name]: 'allow' }), vscode.ConfigurationTarget.Global);
+		post({ type: 'agentTool', icon: 'check', text: '🔌 mcp · always allow ' + name });
+		dbg('mcp.allow.persisted', { name });
+	} catch (e) {
+		dbg('mcp.allow.failed', { name, error: String((e && e.message) || e) });
+	}
+}
+
 /** Ask the webview to approve an action; resolves true/false. */
 function requestApproval(req) {
 	const id = String(++approvalSeq);
@@ -1358,7 +1380,13 @@ class ChatViewProvider {
 				case 'send': await handleSend(msg.text); break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
-				case 'approvalResponse': resolveApproval(msg.id, msg.approved); break;
+				case 'approvalResponse':
+					// "Always allow" on an MCP card persists the tool to the allow-list BEFORE resolving, so a
+					// future run skips the prompt. It only ever adds an ALLOW (never a broadening default), and
+					// the webview offers it only for non-destructive tools — mcpAllowAlways re-checks anyway.
+					if (msg.approved && msg.remember && msg.mcpName) { await mcpAllowAlways(msg.mcpName); }
+					resolveApproval(msg.id, msg.approved);
+					break;
 				case 'questionsResponse': resolveQuestions(msg.id, msg.answers, msg.notes); break;
 				case 'accountSignIn': await accountSignIn(msg.provider, msg.create); break;
 				case 'accountSignOut': await accountSignOut(); break;

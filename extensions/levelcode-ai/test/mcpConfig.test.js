@@ -504,4 +504,43 @@ test('SOURCE: the mcp modules contain no raw control bytes', () => {
 	}
 });
 
+// ---- 6. describeMcpCall: the approval card's content (S4) -------------------------------------
+
+test('CARD: server/tool come from the route, with a namespaced-name fallback', () => {
+	const d = M.describeMcpCall('github__create_issue', { title: 'x' }, { server: 'github', tool: 'create_issue' });
+	assert.strictEqual(d.server, 'github');
+	assert.strictEqual(d.tool, 'create_issue');
+	// No route → split the namespaced name on the separator rather than showing a blank card.
+	const f = M.describeMcpCall('github__create_issue', {}, undefined);
+	assert.strictEqual(f.server, 'github');
+	assert.strictEqual(f.tool, 'create_issue');
+});
+
+test('CARD: a destructive tool cannot be "always allowed"', () => {
+	// The card must not offer a button that does nothing — a destructive tool can never be allow-listed
+	// (classifyMcpTool tightens on it), so canAllowAlways is derived from the SAME annotation.
+	const d = M.describeMcpCall('gh__nuke', {}, { server: 'gh', tool: 'nuke', annotations: { destructiveHint: true } });
+	assert.strictEqual(d.destructive, true);
+	assert.strictEqual(d.canAllowAlways, false);
+	const ok = M.describeMcpCall('gh__list', {}, { server: 'gh', tool: 'list' });
+	assert.strictEqual(ok.destructive, false);
+	assert.strictEqual(ok.canAllowAlways, true);
+});
+
+test('CARD: arguments are shown in full but bounded, and never throw', () => {
+	const d = M.describeMcpCall('s__t', { path: '/etc/passwd', n: 3 }, { server: 's', tool: 't' });
+	assert.ok(d.argsText.includes('/etc/passwd') && d.argsText.includes('"n": 3'), 'the user must SEE the real args');
+
+	// Over the cap → truncated with an ellipsis, not dropped and not unbounded.
+	const big = M.describeMcpCall('s__t', { blob: 'z'.repeat(5000) }, { server: 's', tool: 't' });
+	assert.ok(big.argsText.length <= M.MAX_ARG_CHARS, 'args preview must obey MAX_ARG_CHARS');
+	assert.ok(big.argsText.endsWith('…'));
+
+	// Circular / weird input must not throw inside the card renderer's data prep.
+	const circ = {}; circ.self = circ;
+	assert.doesNotThrow(() => M.describeMcpCall('s__t', circ, { server: 's', tool: 't' }));
+	assert.strictEqual(M.describeMcpCall('s__t', null, { server: 's', tool: 't' }).argsText, '');
+	assert.strictEqual(M.describeMcpCall('s__t', undefined, { server: 's', tool: 't' }).argsText, '');
+});
+
 console.log('\nmcpConfig.js: ' + n + ' tests passed.');
