@@ -128,9 +128,36 @@ function sniffPreviewUrl(text) {
 	return port ? 'http://localhost:' + port : null;
 }
 
+/**
+ * Tracks which preview URLs have actually been SHOWN, so the auto-preview opens each address once and
+ * never fights the user who closed the tab.
+ *
+ * The distinction that matters (PR #35 review): a URL counts as shown only when the open SUCCEEDED. An
+ * attempt that throws — Simple Browser disabled, or unavailable for a moment — must stay retryable, or
+ * one transient failure silently suppresses the preview for the rest of the session and the feature
+ * looks broken with nothing to point at. Hence three states rather than a single Set: never-tried,
+ * in-flight, shown. In-flight exists because opening is async, so two runs advertising the same address
+ * could otherwise both pass the check and stack two tabs.
+ */
+function createPreviewGate() {
+	const shown = new Set();
+	const inFlight = new Set();
+	return {
+		/** May we try to open this URL right now? */
+		shouldOpen(url) { return !!url && !shown.has(url) && !inFlight.has(url); },
+		begin(url) { inFlight.add(url); },
+		/** It really appeared — never open it again, so closing the tab is final. */
+		succeeded(url) { inFlight.delete(url); shown.add(url); },
+		/** It did NOT appear — forget the attempt entirely so a later run can retry. */
+		failed(url) { inFlight.delete(url); },
+		clear() { shown.clear(); inFlight.clear(); },
+		get size() { return shown.size; }
+	};
+}
+
 /** Does this output line signal the server/watcher is up and ready? (Used even when no port is found.) */
 function looksReady(text) {
 	return /\bcompiled successfully\b|\blistening on\b|\bserver (?:is )?(?:running|started|ready)\b|\bwatching for file changes\b|\bready in\b|\bLocal:\s/i.test(String(text == null ? '' : text));
 }
 
-module.exports = { SEV, diagKey, formatDiagnosticLines, verifyOutcome, formatVerifyFeedback, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady };
+module.exports = { SEV, diagKey, formatDiagnosticLines, verifyOutcome, formatVerifyFeedback, looksUnrunnable, sniffPort, sniffPreviewUrl, createPreviewGate, looksReady };

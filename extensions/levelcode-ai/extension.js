@@ -22,7 +22,7 @@ const { registerInlineComplete } = require('./inlineComplete');
 const { runAgent } = require('./agent');
 const { findCompactionCut, estimateMsgTokens } = require('./agentMemory');
 const { registerReview } = require('./reviewSession');
-const { formatDiagnosticLines, diagKey } = require('./verify');
+const { formatDiagnosticLines, diagKey, createPreviewGate } = require('./verify');
 const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
@@ -665,12 +665,13 @@ function reapCommands() {
 	for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* already gone */ } }
 	commandStops.clear();
 	bgRuns.clear();
-	previewedUrls.clear();   // the servers are gone; a fresh session may legitimately preview again
+	previewGate.clear();     // the servers are gone; a fresh session may legitimately preview again
 }
 
-// Auto-preview (see openPreview): URLs already shown this session, so a chatty server can't stack tabs
-// and — more importantly — so closing the tab is RESPECTED rather than undone by the next log line.
-const previewedUrls = new Set();
+// Auto-preview (see openPreview): tracks which addresses have actually been SHOWN this session, so a
+// chatty server can't stack tabs and — more importantly — so closing the tab is RESPECTED rather than
+// undone by the next log line. A FAILED open stays retryable; see createPreviewGate.
+const previewGate = createPreviewGate();
 
 /**
  * Show a locally-served URL in the built-in Simple Browser, beside the chat.
@@ -682,19 +683,26 @@ const previewedUrls = new Set();
  * Three deliberate choices: `preserveFocus` so a server coming up never steals the caret from whoever
  * is typing; `Beside` so the site sits next to the work rather than replacing it; and dedupe-by-URL so
  * the user closing the tab is final. Never throws — a preview must not be able to fail a run.
+ *
+ * The gate records a URL as shown only AFTER the open succeeds (PR #35 review): marking it up-front
+ * meant one transient failure — Simple Browser disabled for a moment — blacklisted that address for the
+ * whole session, so the preview silently never appeared again. See createPreviewGate.
  */
 async function openPreview(url) {
 	if (!aiConfig().get('preview.autoOpen', true)) { return; }
-	if (!url || previewedUrls.has(url)) { return; }
-	previewedUrls.add(url);
+	if (!previewGate.shouldOpen(url)) { return; }
+	previewGate.begin(url);
 	try {
 		await vscode.commands.executeCommand('simpleBrowser.api.open', vscode.Uri.parse(url), {
 			preserveFocus: true,
 			viewColumn: vscode.ViewColumn.Beside
 		});
+		previewGate.succeeded(url);   // it really appeared → never reopen, so closing the tab is final
 		post({ type: 'agentTool', icon: 'globe', text: '🌐 preview · ' + url });
 	} catch (e) {
-		// simple-browser disabled or the id moved upstream — log, never surface as a run failure.
+		// simple-browser disabled or the id moved upstream — log, never surface as a run failure. The
+		// URL stays retryable: nothing was shown, so a later run should be free to try again.
+		previewGate.failed(url);
 		dbg('preview.failed', { url: url, error: String((e && e.message) || e) });
 	}
 }

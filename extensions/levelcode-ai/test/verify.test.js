@@ -13,7 +13,7 @@
 'use strict';
 
 const assert = require('assert');
-const { sniffPreviewUrl, sniffPort, looksReady } = require('../verify');
+const { sniffPreviewUrl, sniffPort, looksReady, createPreviewGate } = require('../verify');
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('  ok - ' + name); }
@@ -98,6 +98,54 @@ test('READY: recognises the common "it is up" lines, and nothing else', () => {
 	for (const notUp of ['', 'building...', 'error: failed to compile']) {
 		assert.strictEqual(looksReady(notUp), false, JSON.stringify(notUp));
 	}
+});
+
+// ---- 3b. the preview gate: shown-once, but a FAILED open stays retryable ----------------------
+
+test('GATE: a successful open is final — closing the tab is never undone', () => {
+	const g = createPreviewGate();
+	const url = 'http://localhost:3000';
+	assert.strictEqual(g.shouldOpen(url), true);
+	g.begin(url);
+	g.succeeded(url);
+	// The user may now close that tab. Nothing — no later run, no chatty log line — may reopen it.
+	assert.strictEqual(g.shouldOpen(url), false);
+});
+
+test('GATE: a FAILED open is retryable — the bug this gate exists for', () => {
+	// PR #35 review: the first version marked the URL as previewed BEFORE attempting to open it, so a
+	// single transient failure (Simple Browser disabled for a moment) blacklisted that address for the
+	// rest of the session — the preview then silently never appeared, with nothing to point at.
+	const g = createPreviewGate();
+	const url = 'http://localhost:5173';
+	g.begin(url);
+	g.failed(url);
+	assert.strictEqual(g.shouldOpen(url), true, 'a failed open must not suppress later attempts');
+	// …and a later attempt that works still closes the door exactly once.
+	g.begin(url); g.succeeded(url);
+	assert.strictEqual(g.shouldOpen(url), false);
+});
+
+test('GATE: an in-flight open blocks a concurrent duplicate', () => {
+	// Opening is async, so two runs advertising the same address could both pass the check and stack
+	// two tabs. This is why "have we shown it" alone is not enough state.
+	const g = createPreviewGate();
+	const url = 'http://localhost:8080';
+	g.begin(url);
+	assert.strictEqual(g.shouldOpen(url), false, 'must not open the same URL twice concurrently');
+});
+
+test('GATE: distinct URLs are independent, and clear() resets everything', () => {
+	const g = createPreviewGate();
+	g.begin('http://localhost:3000'); g.succeeded('http://localhost:3000');
+	assert.strictEqual(g.shouldOpen('http://localhost:4000'), true, 'a different port is a different site');
+	g.clear();
+	assert.strictEqual(g.shouldOpen('http://localhost:3000'), true, 'New Chat may legitimately preview again');
+});
+
+test('GATE: junk urls are never openable', () => {
+	const g = createPreviewGate();
+	for (const bad of [null, undefined, '']) { assert.strictEqual(g.shouldOpen(/** @type {any} */(bad)), false); }
 });
 
 // ---- 4. source hygiene ------------------------------------------------------------------------
