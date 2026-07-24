@@ -2421,10 +2421,19 @@
   }
   // [LevelCode] Retail micro-$ → a human figure. Sub-cent turns are common once prompt caching kicks
   // in, and "$0.00" would read as free/broken — so floor them at "<$0.01" instead of rounding away.
-  function money(micros){
-    const d = Number(micros) / 1e6;
-    if (!isFinite(d) || d <= 0) { return '$0.00'; }
-    return d < 0.01 ? '<$0.01' : '$' + d.toFixed(2);
+  // Credits are the in-product spending unit: $1 = 100 credits, so 1 credit = 10_000 retail micro-$.
+  // The gateway sends RETAIL micro-$ (Levelcode.retail_micros), the same figures the account dashboard
+  // renders — so converting here with the same rule keeps the editor and the website in agreement.
+  const MICROS_PER_CREDIT = 10000;
+  function toCredits(micros){ const c = Number(micros) / MICROS_PER_CREDIT; return isFinite(c) ? c : 0; }
+  // A balance reads as a whole credit count. A single run, though, can cost well under one credit (a
+  // cheap-model turn is ~0.4), and rounding that to "0" would read as free — so small costs keep one
+  // decimal until they're big enough not to need it.
+  function creditBalance(micros){ return Math.round(toCredits(micros)).toLocaleString(); }
+  function creditCost(micros){
+    const c = toCredits(micros);
+    if (c <= 0) { return '0'; }
+    return c < 10 ? String(+c.toFixed(1)) : Math.round(c).toLocaleString();
   }
 
   // Response action bar: (Retry) (Copy) (Helpful) (Unhelpful) … model · $cost · $left.
@@ -2447,8 +2456,8 @@
       + '<span class="abmodel" title="Click to change model">' + esc(modelLabel()) + '</span>'
       // Gateway runs report real money (retail micro-$): what this run cost + what's left. BYOK runs
       // report neither, so the bar stays exactly as it was.
-      + (costMicros != null ? '<span class="abcredits" title="What this run cost">· ' + esc(money(costMicros)) + '</span>' : '')
-      + (credits != null ? '<span class="abcredits" title="Credits remaining on your plan">· ' + esc(money(credits)) + ' left</span>' : '');
+      + (costMicros != null ? '<span class="abcredits" title="What this run cost">· ' + esc(creditCost(costMicros)) + ' credits</span>' : '')
+      + (credits != null ? '<span class="abcredits" title="Credits remaining on your plan">· ' + esc(creditBalance(credits)) + ' left</span>' : '');
     bar.append(actions, meta);
     log.appendChild(bar); scrollIfStuck();
 
