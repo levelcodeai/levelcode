@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const providers = require('./providers/index');
-const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
+const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
 const { loadProjectRules } = require('./projectRules');
 const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal } = require('./mcpConfig');
@@ -68,6 +68,11 @@ function buildSystem(menu) {
 	return SYSTEM_BASE + '\n\nAvailable skills (call use_skill with the name):\n' + list;
 }
 const TOOLS_TOKENS_EST = Math.round(JSON.stringify(TOOLS).length / 4);
+
+// How much of a background command's accumulated output the sniffers re-read on each chunk. Generous
+// next to any single log line, so a url split across chunk boundaries is still found, yet small enough
+// that a noisy watcher which never prints an address costs nothing to keep scanning.
+const SNIFF_TAIL = 8192;
 
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
 
@@ -385,15 +390,35 @@ async function runTool(tu, ctx) {
 			const stops = ctx.commandStops;   // shared registry so the Stop button / ■ can kill the process group
 			// Only BACKGROUND commands get a registry entry (read_command_output reads it). Foreground
 			// one-shots keep their old behavior + don't accumulate — the model already gets their output.
-			const entry = bg ? { command: cmd, status: 'running', code: null, how: null, port: null, ready: false, ring: '', totalBytes: 0, lastReadOffset: 0, startedAt: Date.now() } : null;
+			const entry = bg ? { command: cmd, status: 'running', code: null, how: null, port: null, ready: false, previewUrl: null, ring: '', totalBytes: 0, lastReadOffset: 0, startedAt: Date.now() } : null;
 			if (entry && ctx.commandRuns) { ctx.commandRuns.set(runId, entry); }
 			const onChunk = (chunk, stream) => {
 				ctx.post({ type: 'termOutput', id: runId, chunk: chunk, stream: stream });
 				if (entry) {
 					entry.ring = (entry.ring + chunk).slice(-100000);   // bounded tail for read_command_output
 					entry.totalBytes += chunk.length;
-					if (!entry.port) { const p = sniffPort(chunk); if (p) { entry.port = p; ctx.post({ type: 'bgTask', id: runId, port: p }); } }
-					if (!entry.ready && looksReady(chunk)) { entry.ready = true; ctx.post({ type: 'bgTask', id: runId, ready: true }); }
+					// Sniff the accumulated TAIL, never the raw chunk: stdout arrives in arbitrary slices, so
+					// a line can straddle a boundary ("http://local" + "host:5173/") and match neither half.
+					// A few KB is far more than any single line needs, and bounding it keeps the rescan cheap
+					// for a chatty server that never prints an address at all. (Applies to all three sniffs —
+					// port and ready had the same latent gap.)
+					const tail = entry.ring.slice(-SNIFF_TAIL);
+					if (!entry.port) { const p = sniffPort(tail); if (p) { entry.port = p; ctx.post({ type: 'bgTask', id: runId, port: p }); } }
+					if (!entry.ready && looksReady(tail)) { entry.ready = true; ctx.post({ type: 'bgTask', id: runId, ready: true }); }
+					// Auto-preview: the moment a background command advertises a LOCAL address, offer to show
+					// it in the built-in browser. Fired at most ONCE per run — if the user closes the tab we
+					// must not reopen it on the next log line, and a restart-on-save server would otherwise
+					// spawn a tab per reload. The host decides whether to honour it (setting + dedupe).
+					if (!entry.previewUrl && typeof ctx.openPreview === 'function') {
+						const url = sniffPreviewUrl(tail);
+						if (url) {
+							entry.previewUrl = url;
+							dbg('preview.detected', { id: runId, url: url });
+							// Never let a preview reject inside a live stream handler — showing a browser tab
+							// must not be able to disturb a running command's output.
+							Promise.resolve(ctx.openPreview(url)).catch((e) => dbg('preview.rejected', { id: runId, error: String((e && e.message) || e) }));
+						}
+					}
 				}
 			};
 			const onExit = (code, ms, how) => {
