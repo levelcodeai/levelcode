@@ -31,13 +31,15 @@ const REMOTE = [
 	'http://127.0.0.1.evil.com:3000'         // same trick with the loopback literal
 ];
 
-test('SECURITY: a remote url in command output is never opened', () => {
+test('SECURITY: remote-only output opens NOTHING', () => {
+	// Strictly null, not "null or some localhost url". An earlier version of this assertion allowed a
+	// localhost fallback, which quietly permitted the thing it was meant to forbid: the port would be
+	// re-extracted from the refused remote address and we'd open localhost:<their port> — a preview
+	// conjured entirely out of a line we ignored. If the fixture is remote-only, the answer is nothing.
 	for (const line of REMOTE) {
-		const got = sniffPreviewUrl(line);
-		assert.ok(
-			got === null || /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/.test(got),
-			'opened a non-local address from ' + JSON.stringify(line) + ' -> ' + JSON.stringify(got)
-		);
+		assert.strictEqual(sniffPreviewUrl(line), null,
+			'remote-only output must open nothing, got ' + JSON.stringify(sniffPreviewUrl(line)) +
+			' from ' + JSON.stringify(line));
 	}
 });
 

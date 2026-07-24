@@ -124,7 +124,13 @@ function sniffPreviewUrl(text) {
 		const host = /^(?:0\.0\.0\.0|\[::\])$/i.test(m[2]) ? 'localhost' : m[2];
 		return m[1].toLowerCase() + '://' + host + ':' + m[3] + (m[4] || '');
 	}
-	const port = sniffPort(s);
+	// Nothing local was printed as a URL. Before falling back to a bare port, blank out any REMOTE one:
+	// sniffPort's first pattern matches any http(s) URL, so it would re-extract the port out of the very
+	// address we just refused and we'd open localhost:<their port> — a preview inferred entirely from a
+	// line we deliberately ignored. A port with no host attached ("running on port 3000") still counts.
+	const localOnly = s.replace(/(https?):\/\/([a-z0-9.\-]+|\[[0-9a-f:]*\]):(\d{2,5})(\/[^\s"'<>)\]]*)?/gi,
+		(full, _scheme, host) => (LOCAL_HOSTS.test(host) ? full : ' '));
+	const port = sniffPort(localOnly);
 	return port ? 'http://localhost:' + port : null;
 }
 
