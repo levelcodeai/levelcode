@@ -29,8 +29,15 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-const REPO = process.cwd();
 const die = (msg) => { console.error('draft-release-notes: ' + msg); process.exit(1); };
+
+// Anchor EVERYTHING to the repo root, never to the invocation directory. Run from scripts/ with a cwd
+// -based root and the tool does not fail — it reports "0 suites … all green", because extensions/ is
+// simply not there to look in, and --write drops RELEASE-NOTES.md into the subdirectory. A wrong answer
+// delivered confidently is the one failure mode this tool must not have.
+const bootstrap = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: process.cwd(), encoding: 'utf8' });
+if (bootstrap.status !== 0) { die('not inside a git repository'); }
+const REPO = bootstrap.stdout.trim();
 
 // git via argv, never a shell string. A tag name is repo-controlled but still UNTRUSTED input here:
 // it is discovered at runtime and then used to build a revision range, so passing it through a shell
@@ -142,6 +149,12 @@ function measureSuites() {
 const { suites, failed } = measureSuites();
 if (failed.length) {
 	die(`these suites FAIL — fix before drafting notes:\n  ${failed.join('\n  ')}`);
+}
+// Zero suites is not "all green", it is "nothing was measured" — and the two must never render the
+// same. Anchoring REPO above should make this unreachable; it stays as the backstop, because the cost
+// of being wrong here is a release note that certifies coverage nobody ran.
+if (!suites.length) {
+	die(`found no test suites under ${join(REPO, 'extensions')} — refusing to draft notes that would claim "all green" without measuring anything`);
 }
 const totalCases = suites.reduce((n, s) => n + (s.cases || 0), 0);
 // A suite whose summary line we could not parse contributes 0, so the total would quietly UNDER-report
