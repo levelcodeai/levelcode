@@ -53,7 +53,7 @@ export NOTARY_PROFILE="levelcode-notary"
 
 ```bash
 ./scripts/bootstrap.sh        # first time / after an upstream bump (clone + brand + patch + npm ci)
-./scripts/build-macos.sh      # → VSCode-darwin-<arch>/LevelCode.app, then auto-strips proprietary MS/Copilot code from the app
+./scripts/build-macos.sh      # → VSCode-darwin-<arch>/LevelCode.app; strips proprietary MS/Copilot code, then stamps the release version (§3)
 ./scripts/make-dmg.sh         # de-Microsoft (defensive) → sign (Developer ID) → dmg → notarize → staple → verify
 ```
 With `CODESIGN_IDENTITY` + `NOTARY_PROFILE` set, `make-dmg.sh` runs the whole signed+notarized pipeline;
@@ -75,6 +75,26 @@ find VSCode-darwin-arm64/LevelCode.app \( -path "*@github/copilot*" -o -path "*m
   \( -name "*.node" -o -name "*.dylib" -o -name "mxc-exec-mac" \) -print   # → prints NOTHING
 ```
 
+Confirm the app reports **its own** version rather than the Code-OSS base — this **fails silently**, so
+check it every release:
+```bash
+python3 -c "import json;d=json.load(open('VSCode-darwin-arm64/LevelCode.app/Contents/Resources/app/product.json'));print(d.get('levelcodeVersion'),'|',d.get('version'),'|',d.get('commit','')[:7])"
+# → 0.8.1 | 1.126.0 | 07b7341
+#   ^ the release version   ^ MUST stay 1.126.0 (extensions' engines.vscode is checked against it)
+```
+A **missing `levelcodeVersion`** means `build-macos.sh` could not resolve a tag (`git describe --tags`
+failed) and fell back — the update tooltip and About will then report `1.126.0`, the upstream base, which
+is exactly the confusion this stamp exists to prevent. The build log distinguishes the two:
+
+| Log line | Meaning |
+| --- | --- |
+| `[build] Stamping the LevelCode release version (v0.8.1) …` | Good. |
+| `[build] WARN: no reachable git tag — skipping the release-version stamp.` | **No stamp** — fix before publishing. |
+
+An off-tag build is stamped `0.8.1-3-g1a2b3c4` on purpose (see `scripts/stamp-levelcode-version.mjs`): a
+build that isn't a release must not impersonate one. A release build sits on the tag and gets a clean
+`0.8.1`, so a suffix here means you are not building what you think you are.
+
 Build **both architectures** on matching hardware (Apple silicon → `arm64`, Intel → `x64`) to ship both dmgs.
 
 ## 4. Publish
@@ -92,9 +112,26 @@ from **levelcode.ai/download**.
 
 ## 5. The update feed
 
+> ⚠️ **Auto-update is LIVE — publishing is deploying.** `LEVELCODE_UPDATE_FEED_SIGNED=1` is set in
+> production, so a published release is no longer just *announced*: the built-in Squirrel updater
+> **downloads and installs it on every existing install** at that install's next check. There is no
+> staged rollout and no percentage gate. The rollback lever (below) stops it propagating further but
+> **cannot un-update anyone who already took it**. Finish §3 on a real Mac *before* `--draft=false`.
+>
+> This changed with v0.8.0 — the first release to carry signed `.app.zip` assets. Everything published
+> before that stayed notify-only regardless of the flag, because the feed refuses to hand Squirrel a
+> release that has no installable asset for its arch.
+
 Publishing the GitHub release **is** the announcement — `Levelcode::EditorReleaseFeed` (thin.ly) reads
 `releases/latest` and serves `/api/update/{target}/{quality}/{commit}`. There is no feed file to
 hand-maintain per release.
+
+Confirm the feed picked the release up (it caches for 5 minutes):
+```bash
+curl -s -H "User-Agent: LevelCode Updater" \
+  https://levelcode.ai/api/update/darwin-arm64/stable/deadbeef | python3 -m json.tool
+# url must end in LevelCode-arm64.app.zip (NOT a /releases/tag/ page), and productVersion must be the new one
+```
 
 Two assets, **not** interchangeable:
 
