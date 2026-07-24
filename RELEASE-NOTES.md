@@ -1,50 +1,38 @@
-# LevelCode v0.9.1
+# LevelCode v0.9.2
 
-Two big things this release: the agent gains **external tools via MCP**, and it learns to **narrate its work** instead of scrolling a wall of chips.
+A small, practical release: your site **opens itself** in the editor while the agent builds it, and what a run costs is now measured in **credits** rather than dollars.
 
 ## Highlights
 
-### The agent can use external tools — MCP support
+### The browser opens itself
 
-LevelCode's agent now speaks the **Model Context Protocol**, so it can use tools from external MCP servers — a filesystem server, GitHub, Postgres, an internal company server — right alongside its own built-in tools. There's no glue code: an MCP tool becomes an agent tool directly.
+LevelCode has always shipped a built-in browser — but you had to know the command to find it, so most people never did. Now it appears on its own: the moment the agent starts a web server in the background, the site opens **beside the chat**.
 
-Add a server in your **user settings** and its tools show up in the agent, namespaced `server__tool`:
+- **It updates as the agent works.** Edits land on disk immediately (that's the apply-then-review model — Keep/Undo comes *after*), so your dev server's watcher fires HMR and the preview refreshes before you click Keep. Ask for a page, watch it appear.
+- **It never steals your focus.** A server coming up mid-run doesn't yank the caret away from whatever you're typing.
+- **Closing it means closed.** Each address opens at most once per session, so a chatty server can't reopen the tab you just dismissed, and a restart-on-save server can't stack one tab per reload.
+- **Only local addresses, ever.** The address is read from the dev server's own output — which is whatever a project's start script chose to print. So only `localhost`, `127.0.0.1` and the IPv6 loopback are opened; a remote URL printed by a script is ignored. A hostile repo can't point your editor's browser somewhere else.
 
-```json
-"levelcode.ai.mcp.servers": {
-  "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"] }
-}
-```
+Turn it off with `levelcode.ai.preview.autoOpen`, or open previews yourself with **Simple Browser: Show**.
 
-Security is the feature here, not a footnote — an MCP server is a process LevelCode spawns with your privileges:
+### Credits, not dollars
 
-- **User-authored only.** These live in your *user* settings; a repo's committed `.vscode/settings.json` can't add a server, so opening an untrusted project can never make LevelCode spawn a process. A repo's own `.levelcode/mcp.json` is read and listed but **never started** on its own.
-- **Nothing runs unless you allow it.** Every MCP tool call is gated by default — including under Autopilot. A tool runs only once you allow-list it in `levelcode.ai.mcp.toolPolicy`, and a server's own "destructive" hint can only ever *tighten* that, never loosen it.
+The response bar under each run now reads **`Opus 4.8 · 46 credits · 1,279 left`** instead of dollar amounts. $1 = 100 credits, so a $100 Ultra plan is a 10,000-credit allowance.
 
-This is the **first slice**: servers are configured in settings and tools are enabled through the allow-list. A per-call approval card and a one-click "Add MCP Server…" are what come next.
+This is a change of unit, not of price — nothing about what you pay or what a turn costs has moved. A balance that ticks down in dollars reads as money draining away; an allowance reads as something you're meant to spend, which is what it is.
 
-### A calmer, narrated transcript
-
-An agent run now reads like a colleague narrating their work rather than a flat scroll of chips and cards.
-
-- **Short prose between actions.** The agent says what it's about to do, then interprets what it found — in the same turn, so it never stops to chatter instead of working.
-- **Activity folds into one card.** Consecutive actions collapse into a single expandable group: while it runs, the header shows the *live* step; when it finishes, a past-tense summary takes its place — "Read and edited `PLAN.md` +56 −0, ran 2 commands."
-- **Failures read as findings.** A hiccup shows up as a one-line `Correction:` and a next step, not an alarm.
-- **Plain-language command labels.** A `run_command` shows what it *does* ("Run the extension unit tests"); the raw command stays tucked behind the card.
-- **One question at a time.** `ask_user` now asks a single question per prompt.
-
-### Smaller things
-- **`Shift+Cmd+I` now focuses the chat** — previously only `Ctrl+Cmd+I` did.
-- A single circle-check glyph wherever a "done" check appears, and an HTML5 shield icon for `.html` files.
+- **Small runs stay honest.** A cheap-model turn costs a fraction of a credit, so it shows as `0.4` rather than rounding to `0` and looking free.
+- **One number everywhere.** The editor and levelcode.ai/ai/account now format the same figure identically, down to digit grouping.
 
 ## Under the hood
 
-- **MCP is three small, dependency-free modules** — no SDK, in keeping with the plain-JS extension style. `mcpProtocol.js` (JSON-RPC 2.0 framing + typed-content flattening, pure), `mcpConfig.js` (server config, tool-name namespacing, and the approval policy — pure), and `mcpClient.js` (the stdio subprocess: spawned detached and group-killed on New Chat and reload, with a per-call timeout and an output cap so one server can neither hang the agent nor flood its context). The full plan and threat model are in `docs/MCP.md`.
-- **The calm transcript ships as two halves** — the *voice* lives in the agent's system prompt (`agent.js`), the *grouping* in the chat webview (`chat.html`). Scope and design are in `docs/CALM-TRANSCRIPT.md`.
+- The dev-server address is sniffed from the **accumulated output**, not a single chunk. Node delivers stdout in arbitrary slices, so a URL routinely arrives split (`http://local` + `host:5173/`) and would otherwise never be recognised — the preview would silently never open.
+- `verify.js` gained its first test suite, and shed a stray NUL byte that had been making the whole file invisible to `grep` and `diff`.
+- Release builds no longer download a Playwright browser during bootstrap — an unnecessary network dependency that failed one architecture while the other passed.
 
 ## Test coverage
 
-- **56 MCP unit tests**, all off-editor (no process, no network): `mcpConfig.test.js` (41 — tool names stay provider-legal across a hostile corpus, a repo's config can never shadow or auto-start a server, untrusted keys are dropped before they can reach a prototype, and the allow-list never defaults to "allow") and `mcpProtocol.test.js` (15 — JSON-RPC framing with partial-line buffering, and base64 image/audio payloads never reaching the stored transcript).
-- The CI gate runs **every** bundled extension's suite on each release.
+- **24 suites** across the bundled extensions, all green on every release.
+- `verify.test.js` (16 cases) — the preview sniffers, led by the one that matters: a remote address in command output must open **nothing**. `creditFormat.test.js` (8 cases) extracts the real formatters out of the shipped `chat.html`, so the tests can't drift from what ships.
 
-**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v0.9.0...v0.9.1
+**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v0.9.1...v0.9.2
