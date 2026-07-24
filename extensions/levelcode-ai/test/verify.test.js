@@ -76,11 +76,26 @@ test('PREVIEW: silence when nothing resembles a server', () => {
 	}
 });
 
-test('PREVIEW: garbage input returns null instead of throwing', () => {
-	// This runs inside a stdout handler — a throw here would take down a live command stream.
-	for (const junk of [{}, [], 42, true, Symbol.iterator.toString()]) {
-		assert.doesNotThrow(() => sniffPreviewUrl(/** @type {any} */(junk)));
+test('PREVIEW: garbage input returns null — not merely "does not throw"', () => {
+	// This runs inside a stdout handler, so not throwing is necessary but nowhere near sufficient:
+	// returning a non-null url would still pop a browser tab. Assert the value, not just the absence
+	// of an exception.
+	for (const junk of [{}, [], 42, true, Symbol.iterator.toString(), NaN, () => {}]) {
+		let got;
+		assert.doesNotThrow(() => { got = sniffPreviewUrl(/** @type {any} */(junk)); }, 'threw on ' + String(junk));
+		assert.strictEqual(got, null, 'opened something from junk input: ' + String(junk));
 	}
+});
+
+test('SPLIT: a url straddling two stdout chunks matches only once reassembled', () => {
+	// Why agent.js sniffs the accumulated ring TAIL rather than the raw chunk. runCommand streams
+	// arbitrary slices, so a dev server's address routinely arrives in two pieces — and each piece on
+	// its own is invisible to the sniffer, which would mean the preview silently never opened.
+	const first = '  ➜  Local:   http://local';
+	const second = 'host:5173/\n';
+	assert.strictEqual(sniffPreviewUrl(first), null, 'the leading half must not match on its own');
+	assert.strictEqual(sniffPreviewUrl(second), null, 'the trailing half must not match on its own');
+	assert.strictEqual(sniffPreviewUrl(first + second), 'http://localhost:5173/', 'reassembled, it must');
 });
 
 // ---- 3. the sniffers the preview builds on (previously untested) ------------------------------
