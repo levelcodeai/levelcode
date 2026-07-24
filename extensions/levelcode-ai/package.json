@@ -436,6 +436,11 @@
           "default": false,
           "description": "Treat editor warnings (not just errors) as verification failures the agent must fix. Off by default — only errors block."
         },
+        "levelcode.ai.preview.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When the agent starts a web server in the background, automatically open the site in LevelCode's built-in browser, beside the chat.\n\nOnly **local** addresses are ever opened (`localhost` / `127.0.0.1`), and each address opens at most once per session — so closing the tab is respected. Your focus is never taken. Turn this off to open previews yourself with **Simple Browser: Show**."
+        },
         "levelcode.ai.mcp.servers": {
           "type": "object",
           "default": {},

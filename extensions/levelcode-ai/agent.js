@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const providers = require('./providers/index');
-const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, looksReady } = require('./verify');
+const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
 const { loadProjectRules } = require('./projectRules');
 const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal } = require('./mcpConfig');
@@ -385,7 +385,7 @@ async function runTool(tu, ctx) {
 			const stops = ctx.commandStops;   // shared registry so the Stop button / ■ can kill the process group
 			// Only BACKGROUND commands get a registry entry (read_command_output reads it). Foreground
 			// one-shots keep their old behavior + don't accumulate — the model already gets their output.
-			const entry = bg ? { command: cmd, status: 'running', code: null, how: null, port: null, ready: false, ring: '', totalBytes: 0, lastReadOffset: 0, startedAt: Date.now() } : null;
+			const entry = bg ? { command: cmd, status: 'running', code: null, how: null, port: null, ready: false, previewUrl: null, ring: '', totalBytes: 0, lastReadOffset: 0, startedAt: Date.now() } : null;
 			if (entry && ctx.commandRuns) { ctx.commandRuns.set(runId, entry); }
 			const onChunk = (chunk, stream) => {
 				ctx.post({ type: 'termOutput', id: runId, chunk: chunk, stream: stream });
@@ -394,6 +394,14 @@ async function runTool(tu, ctx) {
 					entry.totalBytes += chunk.length;
 					if (!entry.port) { const p = sniffPort(chunk); if (p) { entry.port = p; ctx.post({ type: 'bgTask', id: runId, port: p }); } }
 					if (!entry.ready && looksReady(chunk)) { entry.ready = true; ctx.post({ type: 'bgTask', id: runId, ready: true }); }
+					// Auto-preview: the moment a background command advertises a LOCAL address, offer to show
+					// it in the built-in browser. Fired at most ONCE per run — if the user closes the tab we
+					// must not reopen it on the next log line, and a restart-on-save server would otherwise
+					// spawn a tab per reload. The host decides whether to honour it (setting + dedupe).
+					if (!entry.previewUrl && typeof ctx.openPreview === 'function') {
+						const url = sniffPreviewUrl(chunk);
+						if (url) { entry.previewUrl = url; dbg('preview.detected', { id: runId, url: url }); ctx.openPreview(url); }
+					}
 				}
 			};
 			const onExit = (code, ms, how) => {

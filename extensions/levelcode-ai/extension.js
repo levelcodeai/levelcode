@@ -665,6 +665,38 @@ function reapCommands() {
 	for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* already gone */ } }
 	commandStops.clear();
 	bgRuns.clear();
+	previewedUrls.clear();   // the servers are gone; a fresh session may legitimately preview again
+}
+
+// Auto-preview (see openPreview): URLs already shown this session, so a chatty server can't stack tabs
+// and — more importantly — so closing the tab is RESPECTED rather than undone by the next log line.
+const previewedUrls = new Set();
+
+/**
+ * Show a locally-served URL in the built-in Simple Browser, beside the chat.
+ *
+ * This exists because the browser was already there and nobody knew: LevelCode ships VS Code's
+ * simple-browser, but you had to know the command name to find it. Opening it automatically the moment
+ * the agent brings a site up turns an invisible feature into the obvious one.
+ *
+ * Three deliberate choices: `preserveFocus` so a server coming up never steals the caret from whoever
+ * is typing; `Beside` so the site sits next to the work rather than replacing it; and dedupe-by-URL so
+ * the user closing the tab is final. Never throws — a preview must not be able to fail a run.
+ */
+async function openPreview(url) {
+	if (!aiConfig().get('preview.autoOpen', true)) { return; }
+	if (!url || previewedUrls.has(url)) { return; }
+	previewedUrls.add(url);
+	try {
+		await vscode.commands.executeCommand('simpleBrowser.api.open', vscode.Uri.parse(url), {
+			preserveFocus: true,
+			viewColumn: vscode.ViewColumn.Beside
+		});
+		post({ type: 'agentTool', icon: 'globe', text: '🌐 preview · ' + url });
+	} catch (e) {
+		// simple-browser disabled or the id moved upstream — log, never surface as a run failure.
+		dbg('preview.failed', { url: url, error: String((e && e.message) || e) });
+	}
 }
 
 // Workspace checkpoints: a per-user-turn stack of file pre-images so the user can roll the workspace back
@@ -987,6 +1019,7 @@ async function agentFlow(text) {
 				toolPolicy: userScopedSetting(cfg.inspect('mcp.toolPolicy'), {})
 			},
 			contextLimit: contextLimitFor(req.providerId, capsModel(req.model)), // Auto → flagship window; the model SENT stays req.model
+			openPreview: openPreview,           // background server advertised a local URL → show it in-editor
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■
 			commandRuns: bgRuns,                // runId → background-process registry (read_command_output reads it)
 			commandTimeout: cfg.get('commandTimeout', 120000), // backstop before a command is force-killed (0 = off)
