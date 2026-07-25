@@ -226,23 +226,47 @@ function gatewayModelLabel(id) {
 /** Fetch the plan's model roster (entitled models + credits + ≈ turns-left). Caches it for the
  *  footer/picker. Best-effort; returns null when signed out / offline / not gateway. */
 async function fetchCloudRoster() {
-	if (providerMode() !== 'gateway' || !cloudSignedIn || !ctx) { return null; }
-	const token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
+	// The presence of a stored token IS the signed-in truth; don't gate on the cloudSignedIn flag, which
+	// can still be false mid-activation while a valid token already exists (another way the picker was
+	// degrading to the 2-model fallback on a fresh open).
+	if (providerMode() !== 'gateway' || !ctx) { return null; }
+	let token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
 	if (!token) { return null; }
 	const api = cloudApiUrl();
 	if (!/^https:\/\//i.test(api) && !/^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(api)) { return null; }
+	// Last-known-good roster: a transient failure keeps the FULL model list rather than collapsing to the
+	// 2-model offline fallback. The per-model fields — INCLUDING "≈ turns left" — are whatever the last
+	// good fetch returned, so they may be slightly stale. The account-level credit BALANCE is NOT carried
+	// here, so pickCloudModel just omits the "$X credits left" header until the next successful fetch.
+	const cached = () => (cloudRoster && cloudRoster.length ? { plan: cloudPlanName(), models: cloudRoster } : null);
+	const get = (bearer) => fetch(api + '/api/levelcode/v1/account/models', { headers: { authorization: 'Bearer ' + bearer } });
 	try {
-		const res = await fetch(api + '/api/levelcode/v1/account/models', { headers: { authorization: 'Bearer ' + token } });
-		if (!res.ok) { dbg('cloud.roster', { ok: false, status: res.status }); return null; }
+		let res = await get(token);
+		// THE FIX: on a fresh open, last session's short-lived access token is usually EXPIRED, so this
+		// first call 401s. Refresh once and retry. Without it the 401 silently degrades the picker to the
+		// 2-model offline fallback and hides the plan's real roster (Opus, K3, …) — exactly the reported
+		// bug. The profile fetch and the agent loop already refresh on 401; the roster fetch didn't.
+		if (res.status === 401 && await refreshCloudToken()) {
+			// Guard the refreshed token: if it comes back falsy for any reason, retrying would send
+			// `Authorization: Bearer null` — noise that masks the real 401. Skip the retry instead and let
+			// the !res.ok path below fall back to the cached roster.
+			const fresh = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
+			if (fresh) { token = fresh; res = await get(token); }
+		}
+		if (!res.ok) { dbg('cloud.roster', { ok: false, status: res.status }); return cached(); }
 		const data = await res.json().catch(() => null);
+		// Only a payload with a real models array IS a roster. A 200 carrying an error object, a partial
+		// response, or a schema drift is not — returning it would make pickCloudModel see "no models" and
+		// collapse to the 2-model fallback despite a valid last-known-good list. Prefer the cache then.
 		if (data && Array.isArray(data.models)) {
 			cloudRoster = data.models;
 			// The roster carries each model's short label — refresh the footer chip so it shows
 			// "Opus 4.8" instead of the raw id it fell back to before the roster finished loading.
 			sendConfigToWebview();
+			return data;
 		}
-		return data;
-	} catch (e) { dbg('cloud.roster', { error: String((e && e.message) || e) }); return null; }
+		return cached();
+	} catch (e) { dbg('cloud.roster', { error: String((e && e.message) || e) }); return cached(); }
 }
 
 /**
