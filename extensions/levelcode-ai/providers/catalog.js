@@ -61,7 +61,13 @@ const CAPS = {
 	// Same reason as K3: a 1M window that the `claude-` heuristic would otherwise report as 200K,
 	// making the in-run context meter cry "full" 5× too early. Listed under its OpenRouter slug
 	// because that is how it is reached (BYOK here, and the gateway roster uses the same id).
-	'anthropic/claude-opus-5':   { context: 1000000, tools: true, vision: true, caching: true }
+	'anthropic/claude-opus-5':   { context: 1000000, tools: true, vision: true, caching: true },
+	// Opus 4.8 is ALSO 1M — but only stated here under the OpenRouter slug, where every endpoint
+	// (Anthropic first-party, Bedrock, Azure, Google) advertises 1M/128K. The bare `claude-opus-4-8`
+	// row above stays at 200K on purpose: that key serves the DIRECT Anthropic provider, and this
+	// extension sends no `anthropic-beta` header, so the long window is not confirmed on that route.
+	// Exact-id lookup beats basename, so the two coexist and each route reports its own truth.
+	'anthropic/claude-opus-4-8': { context: 1000000, tools: true, vision: true, caching: true }
 };
 
 /** The basename of a model id ('openai/gpt-4o' → 'gpt-4o', 'gpt-4o' → 'gpt-4o'). */
