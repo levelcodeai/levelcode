@@ -45,6 +45,7 @@ const PROVIDERS = {
 		caps: { tools: true, vision: true }, headers: { 'HTTP-Referer': 'https://levelcode.ai', 'X-Title': 'LevelCode' },
 		models: [
 			{ id: 'moonshotai/kimi-k2.7-code', label: 'Kimi K2.7 Code', detail: 'Moonshot · coding, 262K · via OpenRouter' },
+			{ id: 'anthropic/claude-opus-5', label: 'Claude Opus 5', detail: 'Anthropic · frontier, 1M · via OpenRouter' },
 			{ id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', detail: 'via OpenRouter' },
 			{ id: 'openai/gpt-4o', label: 'GPT-4o', detail: 'via OpenRouter' },
 			{ id: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash', detail: 'via OpenRouter' },

@@ -94,7 +94,7 @@ test('splitOutCachedTokens: zero cached_tokens does not subtract', () => {
 // ---- Anthropic-family gating for OpenRouter explicit caching ----
 
 test('isAnthropicFamily: identifies Claude upstreams on OpenRouter, IDs only Anthropic routes', () => {
-	for (const id of ['claude-opus-4-8', 'anthropic/claude-sonnet-4-6', 'claude-sonnet-4-6']) {
+	for (const id of ['claude-opus-4-8', 'anthropic/claude-sonnet-4-6', 'claude-sonnet-4-6', 'anthropic/claude-opus-5']) {
 		assert.strictEqual(O.isAnthropicFamily(id), true, id);
 	}
 	for (const id of ['openai/gpt-4o', 'deepseek/deepseek-chat', 'gpt-4o', 'moonshotai/kimi-k2.7-code', '']) {

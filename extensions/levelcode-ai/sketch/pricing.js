@@ -19,6 +19,11 @@ const { baseName } = require('../providers/catalog');
 const PRICING = {
 	// Anthropic (published)
 	'claude-opus-4-8':           { inM: 5.00, outM: 25.00 },
+	// Opus 5 ties 4.8's sheet, so the `claude-opus` family fallback below already gets it right — but
+	// the FAST variant is double ($10/$50), and that fallback would silently under-report it by 2×.
+	// Pinning both keeps the cost meter honest for whichever slug a BYOK user types.
+	'claude-opus-5':             { inM: 5.00, outM: 25.00 },
+	'claude-opus-5-fast':        { inM: 10.00, outM: 50.00 },
 	'claude-sonnet-4-6':         { inM: 3.00, outM: 15.00 },
 	'claude-haiku-4-5':          { inM: 1.00, outM: 5.00 },
 	'claude-haiku-4-5-20251001': { inM: 1.00, outM: 5.00 },

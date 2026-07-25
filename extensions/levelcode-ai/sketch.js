@@ -41,7 +41,10 @@ const MODEL_TIERS = {
   openrouter: {
     fast: "google/gemini-2.0-flash-001",
     balanced: "anthropic/claude-sonnet-4-6",
-    powerful: "anthropic/claude-opus-4-8",
+    // Opus 5 costs exactly what 4.8 did ($5/$25), so "powerful" gets the newer model for the same
+    // money. It is also in the OpenRouter registry now, which the old id never was — so a per-node
+    // model override naming it now validates instead of silently falling back to the tier default.
+    powerful: "anthropic/claude-opus-5",
   },
   groq: {
     fast: "llama-3.1-8b-instant",

@@ -61,6 +61,14 @@ test('contextWindowFor: known model wins; fallback then 200000 when unknown', ()
 	assert.strictEqual(C.contextWindowFor('openai', 'unknown-x'), 200000);
 	// Gateway Kimi K3 — its 1M window must beat the 200000 fallback, or the meter warns 5× too early.
 	assert.strictEqual(C.contextWindowFor('openai', 'moonshotai/kimi-k3', 200000), 1048576);
+	// Same trap for Opus 5: the `claude-` heuristic would hand back 200K and shrink a 1M window.
+	assert.strictEqual(C.contextWindowFor('openai', 'anthropic/claude-opus-5', 200000), 1000000);
+	// Opus 4.8 is route-dependent, and exact-id lookup is what keeps the two apart: the OpenRouter
+	// slug is a confirmed 1M, while the bare id (direct Anthropic, no beta header sent) stays 200K.
+	assert.strictEqual(C.contextWindowFor('openrouter', 'anthropic/claude-opus-4-8', 200000), 1000000);
+	assert.strictEqual(C.contextWindowFor('claude', 'claude-opus-4-8', 200000), 200000);
+	// Claude ids we DON'T list still fall to the heuristic's 200K default.
+	assert.strictEqual(C.contextWindowFor('claude', 'claude-something-unreleased', 200000), 200000);
 });
 
 // ---- fastCompletionModel ----
