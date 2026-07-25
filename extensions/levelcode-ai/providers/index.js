@@ -142,8 +142,9 @@ function secretStorageKey(id) {
 /**
  * Unified streaming chat across providers. `messages` is the shared {role,content:string} shape
  * (valid for both Anthropic and OpenAI). Anthropic → native adapter; everything else → openaiCompat.
- * @param {{providerId:string, apiKey?:string, baseURL?:string, model:string, maxTokens?:number,
- *          system:string, messages:any[], signal?:AbortSignal, onDelta:(t:string)=>void}} o
+ * @param {{providerId:string, apiKey?:string, baseURL?:string, label?:string, model:string, maxTokens?:number,
+ *          system:string, messages:any[], signal?:AbortSignal, onDelta:(t:string)=>void,
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} o
  */
 async function streamChat(o) {
 	const p = getProvider(o.providerId);
@@ -155,16 +156,17 @@ async function streamChat(o) {
 		});
 	}
 	return openai.streamOpenAI({
-		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: p.label,
+		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: o.label || p.label,
 		model: o.model, maxTokens: o.maxTokens, system: o.system, messages: o.messages,
-		signal: o.signal, onDelta: o.onDelta
+		signal: o.signal, onDelta: o.onDelta, onRetry: o.onRetry
 	});
 }
 
 /**
  * Unified one-shot completion across providers (inline ghost-text / edit). Returns full text.
- * @param {{providerId:string, apiKey?:string, baseURL?:string, model:string, maxTokens?:number,
- *          system:string, messages:any[], stop?:string[], signal?:AbortSignal}} o
+ * @param {{providerId:string, apiKey?:string, baseURL?:string, label?:string, model:string, maxTokens?:number,
+ *          system:string, messages:any[], stop?:string[], signal?:AbortSignal,
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} o
  * @returns {Promise<string>}
  */
 async function complete(o) {
@@ -177,9 +179,9 @@ async function complete(o) {
 		});
 	}
 	return openai.completeOpenAI({
-		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: p.label,
+		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: o.label || p.label,
 		model: o.model, maxTokens: o.maxTokens, system: o.system, messages: o.messages,
-		stop: o.stop, signal: o.signal
+		stop: o.stop, signal: o.signal, onRetry: o.onRetry
 	});
 }
 
@@ -195,9 +197,10 @@ function supportsTools(id) {
  * translation); every other provider → the OpenAI adapter, which translates the Anthropic-shaped
  * transcript/tools in and the streamed tool-calls back out. Returns the SAME
  * {content, stop_reason, usage, malformed} shape for both, so agent.js is provider-agnostic.
- * @param {{providerId:string, apiKey?:string, baseURL?:string, model:string, maxTokens?:number,
+ * @param {{providerId:string, apiKey?:string, baseURL?:string, label?:string, model:string, maxTokens?:number,
  *          system:string, messages:any[], tools?:any[], signal?:AbortSignal,
- *          onText?:(t:string)=>void, onToolStart?:(name:string)=>void}} o
+ *          onText?:(t:string)=>void, onToolStart?:(name:string)=>void,
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} o
  */
 async function streamAgentTurn(o) {
 	const p = getProvider(o.providerId);
@@ -209,9 +212,9 @@ async function streamAgentTurn(o) {
 		});
 	}
 	return openai.streamOpenAIAgentTurn({
-		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: p.label,
+		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: o.label || p.label,
 		model: o.model, maxTokens: o.maxTokens, system: o.system, messages: o.messages, tools: o.tools,
-		signal: o.signal, onText: o.onText, onToolStart: o.onToolStart
+		signal: o.signal, onText: o.onText, onToolStart: o.onToolStart, onRetry: o.onRetry
 	});
 }
 

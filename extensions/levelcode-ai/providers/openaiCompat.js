@@ -76,24 +76,111 @@ function deltaFromEvent(ev) {
 	return typeof d.content === 'string' ? d.content : '';
 }
 
+// Fallback reason phrases for when fetch leaves res.statusText empty (some HTTP/2 responses do). Not
+// exhaustive — just what a model endpoint or the proxy in front of it realistically returns.
+const STATUS_REASON = {
+	400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found',
+	408: 'Request Timeout', 413: 'Payload Too Large', 429: 'Too Many Requests',
+	500: 'Internal Server Error', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout'
+};
+
+/**
+ * Pull a human-readable message out of an error response body, or '' when there isn't one worth showing.
+ * The body is UNTRUSTED and provider-shaped: a JSON `{error:{message}}` on a normal API rejection, but a
+ * raw HTML page when a proxy IN FRONT of the model (nginx/Cloudflare) returns a 5xx — dumping that page
+ * into a chat transcript is pure noise. Return '' for HTML so the caller falls back to the status reason;
+ * cap anything else so a stray multi-KB body can't flood the UI. Pure — unit-tested.
+ */
+function extractApiError(body) {
+	const s = String(body || '').trim();
+	if (!s) { return ''; }
+	if (s[0] === '<' || /<html[\s>]/i.test(s)) { return ''; }              // HTML proxy page — no useful message
+	if (s[0] === '{' || s[0] === '[') {
+		try {
+			const j = JSON.parse(s);
+			const m = (j && j.error && (j.error.message || (typeof j.error === 'string' ? j.error : ''))) || (j && j.message) || '';
+			if (m) { return String(m).slice(0, 500); }
+		} catch { /* not valid JSON after all — fall through to the capped-text path */ }
+	}
+	return s.length > 300 ? s.slice(0, 300) + '…' : s;     // short plain text: keep it, capped
+}
+
+/**
+ * Build a clean Error for a failed (`!res.ok`) response: `"<label> API <status>: <detail>"`, where detail
+ * is the provider's own message when it gave one, else the HTTP status reason — never a dumped HTML page.
+ * `label` names the ROUTE (e.g. "LevelCode Cloud", "OpenRouter"), so the failure is attributed correctly
+ * rather than blamed on whichever adapter happens to carry it. Sets `.status` for retry/refresh logic.
+ */
+function httpError(label, res, body) {
+	const detail = extractApiError(body) || res.statusText || STATUS_REASON[res.status] || 'request failed';
+	const e = new Error(`${label} API ${res.status}: ${detail}`);
+	e.status = res.status;
+	return e;
+}
+
+// Upstream statuses worth ONE automatic retry: a proxy in front of the model (nginx/Cloudflare/the gateway)
+// briefly couldn't reach a healthy backend. These almost always clear within a second. Deliberately NOT
+// retried: 429 (rate limit — needs Retry-After, and hammering makes it worse), 500 (usually a real request
+// error, not a blip), and every other 4xx. A thrown fetch error (network drop, abort) is not retried either
+// — only an HTTP response whose status is in this set.
+const TRANSIENT_STATUS = new Set([502, 503, 504]);
+const TRANSIENT_RETRIES = 1;      // one extra attempt after the first — a single pre-stream retry
+const RETRY_DELAY_MS = 700;       // backoff before the retry (RETRY_DELAY_MS * attempt); overridable per call
+
+/**
+ * A backoff that wakes early the instant the turn is aborted, so Stop stays responsive. Resolves — never
+ * rejects: the caller's next `fetch` sees the aborted signal and rejects with the native AbortError, which
+ * is exactly how a normal aborted request already surfaces. Works with no signal too.
+ */
+function retryDelay(ms, signal) {
+	return new Promise((resolve) => {
+		if (signal && signal.aborted) { return resolve(); }
+		const timer = setTimeout(done, ms);
+		function done() { clearTimeout(timer); if (signal) { signal.removeEventListener('abort', done); } resolve(); }
+		if (signal) { signal.addEventListener('abort', done, { once: true }); }
+	});
+}
+
+/**
+ * POST /chat/completions with a single pre-stream retry on a transient upstream status (502/503/504).
+ *
+ * This is the ONLY place a chat request is retried, and it is safe precisely because it runs BEFORE any SSE
+ * line is read: on a transient status the response carries no model output, so nothing has been shown to the
+ * user or metered, and re-issuing the request cannot duplicate output or double-bill the UI. A failure that
+ * happens mid-stream is a different code path and is never retried here. A 401 is not transient, so it is
+ * thrown straight through for the agent's token-refresh path. Non-transient statuses and an exhausted retry
+ * throw a clean httpError. `opts.onRetry({attempt,retries,status})` fires just before each backoff (for a
+ * visible "retrying…" hint); `opts.retryDelayMs` overrides the backoff (0 in tests). Returns res.ok===true.
+ */
+async function postChat(opts, body) {
+	const label = opts.label || 'OpenAI-compatible';
+	const base = opts.retryDelayMs != null ? opts.retryDelayMs : RETRY_DELAY_MS;
+	const init = { method: 'POST', headers: authHeaders(opts), body: JSON.stringify(body), signal: opts.signal };
+	const url = baseUrl(opts) + '/chat/completions';
+	for (let attempt = 0; ; attempt++) {
+		const res = await fetch(url, init);
+		if (res.ok) { return res; }
+		const text = await res.text().catch(() => '');
+		if (attempt < TRANSIENT_RETRIES && TRANSIENT_STATUS.has(res.status)) {
+			if (typeof opts.onRetry === 'function') { opts.onRetry({ attempt: attempt + 1, retries: TRANSIENT_RETRIES, status: res.status }); }
+			await retryDelay(base * (attempt + 1), opts.signal);
+			continue;
+		}
+		throw httpError(label, res, text);
+	}
+}
+
 /**
  * Streaming chat over /v1/chat/completions. opts.onDelta(text) per chunk; resolves at end.
  * @param {{baseURL:string, apiKey?:string, headers?:object, label?:string, model:string,
  *          maxTokens?:number, system?:string, messages:any[], stop?:string[],
- *          signal?:AbortSignal, onDelta:(t:string)=>void}} opts
+ *          signal?:AbortSignal, onDelta:(t:string)=>void,
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} opts
  */
 async function streamOpenAI(opts) {
 	const label = opts.label || 'OpenAI-compatible';
-	const res = await fetch(baseUrl(opts) + '/chat/completions', {
-		method: 'POST',
-		headers: authHeaders(opts),
-		body: JSON.stringify(buildChatBody(Object.assign({}, opts, { stream: true }))),
-		signal: opts.signal
-	});
-	if (!res.ok || !res.body) {
-		const text = await res.text().catch(() => '');
-		throw new Error(`${label} API ${res.status}: ${text || res.statusText}`);
-	}
+	const res = await postChat(opts, buildChatBody(Object.assign({}, opts, { stream: true })));
+	if (!res.body) { throw new Error(label + ' API ' + res.status + ': empty response stream'); }
 	await readLines(res, (line) => {
 		const s = line.trim();
 		if (!s.startsWith('data:')) { return; }
@@ -110,21 +197,12 @@ async function streamOpenAI(opts) {
 /**
  * Non-streaming single completion (inline ghost-text / edit). Returns the full text.
  * @param {{baseURL:string, apiKey?:string, headers?:object, label?:string, model:string,
- *          maxTokens?:number, system?:string, messages:any[], stop?:string[], signal?:AbortSignal}} opts
+ *          maxTokens?:number, system?:string, messages:any[], stop?:string[], signal?:AbortSignal,
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} opts
  * @returns {Promise<string>}
  */
 async function completeOpenAI(opts) {
-	const label = opts.label || 'OpenAI-compatible';
-	const res = await fetch(baseUrl(opts) + '/chat/completions', {
-		method: 'POST',
-		headers: authHeaders(opts),
-		body: JSON.stringify(buildChatBody(Object.assign({}, opts, { stream: false }))),
-		signal: opts.signal
-	});
-	if (!res.ok) {
-		const text = await res.text().catch(() => '');
-		throw new Error(`${label} API ${res.status}: ${text || res.statusText}`);
-	}
+	const res = await postChat(opts, buildChatBody(Object.assign({}, opts, { stream: false })));
 	const data = await res.json();
 	const c = data && data.choices && data.choices[0];
 	return (c && c.message && typeof c.message.content === 'string') ? c.message.content : '';
@@ -172,7 +250,8 @@ async function listOpenAIModels(opts) {
  * to {type:'text'} / {type:'tool_use', id, name, input} blocks.
  * @param {{baseURL:string, apiKey?:string, headers?:object, label?:string, model:string,
  *          maxTokens?:number, system:string, messages:any[], tools?:any[], signal?:AbortSignal,
- *          onText?:(t:string)=>void, onToolStart?:(name:string)=>void}} opts
+ *          onText?:(t:string)=>void, onToolStart?:(name:string)=>void,
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} opts
  * @returns {Promise<{content:any[], stop_reason:string, usage:any, malformed:Set<string>}>}
  */
 async function streamOpenAIAgentTurn(opts) {
@@ -188,16 +267,8 @@ async function streamOpenAIAgentTurn(opts) {
 	// on OpenAI-shaped providers — they omit usage from streams unless include_usage is set. Mainstream
 	// providers (OpenAI/OpenRouter/Groq/Together/Fireworks/DeepSeek/xAI/Mistral) honor it.
 	body.stream_options = { include_usage: true };
-	const res = await fetch(baseUrl(opts) + '/chat/completions', {
-		method: 'POST',
-		headers: authHeaders(opts),
-		body: JSON.stringify(body),
-		signal: opts.signal
-	});
-	if (!res.ok || !res.body) {
-		const text = await res.text().catch(() => '');
-		throw new Error(`${label} API ${res.status}: ${text || res.statusText}`);
-	}
+	const res = await postChat(opts, body);
+	if (!res.body) { throw new Error(label + ' API ' + res.status + ': empty response stream'); }
 	let text = '';
 	/** @type {any[]} */
 	const acc = [];
@@ -240,4 +311,4 @@ async function streamOpenAIAgentTurn(opts) {
 	return { content, stop_reason: stopReason, usage, malformed };
 }
 
-module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily, splitOutCachedTokens };
+module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily, splitOutCachedTokens, extractApiError, httpError, postChat };

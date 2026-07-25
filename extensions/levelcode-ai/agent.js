@@ -719,7 +719,7 @@ async function runAgent(ctx) {
 			let streamed = false;
 			let textChars = 0;
 			const turnOpts = {
-				providerId: ctx.providerId, baseURL: ctx.baseURL,
+				providerId: ctx.providerId, baseURL: ctx.baseURL, label: ctx.label,
 				apiKey: ctx.apiKey, model: ctx.model, maxTokens: perTurnMax, system: system,
 				messages, tools: tools, signal: ctx.signal,
 				onText: (t) => { streamed = true; textChars += t.length; ctx.post({ type: 'agentDelta', text: t }); },
@@ -729,7 +729,10 @@ async function runAgent(ctx) {
 						: name === 'delete_file' ? 'deleting a file…'
 						: name === 'run_command' ? 'preparing command…' : name === 'update_plan' ? 'planning…' : 'running ' + name + '…';
 					ctx.post({ type: 'agentStatus', text: verb });
-				}
+				},
+				// A transient upstream 5xx (502/503/504) is retried once before it can fail the run — surface it
+				// as a status rather than a mystery pause, and log it. Nothing has streamed yet when this fires.
+				onRetry: (info) => { dbg('turn.retry', info); ctx.post({ type: 'agentStatus', text: 'upstream busy (' + info.status + ') — retrying…' }); }
 			};
 			let turn;
 			try {
