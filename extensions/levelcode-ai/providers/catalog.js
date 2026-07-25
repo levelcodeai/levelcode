@@ -57,7 +57,11 @@ const CAPS = {
 	// warns "full" 5× too early (the roster feeds the PICKER's ctx, but the meter reads this local CAPS).
 	// No `fast` (a 2.8T reasoning model is a poor ghost-text completer). tools:true matches its agentic
 	// intent; flip to false ONLY if the reasoning-loop spike (docs/KIMI-K3.md §3) shows it breaks the loop.
-	'moonshotai/kimi-k3':        { context: 1048576, tools: true, reasoning: true }
+	'moonshotai/kimi-k3':        { context: 1048576, tools: true, reasoning: true },
+	// Same reason as K3: a 1M window that the `claude-` heuristic would otherwise report as 200K,
+	// making the in-run context meter cry "full" 5× too early. Listed under its OpenRouter slug
+	// because that is how it is reached (BYOK here, and the gateway roster uses the same id).
+	'anthropic/claude-opus-5':   { context: 1000000, tools: true, vision: true, caching: true }
 };
 
 /** The basename of a model id ('openai/gpt-4o' → 'gpt-4o', 'gpt-4o' → 'gpt-4o'). */

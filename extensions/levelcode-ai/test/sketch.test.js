@@ -72,6 +72,10 @@ test('modelPricing: exact, basename (openrouter prefix), family fallback, unknow
 	assert.strictEqual(P.modelPricing('claude-opus-4-8').inM, 5.0);
 	assert.strictEqual(P.modelPricing('anthropic/claude-sonnet-4-6').outM, 15.0);   // basename via vendor/model
 	assert.strictEqual(P.modelPricing('claude-sonnet-4-6-preview').outM, 15.0);     // family prefix
+	// Opus 5 matches 4.8's sheet; its FAST variant is double. Without the explicit rows the
+	// `claude-opus` family fallback prices the fast one at half what it costs.
+	assert.deepStrictEqual(P.modelPricing('anthropic/claude-opus-5'), { inM: 5.0, outM: 25.0 });
+	assert.deepStrictEqual(P.modelPricing('anthropic/claude-opus-5-fast'), { inM: 10.0, outM: 50.0 });
 	assert.strictEqual(P.modelPricing('totally-unknown-model'), null);
 	assert.strictEqual(P.modelPricing(''), null);
 });
