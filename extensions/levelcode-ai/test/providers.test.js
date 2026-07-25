@@ -116,4 +116,54 @@ test('isInsecureCustomUrl: https anywhere ok; http only to localhost/loopback; r
 	assert.strictEqual(reg.isInsecureCustomUrl('http://localhost.evil.com/v1'), true);
 });
 
+// --- extractApiError: pull a clean message from an error body; '' when there's nothing worth showing ---
+test('extractApiError: JSON {error:{message}} -> the message (OpenAI/OpenRouter shape)', () => {
+	assert.strictEqual(oc.extractApiError('{"error":{"message":"model is overloaded","type":"server_error"}}'), 'model is overloaded');
+});
+test('extractApiError: {error:"str"} and {message} shapes both yield the text', () => {
+	assert.strictEqual(oc.extractApiError('{"error":"nope"}'), 'nope');
+	assert.strictEqual(oc.extractApiError('{"message":"bad key"}'), 'bad key');
+});
+test('extractApiError: an HTML proxy page yields "" — never dump nginx/Cloudflare markup', () => {
+	const nginx502 = '<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></center>\r\n</body>\r\n</html>';
+	assert.strictEqual(oc.extractApiError(nginx502), '');
+	assert.strictEqual(oc.extractApiError('<!DOCTYPE html><html><body>down</body></html>'), '');
+});
+test('extractApiError: empty / whitespace / null -> ""', () => {
+	assert.strictEqual(oc.extractApiError(''), '');
+	assert.strictEqual(oc.extractApiError('   \n  '), '');
+	assert.strictEqual(oc.extractApiError(null), '');
+});
+test('extractApiError: short plain text kept as-is; an over-long body is hard-capped', () => {
+	assert.strictEqual(oc.extractApiError('rate limited, retry soon'), 'rate limited, retry soon');
+	const out = oc.extractApiError('x'.repeat(1000));
+	assert.strictEqual(out.length, 301);                       // 300 chars + one ellipsis
+	assert.strictEqual(out.charCodeAt(300), 0x2026);
+});
+test('extractApiError: malformed JSON falls through to capped text instead of throwing', () => {
+	assert.strictEqual(oc.extractApiError('{not valid json'), '{not valid json');
+});
+
+// --- httpError: "<label> API <status>: <detail>" — precisely the reported "OpenAI API 502: <html>" bug ---
+test('httpError: nginx 502 HTML collapses to "<label> API 502: Bad Gateway", no markup', () => {
+	const html = '<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>';
+	const e = oc.httpError('LevelCode Cloud', { status: 502, statusText: 'Bad Gateway' }, html);
+	assert.strictEqual(e.message, 'LevelCode Cloud API 502: Bad Gateway');
+	assert.strictEqual(e.status, 502);
+	assert.ok(!/[<>]/.test(e.message), 'no HTML leaks into the surfaced message');
+});
+test('httpError: the label names the ROUTE — a gateway failure is not attributed to OpenAI', () => {
+	const e = oc.httpError('LevelCode Cloud', { status: 502, statusText: 'Bad Gateway' }, '<html>502</html>');
+	assert.ok(e.message.startsWith('LevelCode Cloud API 502'));
+	assert.ok(!/OpenAI/.test(e.message));
+});
+test('httpError: empty statusText falls back to the canonical reason phrase', () => {
+	const e = oc.httpError('OpenRouter', { status: 503, statusText: '' }, '<html>x</html>');
+	assert.strictEqual(e.message, 'OpenRouter API 503: Service Unavailable');
+});
+test('httpError: a genuine JSON API error keeps the provider message verbatim', () => {
+	const e = oc.httpError('OpenRouter', { status: 429, statusText: 'Too Many Requests' }, '{"error":{"message":"rate limit exceeded"}}');
+	assert.strictEqual(e.message, 'OpenRouter API 429: rate limit exceeded');
+});
+
 console.log('\nproviders: ' + n + ' tests passed.');

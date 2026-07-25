@@ -719,7 +719,7 @@ async function runAgent(ctx) {
 			let streamed = false;
 			let textChars = 0;
 			const turnOpts = {
-				providerId: ctx.providerId, baseURL: ctx.baseURL,
+				providerId: ctx.providerId, baseURL: ctx.baseURL, label: ctx.label,
 				apiKey: ctx.apiKey, model: ctx.model, maxTokens: perTurnMax, system: system,
 				messages, tools: tools, signal: ctx.signal,
 				onText: (t) => { streamed = true; textChars += t.length; ctx.post({ type: 'agentDelta', text: t }); },

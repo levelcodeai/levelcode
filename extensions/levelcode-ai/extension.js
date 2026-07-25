@@ -941,7 +941,7 @@ async function compactAgentMemory() {
 	let summary;
 	try {
 		summary = await providers.complete({
-			providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL,
+			providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL, label: req.label,
 			model: req.model, maxTokens: 1500,
 			system: COMPACT_SYSTEM,
 			messages: [{ role: 'user', content: COMPACT_INSTRUCTIONS + flat }]
@@ -1021,6 +1021,8 @@ async function agentFlow(text) {
 			messages: agentMessages, // persists across runs → the agent remembers the session
 			providerId: req.providerId,         // Anthropic native, or an OpenAI-shaped provider via translation (P2)
 			baseURL: req.baseURL,               // for the custom / Ollama endpoints
+			label: req.label,                   // route name for error attribution — "LevelCode Cloud" on the gateway,
+			                                    // else the provider's own label; keeps a 502 from being blamed on "OpenAI"
 			apiKey: req.apiKey,
 			model: req.model,
 			maxSteps: Math.max(1, cfg.get('agent.maxSteps', 25)),
@@ -1116,7 +1118,7 @@ async function handleSend(text) {
 			return;
 		}
 		const doStream = (r) => providers.streamChat({
-			providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL,
+			providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL, label: r.label,
 			model: r.model, maxTokens: r.maxTokens, system: SYSTEM_PROMPT,
 			messages: conversation, signal: abort.signal, onDelta
 		});

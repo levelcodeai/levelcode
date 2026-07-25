@@ -76,6 +76,48 @@ function deltaFromEvent(ev) {
 	return typeof d.content === 'string' ? d.content : '';
 }
 
+// Fallback reason phrases for when fetch leaves res.statusText empty (some HTTP/2 responses do). Not
+// exhaustive — just what a model endpoint or the proxy in front of it realistically returns.
+const STATUS_REASON = {
+	400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found',
+	408: 'Request Timeout', 413: 'Payload Too Large', 429: 'Too Many Requests',
+	500: 'Internal Server Error', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout'
+};
+
+/**
+ * Pull a human-readable message out of an error response body, or '' when there isn't one worth showing.
+ * The body is UNTRUSTED and provider-shaped: a JSON `{error:{message}}` on a normal API rejection, but a
+ * raw HTML page when a proxy IN FRONT of the model (nginx/Cloudflare) returns a 5xx — dumping that page
+ * into a chat transcript is pure noise. Return '' for HTML so the caller falls back to the status reason;
+ * cap anything else so a stray multi-KB body can't flood the UI. Pure — unit-tested.
+ */
+function extractApiError(body) {
+	const s = String(body || '').trim();
+	if (!s) { return ''; }
+	if (s[0] === '<' || /<html[\s>]/i.test(s)) { return ''; }              // HTML proxy page — no useful message
+	if (s[0] === '{' || s[0] === '[') {
+		try {
+			const j = JSON.parse(s);
+			const m = (j && j.error && (j.error.message || (typeof j.error === 'string' ? j.error : ''))) || (j && j.message) || '';
+			if (m) { return String(m).slice(0, 500); }
+		} catch { /* not valid JSON after all — fall through to the capped-text path */ }
+	}
+	return s.length > 300 ? s.slice(0, 300) + '…' : s;     // short plain text: keep it, capped
+}
+
+/**
+ * Build a clean Error for a failed (`!res.ok`) response: `"<label> API <status>: <detail>"`, where detail
+ * is the provider's own message when it gave one, else the HTTP status reason — never a dumped HTML page.
+ * `label` names the ROUTE (e.g. "LevelCode Cloud", "OpenRouter"), so the failure is attributed correctly
+ * rather than blamed on whichever adapter happens to carry it. Sets `.status` for retry/refresh logic.
+ */
+function httpError(label, res, body) {
+	const detail = extractApiError(body) || res.statusText || STATUS_REASON[res.status] || 'request failed';
+	const e = new Error(`${label} API ${res.status}: ${detail}`);
+	e.status = res.status;
+	return e;
+}
+
 /**
  * Streaming chat over /v1/chat/completions. opts.onDelta(text) per chunk; resolves at end.
  * @param {{baseURL:string, apiKey?:string, headers?:object, label?:string, model:string,
@@ -91,8 +133,7 @@ async function streamOpenAI(opts) {
 		signal: opts.signal
 	});
 	if (!res.ok || !res.body) {
-		const text = await res.text().catch(() => '');
-		throw new Error(`${label} API ${res.status}: ${text || res.statusText}`);
+		throw httpError(label, res, await res.text().catch(() => ''));
 	}
 	await readLines(res, (line) => {
 		const s = line.trim();
@@ -122,8 +163,7 @@ async function completeOpenAI(opts) {
 		signal: opts.signal
 	});
 	if (!res.ok) {
-		const text = await res.text().catch(() => '');
-		throw new Error(`${label} API ${res.status}: ${text || res.statusText}`);
+		throw httpError(label, res, await res.text().catch(() => ''));
 	}
 	const data = await res.json();
 	const c = data && data.choices && data.choices[0];
@@ -195,8 +235,7 @@ async function streamOpenAIAgentTurn(opts) {
 		signal: opts.signal
 	});
 	if (!res.ok || !res.body) {
-		const text = await res.text().catch(() => '');
-		throw new Error(`${label} API ${res.status}: ${text || res.statusText}`);
+		throw httpError(label, res, await res.text().catch(() => ''));
 	}
 	let text = '';
 	/** @type {any[]} */
@@ -240,4 +279,4 @@ async function streamOpenAIAgentTurn(opts) {
 	return { content, stop_reason: stopReason, usage, malformed };
 }
 
-module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily, splitOutCachedTokens };
+module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily, splitOutCachedTokens, extractApiError, httpError };
