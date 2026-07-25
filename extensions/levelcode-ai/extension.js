@@ -235,7 +235,9 @@ async function fetchCloudRoster() {
 	const api = cloudApiUrl();
 	if (!/^https:\/\//i.test(api) && !/^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(api)) { return null; }
 	// Last-known-good roster: a transient failure keeps the FULL model list rather than collapsing to the
-	// 2-model offline fallback. credits/turns aren't cached, so the menu just omits those detail lines.
+	// 2-model offline fallback. The per-model fields — INCLUDING "≈ turns left" — are whatever the last
+	// good fetch returned, so they may be slightly stale. The account-level credit BALANCE is NOT carried
+	// here, so pickCloudModel just omits the "$X credits left" header until the next successful fetch.
 	const cached = () => (cloudRoster && cloudRoster.length ? { plan: cloudPlanName(), models: cloudRoster } : null);
 	const get = (bearer) => fetch(api + '/api/levelcode/v1/account/models', { headers: { authorization: 'Bearer ' + bearer } });
 	try {
@@ -245,8 +247,11 @@ async function fetchCloudRoster() {
 		// 2-model offline fallback and hides the plan's real roster (Opus, K3, …) — exactly the reported
 		// bug. The profile fetch and the agent loop already refresh on 401; the roster fetch didn't.
 		if (res.status === 401 && await refreshCloudToken()) {
-			token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
-			res = await get(token);
+			// Guard the refreshed token: if it comes back falsy for any reason, retrying would send
+			// `Authorization: Bearer null` — noise that masks the real 401. Skip the retry instead and let
+			// the !res.ok path below fall back to the cached roster.
+			const fresh = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
+			if (fresh) { token = fresh; res = await get(token); }
 		}
 		if (!res.ok) { dbg('cloud.roster', { ok: false, status: res.status }); return cached(); }
 		const data = await res.json().catch(() => null);
