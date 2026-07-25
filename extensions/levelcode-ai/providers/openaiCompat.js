@@ -174,7 +174,8 @@ async function postChat(opts, body) {
  * Streaming chat over /v1/chat/completions. opts.onDelta(text) per chunk; resolves at end.
  * @param {{baseURL:string, apiKey?:string, headers?:object, label?:string, model:string,
  *          maxTokens?:number, system?:string, messages:any[], stop?:string[],
- *          signal?:AbortSignal, onDelta:(t:string)=>void}} opts
+ *          signal?:AbortSignal, onDelta:(t:string)=>void,
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} opts
  */
 async function streamOpenAI(opts) {
 	const label = opts.label || 'OpenAI-compatible';
@@ -196,7 +197,8 @@ async function streamOpenAI(opts) {
 /**
  * Non-streaming single completion (inline ghost-text / edit). Returns the full text.
  * @param {{baseURL:string, apiKey?:string, headers?:object, label?:string, model:string,
- *          maxTokens?:number, system?:string, messages:any[], stop?:string[], signal?:AbortSignal}} opts
+ *          maxTokens?:number, system?:string, messages:any[], stop?:string[], signal?:AbortSignal,
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} opts
  * @returns {Promise<string>}
  */
 async function completeOpenAI(opts) {
@@ -248,7 +250,8 @@ async function listOpenAIModels(opts) {
  * to {type:'text'} / {type:'tool_use', id, name, input} blocks.
  * @param {{baseURL:string, apiKey?:string, headers?:object, label?:string, model:string,
  *          maxTokens?:number, system:string, messages:any[], tools?:any[], signal?:AbortSignal,
- *          onText?:(t:string)=>void, onToolStart?:(name:string)=>void}} opts
+ *          onText?:(t:string)=>void, onToolStart?:(name:string)=>void,
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} opts
  * @returns {Promise<{content:any[], stop_reason:string, usage:any, malformed:Set<string>}>}
  */
 async function streamOpenAIAgentTurn(opts) {
