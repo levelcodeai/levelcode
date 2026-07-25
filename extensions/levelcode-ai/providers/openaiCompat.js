@@ -118,6 +118,58 @@ function httpError(label, res, body) {
 	return e;
 }
 
+// Upstream statuses worth ONE automatic retry: a proxy in front of the model (nginx/Cloudflare/the gateway)
+// briefly couldn't reach a healthy backend. These almost always clear within a second. Deliberately NOT
+// retried: 429 (rate limit — needs Retry-After, and hammering makes it worse), 500 (usually a real request
+// error, not a blip), and every other 4xx. A thrown fetch error (network drop, abort) is not retried either
+// — only an HTTP response whose status is in this set.
+const TRANSIENT_STATUS = new Set([502, 503, 504]);
+const TRANSIENT_RETRIES = 1;      // one extra attempt after the first — a single pre-stream retry
+const RETRY_DELAY_MS = 700;       // backoff before the retry (RETRY_DELAY_MS * attempt); overridable per call
+
+/**
+ * A backoff that wakes early the instant the turn is aborted, so Stop stays responsive. Resolves — never
+ * rejects: the caller's next `fetch` sees the aborted signal and rejects with the native AbortError, which
+ * is exactly how a normal aborted request already surfaces. Works with no signal too.
+ */
+function retryDelay(ms, signal) {
+	return new Promise((resolve) => {
+		if (signal && signal.aborted) { return resolve(); }
+		const timer = setTimeout(done, ms);
+		function done() { clearTimeout(timer); if (signal) { signal.removeEventListener('abort', done); } resolve(); }
+		if (signal) { signal.addEventListener('abort', done, { once: true }); }
+	});
+}
+
+/**
+ * POST /chat/completions with a single pre-stream retry on a transient upstream status (502/503/504).
+ *
+ * This is the ONLY place a chat request is retried, and it is safe precisely because it runs BEFORE any SSE
+ * line is read: on a transient status the response carries no model output, so nothing has been shown to the
+ * user or metered, and re-issuing the request cannot duplicate output or double-bill the UI. A failure that
+ * happens mid-stream is a different code path and is never retried here. A 401 is not transient, so it is
+ * thrown straight through for the agent's token-refresh path. Non-transient statuses and an exhausted retry
+ * throw a clean httpError. `opts.onRetry({attempt,retries,status})` fires just before each backoff (for a
+ * visible "retrying…" hint); `opts.retryDelayMs` overrides the backoff (0 in tests). Returns res.ok===true.
+ */
+async function postChat(opts, body) {
+	const label = opts.label || 'OpenAI-compatible';
+	const base = opts.retryDelayMs != null ? opts.retryDelayMs : RETRY_DELAY_MS;
+	const init = { method: 'POST', headers: authHeaders(opts), body: JSON.stringify(body), signal: opts.signal };
+	const url = baseUrl(opts) + '/chat/completions';
+	for (let attempt = 0; ; attempt++) {
+		const res = await fetch(url, init);
+		if (res.ok) { return res; }
+		const text = await res.text().catch(() => '');
+		if (attempt < TRANSIENT_RETRIES && TRANSIENT_STATUS.has(res.status)) {
+			if (typeof opts.onRetry === 'function') { opts.onRetry({ attempt: attempt + 1, retries: TRANSIENT_RETRIES, status: res.status }); }
+			await retryDelay(base * (attempt + 1), opts.signal);
+			continue;
+		}
+		throw httpError(label, res, text);
+	}
+}
+
 /**
  * Streaming chat over /v1/chat/completions. opts.onDelta(text) per chunk; resolves at end.
  * @param {{baseURL:string, apiKey?:string, headers?:object, label?:string, model:string,
@@ -126,15 +178,8 @@ function httpError(label, res, body) {
  */
 async function streamOpenAI(opts) {
 	const label = opts.label || 'OpenAI-compatible';
-	const res = await fetch(baseUrl(opts) + '/chat/completions', {
-		method: 'POST',
-		headers: authHeaders(opts),
-		body: JSON.stringify(buildChatBody(Object.assign({}, opts, { stream: true }))),
-		signal: opts.signal
-	});
-	if (!res.ok || !res.body) {
-		throw httpError(label, res, await res.text().catch(() => ''));
-	}
+	const res = await postChat(opts, buildChatBody(Object.assign({}, opts, { stream: true })));
+	if (!res.body) { throw new Error(label + ' API ' + res.status + ': empty response stream'); }
 	await readLines(res, (line) => {
 		const s = line.trim();
 		if (!s.startsWith('data:')) { return; }
@@ -155,16 +200,7 @@ async function streamOpenAI(opts) {
  * @returns {Promise<string>}
  */
 async function completeOpenAI(opts) {
-	const label = opts.label || 'OpenAI-compatible';
-	const res = await fetch(baseUrl(opts) + '/chat/completions', {
-		method: 'POST',
-		headers: authHeaders(opts),
-		body: JSON.stringify(buildChatBody(Object.assign({}, opts, { stream: false }))),
-		signal: opts.signal
-	});
-	if (!res.ok) {
-		throw httpError(label, res, await res.text().catch(() => ''));
-	}
+	const res = await postChat(opts, buildChatBody(Object.assign({}, opts, { stream: false })));
 	const data = await res.json();
 	const c = data && data.choices && data.choices[0];
 	return (c && c.message && typeof c.message.content === 'string') ? c.message.content : '';
@@ -228,15 +264,8 @@ async function streamOpenAIAgentTurn(opts) {
 	// on OpenAI-shaped providers — they omit usage from streams unless include_usage is set. Mainstream
 	// providers (OpenAI/OpenRouter/Groq/Together/Fireworks/DeepSeek/xAI/Mistral) honor it.
 	body.stream_options = { include_usage: true };
-	const res = await fetch(baseUrl(opts) + '/chat/completions', {
-		method: 'POST',
-		headers: authHeaders(opts),
-		body: JSON.stringify(body),
-		signal: opts.signal
-	});
-	if (!res.ok || !res.body) {
-		throw httpError(label, res, await res.text().catch(() => ''));
-	}
+	const res = await postChat(opts, body);
+	if (!res.body) { throw new Error(label + ' API ' + res.status + ': empty response stream'); }
 	let text = '';
 	/** @type {any[]} */
 	const acc = [];
@@ -279,4 +308,4 @@ async function streamOpenAIAgentTurn(opts) {
 	return { content, stop_reason: stopReason, usage, malformed };
 }
 
-module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily, splitOutCachedTokens, extractApiError, httpError };
+module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily, splitOutCachedTokens, extractApiError, httpError, postChat };
