@@ -255,13 +255,17 @@ async function fetchCloudRoster() {
 		}
 		if (!res.ok) { dbg('cloud.roster', { ok: false, status: res.status }); return cached(); }
 		const data = await res.json().catch(() => null);
+		// Only a payload with a real models array IS a roster. A 200 carrying an error object, a partial
+		// response, or a schema drift is not — returning it would make pickCloudModel see "no models" and
+		// collapse to the 2-model fallback despite a valid last-known-good list. Prefer the cache then.
 		if (data && Array.isArray(data.models)) {
 			cloudRoster = data.models;
 			// The roster carries each model's short label — refresh the footer chip so it shows
 			// "Opus 4.8" instead of the raw id it fell back to before the roster finished loading.
 			sendConfigToWebview();
+			return data;
 		}
-		return data || cached();
+		return cached();
 	} catch (e) { dbg('cloud.roster', { error: String((e && e.message) || e) }); return cached(); }
 }
 
