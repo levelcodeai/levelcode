@@ -61,4 +61,4 @@ Code-OSS is MIT-licensed and free to fork, modify, and ship. LevelCode honors th
 
 ## License
 
-MIT — see [`LICENSE`](./LICENSE). A derivative of [Code-OSS](https://github.com/microsoft/vscode) (MIT, © Microsoft Corporation). Not affiliated with Microsoft.
+MIT — see [`LICENSE`](./LICENSE). A derivative of [Code-OSS](https://github.com/microsoft/vscode) (MIT, © Microsoft Corporation); see [`NOTICE`](./NOTICE) for attributions. Not affiliated with Microsoft.

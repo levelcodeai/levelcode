@@ -19,12 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-LevelCode is a derivative of Code-OSS (https://github.com/microsoft/vscode),
-which is licensed under the MIT License, Copyright (c) Microsoft Corporation.
-LevelCode is not produced by, endorsed by, or affiliated with Microsoft.
-"Visual Studio Code" and related marks are trademarks of Microsoft.
-The upstream Code-OSS source is fetched at build time and is not redistributed
-in this repository.
