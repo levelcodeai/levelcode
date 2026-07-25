@@ -1169,18 +1169,13 @@ async function openLegal(target) {
 	await vscode.env.openExternal(vscode.Uri.parse('https://levelcode.ai' + path));
 }
 
-/** Human "≈ turns left" formatting (e.g. 8044 → "8k", 375 → "375"). */
-function fmtTurns(n) {
-	n = Number(n) || 0;
-	return n >= 1000 ? (Math.round(n / 100) / 10) + 'k' : String(n);
-}
-
 /**
  * The LevelCode Cloud model menu (gateway mode, signed in). Fetches the plan's roster from the backend
- * (GET /account/models): LIVE models (confirmed price) are selectable with their credit multiplier +
- * ≈ turns-left on the remaining budget; STAGED models (frontier, assumption-priced) are shown 🔒 as
- * "coming soon"; the free tier surfaces an Upgrade CTA. The backend re-checks entitlement, so a
- * client selection can never over-reach the plan.
+ * (GET /account/models): LIVE models (confirmed price) are selectable; STAGED models (frontier,
+ * assumption-priced) are shown 🔒 as "coming soon"; the free tier surfaces an Upgrade CTA. Rows are
+ * deliberately NAME-ONLY — the id, context, credit multiplier and ≈turns-left were debug detail that
+ * buried the model name, so they were dropped (the plan + remaining credits stay in the placeholder).
+ * The backend re-checks entitlement, so a client selection can never over-reach the plan.
  */
 async function pickCloudModel() {
 	const roster = await fetchCloudRoster();
@@ -1195,46 +1190,38 @@ async function pickCloudModel() {
 	const items = [{ label: 'LevelCode Cloud · ' + plan, kind: vscode.QuickPickItemKind.Separator }];
 	// Auto (paid only): the gateway picks the cheapest engine per turn — free margin for the user.
 	if (paid) {
-		items.push({
-			label: (active === GATEWAY_AUTO_MODEL ? '$(check) ' : '') + '$(sparkle) ' + GATEWAY_AUTO_LABEL,
-			description: GATEWAY_AUTO_MODEL,
-			detail: 'Routes each turn to the best-value engine · saves credits',
-			_cloud: GATEWAY_AUTO_MODEL
-		});
+		items.push({ label: (active === GATEWAY_AUTO_MODEL ? '$(check) ' : '') + '$(sparkle) ' + GATEWAY_AUTO_LABEL, _cloud: GATEWAY_AUTO_MODEL });
 	}
 	if (models.length) {
 		for (const m of models) {
-			const ctxK = Math.round((m.context || 0) / 1000) + 'K ctx';
 			if (m.live) {
-				const turns = (m.turns_left != null) ? ' · ≈' + fmtTurns(m.turns_left) + ' turns left' : '';
-				items.push({
-					label: (m.id === active ? '$(check) ' : '') + m.label,
-					description: m.id,
-					detail: m.multiplier + '× credits · ' + ctxK + turns,
-					_cloud: m.id
-				});
+				// Name only — the model name is the whole point of the row. id/ctx/multiplier/turns removed.
+				items.push({ label: (m.id === active ? '$(check) ' : '') + m.label, _cloud: m.id });
 			} else {
-				items.push({ label: '$(lock) ' + m.label, description: m.id, detail: m.multiplier + '× credits · ' + ctxK + ' · coming soon', _soon: true });
+				// Staged: not selectable yet — "coming soon" is the one kept hint; _name backs the info toast.
+				items.push({ label: '$(lock) ' + m.label, description: 'coming soon', _soon: true, _name: m.label });
 			}
 		}
 	} else {
 		// Offline / roster unavailable — minimal fallback so the menu still works.
-		items.push({ label: (active === GATEWAY_FREE_MODEL ? '$(check) ' : '') + GATEWAY_FREE_LABEL, description: GATEWAY_FREE_MODEL, _cloud: GATEWAY_FREE_MODEL });
-		if (paid) { items.push({ label: (active === GATEWAY_PRO_MODEL ? '$(check) ' : '') + GATEWAY_PRO_LABEL, description: GATEWAY_PRO_MODEL, _cloud: GATEWAY_PRO_MODEL }); }
+		items.push({ label: (active === GATEWAY_FREE_MODEL ? '$(check) ' : '') + GATEWAY_FREE_LABEL, _cloud: GATEWAY_FREE_MODEL });
+		if (paid) { items.push({ label: (active === GATEWAY_PRO_MODEL ? '$(check) ' : '') + GATEWAY_PRO_LABEL, _cloud: GATEWAY_PRO_MODEL }); }
 	}
 	if (!paid) {
-		items.push({ label: '$(rocket) Upgrade to Pro', description: 'Kimi K2.7 Code + the full model roster', _upgrade: true });
+		items.push({ label: '$(rocket) Upgrade to Pro', description: 'unlock the full roster', _upgrade: true });
 	}
 	items.push({ label: 'Other', kind: vscode.QuickPickItemKind.Separator });
-	items.push({ label: '$(key) Use my own key (BYOK)…', description: 'Turn off the metered gateway in settings', _action: 'byokSettings' });
+	items.push({ label: '$(key) Use my own key (BYOK)…', description: 'turn off the metered gateway', _action: 'byokSettings' });
 
+	// Name-forward filtering: match the label only (no hidden id/description matching), so typing "opus"
+	// narrows to the Opus rows and nothing else.
 	const pick = await vscode.window.showQuickPick(items, {
 		placeHolder: 'LevelCode Cloud model · Plan: ' + plan + credits,
-		matchOnDescription: true
+		matchOnDescription: false
 	});
 	if (!pick) { return; }
 	if (pick._upgrade) { await openUpgrade(); return; }
-	if (pick._soon) { vscode.window.showInformationMessage('LevelCode Cloud: ' + (pick.description || 'that model') + ' is coming soon — pricing is being finalized.'); return; }
+	if (pick._soon) { vscode.window.showInformationMessage('LevelCode Cloud: ' + (pick._name || 'that model') + ' is coming soon — pricing is being finalized.'); return; }
 	if (pick._action === 'byokSettings') { vscode.commands.executeCommand('workbench.action.openSettings', 'levelcode.ai.providerMode'); return; }
 	if (pick._cloud) {
 		await aiConfig().update('cloudModel', pick._cloud, vscode.ConfigurationTarget.Global);
