@@ -841,7 +841,8 @@
 
   /* ── Signed-in account card — the levelcode.ai "classic" (atom.io) look. A FIXED brand palette (not the
      editor theme): One Dark by default, One Light under body.vscode-light — the same convention the rest of
-     this webview uses. One violet accent, hairline borders, tiny radii (6px card / 4px controls), and mono +
+     this webview uses; high-contrast themes defer to the editor's own tokens so the a11y choice wins.
+     One violet accent, hairline borders, tiny radii (6px card / 4px controls), and mono +
      tabular-nums metadata (email · plan pill · synced) — the detail that sells the code-editor personality. */
   .acctcard.classic {
     --cc-bg: #282c34; --cc-surface: #21252b; --cc-text: #dcdfe4; --cc-text2: #abb2bf; --cc-text3: #828997;
@@ -852,9 +853,26 @@
     background: var(--cc-surface); color: var(--cc-text); border: 1px solid var(--cc-line);
     box-shadow: 0 1px 2px rgba(0,0,0,.05);
   }
-  body.vscode-light .acctcard.classic, body.vscode-high-contrast-light .acctcard.classic {
+  body.vscode-light .acctcard.classic {
     --cc-bg: #ffffff; --cc-surface: #fafaf9; --cc-text: #333333; --cc-text2: #555555; --cc-text3: #777777;
     --cc-line: #e0e0e0; --cc-accent: #5b3fd6;
+  }
+  /* High-contrast (dark OR light): defer to the user's accessibility theme instead of the fixed brand
+     palette — map the card's vars onto the editor's own tokens, with contrastBorder for the required edges,
+     so the a11y choice wins over the brand look. */
+  body.vscode-high-contrast .acctcard.classic, body.vscode-high-contrast-light .acctcard.classic {
+    --cc-bg: var(--vscode-editor-background, #000);
+    --cc-surface: var(--vscode-editorWidget-background, var(--vscode-editor-background, #000));
+    --cc-text: var(--vscode-foreground);
+    --cc-text2: var(--vscode-foreground);
+    --cc-text3: var(--vscode-descriptionForeground, var(--vscode-foreground));
+    --cc-line: var(--vscode-contrastBorder, var(--vscode-editorWidget-border, var(--vscode-widget-border)));
+    --cc-accent: var(--vscode-textLink-foreground, var(--vscode-focusBorder));
+  }
+  /* The one filled control (free-tier Upgrade) takes the editor's button colors in HC, not white-on-accent. */
+  body.vscode-high-contrast .acctcard.classic .abtn.primary, body.vscode-high-contrast-light .acctcard.classic .abtn.primary {
+    background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+    border: 1px solid var(--vscode-contrastBorder, transparent);
   }
   .acctcard.classic .ovclose { color: var(--cc-text3); }
   .acctcard.classic .ovclose:hover { color: var(--cc-text); background: color-mix(in srgb, var(--cc-text3) 18%, transparent); }
