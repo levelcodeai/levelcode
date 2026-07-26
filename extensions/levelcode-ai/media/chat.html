@@ -558,7 +558,10 @@
   /* Dismiss (×): reveals on header hover, and stays visible once the plan is done (its primary use). */
   .plancard .pdismiss { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: var(--muted); font-size: 14px; line-height: 1; opacity: 0; cursor: pointer; border-radius: 6px; transition: opacity .12s, background .12s; }
   .plancard .phead:hover .pdismiss, .plancard.alldone .pdismiss { opacity: .55; }
-  .plancard .pdismiss:hover { opacity: 1; background: rgba(127,127,127,.16); }
+  /* :focus-visible so a keyboard-only user can see AND ring the control even on a not-yet-done plan
+     — it is opacity:0 by default (revealed on hover/done), so focus must reveal it too. */
+  .plancard .pdismiss:hover, .plancard .pdismiss:focus-visible { opacity: 1; background: rgba(127,127,127,.16); }
+  .plancard .pdismiss:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
   .plancard .pprog { height: 3px; margin: 0 12px 2px; border-radius: 3px; background: rgba(127,127,127,.16); overflow: hidden; }
   .plancard .pprog .pfill { height: 100%; border-radius: 3px; background: var(--accent); transition: width .4s cubic-bezier(.4,0,.2,1); }
   .plancard.alldone .pprog .pfill { background: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
@@ -2400,7 +2403,7 @@
     }
     const head = '<div class="phead"><span class="ptoggle">' + codicon('chevron-down') + '</span>'
                + '<span class="phtitle">Plan</span><span class="pcount">' + done + '/' + total + '</span>'
-               + '<span class="pdismiss" title="Dismiss plan" role="button" aria-label="Dismiss plan">&times;</span></div>'
+               + '<span class="pdismiss" title="Dismiss plan" role="button" tabindex="0" aria-label="Dismiss plan">&times;</span></div>'
                + '<div class="pprog"><div class="pfill" style="width:' + pct + '%"></div></div>';
     planBar.innerHTML = '<div class="plancard' + (allDone ? ' alldone' : '') + (planCollapsed ? ' collapsed' : '') + '">'
                       + head + '<div class="pitems">' + items + '</div></div>';
@@ -2409,7 +2412,11 @@
     // Dismiss (×): close the finished — or abandoned — plan outright. stopPropagation so the header's
     // collapse-toggle doesn't also fire. Clearing resets the latches via the empty-todos branch above.
     const pdismiss = planBar.querySelector('.pdismiss');
-    if (pdismiss){ pdismiss.onclick = (e) => { e.stopPropagation(); renderPlan([]); }; }
+    if (pdismiss){
+      const dismiss = (e) => { e.preventDefault(); e.stopPropagation(); renderPlan([]); };
+      pdismiss.onclick = dismiss;
+      pdismiss.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' '){ dismiss(e); } };   // keyboard-activate, like ctxStat / approvals
+    }
     planBar.style.display = 'block';
     scrollIfStuck();   // log shrank as the sticky plan appeared — keep pinned if we were at bottom
   }
