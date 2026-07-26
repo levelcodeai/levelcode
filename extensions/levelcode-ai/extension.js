@@ -1161,10 +1161,10 @@ async function openUpgrade() {
 	await vscode.env.openExternal(vscode.Uri.parse(base + '/ai/pricing'));
 }
 
-/** Open a LevelCode legal page (Terms / Privacy) from the sign-in modal. Targets are a fixed
- *  allow-list — never a URL from the webview — so this can't be turned into an open-redirect. */
+/** Open a fixed LevelCode site page (Terms / Privacy / Docs). Targets are a fixed allow-list — never a
+ *  URL from the webview — so this can't be turned into an open-redirect. */
 async function openLegal(target) {
-	const path = target === 'privacy' ? '/privacy' : target === 'terms' ? '/terms' : null;
+	const path = target === 'privacy' ? '/privacy' : target === 'terms' ? '/terms' : target === 'docs' ? '/ai/docs' : null;
 	if (!path) { return; }
 	await vscode.env.openExternal(vscode.Uri.parse('https://levelcode.ai' + path));
 }
