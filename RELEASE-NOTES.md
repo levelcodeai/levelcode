@@ -1,38 +1,38 @@
-# LevelCode v0.9.2
+# LevelCode v1.0.1
 
-A small, practical release: your site **opens itself** in the editor while the agent builds it, and what a run costs is now measured in **credits** rather than dollars.
+A reliability patch. A transient upstream hiccup now **retries and recovers** instead of killing your run, and when something does fail you get an **honest, readable** message rather than a wall of proxy HTML mislabeled "OpenAI".
 
 ## Highlights
 
-### The browser opens itself
+### Runs survive a transient upstream blip
 
-LevelCode has always shipped a built-in browser — but you had to know the command to find it, so most people never did. Now it appears on its own: the moment the agent starts a web server in the background, the site opens **beside the chat**.
+When the model gateway briefly can't reach a healthy backend it returns a **502 / 503 / 504** — a momentary hiccup that used to end the whole run. LevelCode now **retries once, before anything has streamed**, so the common case (the backend is fine a second later) just recovers and your turn carries on. You'll see a brief `upstream busy — retrying…` instead of a dead run.
 
-- **It updates as the agent works.** Edits land on disk immediately (that's the apply-then-review model — Keep/Undo comes *after*), so your dev server's watcher fires HMR and the preview refreshes before you click Keep. Ask for a page, watch it appear.
-- **It never steals your focus.** A server coming up mid-run doesn't yank the caret away from whatever you're typing.
-- **Closing it means closed.** Each address opens at most once per session, so a chatty server can't reopen the tab you just dismissed, and a restart-on-save server can't stack one tab per reload.
-- **Only local addresses, ever.** The address is read from the dev server's own output — which is whatever a project's start script chose to print. So only `localhost`, `127.0.0.1`, the IPv6 loopback `[::1]`, and the bind addresses `0.0.0.0` / `[::]` (treated as `localhost`) are opened; a remote URL printed by a script is ignored. A hostile repo can't point your editor's browser somewhere else.
+It's deliberate about *when* it retries: only a genuine transient 5xx, and only before any output has appeared — so a retry can never duplicate text or double-charge. It does **not** retry a rate-limit (429), a real request error (500 / other 4xx), or an aborted request, and a 401 still refreshes your session as before. Hitting **Stop** during the wait stays instant.
 
-Turn it off with `levelcode.ai.preview.autoOpen`, or open previews yourself with **Simple Browser: Show**.
+### Honest error messages
 
-### Credits, not dollars
+A gateway failure used to land in the chat verbatim, like this:
 
-The response bar under each run now reads **`Opus 4.8 · 46 credits · 1,279 left`** instead of dollar amounts. $1 = 100 credits, so a $100 Ultra plan is a 10,000-credit allowance.
+```
+OpenAI API 502: <html><head><title>502 Bad Gateway</title></head><body>…
+```
 
-This is a change of unit, not of price — nothing about what you pay or what a turn costs has moved. A balance that ticks down in dollars reads as money draining away; an allowance reads as something you're meant to spend, which is what it is.
+Two things were wrong: it was labelled **OpenAI** even for an Anthropic model on your LevelCode Cloud plan, and it pasted the raw nginx error page into the transcript. The same failure now reads:
 
-- **Small runs stay honest.** A cheap-model turn costs a fraction of a credit, so it shows as `0.4` rather than rounding to `0` and looking free.
-- **One number everywhere.** The editor and levelcode.ai/ai/account now format the same figure identically, down to digit grouping.
+```
+LevelCode Cloud API 502: Bad Gateway
+```
+
+The route is named correctly — LevelCode Cloud, OpenRouter, or whichever provider actually handled it — and the body is parsed for a real message. An HTML proxy page carries none, so it falls back to the plain status reason instead of being dumped in.
 
 ## Under the hood
 
-- The dev-server address is sniffed from the **accumulated output**, not a single chunk. Node delivers stdout in arbitrary slices, so a URL routinely arrives split (`http://local` + `host:5173/`) and would otherwise never be recognised — the preview would silently never open.
-- `verify.js` gained its first test suite, and shed a stray NUL byte that had been making the whole file invisible to `grep` and `diff`.
-- Release builds no longer download a Playwright browser during bootstrap — an unnecessary network dependency that failed one architecture while the other passed.
+- The repository's `LICENSE` is now recognised as **MIT** by GitHub. The MIT text is kept verbatim so the detector matches it, the Code-OSS provenance + trademark notice moved to a dedicated `NOTICE` file, and the in-app license link points at a branch that exists (`HEAD`) rather than a `main` that never did (it had been a 404).
 
 ## Test coverage
 
 - **24 suites** across the bundled extensions, all green on every release.
-- `verify.test.js` (16 cases) — the preview sniffers, led by the one that matters: a remote address in command output must open **nothing**. `creditFormat.test.js` (8 cases) extracts the real formatters out of the shipped `chat.html`, so the tests can't drift from what ships.
+- `providers.test.js` grew to **28 cases**: the error sanitiser (a real nginx 502 page collapses to `Bad Gateway`, a JSON `{error:{message}}` is preserved, the label names the route — not the adapter) and the retry (recovers on a 502-then-200, gives up cleanly after one try, never retries a 4xx or an abort). The retry is also exercised end-to-end against a stubbed stream, so the whole router → adapter path is covered, not just the helper.
 
-**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v0.9.1...v0.9.2
+**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.0...v1.0.1
