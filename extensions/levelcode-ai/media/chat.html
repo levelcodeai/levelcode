@@ -839,6 +839,78 @@
   .acctbody .link { color: var(--accent); cursor: pointer; text-decoration: none; }
   .acctbody .link:hover { text-decoration: underline; }
 
+  /* ── Signed-in account card — the levelcode.ai "classic" (atom.io) look. A FIXED brand palette (not the
+     editor theme): One Dark by default, One Light under body.vscode-light — the same convention the rest of
+     this webview uses; high-contrast themes defer to the editor's own tokens so the a11y choice wins.
+     One violet accent, hairline borders, tiny radii (6px card / 4px controls), and mono +
+     tabular-nums metadata (email · plan pill · synced) — the detail that sells the code-editor personality. */
+  .acctcard.classic {
+    --cc-bg: #282c34; --cc-surface: #21252b; --cc-text: #dcdfe4; --cc-text2: #abb2bf; --cc-text3: #828997;
+    --cc-line: #3e4451; --cc-accent: #7d6bff;
+    --cc-mono: var(--vscode-editor-font-family, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+    font-variant-numeric: tabular-nums;   /* align digits across the card (email, any future counters) */
+    max-width: 300px; padding: 24px 22px 20px; border-radius: 6px;
+    background: var(--cc-surface); color: var(--cc-text); border: 1px solid var(--cc-line);
+    box-shadow: 0 1px 2px rgba(0,0,0,.05);
+  }
+  body.vscode-light .acctcard.classic {
+    --cc-bg: #ffffff; --cc-surface: #fafaf9; --cc-text: #333333; --cc-text2: #555555; --cc-text3: #777777;
+    --cc-line: #e0e0e0; --cc-accent: #5b3fd6;
+  }
+  /* High-contrast (dark OR light): defer to the user's accessibility theme instead of the fixed brand
+     palette — map the card's vars onto the editor's own tokens, with contrastBorder for the required edges,
+     so the a11y choice wins over the brand look. */
+  body.vscode-high-contrast .acctcard.classic, body.vscode-high-contrast-light .acctcard.classic {
+    --cc-bg: var(--vscode-editor-background, #000);
+    --cc-surface: var(--vscode-editorWidget-background, var(--vscode-editor-background, #000));
+    --cc-text: var(--vscode-foreground);
+    --cc-text2: var(--vscode-foreground);
+    --cc-text3: var(--vscode-descriptionForeground, var(--vscode-foreground));
+    --cc-line: var(--vscode-contrastBorder, var(--vscode-editorWidget-border, var(--vscode-widget-border)));
+    --cc-accent: var(--vscode-textLink-foreground, var(--vscode-focusBorder));
+  }
+  /* The one filled control (free-tier Upgrade) takes the editor's button colors in HC, not white-on-accent. */
+  body.vscode-high-contrast .acctcard.classic .abtn.primary, body.vscode-high-contrast-light .acctcard.classic .abtn.primary {
+    background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+    border: 1px solid var(--vscode-contrastBorder, transparent);
+  }
+  .acctcard.classic .ovclose { color: var(--cc-text3); }
+  .acctcard.classic .ovclose:hover { color: var(--cc-text); background: color-mix(in srgb, var(--cc-text3) 18%, transparent); }
+  .acctcard.classic .bigavatar {
+    width: 56px; height: 56px; border-radius: 50%; margin: 2px auto 14px; display: grid; place-items: center;
+    border: 1px solid color-mix(in srgb, var(--cc-accent) 42%, var(--cc-line));
+    background: color-mix(in srgb, var(--cc-accent) 13%, transparent); color: var(--cc-accent);
+    font-weight: 600; font-size: 18px; letter-spacing: .02em;
+  }
+  .acctcard.classic h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; color: var(--cc-text); }
+  .acctcard.classic .em { margin: 5px 0 0; font-family: var(--cc-mono); font-size: 12.5px; color: var(--cc-text3); }
+  .acctcard.classic .planpill {
+    display: inline-block; margin: 12px 0 2px; border: 1px solid var(--cc-line); background: var(--cc-bg);
+    border-radius: 3px; padding: 4px 10px; font-family: var(--cc-mono); font-size: 12px; color: var(--cc-text2);
+  }
+  .acctcard.classic .abtn {
+    display: block; width: 100%; box-sizing: border-box; margin: 16px 0 0; padding: 10px 14px; border-radius: 4px;
+    border: 1px solid var(--cc-line); background: var(--cc-bg); color: var(--cc-text);
+    font-size: 14px; font-weight: 500; cursor: pointer; transition: border-color .15s ease;
+  }
+  .acctcard.classic .abtn:hover { border-color: var(--cc-accent); }
+  .acctcard.classic .abtn.primary { background: var(--cc-accent); color: #fff; border-color: transparent; }
+  .acctcard.classic .abtn.primary:hover { filter: brightness(1.06); }
+  .acctcard.classic .signout {
+    display: inline-block; margin-top: 14px; padding: 2px 6px; border: none; background: transparent;
+    color: var(--cc-accent); font: inherit; font-size: 13px; cursor: pointer; border-radius: 4px;
+  }
+  .acctcard.classic .signout:hover { text-decoration: underline; }
+  .acctcard.classic .signout:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
+  .acctcard.classic .synced {
+    margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--cc-line);
+    font-family: var(--cc-mono); font-size: 11.5px; color: var(--cc-text3); line-height: 1.5;
+  }
+  .acctcard.classic .note {
+    margin-top: 12px; font-family: var(--cc-mono); font-size: 11.5px; color: var(--cc-text3);
+    line-height: 1.55; text-align: left;
+  }
+
   /* ── LevelCode sign-in modal — calm, soft, THEME-FOLLOWING (matches the Manage-account card) ────
      Scoped to .acctcard.lc-modal. Uses the editor theme tokens (--vscode-*, --border, --muted, --field-bg)
      so it adapts light/dark exactly like the signed-in card, with a gentle lavender (--accent) as the
@@ -2689,41 +2761,39 @@
     if (acctLastFocus && acctLastFocus.focus) { try { acctLastFocus.focus(); } catch(e){} }  // restore focus to the opener
     acctLastFocus = null;
   }
-  // Mode-aware privacy note: BYOK = keys never touch the cloud; gateway = metered plan through LevelCode.
-  function privacyNote(gateway){
-    return gateway
-      ? '<div class="note priv">Gateway mode: AI runs through your <b>metered LevelCode plan</b> — no provider key needed. Requests are proxied by the account server. Switch to BYOK any time in settings (<code>levelcode.ai.providerMode</code>).</div>'
-      : '<div class="note priv">BYOK mode: the account only syncs settings/skills. AI requests stay <b>direct from your machine to your provider</b> — your keys never touch the cloud.</div>';
-  }
   function renderAccount(state){
     account = state || { signedIn: false };
     const gateway = account.mode === 'gateway';
     if (account.signedIn){
-      acctCard.classList.remove('lc-modal'); // signed-in keeps the plain themed card
+      acctCard.classList.remove('lc-modal');
+      acctCard.classList.add('classic'); // signed-in → the levelcode.ai "classic" (atom.io) look
       acctAvatar.textContent = initials(account.name || account.email);
       acctAvatar.classList.add('signed');
-      // Gateway: show the active plan (and credits when the server reports them). BYOK: plan is display-only.
       const paidPlan = !!(account.plan && account.plan.trim().toLowerCase() !== 'free');
-      const planLine = gateway
-        ? '<p class="meta">Plan: <b>' + esc(account.plan || 'Free') + '</b> · '
-            + esc(paidPlan ? 'Kimi K2.7 Code' : 'gpt-oss-120b')
-            + (account.credits != null ? ' · ' + esc(String(account.credits)) + ' credit' + (Number(account.credits) === 1 ? '' : 's') + ' left' : '')
-            + '</p>'
-        : '<p class="meta">' + esc(account.email || '') + (account.plan ? ' · ' + esc(account.plan) : '') + '</p>';
-      // Free-tier Upgrade CTA (gateway only): unlock the flagship Kimi K2.7 Code.
+      // Model-agnostic: a mono pill, never a model name (it churns and confused clients), and no credits
+      // (that lives on /ai/account). "plan · Max" for gateway; "your own key" for BYOK.
+      const planPill = gateway
+        ? '<span class="planpill">plan · ' + esc(account.plan || 'Free') + '</span>'
+        : '<span class="planpill">your own key' + (account.plan ? ' · ' + esc(account.plan) : '') + '</span>';
+      const emailLine = account.email ? '<p class="em">' + esc(account.email) + '</p>' : '';
       const upgradeBtn = (gateway && !paidPlan)
-        ? '<button class="abtn primary" data-act="upgrade">' + codicon('sparkle') + ' Upgrade to Pro — unlock Kimi K2.7 Code</button>'
+        ? '<button class="abtn primary" data-act="upgrade">' + codicon('sparkle') + ' Upgrade to Pro</button>'
         : '';
+      // Gateway needs no explainer (the "how the gateway works" blurb was removed). BYOK keeps a one-line
+      // privacy reassurance, which is genuinely useful there.
+      const note = gateway ? '' : '<div class="note">Your keys never leave your machine — requests go direct to your provider.</div>';
       acctBody.innerHTML =
         '<div class="bigavatar">' + esc(initials(account.name || account.email)) + '</div>'
         + '<h2 id="lcTitle">' + esc(account.name || 'Signed in') + '</h2>'
-        + planLine
+        + emailLine
+        + planPill
         + upgradeBtn
         + '<button class="abtn" data-act="manage">Manage account</button>'
-        + '<button class="abtn" data-act="signout">Sign out</button>'
-        + '<div class="synced">' + codicon('check-circle') + ' Synced: settings · skills · keymaps</div>'
-        + privacyNote(gateway);
+        + '<button class="signout" data-act="signout">Sign out</button>'
+        + '<div class="synced">Synced · settings · skills · keymaps</div>'
+        + note;
     } else {
+      acctCard.classList.remove('classic');
       acctCard.classList.add('lc-modal'); // signed-out → the calm LevelCode sign-in modal
       acctAvatar.innerHTML = PERSON_SVG;
       acctAvatar.classList.remove('signed');
