@@ -849,9 +849,9 @@
     --cc-line: #3e4451; --cc-accent: #7d6bff;
     --cc-mono: var(--vscode-editor-font-family, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
     font-variant-numeric: tabular-nums;   /* align digits across the card (email, any future counters) */
-    max-width: 300px; padding: 24px 22px 20px; border-radius: 6px;
+    max-width: 304px; padding: 0; border-radius: 14px; overflow: hidden;
     background: var(--cc-surface); color: var(--cc-text); border: 1px solid var(--cc-line);
-    box-shadow: 0 1px 2px rgba(0,0,0,.05);
+    box-shadow: 0 18px 50px rgba(0,0,0,.34); animation: lcPop .4s cubic-bezier(.2,.9,.25,1.2) both;
   }
   body.vscode-light .acctcard.classic {
     --cc-bg: #ffffff; --cc-surface: #fafaf9; --cc-text: #333333; --cc-text2: #555555; --cc-text3: #777777;
@@ -876,12 +876,18 @@
   }
   .acctcard.classic .ovclose { color: var(--cc-text3); }
   .acctcard.classic .ovclose:hover { color: var(--cc-text); background: color-mix(in srgb, var(--cc-text3) 18%, transparent); }
-  .acctcard.classic .bigavatar {
-    width: 56px; height: 56px; border-radius: 50%; margin: 2px auto 14px; display: grid; place-items: center;
-    border: 1px solid color-mix(in srgb, var(--cc-accent) 42%, var(--cc-line));
-    background: color-mix(in srgb, var(--cc-accent) 13%, transparent); color: var(--cc-accent);
-    font-weight: 600; font-size: 18px; letter-spacing: .02em;
-  }
+  /* Hero — the landing page's floating chevron over four drifting "portal" circles. Decorative (aria-hidden),
+     full-bleed at the top of the modal; the motion respects prefers-reduced-motion (guard below). */
+  .acctcard.classic .hero { position: relative; height: 150px; display: grid; place-items: center; overflow: hidden; }
+  .acctcard.classic .hero .portalmark { width: 212px; height: auto; display: block; }
+  .acctcard.classic .portal-layer { transform-origin: 50% 60%; animation: portalDrift 7s ease-in-out infinite; }
+  .acctcard.classic .portal-layer:nth-child(2) { animation-delay: -1.4s; }
+  .acctcard.classic .portal-layer:nth-child(3) { animation-delay: -2.8s; }
+  .acctcard.classic .portal-layer:nth-child(4) { animation-delay: -4.2s; }
+  .acctcard.classic .portal-layer:nth-child(5) { animation-delay: -5.6s; }
+  @keyframes portalDrift { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-6px) scale(1.02); } }
+  /* Everything under the hero carries the padding, since the hero is full-bleed. */
+  .acctcard.classic .acctmain { padding: 2px 24px 22px; }
   .acctcard.classic h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; color: var(--cc-text); }
   .acctcard.classic .em { margin: 5px 0 0; font-family: var(--cc-mono); font-size: 12.5px; color: var(--cc-text3); }
   .acctcard.classic .planpill {
@@ -902,13 +908,26 @@
   }
   .acctcard.classic .signout:hover { text-decoration: underline; }
   .acctcard.classic .signout:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
-  .acctcard.classic .synced {
+  /* Footer: the Documentation link + the muted "Synced" line, under one divider. */
+  .acctcard.classic .acctfoot {
     margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--cc-line);
-    font-family: var(--cc-mono); font-size: 11.5px; color: var(--cc-text3); line-height: 1.5;
+    display: flex; flex-direction: column; align-items: center; gap: 9px;
   }
+  .acctcard.classic .docs {
+    display: inline-flex; align-items: center; gap: 6px; padding: 1px 4px; border-radius: 4px;
+    color: var(--cc-accent); font-size: 13px; font-weight: 500; text-decoration: none; cursor: pointer;
+  }
+  .acctcard.classic .docs:hover { text-decoration: underline; }
+  .acctcard.classic .docs:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
+  .acctcard.classic .docs .darrow { font-size: 11px; opacity: .85; }
+  .acctcard.classic .synced { font-family: var(--cc-mono); font-size: 11px; color: var(--cc-text3); line-height: 1.5; }
   .acctcard.classic .note {
     margin-top: 12px; font-family: var(--cc-mono); font-size: 11.5px; color: var(--cc-text3);
     line-height: 1.55; text-align: left;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .acctcard.classic { animation: none; }
+    .acctcard.classic .portal-layer { animation: none; }
   }
 
   /* ── LevelCode sign-in modal — calm, soft, THEME-FOLLOWING (matches the Manage-account card) ────
@@ -2740,6 +2759,20 @@
     '<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     + '<path d="M29,92 L60,70 L91,92" opacity=".5"/><path d="M29,71 L60,49 L91,71" opacity=".78"/>'
     + '<path d="M29,50 L60,28 L91,50"/></svg>';
+  // The full COLORED "portal" mark from the levelcode.ai landing hero: three chevrons over four soft
+  // drifting circles (the .portal-layer drift lives in CSS). Decorative; aria-hidden. First circle takes
+  // --cc-accent (theme-aware); the rest are the fixed brand gradient.
+  const LC_PORTAL_SVG =
+    '<svg class="portalmark" viewBox="0 0 300 280" aria-hidden="true">'
+    + '<g class="portal-layer"><circle cx="118" cy="128" r="104" fill="var(--cc-accent)" opacity=".14"/></g>'
+    + '<g class="portal-layer"><circle cx="186" cy="104" r="86" fill="#7d6bff" opacity=".16"/></g>'
+    + '<g class="portal-layer"><circle cx="120" cy="180" r="72" fill="#5fb4ff" opacity=".18"/></g>'
+    + '<g class="portal-layer"><circle cx="204" cy="182" r="58" fill="#a8ecff" opacity=".28"/></g>'
+    + '<g class="portal-layer" fill="none" stroke-linecap="round" stroke-linejoin="round">'
+    +   '<path d="M96 196 L152 152 L208 196" stroke="#5b3fd6" stroke-width="21" opacity=".55"/>'
+    +   '<path d="M96 152 L152 108 L208 152" stroke="#7d6bff" stroke-width="21" opacity=".8"/>'
+    +   '<path d="M96 108 L152 64 L208 108" stroke="#5fb4ff" stroke-width="21"/>'
+    + '</g></svg>';
   const LC_GH_SVG =
     '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>';
   const LC_GOOGLE_SVG =
@@ -2782,16 +2815,19 @@
       // Gateway needs no explainer (the "how the gateway works" blurb was removed). BYOK keeps a one-line
       // privacy reassurance, which is genuinely useful there.
       const note = gateway ? '' : '<div class="note">Your keys never leave your machine — requests go direct to your provider.</div>';
+      const docsLink = '<a class="docs" data-act="docs" role="link" tabindex="0">Documentation <span class="darrow" aria-hidden="true">↗</span></a>';
       acctBody.innerHTML =
-        '<div class="bigavatar">' + esc(initials(account.name || account.email)) + '</div>'
-        + '<h2 id="lcTitle">' + esc(account.name || 'Signed in') + '</h2>'
-        + emailLine
-        + planPill
-        + upgradeBtn
-        + '<button class="abtn" data-act="manage">Manage account</button>'
-        + '<button class="signout" data-act="signout">Sign out</button>'
-        + '<div class="synced">Synced · settings · skills · keymaps</div>'
-        + note;
+        '<div class="hero">' + LC_PORTAL_SVG + '</div>'
+        + '<div class="acctmain">'
+        +   '<h2 id="lcTitle">' + esc(account.name || 'Signed in') + '</h2>'
+        +   emailLine
+        +   planPill
+        +   upgradeBtn
+        +   '<button class="abtn" data-act="manage">Manage account</button>'
+        +   '<button class="signout" data-act="signout">Sign out</button>'
+        +   '<div class="acctfoot">' + docsLink + '<div class="synced">Synced · settings · skills · keymaps</div></div>'
+        +   note
+        + '</div>';
     } else {
       acctCard.classList.remove('classic');
       acctCard.classList.add('lc-modal'); // signed-out → the calm LevelCode sign-in modal
@@ -2866,7 +2902,7 @@
     else if (act === 'manage') { vscode.postMessage({ type: 'accountManage' }); }
     else if (act === 'github' || act === 'google') { vscode.postMessage({ type: 'accountSignIn', provider: act }); }
     else if (act === 'create') { vscode.postMessage({ type: 'accountSignIn', create: true }); }
-    else if (act === 'terms' || act === 'privacy') { vscode.postMessage({ type: 'openExternal', target: act }); }
+    else if (act === 'terms' || act === 'privacy' || act === 'docs') { vscode.postMessage({ type: 'openExternal', target: act }); }
     else { vscode.postMessage({ type: 'accountSignIn' }); }
   }
   acctBody.addEventListener('click', (e) => {
