@@ -8,7 +8,7 @@ A reliability patch. A transient upstream hiccup now **retries and recovers** in
 
 When the model gateway briefly can't reach a healthy backend it returns a **502 / 503 / 504** — a momentary hiccup that used to end the whole run. LevelCode now **retries once, before anything has streamed**, so the common case (the backend is fine a second later) just recovers and your turn carries on. You'll see a brief `upstream busy — retrying…` instead of a dead run.
 
-It's deliberate about *when* it retries: only a genuine transient 5xx, and only before any output has appeared — so a retry can never duplicate text or double-charge. It does **not** retry a rate-limit (429), a real request error (500 / other 4xx), or an aborted request, and a 401 still refreshes your session as before. Hitting **Stop** during the wait stays instant.
+It's deliberate about *when* it retries: only a **502, 503, or 504**, and only before any output has appeared — so a retry can never duplicate text or double-charge. It does **not** retry a rate-limit (429), a 500, any other 4xx, or an aborted request, and a 401 still refreshes your session as before. Hitting **Stop** during the wait stays instant.
 
 ### Honest error messages
 
