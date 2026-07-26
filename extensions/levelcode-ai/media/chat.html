@@ -874,14 +874,15 @@
     background: var(--vscode-button-background); color: var(--vscode-button-foreground);
     border: 1px solid var(--vscode-contrastBorder, transparent);
   }
-  .acctcard.classic .ovclose { color: var(--cc-text3); }
+  .acctcard.classic .ovclose { color: var(--cc-text3); z-index: 3; }   /* above the full-bleed hero, so the close click lands */
   .acctcard.classic .ovclose:hover { color: var(--cc-text); background: color-mix(in srgb, var(--cc-text3) 18%, transparent); }
   /* Hero — the landing page's floating chevron over four drifting "portal" circles. Decorative (aria-hidden),
      full-bleed at the top of the modal; the motion respects prefers-reduced-motion (guard below). */
-  .acctcard.classic .hero { position: relative; height: 146px; overflow: hidden; }
-  /* Absolutely placed with a top gap so the chevron peak clears the modal's rounded top edge; the SVG is
-     taller than the hero, so only the LOWER soft circles bleed off — the chevron itself is never clipped. */
-  .acctcard.classic .hero .portalmark { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); width: 182px; height: auto; }
+  /* Hero. The mark is small enough to sit fully INSIDE the hero (place-items:center) — no bleed on any
+     side. pointer-events:none so the decorative mark never intercepts clicks (it was covering — and
+     swallowing — the X close button, which paints under acctBody). */
+  .acctcard.classic .hero { position: relative; height: 148px; display: grid; place-items: center; overflow: hidden; pointer-events: none; }
+  .acctcard.classic .hero .portalmark { width: 150px; height: auto; }
   .acctcard.classic .portal-layer { transform-origin: 50% 60%; animation: portalDrift 7s ease-in-out infinite; }
   .acctcard.classic .portal-layer:nth-child(2) { animation-delay: -1.4s; }
   .acctcard.classic .portal-layer:nth-child(3) { animation-delay: -2.8s; }
