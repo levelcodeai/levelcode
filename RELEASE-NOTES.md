@@ -15,7 +15,7 @@ Your plan and remaining credits still sit in the picker's header, so the number 
 When the agent works from a checklist, a completed plan used to sit fully expanded in the sticky bar — a large part of the panel — long after the run had ended. Now, matching how Claude Code and Cursor handle a finished plan:
 
 - **It auto-collapses** to its green header the moment every item is done: still there, still one click to expand, just no longer hogging the view.
-- **A dismiss (×)** closes it outright — and also clears a plan left **stranded by a run that was stopped or errored**. It's keyboard-operable (Tab to it, Enter / Space to close), like the other status-bar controls.
+- **A dismiss (×)** closes it outright — and also clears a plan left **stranded by a run that was stopped or errored**. It's keyboard-operable (Tab to it, Enter / Space to close), like the other controls in the plan bar.
 
 ### A slimmer footer
 
