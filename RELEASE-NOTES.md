@@ -1,38 +1,29 @@
-# LevelCode v1.0.1
+# LevelCode v1.0.2
 
-A reliability patch. A transient upstream hiccup now **retries and recovers** instead of killing your run, and when something does fail you get an **honest, readable** message rather than a wall of proxy HTML mislabeled "OpenAI".
+A UI-polish release. The model picker is **name-forward** instead of a wall of detail, a finished plan **folds away** on its own, and the footer shed a redundant chip.
 
 ## Highlights
 
-### Runs survive a transient upstream blip
+### A cleaner model picker
 
-When the model gateway briefly can't reach a healthy backend it returns a **502 / 503 / 504** — a momentary hiccup that used to end the whole run. LevelCode now **retries once, before anything has streamed**, so the common case (the backend is fine a second later) just recovers and your turn carries on. You'll see a brief `upstream busy — retrying…` instead of a dead run.
+Picking a model used to mean reading three technical fields per row — the raw id (`anthropic/claude-opus-5`), the context size, and a `6.67× credits · 1000K ctx · ≈103 turns left` second line. Handy for debugging, noise for choosing. Each model is now a single, **name-forward** line: just the name, an active check, and a lock on "coming soon" models — the way Cursor and Claude Code present them.
 
-It's deliberate about *when* it retries: only a **502, 503, or 504**, and only before any output has appeared — so a retry can never duplicate text or double-charge. It does **not** retry a rate-limit (429), a 500, any other 4xx, or an aborted request, and a 401 still refreshes your session as before. Hitting **Stop** during the wait stays instant.
+Your plan and remaining credits still sit in the picker's header, so the number that matters isn't lost; only the per-row debug detail is gone. Type to filter by model name.
 
-### Honest error messages
+### A finished plan cleans up after itself
 
-A gateway failure used to land in the chat verbatim, like this:
+When the agent works from a checklist, a completed plan used to sit fully expanded in the sticky bar — a large part of the panel — long after the run had ended. Now, matching how Claude Code and Cursor handle a finished plan:
 
-```
-OpenAI API 502: <html><head><title>502 Bad Gateway</title></head><body>…
-```
+- **It auto-collapses** to its green header the moment every item is done: still there, still one click to expand, just no longer hogging the view.
+- **A dismiss (×)** closes it outright — and also clears a plan left **stranded by a run that was stopped or errored**. It's keyboard-operable (Tab to it, Enter / Space to close), like the other controls in the plan bar.
 
-Two things were wrong: it was labelled **OpenAI** even for an Anthropic model on your LevelCode Cloud plan, and it pasted the raw nginx error page into the transcript. The same failure now reads:
+### A slimmer footer
 
-```
-LevelCode Cloud API 502: Bad Gateway
-```
-
-The route is named correctly — LevelCode Cloud, OpenRouter, or whichever provider actually handled it — and the body is parsed for a real message. An HTML proxy page carries none, so it falls back to the plain status reason instead of being dumped in.
-
-## Under the hood
-
-- The repository's `LICENSE` is now recognised as **MIT** by GitHub. The MIT text is kept verbatim so the detector matches it, the Code-OSS provenance + trademark notice moved to a dedicated `NOTICE` file, and the in-app license link points at a branch that exists (`HEAD`) rather than a `main` that never did (it had been a 404).
+Dropped the redundant home-icon **"LevelCode Cloud"** chip from the status bar. The mode-and-plan chip on the right (`Gateway · Pro+`, `BYO key`, `Direct · no key`) already tells you where your requests go.
 
 ## Test coverage
 
 - **24 suites** across the bundled extensions, all green on every release.
-- `providers.test.js` grew to **28 cases**: the error sanitiser (a real nginx 502 page collapses to `Bad Gateway`, a JSON `{error:{message}}` is preserved, the label names the route — not the adapter) and the retry (recovers on a 502-then-200, gives up cleanly after one try, never retries a 4xx or an abort). The retry is also exercised end-to-end against a stubbed stream, so the whole router → adapter path is covered, not just the helper.
+- These are webview / picker UI changes, so they're verified by parsing the shipped `chat.html` — every script block, plus the `webviewCss` and `creditFormat` suites that read it — rather than by snapshot.
 
-**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.0...v1.0.1
+**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.1...v1.0.2
