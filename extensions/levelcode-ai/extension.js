@@ -775,6 +775,23 @@ let approvalSeq = 0;
  * it. Reads the current value the same user-scoped way it is read at run start. Idempotent, and refuses
  * a tool name that is not a namespaced server__tool to avoid writing junk from a malformed message.
  */
+/**
+ * A JSON-shaped map, and nothing else — guards what we copy out of settings.
+ *
+ * The prototype check is what makes that true. `typeof v === 'object' && !Array.isArray(v)` is the
+ * reflex version and it is wrong: `new String('x')`, `new Date()` and `new Map()` all pass it, and the
+ * first would then have its character indices copied into the policy. Settings deserialize to plain
+ * objects, so anything with another prototype did not come from there and is not a policy.
+ *
+ * A null prototype is accepted: `Object.create(null)` is still a plain map, and some JSON handling
+ * produces one deliberately to avoid the `__proto__` trap.
+ */
+function isPlainObject(v) {
+	if (!v || typeof v !== 'object' || Array.isArray(v)) { return false; }
+	const proto = Object.getPrototypeOf(v);
+	return proto === Object.prototype || proto === null;
+}
+
 async function mcpAllowAlways(name) {
 	// isNamespacedToolName owns the rule (mcpConfig.js), rather than a second regex here: this used to
 	// hand-roll one that required a `__` separator, which REJECTED names namespaceToolName legitimately
@@ -789,7 +806,13 @@ async function mcpAllowAlways(name) {
 		// safeCopy, not Object.assign: the existing value comes from the user's settings.json, where a
 		// literal "__proto__" key survives JSON.parse as a real own property. Object.assign would hand it
 		// to the prototype setter instead of copying it; safeCopy drops the unsafe keys outright.
-		const cur = safeCopy(userScopedSetting(cfg.inspect('mcp.toolPolicy'), {}) || {});
+		//
+		// The plain-object check in front of it matters just as much. userScopedSetting hands back
+		// whatever is in settings.json, of whatever type — and a policy that is accidentally a STRING
+		// would have safeCopy faithfully copy its character indices ({"0":"a","1":"l",…}) and then write
+		// that back as the user's policy, destroying it. A malformed value is discarded, not migrated.
+		const stored = userScopedSetting(cfg.inspect('mcp.toolPolicy'), {});
+		const cur = safeCopy(isPlainObject(stored) ? stored : {});
 		if (cur[name] === 'allow') { return; }
 		cur[name] = 'allow';
 		await cfg.update('mcp.toolPolicy', cur, vscode.ConfigurationTarget.Global);
@@ -1390,7 +1413,14 @@ class ChatViewProvider {
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
 				case 'approvalResponse': {
-					// Persisting "Always allow" should not block the approved tool call.
+					// "Always allow" persists the tool to the allow-list so a FUTURE run skips the prompt. It
+					// only ever adds an `allow` (never a broadening default), and the webview offers the button
+					// only for non-destructive tools — mcpAllowAlways re-checks regardless.
+					//
+					// Deliberately not awaited: this call is already approved by the click, and the write only
+					// affects later runs, so blocking the tool on a settings round-trip buys nothing. Failures
+					// are swallowed inside mcpAllowAlways and logged; the .catch here is belt-and-braces so a
+					// rejection can never surface as an unhandled one.
 					if (msg.approved && msg.remember && msg.mcpName) {
 						Promise.resolve(mcpAllowAlways(msg.mcpName)).catch(() => { /* best-effort */ });
 					}
