@@ -27,7 +27,7 @@ const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
 const { reapMcp } = require('./mcpClient');
-const { userScopedSetting } = require('./mcpConfig');
+const { userScopedSetting, isNamespacedToolName, safeCopy } = require('./mcpConfig');
 
 const SECRET_KEY = 'levelcode.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -776,14 +776,23 @@ let approvalSeq = 0;
  * a tool name that is not a namespaced server__tool to avoid writing junk from a malformed message.
  */
 async function mcpAllowAlways(name) {
-	if (typeof name !== 'string' || !/^[A-Za-z0-9_-]+__[A-Za-z0-9_-]+$/.test(name)) {
-		dbg('mcp.allow.reject', { name }); return;
+	// isNamespacedToolName owns the rule (mcpConfig.js), rather than a second regex here: this used to
+	// hand-roll one that required a `__` separator, which REJECTED names namespaceToolName legitimately
+	// produces — a server whose name alone hits the 64-char cap truncates inside that first segment and
+	// comes back without one. "Always allow" then silently did nothing for that server. The shared check
+	// also bounds the length, so a malformed message cannot persist an arbitrarily long settings key.
+	if (!isNamespacedToolName(name)) {
+		dbg('mcp.allow.reject', { name: String(name).slice(0, 80) }); return;
 	}
 	try {
 		const cfg = aiConfig();
-		const cur = userScopedSetting(cfg.inspect('mcp.toolPolicy'), {}) || {};
+		// safeCopy, not Object.assign: the existing value comes from the user's settings.json, where a
+		// literal "__proto__" key survives JSON.parse as a real own property. Object.assign would hand it
+		// to the prototype setter instead of copying it; safeCopy drops the unsafe keys outright.
+		const cur = safeCopy(userScopedSetting(cfg.inspect('mcp.toolPolicy'), {}) || {});
 		if (cur[name] === 'allow') { return; }
-		await cfg.update('mcp.toolPolicy', Object.assign({}, cur, { [name]: 'allow' }), vscode.ConfigurationTarget.Global);
+		cur[name] = 'allow';
+		await cfg.update('mcp.toolPolicy', cur, vscode.ConfigurationTarget.Global);
 		post({ type: 'agentTool', icon: 'check', text: '🔌 mcp · always allow ' + name });
 		dbg('mcp.allow.persisted', { name });
 	} catch (e) {

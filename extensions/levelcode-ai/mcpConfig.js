@@ -220,6 +220,36 @@ function namespaceToolName(server, tool) {
 }
 
 /**
+ * Could `name` have come out of namespaceToolName? The guard for anything that PERSISTS a tool name —
+ * today, "Always allow" writing a key into `levelcode.ai.mcp.toolPolicy`.
+ *
+ * It lives here, beside the function whose output it describes, because the caller was hand-rolling its
+ * own regex, and two copies of one naming rule is how they drift apart.
+ *
+ * Deliberately does NOT require the `__` separator, however much the `server__tool` shape invites it.
+ * When a server's name alone reaches the cap, truncation cuts INSIDE that first segment and the
+ * hash-tagged result carries no separator at all:
+ *
+ *   namespaceToolName('s'.repeat(70), 'tool')  ->  'sss…sss_a1b2c3'   // 64 chars, no '__'
+ *
+ * Requiring it would reject a name this module itself produced, and "Always allow" would then silently
+ * do nothing for that server. The alphabet and the length are the real guarantee — they are what makes a
+ * name safe to write into settings — so those are what this checks.
+ *
+ * UNSAFE_KEYS is then rejected EXPLICITLY. The separator requirement used to exclude `__proto__` by
+ * accident (it has no non-underscore character before its `__`); dropping that requirement takes the
+ * accident with it, since underscores are otherwise legal. Stating it outright means the protection no
+ * longer depends on an unrelated rule staying a certain shape.
+ */
+function isNamespacedToolName(name) {
+	return typeof name === 'string'
+		&& name.length > 0
+		&& name.length <= MAX_TOOL_NAME
+		&& UNSAFE_KEYS.indexOf(name) === -1
+		&& /^[A-Za-z0-9_-]+$/.test(name);
+}
+
+/**
  * Assign a final, unique, provider-legal name to every (server, tool) pair — the last line of defence
  * before names reach the wire. Collisions (with a built-in, or between two servers whose names
  * sanitize alike) get a numeric suffix rather than being dropped.
@@ -452,7 +482,8 @@ function describeMcpCall(name, args, route) {
 }
 
 module.exports = {
-	loadServerConfig, userScopedSetting, namespaceToolName, assignToolNames, buildAgentTools,
+	loadServerConfig, userScopedSetting, namespaceToolName, isNamespacedToolName, assignToolNames,
+	buildAgentTools, safeCopy,
 	toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
 	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_ARG_CHARS, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };
