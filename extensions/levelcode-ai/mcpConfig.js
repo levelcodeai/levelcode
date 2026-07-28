@@ -514,20 +514,38 @@ function previewArgs(args) {
  * truncation helper is the wrong tool for an authorization decision; the cost of a real hash here is
  * one call per server per run.
  */
-function launchFingerprint(server) {
+/**
+ * The launch material, normalized ONCE — what would be executed, in canonical form.
+ *
+ * Shared by launchFingerprint and describeMcpLaunch on purpose. They were normalizing separately, and
+ * they drifted: the fingerprint learned to survive a non-array `args` while the card kept calling
+ * `.map` on it and threw. A consent card and the trust record it produces must describe the same thing,
+ * so they read it from the same place.
+ *
+ * MALFORMED SHAPES COLLAPSE TO `null`, which is the same value an ABSENT field gets. That is
+ * deliberate and conservative: normalizeServer rejects a non-array `args` or non-object `env` long
+ * before a server reaches the gate, so neither is reachable here, and "no usable args" is the honest
+ * reading of both. The command itself always differentiates. (An earlier comment claimed malformed and
+ * absent stayed distinct — they do not, and the tests assert the collapse.)
+ *
+ * Env pairs stay STRUCTURAL — [[k, v]] sorted — never joined into "k=v". Joining is ambiguous:
+ * { 'a': 'b=c' } and { 'a=b': 'c' } both flatten to "a=b=c", a collision handed over for free in the
+ * one place collisions are the threat.
+ */
+function launchMaterial(server) {
 	const s = server || {};
-	// Non-array args / non-object env become null rather than [] or {}: a malformed entry must not
-	// fingerprint the same as an absent one, and `.map` on a string would throw in a function whose
-	// whole job is to be safe to call on anything.
-	const args = Array.isArray(s.args) ? s.args.map(String) : null;
-	const rawEnv = (s.env && typeof s.env === 'object' && !Array.isArray(s.env)) ? s.env : null;
-	// Pairs stay STRUCTURAL — [[k, v]] — instead of being joined into "k=v". Joining is ambiguous:
-	// { 'a': 'b=c' } and { 'a=b': 'c' } both flatten to "a=b=c", which is a collision handed over for
-	// free in the one function where collisions are the threat.
-	const env = rawEnv ? Object.keys(rawEnv).sort().map((k) => [k, String(rawEnv[k])]) : null;
+	const env = (s.env && typeof s.env === 'object' && !Array.isArray(s.env)) ? s.env : null;
+	return {
+		command: String(s.command || ''),
+		args: Array.isArray(s.args) ? s.args.map(String) : null,
+		env: env ? Object.keys(env).sort().map((k) => [k, String(env[k])]) : null
+	};
+}
 
-	const material = JSON.stringify({ command: String(s.command || ''), args: args, env: env });
-	return crypto.createHash('sha256').update(material, 'utf8').digest('hex');
+function launchFingerprint(server) {
+	return crypto.createHash('sha256')
+		.update(JSON.stringify(launchMaterial(server)), 'utf8')
+		.digest('hex');
 }
 
 /**
@@ -560,14 +578,16 @@ function rememberLaunchTrust(server, store) {
  */
 function describeMcpLaunch(server) {
 	const s = server || {};
-	const quote = (a) => (/[\s"']/.test(String(a)) ? JSON.stringify(String(a)) : String(a));
-	const env = s.env || {};
-	const envLines = Object.keys(env).sort().map((k) => k + '=' + String(env[k]));
+	// Read from launchMaterial, not from `server` directly. Doing its own normalization is what let this
+	// throw on a string `args` (`.map` is not a function) and render `0=e 1=v 2=i 3=l` for a string
+	// `env` — junk on the one card whose whole purpose is showing the user exactly what will run.
+	const material = launchMaterial(s);
+	const quote = (a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a);
 	return {
 		server: String(s.name || ''),
 		origin: String(s.origin || ''),
-		commandLine: [String(s.command || '')].concat((s.args || []).map(quote)).join(' '),
-		envLines: envLines,
+		commandLine: [material.command].concat((material.args || []).map(quote)).join(' ').trim(),
+		envLines: (material.env || []).map(([k, v]) => k + '=' + v),
 		fingerprint: launchFingerprint(s)
 	};
 }

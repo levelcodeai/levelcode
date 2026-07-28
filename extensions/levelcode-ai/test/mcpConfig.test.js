@@ -762,6 +762,37 @@ test('G1: describeMcpLaunch never throws on a malformed entry', () => {
 	assert.doesNotThrow(() => M.describeMcpLaunch({}));
 	assert.doesNotThrow(() => M.describeMcpLaunch({ name: 'x', args: null, env: null }));
 	assert.strictEqual(M.describeMcpLaunch({}).commandLine, '');
+
+	// The shapes this test USED to miss. It only covered `null`, so a truthy non-array `args` still
+	// reached `.map` and threw — in the helper that renders a security consent card.
+	assert.doesNotThrow(() => M.describeMcpLaunch({ name: 'x', command: 'c', args: 'evil' }));
+	assert.doesNotThrow(() => M.describeMcpLaunch({ name: 'x', command: 'c', args: 42 }));
+	assert.doesNotThrow(() => M.describeMcpLaunch({ name: 'x', command: 'c', env: 'evil' }));
+	assert.doesNotThrow(() => M.describeMcpLaunch({ name: 'x', command: 'c', env: [] }));
+});
+
+test('G1: a malformed entry renders nothing rather than junk on the consent card', () => {
+	// A string env used to enumerate its character indices — the card would ask the user to trust
+	// `0=e 1=v 2=i 3=l`. Showing nonsense on a consent prompt is worse than showing nothing.
+	const strEnv = M.describeMcpLaunch({ name: 'x', command: 'c', env: 'evil' });
+	assert.deepStrictEqual(strEnv.envLines, [], 'no invented env lines');
+	assert.strictEqual(strEnv.commandLine, 'c', 'the command still shows');
+
+	const strArgs = M.describeMcpLaunch({ name: 'x', command: 'c', args: 'evil' });
+	assert.strictEqual(strArgs.commandLine, 'c', 'a malformed args contributes nothing, not "c e v i l"');
+});
+
+test('G1: the card and the fingerprint read the SAME normalized material', () => {
+	// They normalized separately once and drifted — the fingerprint tolerated a non-array args while
+	// the card threw on it. A consent card and the trust it produces must describe one thing.
+	const weird = { name: 'x', command: 'c', args: 'evil', env: 'evil' };
+	assert.strictEqual(
+		M.describeMcpLaunch(weird).fingerprint,
+		M.launchFingerprint(weird),
+		'the card reports the fingerprint that will actually be stored'
+	);
+	// And the card reflects what the fingerprint covers: both ignore the malformed fields.
+	assert.strictEqual(M.launchFingerprint(weird), M.launchFingerprint({ name: 'x', command: 'c' }));
 });
 
 console.log('\nmcpConfig.js: ' + n + ' tests passed.');
