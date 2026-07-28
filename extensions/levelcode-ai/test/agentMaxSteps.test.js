@@ -46,7 +46,7 @@ test('extension.js hands runAgent maxSteps as a LIVE getter over a fresh aiConfi
 	const ext = read('extension.js');
 	assert.match(
 		ext,
-		/get\s+maxSteps\s*\(\s*\)\s*\{[^}]*aiConfig\(\)\s*\.get\(\s*['"]agent\.maxSteps['"]/,
+		/get\s+maxSteps\s*\(\s*\)\s*\{[\s\S]*?(?:\baiConfig\(\)\s*\.get|\b(?:const|let|var)\s+\w+\s*=\s*aiConfig\(\)[\s\S]*?\b\w+\s*\.get)\(\s*['"]agent\.maxSteps['"]/,
 		'runAgent ctx must expose `get maxSteps()` re-reading a FRESH aiConfig() each access'
 	);
 });
