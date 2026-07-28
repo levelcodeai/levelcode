@@ -901,4 +901,17 @@ test('ARGV: it is a splitter, NOT a shell — nothing is expanded or interpreted
 	assert.deepStrictEqual(M.parseArgv('a | b'), [ 'a', '|', 'b' ]);
 });
 
+test('ARGV: a backslash is literal unless it escapes a space/quote/backslash (splitter, not a shell)', () => {
+	// The bug this guards: treating EVERY backslash as an escape silently rewrote arguments — a regex
+	// lost its anchors, a Windows path lost its separators. A splitter must not change what the user typed.
+	assert.deepStrictEqual(M.parseArgv('\\bword\\b'), [ '\\bword\\b' ], 'a regex keeps its backslashes');
+	assert.deepStrictEqual(M.parseArgv('C:\\Users\\me'), [ 'C:\\Users\\me' ], 'a Windows path is preserved');
+	assert.deepStrictEqual(M.parseArgv('"a\\b"'), [ 'a\\b' ], 'a backslash is literal inside double quotes too');
+	// The three things a backslash DOES escape:
+	assert.deepStrictEqual(M.parseArgv('a\\ b'), [ 'a b' ], 'a space → one argument');
+	assert.deepStrictEqual(M.parseArgv('\\"x'), [ '"x' ], 'a quote → a literal quote, no grouping');
+	assert.deepStrictEqual(M.parseArgv('a\\\\b'), [ 'a\\b' ], 'a doubled backslash → one literal backslash');
+	assert.deepStrictEqual(M.parseArgv('end\\'), [ 'end\\' ], 'a trailing backslash is kept literally');
+});
+
 console.log('\nmcpConfig.js: ' + n + ' tests passed.');

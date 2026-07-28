@@ -27,7 +27,7 @@ const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
 const { reapMcp, listActive, getServer } = require('./mcpClient');
-const { userScopedSetting, isNamespacedToolName, safeCopy, loadServerConfig, summarizeMcp, parseArgv } = require('./mcpConfig');
+const { userScopedSetting, isNamespacedToolName, safeCopy, loadServerConfig, summarizeMcp, parseArgv, UNSAFE_KEYS } = require('./mcpConfig');
 
 const SECRET_KEY = 'levelcode.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -1478,6 +1478,10 @@ async function mcpAddServer() {
 		validateInput: (v) => {
 			const t = String(v || '').trim();
 			if (!t) { return 'A name is required.'; }
+			// Reserved object keys pass the charset rule below but would corrupt the settings map when
+			// written as existing[name] — existing['__proto__'] = entry hits the prototype setter rather
+			// than adding a key. Reject them with the same list safeCopy()/normalizeServer() enforce.
+			if (UNSAFE_KEYS.indexOf(t) !== -1) { return 'That name is reserved — choose another.'; }
 			if (Object.prototype.hasOwnProperty.call(existing, t)) { return 'A server called "' + t + '" already exists.'; }
 			// Not a hard rule — namespaceToolName sanitizes anyway — but a name that survives verbatim
 			// makes the tool names in the transcript readable.

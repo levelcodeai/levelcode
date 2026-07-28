@@ -602,8 +602,10 @@ function describeMcpLaunch(server) {
  * entirely by the input box.
  *
  * Deliberately NOT a shell parser. No variable expansion, no globbing, no operators: `args` is handed
- * to spawn as a literal list, so anything clever here would be a lie about what runs. Quotes group,
- * a backslash escapes the next character, and that is all.
+ * to spawn as a literal list, so anything clever here would be a lie about what runs. Quotes group; a
+ * backslash escapes only a following space, quote, or backslash and is otherwise a literal character —
+ * so a regex arg like `\bword\b`, a Windows path `C:\Users\me`, or a JSON string survives verbatim
+ * instead of quietly losing its backslashes. That is all.
  */
 function parseArgv(line) {
 	const s = String(line == null ? '' : line);
@@ -614,10 +616,17 @@ function parseArgv(line) {
 
 	for (let i = 0; i < s.length; i++) {
 		const ch = s[i];
-		if (ch === '\\' && i + 1 < s.length && quote !== "'") {
-			// A backslash escapes the next char, except inside single quotes where it is literal —
-			// matching the shell convention users will expect from muscle memory.
-			cur += s[++i]; started = true; continue;
+		if (ch === '\\' && quote !== "'") {
+			// A SPLITTER, not a shell: a backslash escapes ONLY a delimiter — a whitespace char, a
+			// quote, or another backslash. Anything else keeps the backslash literally, so a regex
+			// (`\bword\b`), a Windows path, or a JSON string is not silently rewritten. (Inside single
+			// quotes it is always literal — the quote !== "'" guard. A trailing backslash falls through
+			// and is kept as an ordinary character.)
+			const nxt = s[i + 1];
+			if (nxt !== undefined && (/\s/.test(nxt) || nxt === '"' || nxt === "'" || nxt === '\\')) {
+				cur += nxt; i++; started = true; continue;
+			}
+			// not escaping a delimiter → fall through and treat this backslash as an ordinary char
 		}
 		if (quote) {
 			if (ch === quote) { quote = ''; } else { cur += ch; }
@@ -718,7 +727,7 @@ function describeMcpCall(name, args, route) {
 
 module.exports = {
 	loadServerConfig, userScopedSetting, namespaceToolName, isNamespacedToolName, assignToolNames,
-	buildAgentTools, safeCopy,
+	buildAgentTools, safeCopy, UNSAFE_KEYS,
 	toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
 	launchFingerprint, isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch, summarizeMcp, parseArgv,
 	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_ARG_CHARS, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH

@@ -25,12 +25,32 @@ const path = require('path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
 
+// Slice a top-level `function <name>(...) {…}` out of the source by matching its braces, not by
+// looking for the first `\n}` (which truncates the moment a nested block's closing brace lands on its
+// own line — i.e. on any reformat). Scan brace depth from the header's opening brace, skipping braces
+// that live inside strings or comments, and stop at the brace that returns depth to zero. Dependency-free.
 function extract(name) {
 	const start = src.indexOf('function ' + name + '(');
 	assert.ok(start >= 0, 'extension.js no longer defines ' + name + '()');
-	const end = src.indexOf('\n}', start);
-	assert.ok(end >= 0, 'no closing brace found for ' + name + '()');
-	return src.slice(start, end + 2);
+	const open = src.indexOf('{', start);
+	assert.ok(open >= 0, 'no opening brace found for ' + name + '()');
+	let depth = 0, str = '', comment = '';
+	for (let i = open; i < src.length; i++) {
+		const ch = src[i], next = src[i + 1];
+		if (comment === 'line') { if (ch === '\n') { comment = ''; } continue; }
+		if (comment === 'block') { if (ch === '*' && next === '/') { comment = ''; i++; } continue; }
+		if (str) {
+			if (ch === '\\') { i++; }                 // escaped char inside a string — skip it
+			else if (ch === str) { str = ''; }
+			continue;
+		}
+		if (ch === '/' && next === '/') { comment = 'line'; i++; continue; }
+		if (ch === '/' && next === '*') { comment = 'block'; i++; continue; }
+		if (ch === '"' || ch === "'" || ch === '`') { str = ch; continue; }
+		if (ch === '{') { depth++; }
+		else if (ch === '}' && --depth === 0) { return src.slice(start, i + 1); }
+	}
+	assert.fail('no matching closing brace found for ' + name + '()');
 }
 
 // eslint-disable-next-line no-new-func
