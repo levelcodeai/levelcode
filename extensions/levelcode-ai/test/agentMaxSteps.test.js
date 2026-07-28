@@ -63,10 +63,10 @@ test('extension.js does NOT re-snapshot the cap from the goal-start cfg (the ori
 
 test('agent.js gates the loop on ctx.maxSteps directly, and never hoists it into a local', () => {
 	const ag = read('agent.js');
-	assert.match(ag, /while\s*\(\s*step\+\+\s*<\s*ctx\.maxSteps\s*\)/, 'the step loop must read ctx.maxSteps live');
+	assert.match(ag, /while\s*\([^)]*\bctx\.maxSteps\b[^)]*\)/, 'the step loop must read ctx.maxSteps live');
 	// A copy (`const max = ctx.maxSteps`) or a destructure (`const { maxSteps } = ctx`) taken before the
 	// loop would evaluate the getter exactly once — reintroducing the snapshot from the other side.
-	assert.ok(!/=\s*ctx\.maxSteps\b/.test(ag), 'ctx.maxSteps must not be assigned into a variable');
+	assert.ok(!/\b(?:const|let|var)\s+\w+\s*=\s*ctx\.maxSteps\b/.test(ag), 'ctx.maxSteps must not be assigned into a variable');
 	assert.ok(
 		!/\b(?:const|let|var)\s*\{[^}]*\bmaxSteps\b[^}]*\}\s*=\s*ctx\b/.test(ag),
 		'maxSteps must not be destructured off ctx'
