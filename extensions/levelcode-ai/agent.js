@@ -17,7 +17,7 @@ const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
 const { loadProjectRules } = require('./projectRules');
-const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal } = require('./mcpConfig');
+const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall } = require('./mcpConfig');
 const { connectAll, getServer } = require('./mcpClient');
 
 const SYSTEM_BASE = [
@@ -484,19 +484,30 @@ async function runTool(tu, ctx) {
 		const route = ctx.mcpRoutes && ctx.mcpRoutes.get(tu.name);
 		if (route) {
 			const verdict = classifyMcpTool(tu.name, ctx.mcp && ctx.mcp.toolPolicy, route.annotations);
-			if (verdict.approve !== 'allow') {
-				// S3 deliberately ships no approval CARD (S4 owns it), so anything the user has not
-				// explicitly allow-listed is REFUSED rather than run — the alternative would be silently
-				// executing third-party code on the user's behalf with no way to say no. The explanation
-				// lives in mcpConfig beside the classifier so it can't drift from it (PR #31 review): a
-				// destructive tool is refused for a reason the allow-list cannot fix, and must not be
-				// described as allow-listable.
-				ctx.post({ type: 'agentTool', icon: 'shield', text: '🔌 mcp · refused ' + tu.name + ' — ' + verdict.reason });
-				return explainMcpRefusal(tu.name, verdict);
-			}
 			const server = getServer(route.server);
 			if (!server || !server.alive) { return 'ERROR: the MCP server "' + route.server + '" is not running.'; }
-			ctx.post({ type: 'agentTool', icon: 'plug', text: '🔌 ' + route.server + ' · ' + route.tool });
+			// S4: a call the user hasn't allow-listed is now PROMPTED, not refused. Autopilot does not relax
+			// this (G3) — an MCP tool is third-party code — and a server-marked-destructive tool prompts even
+			// when allow-listed (classifyMcpTool tightens on it). Only 'allow' skips the card.
+			if (verdict.approve !== 'allow') {
+				if (typeof ctx.approve !== 'function') {
+					// No webview to ask through (headless / a test harness) — fall back to S3's safe refusal
+					// rather than run third-party code with no way to say no.
+					ctx.post({ type: 'agentTool', icon: 'shield', text: '🔌 mcp · refused ' + tu.name + ' — ' + verdict.reason });
+					return explainMcpRefusal(tu.name, verdict);
+				}
+				const call = describeMcpCall(tu.name, input, route);
+				const approved = await ctx.approve({
+					kind: 'mcp', name: tu.name, server: call.server, tool: call.tool,
+					args: call.argsText, destructive: call.destructive, canAllowAlways: call.canAllowAlways
+				});
+				if (!approved) {
+					ctx.post({ type: 'agentTool', icon: 'shield', text: '🔌 mcp · skipped ' + tu.name });
+					return 'User declined to run the MCP tool "' + tu.name + '". Do NOT retry it in this run — '
+						+ 'continue without it, or tell the user what you needed it for.';
+				}
+			}
+			ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🔌 ' + route.server + ' · ' + route.tool });
 			return await server.call(route.tool, input);   // never throws — failures come back as `ERROR: …`
 		}
 		return 'ERROR: unknown tool ' + tu.name;
@@ -586,7 +597,7 @@ async function setupMcp(ctx, wsFolders, dbg) {
 		const perServer = toolCountsByServer(built.routes);
 		const summary = handles.map((h) => h.name + ' (' + (perServer.get(h.name) || 0) + ')').join(', ');
 		dbg('mcp.ready', { servers: handles.map((h) => h.name), tools: built.tools.length, allowed });
-		ctx.post({ type: 'agentTool', icon: 'plug', text: '🔌 mcp · ' + summary + ' · ' + allowed + '/' + built.tools.length + ' allow-listed' });
+		ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🔌 mcp · ' + summary + ' · ' + allowed + '/' + built.tools.length + ' allow-listed' });
 		return built;
 	} catch (e) {
 		dbg('mcp.failed', { error: (e && e.message) || String(e) });

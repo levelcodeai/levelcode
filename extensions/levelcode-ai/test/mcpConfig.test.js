@@ -504,4 +504,88 @@ test('SOURCE: the mcp modules contain no raw control bytes', () => {
 	}
 });
 
+// ---- 6. describeMcpCall: the approval card's content (S4) -------------------------------------
+
+test('CARD: server/tool come from the route, with a namespaced-name fallback', () => {
+	const d = M.describeMcpCall('github__create_issue', { title: 'x' }, { server: 'github', tool: 'create_issue' });
+	assert.strictEqual(d.server, 'github');
+	assert.strictEqual(d.tool, 'create_issue');
+	// No route → split the namespaced name on the separator rather than showing a blank card.
+	const f = M.describeMcpCall('github__create_issue', {}, undefined);
+	assert.strictEqual(f.server, 'github');
+	assert.strictEqual(f.tool, 'create_issue');
+});
+
+test('CARD: a destructive tool cannot be "always allowed"', () => {
+	// The card must not offer a button that does nothing — a destructive tool can never be allow-listed
+	// (classifyMcpTool tightens on it), so canAllowAlways is derived from the SAME annotation.
+	const d = M.describeMcpCall('gh__nuke', {}, { server: 'gh', tool: 'nuke', annotations: { destructiveHint: true } });
+	assert.strictEqual(d.destructive, true);
+	assert.strictEqual(d.canAllowAlways, false);
+	const ok = M.describeMcpCall('gh__list', {}, { server: 'gh', tool: 'list' });
+	assert.strictEqual(ok.destructive, false);
+	assert.strictEqual(ok.canAllowAlways, true);
+});
+
+test('CARD: arguments are shown in full but bounded, and never throw', () => {
+	const d = M.describeMcpCall('s__t', { path: '/etc/passwd', n: 3 }, { server: 's', tool: 't' });
+	assert.ok(d.argsText.includes('/etc/passwd') && d.argsText.includes('"n": 3'), 'the user must SEE the real args');
+
+	// Over the cap → truncated with an ellipsis, not dropped and not unbounded.
+	const big = M.describeMcpCall('s__t', { blob: 'z'.repeat(5000) }, { server: 's', tool: 't' });
+	assert.ok(big.argsText.length <= M.MAX_ARG_CHARS, 'args preview must obey MAX_ARG_CHARS');
+	assert.ok(big.argsText.endsWith('…'));
+
+	// Circular / weird input must not throw inside the card renderer's data prep.
+	const circ = {}; circ.self = circ;
+	assert.doesNotThrow(() => M.describeMcpCall('s__t', circ, { server: 's', tool: 't' }));
+	assert.strictEqual(M.describeMcpCall('s__t', null, { server: 's', tool: 't' }).argsText, '');
+	assert.strictEqual(M.describeMcpCall('s__t', undefined, { server: 's', tool: 't' }).argsText, '');
+});
+
+// ---- isNamespacedToolName: the guard for anything that PERSISTS a tool name ----
+// "Always allow" writes the name into settings, so this decides what can be written.
+
+test('PERSIST: accepts every name namespaceToolName can produce', () => {
+	const produced = [
+		M.namespaceToolName('github', 'list_issues'),
+		M.namespaceToolName('github', 'foo__bar'),          // tool name already contains the separator
+		M.namespaceToolName('a', 'b'),
+		M.namespaceToolName('srv', 't'.repeat(90)),          // truncated on the TOOL side
+		M.namespaceToolName('s'.repeat(70), 'tool'),         // truncated inside the SERVER segment
+		M.namespaceToolName('has spaces', 'and.dots')        // sanitized to the legal alphabet
+	];
+	for (const name of produced) {
+		assert.ok(M.isNamespacedToolName(name), 'must accept a name it produced: ' + name);
+	}
+
+	// The regression this replaced: a server name long enough to be truncated comes back with NO `__`,
+	// so a validator that required the separator rejected it and "Always allow" silently did nothing.
+	const noSeparator = M.namespaceToolName('s'.repeat(70), 'tool');
+	assert.ok(!noSeparator.includes('__'), 'this case must actually lack the separator, or the test is vacuous');
+	assert.ok(M.isNamespacedToolName(noSeparator));
+});
+
+test('PERSIST: rejects prototype-pollution keys, junk, and unbounded names', () => {
+	for (const bad of ['__proto__', 'constructor', 'prototype']) {
+		assert.ok(!M.isNamespacedToolName(bad), bad + ' must never become a settings key');
+	}
+	assert.ok(!M.isNamespacedToolName('x'.repeat(M.MAX_TOOL_NAME + 1)), 'must be bounded by MAX_TOOL_NAME');
+	assert.ok(M.isNamespacedToolName('x'.repeat(M.MAX_TOOL_NAME)), 'the cap itself is legal');
+	for (const bad of ['', 'has space', 'semi;colon', 'quote"', 'slash/es', null, undefined, 42, {}, []]) {
+		assert.ok(!M.isNamespacedToolName(bad), 'must reject ' + JSON.stringify(bad));
+	}
+});
+
+test('PERSIST: safeCopy drops the keys that reach the prototype setter', () => {
+	// JSON.parse creates a REAL own __proto__ key, which is how one arrives from settings.json.
+	const fromSettings = JSON.parse('{"gh__list":"allow","__proto__":"allow","constructor":"allow"}');
+	const copy = M.safeCopy(fromSettings);
+
+	assert.strictEqual(copy.gh__list, 'allow', 'legitimate entries survive');
+	assert.ok(!Object.prototype.hasOwnProperty.call(copy, '__proto__'), '__proto__ must be dropped');
+	assert.ok(!Object.prototype.hasOwnProperty.call(copy, 'constructor'), 'constructor must be dropped');
+	assert.strictEqual(Object.getPrototypeOf(copy), Object.prototype, 'the copy keeps a clean prototype');
+});
+
 console.log('\nmcpConfig.js: ' + n + ' tests passed.');

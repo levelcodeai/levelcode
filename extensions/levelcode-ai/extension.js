@@ -27,7 +27,7 @@ const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
 const { reapMcp } = require('./mcpClient');
-const { userScopedSetting } = require('./mcpConfig');
+const { userScopedSetting, isNamespacedToolName, safeCopy } = require('./mcpConfig');
 
 const SECRET_KEY = 'levelcode.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -769,6 +769,37 @@ async function restoreCheckpoint(turnId) {
 const pendingApprovals = new Map();
 let approvalSeq = 0;
 
+/**
+ * Persist an MCP tool to the allow-list (the ONLY thing that grants 'allow' — G3). Writes to the USER
+ * (Global) tier, matching the application scope the setting is declared with, so a repo can never flip
+ * it. Reads the current value the same user-scoped way it is read at run start. Idempotent, and refuses
+ * a tool name that is not a namespaced server__tool to avoid writing junk from a malformed message.
+ */
+async function mcpAllowAlways(name) {
+	// isNamespacedToolName owns the rule (mcpConfig.js), rather than a second regex here: this used to
+	// hand-roll one that required a `__` separator, which REJECTED names namespaceToolName legitimately
+	// produces — a server whose name alone hits the 64-char cap truncates inside that first segment and
+	// comes back without one. "Always allow" then silently did nothing for that server. The shared check
+	// also bounds the length, so a malformed message cannot persist an arbitrarily long settings key.
+	if (!isNamespacedToolName(name)) {
+		dbg('mcp.allow.reject', { name: String(name).slice(0, 80) }); return;
+	}
+	try {
+		const cfg = aiConfig();
+		// safeCopy, not Object.assign: the existing value comes from the user's settings.json, where a
+		// literal "__proto__" key survives JSON.parse as a real own property. Object.assign would hand it
+		// to the prototype setter instead of copying it; safeCopy drops the unsafe keys outright.
+		const cur = safeCopy(userScopedSetting(cfg.inspect('mcp.toolPolicy'), {}) || {});
+		if (cur[name] === 'allow') { return; }
+		cur[name] = 'allow';
+		await cfg.update('mcp.toolPolicy', cur, vscode.ConfigurationTarget.Global);
+		post({ type: 'agentTool', icon: 'check', text: '🔌 mcp · always allow ' + name });
+		dbg('mcp.allow.persisted', { name });
+	} catch (e) {
+		dbg('mcp.allow.failed', { name, error: String((e && e.message) || e) });
+	}
+}
+
 /** Ask the webview to approve an action; resolves true/false. */
 function requestApproval(req) {
 	const id = String(++approvalSeq);
@@ -1358,7 +1389,14 @@ class ChatViewProvider {
 				case 'send': await handleSend(msg.text); break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
-				case 'approvalResponse': resolveApproval(msg.id, msg.approved); break;
+				case 'approvalResponse': {
+					// Persisting "Always allow" should not block the approved tool call.
+					if (msg.approved && msg.remember && msg.mcpName) {
+						Promise.resolve(mcpAllowAlways(msg.mcpName)).catch(() => { /* best-effort */ });
+					}
+					resolveApproval(msg.id, msg.approved);
+					break;
+				}
 				case 'questionsResponse': resolveQuestions(msg.id, msg.answers, msg.notes); break;
 				case 'accountSignIn': await accountSignIn(msg.provider, msg.create); break;
 				case 'accountSignOut': await accountSignOut(); break;

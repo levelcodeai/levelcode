@@ -380,6 +380,9 @@
   .tl-ask .asksub { margin-top: 3px; font-size: 11.5px; line-height: 1.5; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
   /* recessed well for the command; capped so a long one can't push the buttons off-screen */
   .tl-ask .askcode { margin-top: 10px; border-radius: 8px; background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.14)); max-height: 40vh; overflow: auto; }
+  /* MCP call arguments — wrap rather than force horizontal scroll, and keep them monospace + tidy. */
+  .tl-ask .mcpargs { margin: 0; padding: 9px 12px; white-space: pre-wrap; word-break: break-word; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 12px; line-height: 1.5; }
+  .tl-ask .askbtns .mcp-always { margin-left: auto; }
   .tl-ask .askbtns { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 11px; }
   .tl-ask .askbtns button { cursor: pointer; border: 1px solid transparent; border-radius: 7px; padding: 5px 14px; font-size: 12px; font-weight: 500;
     display: inline-flex; align-items: baseline; gap: 6px; }   /* transparent border keeps both buttons the same height */
@@ -1871,7 +1874,59 @@
   // I being asked", which is exactly what it is for. On decision it collapses to a one-line verdict;
   // the live run card follows with the output.
   let pendingApproval = null;   // { done } while a decision is awaited — Enter approves, Esc skips
+  // MCP tool call (S4) — its own card: server · tool · arguments, so the user sees exactly what a
+  // third-party tool is about to do. Args are shown in full (capped host-side): that IS the decision.
+  function addMcpApproval(m){
+    clearEmpty(); clearStatus(); agentBubble = null;
+    closeGroup();
+    const card = document.createElement('div'); card.className = 'tl tl-cmd tl-ask asking';
+    const dangerLine = m.destructive
+      ? '<div class="askdanger">' + codicon('warning') + ' The server marks this tool <b>destructive</b>. It will always ask, even if allow-listed.</div>'
+      : '';
+    const argsWell = (m.args && String(m.args).trim())
+      ? '<div class="askcode"><pre class="cmdsrc mcpargs">' + esc(m.args) + '</pre></div>'
+      : '<div class="asksub" style="opacity:.7">No arguments.</div>';
+    // "Always allow" only when the tool CAN be allow-listed — a destructive tool can't, so we don't
+    // offer a button that would silently do nothing (mirrors describeMcpCall.canAllowAlways).
+    // "Always allow" reuses the secondary (skip-style) look but is selected by its OWN class — two
+    // buttons sharing `.approve` would make querySelector('.approve') ambiguous.
+    const always = m.canAllowAlways
+      ? '<button class="skip mcp-always" title="Run it now and add it to your allow-list so future runs don’t ask">Always allow</button>'
+      : '';
+    card.innerHTML =
+      '<div class="tl-rail"><span class="tl-node">' + codicon('shield') + '</span></div>'
+      + '<div class="tl-body"><div class="askcard">'
+        + '<div class="asktitle">Run an MCP tool?</div>'
+        + '<div class="asksub"><b>' + esc(m.server || '') + '</b> · ' + esc(m.tool || '') + ' — a third-party tool, not one of LevelCode’s own.</div>'
+        + dangerLine
+        + argsWell
+        + '<div class="askbtns">'
+          + '<button class="skip" title="Don’t run it (esc)">Skip <kbd>esc</kbd></button>'
+          + always
+          + '<button class="approve" title="Run it once (⏎)">Allow once <kbd>⏎</kbd></button>'
+        + '</div>'
+      + '</div></div>';
+    log.appendChild(card); scrollIfStuck();
+    const done = (approved, remember) => {
+      pendingApproval = null;
+      vscode.postMessage({ type: 'approvalResponse', id: m.id, approved, remember: !!remember, mcpName: m.name });
+      card.classList.remove('asking');
+      if (!approved) { card.classList.add('skipped'); }
+      const verb = !approved ? 'Skipped' : (remember ? 'Always allowed' : 'Approved');
+      card.querySelector('.tl-body').innerHTML =
+        '<div class="cmdhead"><span class="cmdverb">' + verb + '</span>'
+        + '<span class="cmdchips"><code>' + esc(m.server || '') + '</code><code>' + esc(m.tool || '') + '</code></span>'
+        + '<span class="cmdstate ' + (approved ? 'ok' : 'bad') + '">' + codicon(approved ? 'check-circle' : 'circle-slash') + '</span></div>';
+      forceStick();
+    };
+    card.querySelector('.approve').onclick = () => done(true, false);   // Allow once (primary)
+    card.querySelector('.skip:not(.mcp-always)').onclick = () => done(false, false);
+    const alt = card.querySelector('.mcp-always'); if (alt) { alt.onclick = () => done(true, true); }
+    pendingApproval = { done };   // Enter = Allow once, Esc = Skip
+  }
+
   function addApproval(m){
+    if (m.kind === 'mcp') { return addMcpApproval(m); }
     clearEmpty(); clearStatus(); agentBubble = null;
     closeGroup();   // a blocking gate never hides inside a collapsed group (D4)
     const card = document.createElement('div'); card.className = 'tl tl-cmd tl-ask asking';

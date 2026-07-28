@@ -220,6 +220,36 @@ function namespaceToolName(server, tool) {
 }
 
 /**
+ * Could `name` have come out of namespaceToolName? The guard for anything that PERSISTS a tool name —
+ * today, "Always allow" writing a key into `levelcode.ai.mcp.toolPolicy`.
+ *
+ * It lives here, beside the function whose output it describes, because the caller was hand-rolling its
+ * own regex, and two copies of one naming rule is how they drift apart.
+ *
+ * Deliberately does NOT require the `__` separator, however much the `server__tool` shape invites it.
+ * When a server's name alone reaches the cap, truncation cuts INSIDE that first segment and the
+ * hash-tagged result carries no separator at all:
+ *
+ *   namespaceToolName('s'.repeat(70), 'tool')  ->  'sss…sss_a1b2c3'   // 64 chars, no '__'
+ *
+ * Requiring it would reject a name this module itself produced, and "Always allow" would then silently
+ * do nothing for that server. The alphabet and the length are the real guarantee — they are what makes a
+ * name safe to write into settings — so those are what this checks.
+ *
+ * UNSAFE_KEYS is then rejected EXPLICITLY. The separator requirement used to exclude `__proto__` by
+ * accident (it has no non-underscore character before its `__`); dropping that requirement takes the
+ * accident with it, since underscores are otherwise legal. Stating it outright means the protection no
+ * longer depends on an unrelated rule staying a certain shape.
+ */
+function isNamespacedToolName(name) {
+	return typeof name === 'string'
+		&& name.length > 0
+		&& name.length <= MAX_TOOL_NAME
+		&& UNSAFE_KEYS.indexOf(name) === -1
+		&& /^[A-Za-z0-9_-]+$/.test(name);
+}
+
+/**
  * Assign a final, unique, provider-legal name to every (server, tool) pair — the last line of defence
  * before names reach the wire. Collisions (with a built-in, or between two servers whose names
  * sanitize alike) get a numeric suffix rather than being dropped.
@@ -400,17 +430,60 @@ function classifyMcpTool(name, policy, annotations) {
  * @returns {string}
  */
 function explainMcpRefusal(name, verdict) {
+	// Reached only when there is NO interactive approval to fall back on (a headless run, a test harness).
+	// With a webview present, S4 shows the per-call card instead of this message.
 	const head = 'ERROR: the MCP tool "' + name + '" is not approved to run (' + verdict.reason + '). ';
 	const fix = verdict.policyCanAllow
-		? 'This build has no per-call approval prompt, so the only way to permit it is for the USER to add '
+		? 'No interactive approval is available here, so the only way to permit it is for the USER to add '
 			+ '"' + name + '": "allow" to the "levelcode.ai.mcp.toolPolicy" setting. '
-		: 'Such tools always require per-call approval — which this build does not yet provide — so it '
-			+ 'CANNOT be enabled through the allow-list. ';
+		: 'Such tools always require per-call approval and CANNOT be enabled through the allow-list, so '
+			+ 'there is no way to run it in this non-interactive context. ';
 	return head + fix + 'Do NOT retry it in this run — continue without it, or tell the user what you needed it for.';
 }
 
+// A tool call's arguments can be large, and the approval card must not be blown open by one. See
+// describeMcpCall — the card is capped, the full args still reach the server if approved.
+const MAX_ARG_CHARS = 2000;
+
+/** Pretty, bounded JSON for the args shown on the approval card. Never throws (circular/huge input). */
+function previewArgs(args) {
+	if (args == null) { return ''; }
+	let text;
+	try { text = JSON.stringify(args, null, 2); }
+	catch { try { text = String(args); } catch { text = '[unserializable arguments]'; } }
+	if (text == null) { return ''; }
+	return text.length > MAX_ARG_CHARS ? text.slice(0, MAX_ARG_CHARS - 1) + '…' : text;
+}
+
+/**
+ * Shape an MCP call for the approval card (S4) — exactly what the user reads before deciding.
+ *
+ * Unlike the debug log (G4), the arguments are shown in FULL here, only length-capped. That is not an
+ * oversight: the card is ephemeral UI shown to the person who owns the credentials, and seeing the real
+ * arguments — the repo it will touch, the id it will delete — IS the decision. Redacting them would make
+ * the prompt meaningless. Nothing here is persisted; the card is not the transcript.
+ *
+ * `canAllowAlways` is false for a destructive tool: a server-marked-destructive tool can never be moved
+ * to the allow-list (classifyMcpTool tightens on it), so the card must not offer a button that would do
+ * nothing. Derived from the same annotation the classifier reads, so the two cannot disagree.
+ *
+ * @param {string} name  namespaced tool name (server__tool)
+ * @param {*} args  the arguments the model produced for this call
+ * @param {{server?:string, tool?:string, annotations?:object}} [route]
+ * @returns {{server:string, tool:string, argsText:string, destructive:boolean, canAllowAlways:boolean}}
+ */
+function describeMcpCall(name, args, route) {
+	const r = route || {};
+	const fallback = String(name == null ? '' : name).split(NAME_SEPARATOR);
+	const server = typeof r.server === 'string' && r.server ? r.server : (fallback[0] || String(name));
+	const tool = typeof r.tool === 'string' && r.tool ? r.tool : (fallback.slice(1).join(NAME_SEPARATOR) || String(name));
+	const destructive = !!(r.annotations && r.annotations.destructiveHint === true);
+	return { server, tool, argsText: previewArgs(args), destructive, canAllowAlways: !destructive };
+}
+
 module.exports = {
-	loadServerConfig, userScopedSetting, namespaceToolName, assignToolNames, buildAgentTools,
-	toolCountsByServer, classifyMcpTool, explainMcpRefusal,
-	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
+	loadServerConfig, userScopedSetting, namespaceToolName, isNamespacedToolName, assignToolNames,
+	buildAgentTools, safeCopy,
+	toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
+	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_ARG_CHARS, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };
