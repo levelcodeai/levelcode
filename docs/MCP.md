@@ -194,8 +194,29 @@ servers, mirroring the project-rules chip (`agent.js:493`).
   the bar would stop summing to `used`. Hidden entirely when no server contributed one. Every tool
   schema rides every turn, so this is the standing cost a chatty server imposes, and it was invisible.
 
-**S6 — later.** Streamable HTTP transport + the `2026-07-28` revision; resources/prompts; a
-"Manage MCP servers…" QuickPick on the `pickModel` pattern (`extension.js:1165-1228`).
+**S6a — "Manage MCP servers…". DONE.** `levelcode.ai.manageMcp`, on the `pickModel` QuickPick pattern,
+linked from the foot of `/mcp`. Rows come from the same `mcpOverview()` as S5, so the two views can
+never disagree. Three things it adds beyond looking:
+- **Add / remove a server** without hand-writing JSON — the last place MCP forced people into a settings
+  file. It writes the **Global** tier only, never Workspace: `mcp.servers` is `application`-scoped
+  precisely so a repo cannot introduce a server that starts without consent (G1), and a UI that offered
+  the workspace tier would quietly undo that. The arguments box takes a **command line**, split by the
+  quote-aware `parseArgv()` — a whitespace split would break
+  `-y @modelcontextprotocol/server-filesystem "/Users/me/My Documents"`, which is close to the single
+  most common MCP server there is. It is a splitter, **not a shell**: no expansion, no globbing, matching
+  `shell:false` at the spawn site.
+- **Revoke G1 trust**, per server or workspace-wide — the missing half of trust-on-first-use. Approving
+  was write-once with no way back short of editing `workspaceState` by hand, which makes the consent
+  prompt harder to say yes to than it should be. Revoking does not kill a running server; the wording
+  says "will ask before starting again" rather than implying otherwise.
+- **Names a stale approval.** `summarizeMcp` reports "never approved" and "approved, then the repo
+  changed the command" both as `trusted:false`. Correct for *starting* the server, wrong for
+  *explaining* it: the second case is exactly the G1 attack — get something benign approved, then swap
+  the command. The row says `command changed — needs approval`, and the detail view offers to forget the
+  dead approval. (`mcpTrustIsStale` / `mcpServerItem`, tested in `test/mcpManage.test.js`.)
+
+**S6b — later.** Streamable HTTP transport + the `2026-07-28` revision; resources/prompts.
+Until HTTP lands, a hosted server is reachable only through a stdio bridge — see §9.
 
 ---
 
@@ -227,3 +248,50 @@ servers, mirroring the project-rules chip (`agent.js:493`).
 
 Remote/HTTP servers and OAuth · sampling (a server driving our model) · resources & prompts ·
 MCP "apps"/UI extensions · auto-discovery or an in-editor server marketplace.
+
+---
+
+## 9. Recipe: the GitHub MCP server
+
+The most-asked-for server, and the one that shows where D2 (stdio only) actually bites. **Verified
+end-to-end on 2026-07-28** against `ghcr.io/github/github-mcp-server` through `mcpClient.connect`:
+handshake 122 ms, **41 tools**, all names legal under D4, a real PR read back, and write access
+confirmed. Settings, user tier:
+
+```jsonc
+"levelcode.ai.mcp.servers": {
+  "github": {
+    "command": "docker",
+    "args": ["run", "-i", "--rm",
+             "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+             "-e", "GITHUB_TOOLSETS",
+             "ghcr.io/github/github-mcp-server"],
+    "env": { "GITHUB_TOOLSETS": "pull_requests,repos,issues,context" }
+  }
+}
+```
+
+Four things worth knowing, each of which is a design constraint rather than a detail:
+
+- **GitHub's hosted server (`api.githubcopilot.com/mcp/`) is Streamable HTTP, which we do not speak
+  (D2).** The container above is the same server over stdio. A bridge like `mcp-remote` also works and
+  is the only way to get the OAuth flow, at the cost of a second process in the chain.
+- **`-e NAME` with no `=value` is deliberate.** `connect()` spawns with `Object.assign({}, process.env,
+  server.env)` (`mcpClient.js:52`), so Docker inherits the token from the editor's environment and the
+  credential never lands in `settings.json`. Putting the value in the `env` block works too — it is also
+  a plaintext secret in a synced settings file. This is why the S6a Add wizard has no `env` step.
+- **`GITHUB_TOOLSETS` is a context-budget decision, not a preference.** The full server advertises far
+  more tools, every schema rides every turn, and the S5 context meter will show exactly what that costs.
+- **Everything is `ask` by default, including `merge_pull_request`** — no GitHub tool sets
+  `destructiveHint`, so nothing is force-asked by G2's hard rule, which means the allow-list *can* grant
+  any of them. `"levelcode.ai.mcp.toolPolicy": { "github__pull_request_read": "allow" }` is the sane
+  shape: allow-list the reads, keep the writes on the card. `"*": "allow"` would let autopilot merge.
+
+| Ask | Tool |
+| --- | --- |
+| read a PR — diff, files, reviews, comments, checks | `github__pull_request_read` (`method` enum, 9 values) |
+| create a PR | `github__create_pull_request` |
+| update a PR — title, body, base, reviewers, draft | `github__update_pull_request` |
+| **close** a PR | `github__update_pull_request` with `state: "closed"` |
+| review a PR | `github__pull_request_review_write`, `github__add_comment_to_pending_review` |
+| merge a PR | `github__merge_pull_request` |

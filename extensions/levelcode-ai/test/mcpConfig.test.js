@@ -863,4 +863,42 @@ test('S5: config problems are carried through, and junk input never throws', () 
 	assert.strictEqual(M.summarizeMcp(null).configured, 0);
 });
 
+// ---- S6a: typed argument lines ----
+// The input box in "Manage MCP servers…" produces a string; `args` must be a list.
+
+test('ARGV: a quoted path with spaces stays ONE argument', () => {
+	// The whole reason this is not a whitespace split. The most common MCP server takes a directory,
+	// and on macOS that directory is very often "~/My Documents/…" — splitting it turns one argument
+	// into three and the server fails with a confusing message about the wrong path.
+	assert.deepStrictEqual(
+		M.parseArgv('-y @modelcontextprotocol/server-filesystem "/Users/me/My Documents/notes"'),
+		[ '-y', '@modelcontextprotocol/server-filesystem', '/Users/me/My Documents/notes' ]
+	);
+	assert.deepStrictEqual(M.parseArgv("--dir 'a b' c"), [ '--dir', 'a b', 'c' ]);
+	assert.deepStrictEqual(M.parseArgv('a\\ b'), [ 'a b' ], 'a backslash escapes a space');
+});
+
+test('ARGV: ordinary lines split on whitespace, and blank input is no arguments', () => {
+	assert.deepStrictEqual(M.parseArgv('-y pkg /a/b'), [ '-y', 'pkg', '/a/b' ]);
+	assert.deepStrictEqual(M.parseArgv('  spaced   out  '), [ 'spaced', 'out' ]);
+	for (const empty of [ '', '   ', '\t\n', null, undefined ]) {
+		assert.deepStrictEqual(M.parseArgv(empty), [], 'blank input yields no args: ' + JSON.stringify(empty));
+	}
+});
+
+test('ARGV: a deliberate empty argument survives, and quotes can join', () => {
+	assert.deepStrictEqual(M.parseArgv('--name "" --x'), [ '--name', '', '--x' ],
+		'an explicitly quoted empty string is an argument, not nothing');
+	assert.deepStrictEqual(M.parseArgv('--flag="a b"'), [ '--flag=a b' ], 'quotes group mid-token');
+	assert.deepStrictEqual(M.parseArgv("it's"), [ 'its' ], 'an unbalanced quote consumes to end, never throws');
+});
+
+test('ARGV: it is a splitter, NOT a shell — nothing is expanded or interpreted', () => {
+	// args goes to spawn as a literal list. Anything clever here would be a lie about what runs.
+	assert.deepStrictEqual(M.parseArgv('$HOME/x'), [ '$HOME/x' ], 'no variable expansion');
+	assert.deepStrictEqual(M.parseArgv('*.js'), [ '*.js' ], 'no globbing');
+	assert.deepStrictEqual(M.parseArgv('a && b'), [ 'a', '&&', 'b' ], 'operators are just text');
+	assert.deepStrictEqual(M.parseArgv('a | b'), [ 'a', '|', 'b' ]);
+});
+
 console.log('\nmcpConfig.js: ' + n + ' tests passed.');

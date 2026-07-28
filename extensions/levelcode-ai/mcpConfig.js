@@ -592,6 +592,48 @@ function describeMcpLaunch(server) {
 	};
 }
 
+/**
+ * Split a typed argument line into the `args` array a server entry needs.
+ *
+ * Quote-aware, and that is the point rather than polish: the single most common MCP server on earth is
+ * `npx -y @modelcontextprotocol/server-filesystem /some/path`, and on macOS that path is very often
+ * `/Users/me/My Documents/…`. Splitting on whitespace alone turns one argument into three and the
+ * server fails to start with a message about the wrong directory — a bad first experience caused
+ * entirely by the input box.
+ *
+ * Deliberately NOT a shell parser. No variable expansion, no globbing, no operators: `args` is handed
+ * to spawn as a literal list, so anything clever here would be a lie about what runs. Quotes group,
+ * a backslash escapes the next character, and that is all.
+ */
+function parseArgv(line) {
+	const s = String(line == null ? '' : line);
+	const out = [];
+	let cur = '';
+	let quote = '';      // '"' or "'" while inside a quoted run
+	let started = false; // distinguishes a deliberate empty argument ("") from whitespace
+
+	for (let i = 0; i < s.length; i++) {
+		const ch = s[i];
+		if (ch === '\\' && i + 1 < s.length && quote !== "'") {
+			// A backslash escapes the next char, except inside single quotes where it is literal —
+			// matching the shell convention users will expect from muscle memory.
+			cur += s[++i]; started = true; continue;
+		}
+		if (quote) {
+			if (ch === quote) { quote = ''; } else { cur += ch; }
+			continue;
+		}
+		if (ch === '"' || ch === "'") { quote = ch; started = true; continue; }
+		if (/\s/.test(ch)) {
+			if (started) { out.push(cur); cur = ''; started = false; }
+			continue;
+		}
+		cur += ch; started = true;
+	}
+	if (started) { out.push(cur); }
+	return out;
+}
+
 // ---- S5: visibility --------------------------------------------------------
 
 /**
@@ -678,6 +720,6 @@ module.exports = {
 	loadServerConfig, userScopedSetting, namespaceToolName, isNamespacedToolName, assignToolNames,
 	buildAgentTools, safeCopy,
 	toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
-	launchFingerprint, isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch, summarizeMcp,
+	launchFingerprint, isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch, summarizeMcp, parseArgv,
 	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_ARG_CHARS, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };

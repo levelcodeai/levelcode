@@ -27,7 +27,7 @@ const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
 const { reapMcp, listActive, getServer } = require('./mcpClient');
-const { userScopedSetting, isNamespacedToolName, safeCopy, loadServerConfig, summarizeMcp } = require('./mcpConfig');
+const { userScopedSetting, isNamespacedToolName, safeCopy, loadServerConfig, summarizeMcp, parseArgv } = require('./mcpConfig');
 
 const SECRET_KEY = 'levelcode.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -1350,6 +1350,226 @@ async function pickCloudModel() {
 	}
 }
 
+// ---- "Manage MCP servers…" (docs/MCP.md S6) --------------------------------
+// The last place MCP forced people into raw JSON, and the only UI for revoking a repo server's G1
+// launch trust — until now that decision was write-once, with no way back short of clearing
+// workspaceState by hand.
+
+/**
+ * Is this server's G1 approval STALE — approved once, but the command line has changed since?
+ *
+ * summarizeMcp collapses "never approved" and "approved, then the repo edited the command" into one
+ * `trusted:false`, which is right for starting the server and wrong for explaining it. The second case
+ * is the exact attack G1 exists to stop: get a benign entry approved, then swap the command. It
+ * deserves to be named rather than shown as a server that was simply never set up.
+ */
+function mcpTrustIsStale(s, store) {
+	return s.trusted === false && Object.prototype.hasOwnProperty.call(store || {}, s.name);
+}
+
+/** One row per configured server, on the same shape summarizeMcp already produces for `/mcp`. */
+function mcpServerItem(s, store) {
+	let state, icon;
+	if (s.running) { state = 'running'; icon = '$(pass-filled)'; }
+	else if (mcpTrustIsStale(s, store)) { state = 'command changed — needs approval'; icon = '$(warning)'; }
+	// A repo server waiting on the consent card is not broken — saying only "not started" would send
+	// the user debugging a gate that is working.
+	else if (s.trusted === false) { state = 'needs approval'; icon = '$(shield)'; }
+	else { state = 'not started'; icon = '$(circle-outline)'; }
+
+	const bits = [ s.source === 'settings' ? 'your settings' : (s.origin || 'workspace'), state ];
+	if (s.running) {
+		bits.push(s.tools + ' tool' + (s.tools === 1 ? '' : 's'));
+		if (s.allowed != null) { bits.push(s.allowed + ' allow-listed'); }
+	}
+	return { label: icon + ' ' + s.name, description: bits.join(' · '), detail: s.commandLine, _server: s };
+}
+
+async function manageMcpServers() {
+	const view = mcpOverview();
+	const store = mcpLaunchTrust();
+	const items = [];
+
+	if (view.servers.length) {
+		items.push({ label: 'Configured servers', kind: vscode.QuickPickItemKind.Separator });
+		for (const s of view.servers) { items.push(mcpServerItem(s, store)); }
+	}
+	items.push({ label: view.servers.length ? 'Actions' : 'No servers configured', kind: vscode.QuickPickItemKind.Separator });
+	items.push({ label: '$(add) Add a server…', description: 'Write a new entry to your settings', _action: 'add' });
+	items.push({ label: '$(edit) Open settings JSON', description: 'levelcode.ai.mcp.servers', _action: 'settings' });
+	if (Object.keys(store).length) {
+		items.push({ label: '$(discard) Revoke all workspace trust…', description: 'Repo-defined servers will ask again before starting', _action: 'revokeAll' });
+	}
+	// Config problems belong here rather than only in `/mcp`: a server the user typed and cannot find is
+	// most often a rejected entry, and this is where they came to look for it.
+	if (view.problems.length) {
+		items.push({ label: 'Problems', kind: vscode.QuickPickItemKind.Separator });
+		for (const p of view.problems) {
+			items.push({ label: '$(warning) ' + p.message, description: p.level, _action: 'settings' });
+		}
+	}
+
+	const pick = await vscode.window.showQuickPick(items, {
+		placeHolder: view.configured
+			? view.configured + ' configured · ' + view.running + ' running'
+			: 'No MCP servers configured yet',
+		matchOnDescription: true,
+		matchOnDetail: true
+	});
+	if (!pick) { return; }
+
+	if (pick._action === 'add') { return mcpAddServer(); }
+	if (pick._action === 'settings') { return openMcpSettings(); }
+	if (pick._action === 'revokeAll') { return mcpRevokeTrust(null, Object.keys(store).length); }
+	if (pick._server) { return mcpServerActions(pick._server, store); }
+}
+
+/** Second level: what you can do to one server. */
+async function mcpServerActions(s, store) {
+	const items = [ { label: '$(clippy) Copy command line', description: s.commandLine, _action: 'copy' } ];
+
+	if (s.source === 'settings') {
+		items.push({ label: '$(edit) Edit in settings JSON', _action: 'settings' });
+		items.push({ label: '$(trash) Remove from settings', _action: 'remove' });
+	} else if (mcpTrustIsStale(s, store)) {
+		items.push({
+			label: '$(warning) This server\'s command line changed since you approved it',
+			description: 'Approve the new one on the consent card, or forget the old approval',
+			_action: 'noop'
+		});
+		items.push({ label: '$(discard) Forget the old approval', _action: 'revoke' });
+	} else if (s.trusted) {
+		items.push({ label: '$(discard) Revoke trust for this workspace', description: 'It will ask again before starting', _action: 'revoke' });
+	} else {
+		items.push({ label: '$(shield) Not yet approved', description: 'The consent card appears when the agent first needs it', _action: 'noop' });
+	}
+
+	const pick = await vscode.window.showQuickPick(items, { placeHolder: s.name + ' · ' + (s.source === 'settings' ? 'your settings' : s.origin) });
+	if (!pick || pick._action === 'noop') { return; }
+	if (pick._action === 'copy') {
+		try { await vscode.env.clipboard.writeText(s.commandLine || ''); } catch (e) { dbg('mcp.manage.copyFailed', { error: String((e && e.message) || e) }); }
+		return;
+	}
+	if (pick._action === 'settings') { return openMcpSettings(); }
+	if (pick._action === 'revoke') { return mcpRevokeTrust(s.name); }
+	if (pick._action === 'remove') { return mcpRemoveServer(s.name); }
+}
+
+function openMcpSettings() {
+	return vscode.commands.executeCommand('workbench.action.openSettingsJson', { revealSetting: { key: 'levelcode.ai.mcp.servers' } });
+}
+
+/**
+ * Add a server to the USER settings tier.
+ *
+ * Global on purpose, and not offered for the workspace tier: `levelcode.ai.mcp.servers` is declared
+ * `application` scope precisely so a repo cannot introduce a server that starts without consent
+ * (docs/MCP.md G1). A UI that wrote it anywhere else would quietly undo that.
+ */
+async function mcpAddServer() {
+	const cfg = aiConfig();
+	const existing = safeCopy(userScopedSetting(cfg.inspect('mcp.servers'), {}) || {});
+
+	const name = (await vscode.window.showInputBox({
+		title: 'Add an MCP server — name',
+		prompt: 'Short id, used to namespace its tools as name__tool',
+		placeHolder: 'github',
+		ignoreFocusOut: true,
+		validateInput: (v) => {
+			const t = String(v || '').trim();
+			if (!t) { return 'A name is required.'; }
+			if (Object.prototype.hasOwnProperty.call(existing, t)) { return 'A server called "' + t + '" already exists.'; }
+			// Not a hard rule — namespaceToolName sanitizes anyway — but a name that survives verbatim
+			// makes the tool names in the transcript readable.
+			if (!/^[A-Za-z0-9_-]+$/.test(t)) { return 'Use letters, digits, dashes or underscores so the tool names stay readable.'; }
+			return null;
+		}
+	}) || '').trim();
+	if (!name) { return; }
+
+	const command = (await vscode.window.showInputBox({
+		title: 'Add an MCP server — command',
+		prompt: 'The executable to run (it is spawned directly, not through a shell)',
+		placeHolder: 'npx',
+		ignoreFocusOut: true,
+		validateInput: (v) => (String(v || '').trim() ? null : 'A command is required.')
+	}) || '').trim();
+	if (!command) { return; }
+
+	const argsLine = await vscode.window.showInputBox({
+		title: 'Add an MCP server — arguments',
+		prompt: 'Space-separated. Quote anything containing spaces, e.g. "/Users/me/My Documents"',
+		placeHolder: '-y @modelcontextprotocol/server-filesystem /path/to/dir',
+		ignoreFocusOut: true
+	});
+	if (argsLine === undefined) { return; }   // escaped — an empty string is a valid "no arguments"
+
+	const entry = { command: command };
+	const args = parseArgv(argsLine);
+	if (args.length) { entry.args = args; }
+
+	existing[name] = entry;
+	try {
+		await cfg.update('mcp.servers', existing, vscode.ConfigurationTarget.Global);
+		dbg('mcp.manage.added', { name: name });
+	} catch (e) {
+		vscode.window.showErrorMessage('Could not save the MCP server: ' + String((e && e.message) || e));
+		return;
+	}
+
+	// The wizard deliberately does not ask for `env`: the servers that need one need an API TOKEN, and a
+	// prompt for it would end with a live credential in plaintext settings.json — worse, it would look
+	// like the recommended way to do it. mcpClient spawns with process.env inherited, so exporting the
+	// variable and launching the editor from that shell keeps the secret out of any file. Anyone who
+	// wants it in settings anyway can put it there; this just points at the file instead of pretending
+	// the wizard covered everything.
+	const next = await vscode.window.showInformationMessage(
+		'Added MCP server "' + name + '". It starts on the next agent run.',
+		'Open settings JSON');
+	if (next === 'Open settings JSON') { return openMcpSettings(); }
+}
+
+async function mcpRemoveServer(name) {
+	const ok = await vscode.window.showWarningMessage(
+		'Remove the MCP server "' + name + '" from your settings?', { modal: true }, 'Remove');
+	if (ok !== 'Remove') { return; }
+
+	const cfg = aiConfig();
+	const existing = safeCopy(userScopedSetting(cfg.inspect('mcp.servers'), {}) || {});
+	delete existing[name];
+	try {
+		await cfg.update('mcp.servers', existing, vscode.ConfigurationTarget.Global);
+		dbg('mcp.manage.removed', { name: name });
+	} catch (e) {
+		vscode.window.showErrorMessage('Could not remove the MCP server: ' + String((e && e.message) || e));
+	}
+}
+
+/**
+ * Forget a G1 launch approval — for one server, or all of them in this workspace.
+ *
+ * The missing half of trust-on-first-use: approving was permanent with no way back, which makes the
+ * prompt harder to say yes to than it should be. Revoking does not stop a server already running in
+ * this session; it means the next run asks again, so the message says exactly that rather than
+ * implying the process was killed.
+ */
+async function mcpRevokeTrust(name, count) {
+	const target = name ? ('trust for "' + name + '"') : ('trust for all ' + count + ' repo-defined server(s)');
+	const ok = await vscode.window.showWarningMessage(
+		'Revoke ' + target + ' in this workspace? They will ask for approval again before starting.',
+		{ modal: true }, 'Revoke');
+	if (ok !== 'Revoke') { return; }
+
+	// Re-read rather than reuse the snapshot the menu was built from: a modal was just open, and
+	// approving a different server in the meantime must not be silently rolled back by this write.
+	let next;
+	if (name) { next = mcpLaunchTrust(); delete next[name]; } else { next = {}; }
+	await saveMcpLaunchTrust(next);
+	dbg('mcp.manage.trustRevoked', { server: name || '*' });
+	vscode.window.showInformationMessage(
+		name ? '"' + name + '" will ask before starting again.' : 'Repo-defined servers will ask before starting again.');
+}
+
 async function pickModel() {
 	const cfg = aiConfig();
 	// Gateway mode + signed in → a plan-scoped LevelCode Cloud menu (free engine + flagship, the latter
@@ -1521,6 +1741,7 @@ class ChatViewProvider {
 				}
 				case 'setKey': await promptForKey(); break;
 				case 'pickModel': await pickModel(); break;
+				case 'manageMcp': await manageMcpServers(); break;
 				case 'openSettings': vscode.commands.executeCommand('workbench.action.openSettings', '@ext:levelcode.levelcode-ai'); break;
 			}
 		});
@@ -1795,6 +2016,7 @@ function activate(context) {
 		vscode.commands.registerCommand('levelcode.import.vscode', () => importFromVscode(context)),
 		vscode.commands.registerCommand('levelcode.ai.newChat', newChat),
 		vscode.commands.registerCommand('levelcode.ai.pickModel', pickModel),
+		vscode.commands.registerCommand('levelcode.ai.manageMcp', manageMcpServers),
 		vscode.commands.registerCommand('levelcode.ai.addSelection', addSelection),
 		vscode.commands.registerCommand('levelcode.ai.addFileContext', addContext),
 		vscode.commands.registerCommand('levelcode.ai.setApiKey', () => promptForKey()),
