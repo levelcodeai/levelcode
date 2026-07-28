@@ -15,8 +15,9 @@
  *
  *  TRUST: a server entry names A PROCESS TO SPAWN. The user's setting is user-authored. A workspace
  *  file is REPO-authored — i.e. attacker-controlled for any repo you clone — so entries from it are
- *  marked source:'workspace' and MUST NOT be started without explicit consent (the launch gate lives
- *  in a later slice; this module only reports the provenance it needs). For the same reason the
+ *  marked source:'workspace' and MUST NOT be started without explicit consent — the trust-on-first-use
+ *  gate at the bottom of this file (launchFingerprint / isLaunchTrusted / describeMcpLaunch), enforced
+ *  by approveMcpLaunch in agent.js. For the same reason the
  *  user's setting WINS on a name collision: a repo can never shadow a server the user defined.
  *
  *  Pure + dependency-free (path only) — file reading is injected as a readFile callback, so all of it
