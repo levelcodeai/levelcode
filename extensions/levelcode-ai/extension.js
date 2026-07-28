@@ -1025,7 +1025,12 @@ async function agentFlow(text) {
 			                                    // else the provider's own label; keeps a 502 from being blamed on "OpenAI"
 			apiKey: req.apiKey,
 			model: req.model,
-			maxSteps: Math.max(1, cfg.get('agent.maxSteps', 25)),
+			// LIVE, not a snapshot (like `autopilot` below): a getter that re-reads via a FRESH
+			// getConfiguration on every access, so agent.js's step loop honours a changed
+			// levelcode.ai.agent.maxSteps WITHOUT restarting the goal. Raising 25 → 1000 mid-run extends
+			// the current autopilot run on the very next step. The captured `cfg` above is a snapshot from
+			// when the goal started, so reading it here would keep returning the old limit.
+			get maxSteps() { return Math.max(1, aiConfig().get('agent.maxSteps', 25)); },
 			maxTokens: Math.max(1024, cfg.get('agent.maxTokens', 8192)),   // per-turn output cap; continued across turns if hit
 			post, dbg,
 			// LIVE, not a snapshot: agent.js reads ctx.autopilot at each run_command, so flipping the
