@@ -1389,13 +1389,14 @@ class ChatViewProvider {
 				case 'send': await handleSend(msg.text); break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
-				case 'approvalResponse':
-					// "Always allow" on an MCP card persists the tool to the allow-list BEFORE resolving, so a
-					// future run skips the prompt. It only ever adds an ALLOW (never a broadening default), and
-					// the webview offers it only for non-destructive tools — mcpAllowAlways re-checks anyway.
-					if (msg.approved && msg.remember && msg.mcpName) { await mcpAllowAlways(msg.mcpName); }
+				case 'approvalResponse': {
+					// Persisting "Always allow" should not block the approved tool call.
+					if (msg.approved && msg.remember && msg.mcpName) {
+						Promise.resolve(mcpAllowAlways(msg.mcpName)).catch(() => { /* best-effort */ });
+					}
 					resolveApproval(msg.id, msg.approved);
 					break;
+				}
 				case 'questionsResponse': resolveQuestions(msg.id, msg.answers, msg.notes); break;
 				case 'accountSignIn': await accountSignIn(msg.provider, msg.create); break;
 				case 'accountSignOut': await accountSignOut(); break;
