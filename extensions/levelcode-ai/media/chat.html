@@ -1876,6 +1876,51 @@
   let pendingApproval = null;   // { done } while a decision is awaited — Enter approves, Esc skips
   // MCP tool call (S4) — its own card: server · tool · arguments, so the user sees exactly what a
   // third-party tool is about to do. Args are shown in full (capped host-side): that IS the decision.
+  // G1 consent card: a repo-authored .levelcode/mcp.json wants to SPAWN A PROCESS. This is the one
+  // prompt where the stakes are RCE-on-clone, so it shows the literal command line — docs/MCP.md G1
+  // says "no summarizing" — plus any env it would set, since NODE_OPTIONS alone is enough to turn an
+  // innocent-looking `node` into arbitrary code.
+  //
+  // There is no "always allow" escape hatch by design: trust is remembered against a fingerprint of
+  // exactly this command, so approving is already the durable answer, and a second, vaguer button
+  // would only blur what was agreed to.
+  function addMcpLaunchApproval(m){
+    clearEmpty(); clearStatus(); agentBubble = null;
+    closeGroup();
+    const card = document.createElement('div'); card.className = 'tl tl-cmd tl-ask asking';
+    const envWell = (m.envLines && m.envLines.length)
+      ? '<div class="askcode"><pre class="cmdsrc mcpargs">' + esc(m.envLines.join('\n')) + '</pre></div>'
+      : '';
+    card.innerHTML =
+      '<div class="tl-rail"><span class="tl-node">' + codicon('shield') + '</span></div>'
+      + '<div class="tl-body"><div class="askcard">'
+        + '<div class="asktitle">Start an MCP server from this repository?</div>'
+        + '<div class="asksub"><b>' + esc(m.server || '') + '</b> is defined by <b>' + esc(m.origin || 'this workspace') + '</b>, not by your settings — it comes from the repository, and starting it runs this command on your machine.</div>'
+        + '<div class="askdanger">' + codicon('warning') + ' Only start this if you trust this repository.</div>'
+        + '<div class="askcode"><pre class="cmdsrc mcpargs">' + esc(m.commandLine || '') + '</pre></div>'
+        + envWell
+        + '<div class="askbtns">'
+          + '<button class="skip" title="Don’t start it (esc)">Don’t start <kbd>esc</kbd></button>'
+          + '<button class="approve" title="Start it, and remember this exact command for this workspace (⏎)">Start server <kbd>⏎</kbd></button>'
+        + '</div>'
+      + '</div></div>';
+    log.appendChild(card); scrollIfStuck();
+    const done = (approved) => {
+      pendingApproval = null;
+      vscode.postMessage({ type: 'approvalResponse', id: m.id, approved, remember: false });
+      card.classList.remove('asking');
+      if (!approved) { card.classList.add('skipped'); }
+      card.querySelector('.tl-body').innerHTML =
+        '<div class="cmdhead"><span class="cmdverb">' + (approved ? 'Started' : 'Not started') + '</span>'
+        + '<span class="cmdchips"><code>' + esc(m.server || '') + '</code></span>'
+        + '<span class="cmdstate ' + (approved ? 'ok' : 'bad') + '">' + codicon(approved ? 'check-circle' : 'circle-slash') + '</span></div>';
+      forceStick();
+    };
+    card.querySelector('.approve').onclick = () => done(true);
+    card.querySelector('.skip').onclick = () => done(false);
+    pendingApproval = { done };   // Enter = Start server, Esc = Don't start
+  }
+
   function addMcpApproval(m){
     clearEmpty(); clearStatus(); agentBubble = null;
     closeGroup();
@@ -1926,6 +1971,7 @@
   }
 
   function addApproval(m){
+    if (m.kind === 'mcpLaunch') { return addMcpLaunchApproval(m); }
     if (m.kind === 'mcp') { return addMcpApproval(m); }
     clearEmpty(); clearStatus(); agentBubble = null;
     closeGroup();   // a blocking gate never hides inside a collapsed group (D4)

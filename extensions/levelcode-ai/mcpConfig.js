@@ -487,6 +487,71 @@ function previewArgs(args) {
  * @param {{server?:string, tool?:string, annotations?:object}} [route]
  * @returns {{server:string, tool:string, argsText:string, destructive:boolean, canAllowAlways:boolean}}
  */
+// ---- G1: trust-on-first-use for repo-authored servers ----------------------
+// A `.levelcode/mcp.json` entry names a process to spawn, and the file is attacker-controlled for any
+// repo you clone. These four functions are the launch gate: fingerprint what would be spawned, compare
+// it to what this workspace has already trusted, and describe it for the consent card.
+
+/**
+ * A stable fingerprint of what a server entry would actually EXECUTE.
+ *
+ * Trust is remembered against this, not against the server's NAME, so a repo cannot be granted consent
+ * for `npx @modelcontextprotocol/server-filesystem` and then quietly swap in `sh -c 'curl … | sh'` under
+ * the same name — the fingerprint changes and the user is asked again.
+ *
+ * `env` is included, and that is not padding: `NODE_OPTIONS=--require /tmp/evil.js` turns an innocent
+ * `node` command into arbitrary code execution without touching command or args. Keys are sorted so an
+ * unrelated reordering of the JSON does not spuriously revoke trust.
+ */
+function launchFingerprint(server) {
+	const s = server || {};
+	const env = s.env || {};
+	const envPairs = Object.keys(env).sort().map((k) => k + '=' + String(env[k]));
+	return shortHash(JSON.stringify([String(s.command || ''), (s.args || []).map(String), envPairs]));
+}
+
+/**
+ * Has THIS workspace already approved launching exactly this server?
+ *
+ * `store` is a plain `{ serverName: fingerprint }` map held in workspaceState, so trust is per-workspace
+ * by construction: approving a server in one repo says nothing about another repo that happens to
+ * declare a server by the same name.
+ */
+function isLaunchTrusted(server, store) {
+	if (!server || !server.name) { return false; }
+	const known = store && store[server.name];
+	return typeof known === 'string' && known === launchFingerprint(server);
+}
+
+/** Record trust for one server. Pure: returns the new store, so the caller owns persistence. */
+function rememberLaunchTrust(server, store) {
+	const next = safeCopy(store || {});
+	if (server && server.name) { next[server.name] = launchFingerprint(server); }
+	return next;
+}
+
+/**
+ * The consent card's data. docs/MCP.md G1: "shows the literal command line — no summarizing."
+ *
+ * So `commandLine` is the real thing, quoted only where an argument contains a space (otherwise
+ * `--path /a b` reads as two arguments when it is one). Env is surfaced separately as NAME=value,
+ * because it is part of the execution surface the user is consenting to and hiding it would make the
+ * card a half-truth.
+ */
+function describeMcpLaunch(server) {
+	const s = server || {};
+	const quote = (a) => (/[\s"']/.test(String(a)) ? JSON.stringify(String(a)) : String(a));
+	const env = s.env || {};
+	const envLines = Object.keys(env).sort().map((k) => k + '=' + String(env[k]));
+	return {
+		server: String(s.name || ''),
+		origin: String(s.origin || ''),
+		commandLine: [String(s.command || '')].concat((s.args || []).map(quote)).join(' '),
+		envLines: envLines,
+		fingerprint: launchFingerprint(s)
+	};
+}
+
 function describeMcpCall(name, args, route) {
 	const r = route || {};
 	const fallback = String(name == null ? '' : name).split(NAME_SEPARATOR);
@@ -500,5 +565,6 @@ module.exports = {
 	loadServerConfig, userScopedSetting, namespaceToolName, isNamespacedToolName, assignToolNames,
 	buildAgentTools, safeCopy,
 	toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
+	launchFingerprint, isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch,
 	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_ARG_CHARS, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };
