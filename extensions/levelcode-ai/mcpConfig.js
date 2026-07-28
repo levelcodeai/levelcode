@@ -244,15 +244,24 @@ function namespaceToolName(server, tool) {
  * UNSAFE_KEYS is rejected EXPLICITLY rather than left to fall out of the shape rules, so the protection
  * does not depend on an unrelated rule keeping a particular form.
  */
-const HASH_TAGGED = /_[0-9a-z]{6}$/;   // shortHash is base36, lower-case, padded to 6
+const LEGAL_NAME = /^[A-Za-z0-9_-]+$/;
+// Shape 1. At least one character on EACH side of a separator, because sanitizeSegment never returns
+// empty — so `abc__` and `__abc` are not names this module can emit.
+//
+// A regex rather than the obvious `indexOf('__') > 0` test, and that difference is not cosmetic: a
+// server legitimately NAMED `__a` yields `__a__b`, whose FIRST separator sits at index 0. The
+// index test rejects it; backtracking here finds the separator at index 3 and accepts.
+const SHAPE_NAMESPACED = /^[A-Za-z0-9_-]+__[A-Za-z0-9_-]+$/;
+// Shape 2. shortHash is base36, lower-case, padded to 6, and truncation always lands exactly at the cap.
+const SHAPE_TRUNCATED = /_[0-9a-z]{6}$/;
 
 function isNamespacedToolName(name) {
 	if (typeof name !== 'string') { return false; }
 	if (name.length === 0 || name.length > MAX_TOOL_NAME) { return false; }
 	if (UNSAFE_KEYS.indexOf(name) !== -1) { return false; }
-	if (!/^[A-Za-z0-9_-]+$/.test(name)) { return false; }
-	return name.indexOf(NAME_SEPARATOR) !== -1                       // shape 1
-		|| (name.length === MAX_TOOL_NAME && HASH_TAGGED.test(name));  // shape 2
+	if (!LEGAL_NAME.test(name)) { return false; }
+	return SHAPE_NAMESPACED.test(name)
+		|| (name.length === MAX_TOOL_NAME && SHAPE_TRUNCATED.test(name));
 }
 
 /**

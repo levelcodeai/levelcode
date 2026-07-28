@@ -775,9 +775,21 @@ let approvalSeq = 0;
  * it. Reads the current value the same user-scoped way it is read at run start. Idempotent, and refuses
  * a tool name that is not a namespaced server__tool to avoid writing junk from a malformed message.
  */
-/** A real map — not an array, not null, not a boxed primitive. Guards what we copy out of settings. */
+/**
+ * A JSON-shaped map, and nothing else — guards what we copy out of settings.
+ *
+ * The prototype check is what makes that true. `typeof v === 'object' && !Array.isArray(v)` is the
+ * reflex version and it is wrong: `new String('x')`, `new Date()` and `new Map()` all pass it, and the
+ * first would then have its character indices copied into the policy. Settings deserialize to plain
+ * objects, so anything with another prototype did not come from there and is not a policy.
+ *
+ * A null prototype is accepted: `Object.create(null)` is still a plain map, and some JSON handling
+ * produces one deliberately to avoid the `__proto__` trap.
+ */
 function isPlainObject(v) {
-	return !!v && typeof v === 'object' && !Array.isArray(v);
+	if (!v || typeof v !== 'object' || Array.isArray(v)) { return false; }
+	const proto = Object.getPrototypeOf(v);
+	return proto === Object.prototype || proto === null;
 }
 
 async function mcpAllowAlways(name) {

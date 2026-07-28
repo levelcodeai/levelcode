@@ -574,8 +574,16 @@ test('PERSIST: every name namespaceToolName can emit validates — swept, not sa
 	let sawTruncated = 0;
 	let sawNoSeparator = 0;
 
+	// Segment alphabets include a leading-underscore server, which is the case a naive shape-1 check
+	// (`indexOf('__') > 0`) silently rejects.
+	const SERVER_CHARS = ['s', '_', '-'];
 	for (let s = 1; s <= 80; s++) {
 		for (const t of [1, 2, 7, 30, 63, 64, 90]) {
+			for (const ch of SERVER_CHARS) {
+				const nm = M.namespaceToolName(ch.repeat(s), 't'.repeat(t));
+				assert.ok(M.isNamespacedToolName(nm),
+					'rejected an emitted name (server=' + JSON.stringify(ch.repeat(Math.min(s, 4))) + '…×' + s + ', tool=' + t + '): ' + nm);
+			}
 			const name = M.namespaceToolName('s'.repeat(s), 't'.repeat(t));
 			assert.ok(LEGAL.test(name), 'precondition: emitted name must be provider-legal: ' + name);
 			assert.ok(M.isNamespacedToolName(name),
@@ -614,6 +622,23 @@ test('PERSIST: rejects safe-looking names that namespacing can never emit', () =
 		'the hash tag is lower-case base36; upper-case is not a shape this module emits');
 	assert.ok(!M.isNamespacedToolName('short_a1b2c3'),
 		'a hash-looking tail only counts at exactly MAX_TOOL_NAME, which is the only way truncation ends');
+
+	// sanitizeSegment never returns empty, so a separator always has something on both sides.
+	assert.ok(!M.isNamespacedToolName('abc__'), 'nothing after the separator');
+	assert.ok(!M.isNamespacedToolName('__abc'), 'nothing before the separator');
+	assert.ok(!M.isNamespacedToolName('__'), 'separator alone');
+});
+
+test('PERSIST: a server whose NAME starts with underscores still validates', () => {
+	// The trap in tightening shape 1: the obvious `indexOf('__') > 0` test rejects this, because the
+	// FIRST separator sits at index 0 — but it is a name this module really emits, and rejecting it
+	// would silently break "Always allow" for that server.
+	const emitted = M.namespaceToolName('__a', 'b');
+	assert.strictEqual(emitted, '__a__b', 'precondition: this input really does produce a leading __');
+	assert.ok(M.isNamespacedToolName(emitted), 'a leading-underscore server name is legitimate');
+
+	assert.ok(M.isNamespacedToolName(M.namespaceToolName('_', '_')), 'both segments bare underscores');
+	assert.ok(M.isNamespacedToolName(M.namespaceToolName('a', '__b')), 'tool starting with the separator');
 });
 
 test('PERSIST: safeCopy drops the keys that reach the prototype setter', () => {
