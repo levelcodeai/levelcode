@@ -26,8 +26,8 @@ const { formatDiagnosticLines, diagKey, createPreviewGate } = require('./verify'
 const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
 const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
-const { reapMcp } = require('./mcpClient');
-const { userScopedSetting, isNamespacedToolName, safeCopy } = require('./mcpConfig');
+const { reapMcp, listActive, getServer } = require('./mcpClient');
+const { userScopedSetting, isNamespacedToolName, safeCopy, loadServerConfig, summarizeMcp } = require('./mcpConfig');
 
 const SECRET_KEY = 'levelcode.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -807,6 +807,48 @@ async function saveMcpLaunchTrust(store) {
 	}
 }
 
+/**
+ * Everything `/mcp` needs, gathered from the four places that know a piece of it: the merged config,
+ * the live client registry, the allow-list setting, and the G1 launch-trust store.
+ *
+ * Config is re-read here rather than reused from the last run: `/mcp` is most useful exactly when the
+ * user has just edited settings or a `.levelcode/mcp.json` and is asking why nothing happened.
+ *
+ * Never throws — a diagnostic command that can fail is worse than useless, because it fails on the
+ * broken configuration it exists to explain.
+ */
+function mcpOverview() {
+	try {
+		const cfg = aiConfig();
+		const folders = (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath }));
+		const { servers, problems } = loadServerConfig({
+			settings: userScopedSetting(cfg.inspect('mcp.servers'), {}),
+			folders: folders,
+			readFile: (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch { return null; } }
+		});
+
+		// listActive reports counts; getServer carries the raw tools/list, which is what lets the row
+		// show per-tool allow state instead of just a number.
+		const active = listActive().map((h) => {
+			const handle = getServer(h.name);
+			return Object.assign({}, h, { tools: (handle && handle.tools) || null });
+		});
+
+		return summarizeMcp({
+			servers: servers,
+			problems: problems,
+			active: active,
+			policy: userScopedSetting(cfg.inspect('mcp.toolPolicy'), {}),
+			trust: mcpLaunchTrust()
+		});
+	} catch (e) {
+		dbg('mcp.overview.failed', { error: String((e && e.message) || e) });
+		return { configured: 0, running: 0, awaitingTrust: 0, servers: [], problems: [
+			{ level: 'error', message: 'could not read the MCP configuration: ' + String((e && e.message) || e) }
+		] };
+	}
+}
+
 async function mcpAllowAlways(name) {
 	// isNamespacedToolName owns the rule (mcpConfig.js), rather than a second regex here: this used to
 	// hand-roll one that required a `__` separator, which REJECTED names namespaceToolName legitimately
@@ -1458,6 +1500,7 @@ class ChatViewProvider {
 				case 'continueAgent': if (!abort) { const g = lastAgentGoal; dbg('continue', { transcriptMsgs: agentMessages.length }); await agentFlow('Continue from where you left off and finish the task. Pick up exactly where you stopped — do not restart or repeat work that is already done.'); lastAgentGoal = g; } break;
 				case 'restoreCheckpoint': dbg('restoreCheckpoint', { turnId: msg.turnId, running: !!abort }); await restoreCheckpoint(msg.turnId); break;
 				case 'listSkills': { const en = aiConfig().get('skills.enabled', true); const idx = en ? loadSkills(ctx.extensionPath, dbg) : new Map(); dbg('listSkills', { enabled: en, count: idx.size }); post({ type: 'skillsList', enabled: en, skills: skillsMenu(idx) }); break; }
+				case 'listMcp': post({ type: 'mcpList', mcp: mcpOverview() }); break;
 				case 'feedback': dbg('feedback', { value: msg.value, model: msg.model }); await recordFeedback(msg.value, msg.model); break;
 				case 'openFile': await openWorkspaceFile(msg.path); break;
 				case 'reviewKeepFile': dbg('review.keep', { id: msg.id }); review.keepFile(msg.id, 'kept'); break;

@@ -795,4 +795,72 @@ test('G1: the card and the fingerprint read the SAME normalized material', () =>
 	assert.strictEqual(M.launchFingerprint(weird), M.launchFingerprint({ name: 'x', command: 'c' }));
 });
 
+// ---- S5: /mcp visibility ----
+// The list answers "why is my server not being used?", so it is built from CONFIGURED servers, not
+// from live handles — a list of what is running cannot explain what is missing.
+
+const settingsSrv = (over) => Object.assign({
+	name: 'gh', command: 'npx', args: ['-y', 'server-github'], env: {},
+	source: 'settings', origin: 'levelcode.ai.mcp.servers'
+}, over || {});
+
+test('S5: a configured-but-not-running server still appears, with its command', () => {
+	const out = M.summarizeMcp({ servers: [ settingsSrv(), srv() ] });
+
+	assert.strictEqual(out.configured, 2);
+	assert.strictEqual(out.running, 0);
+	assert.strictEqual(out.servers.length, 2, 'a server that never started is the interesting case');
+	assert.ok(out.servers[0].commandLine.startsWith('npx '), 'the row carries what it would run');
+});
+
+test('S5: trust state is reported only for repo-authored servers', () => {
+	const workspace = srv();                       // source: 'workspace'
+	const trusted = M.rememberLaunchTrust(workspace, {});
+
+	const cold = M.summarizeMcp({ servers: [ settingsSrv(), workspace ] });
+	assert.strictEqual(cold.servers[0].trusted, null, 'a settings server needs no consent — not `false`');
+	assert.strictEqual(cold.servers[1].trusted, false, 'an untrusted workspace server');
+	assert.strictEqual(cold.awaitingTrust, 1, 'the answer to "why is it not running?"');
+
+	const warm = M.summarizeMcp({ servers: [ workspace ], trust: trusted });
+	assert.strictEqual(warm.servers[0].trusted, true);
+	assert.strictEqual(warm.awaitingTrust, 0);
+});
+
+test('S5: tool names and allow state come from the same functions the agent uses', () => {
+	const active = [ {
+		name: 'gh', alive: true, toolCount: 2,
+		tools: [ { name: 'list_issues' }, { name: 'delete_repo', annotations: { destructiveHint: true } } ]
+	} ];
+	const policy = { 'gh__list_issues': 'allow', 'gh__delete_repo': 'allow' };
+
+	const out = M.summarizeMcp({ servers: [ settingsSrv() ], active: active, policy: policy });
+	const row = out.servers[0];
+
+	assert.strictEqual(out.running, 1);
+	assert.strictEqual(row.tools, 2);
+	assert.deepStrictEqual(row.toolNames.slice().sort(), [ 'gh__delete_repo', 'gh__list_issues' ]);
+
+	// The destructive one is allow-listed but classifyMcpTool still refuses it, so the count must not
+	// claim 2 — a list that disagrees with runTool is worse than no list.
+	assert.strictEqual(row.allowed, 1, 'a destructive tool is never counted as allowed, even if listed');
+});
+
+test('S5: without live tool details the row degrades instead of inventing numbers', () => {
+	const out = M.summarizeMcp({ servers: [ settingsSrv() ], active: [ { name: 'gh', alive: true, toolCount: 7 } ] });
+	assert.strictEqual(out.servers[0].tools, 7, 'the count listActive gives is still shown');
+	assert.strictEqual(out.servers[0].allowed, null, 'unknown, not zero');
+	assert.deepStrictEqual(out.servers[0].toolNames, []);
+});
+
+test('S5: config problems are carried through, and junk input never throws', () => {
+	const out = M.summarizeMcp({ servers: [], problems: [ { level: 'error', message: 'bad entry' } ] });
+	assert.deepStrictEqual(out.problems, [ { level: 'error', message: 'bad entry' } ]);
+
+	assert.doesNotThrow(() => M.summarizeMcp(null));
+	assert.doesNotThrow(() => M.summarizeMcp({}));
+	assert.doesNotThrow(() => M.summarizeMcp({ servers: 'nope', active: 'nope', policy: 'nope', trust: 5 }));
+	assert.strictEqual(M.summarizeMcp(null).configured, 0);
+});
+
 console.log('\nmcpConfig.js: ' + n + ' tests passed.');

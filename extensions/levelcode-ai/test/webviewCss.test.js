@@ -167,4 +167,21 @@ test('the mcpLaunch card shows the literal command and offers no always-allow', 
 	assert.ok(/remember: false/.test(fn), 'never rides the tool-policy remember path');
 });
 
+test('the /mcp command is wired end to end and lists CONFIGURED servers', () => {
+	assert.ok(/\/\^\\\/mcp\\b\/i\.test\(t\)/.test(html) || /\/\^\\\/mcp/.test(html), 'the composer intercepts /mcp');
+	assert.ok(/type: 'listMcp'/.test(html), 'it asks the extension for the list');
+	assert.ok(/m\.type === 'mcpList'/.test(html), 'and renders the reply');
+
+	const fn = html.slice(html.indexOf('function renderMcpList'), html.indexOf('function renderSkillsList'));
+	assert.ok(fn.length > 200, 'found the renderer');
+
+	// The three states a row can be in. "needs approval" is the one that must not read as a fault:
+	// a repo server waiting on the G1 card is working exactly as designed.
+	assert.ok(/needs approval/.test(fn), 'an untrusted repo server says so rather than just "not started"');
+	assert.ok(/not started/.test(fn) && /running/.test(fn), 'the other two states');
+	// The command line is the security-relevant part of this list, so it must be rendered escaped.
+	assert.ok(/esc\(s\.commandLine/.test(fn), 'the command is shown, and escaped');
+	assert.ok(/mcpcmd/.test(html) && /overflow-wrap: anywhere/.test(html), 'and wraps rather than truncating');
+});
+
 console.log('webviewCss: ' + n + ' tests passed');

@@ -61,6 +61,26 @@
   .skrow { border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; }
   .skname { display: block; font-weight: 600; font-family: var(--vscode-editor-font-family, monospace); color: var(--vscode-foreground); }
   .skdesc { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.45; }
+  /* /mcp command — configured servers, their state, and what they would run */
+  .mcprow { border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; }
+  .mcptop { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .mcptop .skname { display: inline; }
+  .mcpstate { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); }
+  .mcpstate.ok { color: var(--ok, #98c379); border-color: color-mix(in srgb, var(--ok, #98c379) 45%, transparent); }
+  .mcpstate.warn { color: #d19a66; border-color: color-mix(in srgb, #d19a66 45%, transparent); }
+  .mcpstate.off { color: var(--muted); }
+  .mcpsrc { font-size: 11px; color: var(--muted); margin-left: auto; }
+  /* The command is the security-relevant line, so it is monospaced and wraps rather than truncating —
+     an elided command line is exactly the part a reader needs whole. */
+  .mcpcmd {
+    font-family: var(--vscode-editor-font-family, monospace); font-size: 11.5px;
+    color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; white-space: pre-wrap;
+  }
+  .mcptools { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .mcptools code { font-size: 11px; opacity: .85; }
+  .mcpproblem { font-size: 12px; margin-top: 7px; line-height: 1.45; }
+  .mcpproblem.warn { color: #d19a66; }
+  .mcpproblem.bad { color: var(--vscode-errorForeground, #e06c75); }
   /* ---- jump-to-latest affordance (shown only when auto-scroll is paused) ---- */
   #jumpLatest {
     position: fixed; right: 16px; bottom: 96px; z-index: 20;
@@ -2410,26 +2430,37 @@
   let ctxState = null;
   function fmtTok(n){ n = Math.max(0, Math.round(n)); if (n >= 1000000){ return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'; } return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n); }
   // Break used tokens into segments (system + tools ride in every request; the remainder is messages).
-  function ctxSegments(used, limit, system, tools){
-    used = Math.max(0, used || 0); limit = Math.max(1, limit || 200000);
-    const overhead = Math.min(used, Math.max(0, system || 0) + Math.max(0, tools || 0));
-    const sys = Math.min(Math.max(0, system || 0), overhead);
+  function ctxSegments(used, limit, system, tools, mcpTools){
+    // `x || 0` alone is not enough: it rescues NaN/null but passes a STRING straight through, and
+    // Math.max(0, 'x') is NaN — which propagates into every later slice and silently un-sums the bar.
+    const num = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+    used = Math.max(0, num(used)); limit = Math.max(1, num(limit) || 200000);
+    const overhead = Math.min(used, Math.max(0, num(system)) + Math.max(0, num(tools)));
+    const sys = Math.min(Math.max(0, num(system)), overhead);
     const tul = Math.max(0, overhead - sys);
+    // The MCP share is carved OUT of the tools slice, never added alongside it: `tools` already counts
+    // every schema, MCP included, so adding would double-count and the bar would stop summing to `used`.
+    // Clamped to `tul` because both numbers are estimates that survived their own clamping above.
+    const mcp = Math.min(Math.max(0, num(mcpTools)), tul);
+    const own = Math.max(0, tul - mcp);
     const msgs = Math.max(0, used - sys - tul);
     const free = Math.max(0, limit - used);
     const seg = [
       { key: 'messages', label: 'Messages', tokens: msgs },
       { key: 'system', label: 'System prompt', tokens: sys },
-      { key: 'tools', label: 'Tools', tokens: tul },
-      { key: 'free', label: 'Free space', tokens: free }
+      { key: 'tools', label: 'Tools', tokens: own }
     ];
+    // Only shown when MCP is actually in play — an always-present "MCP tools 0" row would be noise for
+    // the overwhelming majority of runs, which configure no servers at all.
+    if (mcp > 0){ seg.push({ key: 'mcp', label: 'MCP tools', tokens: mcp }); }
+    seg.push({ key: 'free', label: 'Free space', tokens: free });
     for (const s of seg){ s.pct = Math.round(s.tokens / limit * 1000) / 10; }
     return seg;
   }
   const CTX_C = 2 * Math.PI * 14;   // donut circumference (r=14)
   const ctxOverlay = document.getElementById('ctxOverlay');
   const ctxCard = document.getElementById('ctxCard');
-  const ctxSegColor = { messages: 'var(--accent)', system: 'color-mix(in srgb, var(--accent) 60%, transparent)', tools: 'color-mix(in srgb, var(--accent) 36%, transparent)', free: 'rgba(127,127,127,.28)' };
+  const ctxSegColor = { messages: 'var(--accent)', system: 'color-mix(in srgb, var(--accent) 60%, transparent)', tools: 'color-mix(in srgb, var(--accent) 36%, transparent)', mcp: 'color-mix(in srgb, var(--accent) 20%, transparent)', free: 'rgba(127,127,127,.28)' };
   let ctxOpen = false;
   // The cache-read line (below the breakdown). Only appears once a turn has reported usage. Distinguishes
   // reading from the prefix cache (the win), priming it (first turn writes it), and no caching at all.
@@ -2477,7 +2508,7 @@
     const used = ctxState.input, limit = ctxState.limit;
     const pct = Math.min(100, Math.round(used / limit * 100));
     const level = pct >= 92 ? 'crit' : pct >= 80 ? 'warn' : 'ok';
-    ctxCard.innerHTML = ctxCardHtml(used, limit, ctxSegments(used, limit, ctxState.system, ctxState.tools), pct, level, ctxState.cacheRead);
+    ctxCard.innerHTML = ctxCardHtml(used, limit, ctxSegments(used, limit, ctxState.system, ctxState.tools, ctxState.mcpTools), pct, level, ctxState.cacheRead);
     const nb = ctxCard.querySelector('#ctxNewBtn'); if (nb){ nb.onclick = () => { vscode.postMessage({ type: 'newChat' }); closeCtx(); }; }
     // Go busy SYNCHRONOUSLY on click, not on the compactStart round-trip — otherwise a fast double-click
     // slips a second 'compact' through before 'busy' is set, and the second's stale-recheck failure would
@@ -2512,10 +2543,11 @@
     const used = (d && typeof d.input === 'number') ? d.input : (ctxState ? ctxState.input : 0);
     const system = (d && typeof d.system === 'number') ? d.system : (ctxState ? ctxState.system : 0);
     const tools = (d && typeof d.tools === 'number') ? d.tools : (ctxState ? ctxState.tools : 0);
+    const mcpTools = (d && typeof d.mcpTools === 'number') ? d.mcpTools : (ctxState ? ctxState.mcpTools : 0);
     // cacheRead/cacheWrite are null until the first real turn reports usage → the cache line stays hidden.
     const cacheRead = (d && typeof d.cacheRead === 'number') ? d.cacheRead : (ctxState ? ctxState.cacheRead : null);
     const cacheWrite = (d && typeof d.cacheWrite === 'number') ? d.cacheWrite : (ctxState ? ctxState.cacheWrite : null);
-    ctxState = { input: used, limit: limit, system: system, tools: tools, cacheRead: cacheRead, cacheWrite: cacheWrite };
+    ctxState = { input: used, limit: limit, system: system, tools: tools, mcpTools: mcpTools, cacheRead: cacheRead, cacheWrite: cacheWrite };
     const pct = Math.min(100, Math.round(used / limit * 100));
     const level = pct >= 92 ? 'crit' : pct >= 80 ? 'warn' : 'ok';
     // 1) footer donut — ALWAYS visible (glanceable), click for the breakdown
@@ -2769,6 +2801,7 @@
     histIdx = -1; histDraft = '';
     // Slash commands — handled locally (deterministic, no LLM call).
     if (/^\/skills\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); vscode.postMessage({ type: 'listSkills' }); return; }
+    if (/^\/mcp\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); vscode.postMessage({ type: 'listMcp' }); return; }
     if (/^\/rme\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); addReminder(); return; }
     add('user', render(t)); forceStick(); input.value = ''; auto();
     vscode.postMessage({ type: 'send', text: t });
@@ -3088,6 +3121,66 @@
     note.textContent = (m.reason === 'gone') ? 'That checkpoint is no longer available.' : 'Stop the running agent before restoring a checkpoint.';
     log.appendChild(note); scrollIfStuck(); setTimeout(() => { try { note.remove(); } catch(e){} }, 3500);
   }
+  // `/mcp` — what is configured, what is actually running, and why not.
+  //
+  // Lists CONFIGURED servers, not live ones. The questions this answers are "why is my server not being
+  // used?" and "what is this repo asking to run?", and a list of what is running answers neither: the
+  // interesting server is the one that is absent.
+  function renderMcpList(m){
+    clearEmpty(); clearStatus(); agentBubble = null;
+    const d = document.createElement('div'); d.className = 'msg assistant';
+    let inner = '<div class="role">LevelCode AI</div><div class="body">';
+
+    if (!m.configured){
+      inner += 'No MCP servers configured. Add one under <code>levelcode.ai.mcp.servers</code>, '
+        + 'or commit a <code>.levelcode/mcp.json</code> to a repo — a repo-defined server asks before it starts.';
+    } else {
+      const bits = [ m.configured + ' configured', m.running + ' running' ];
+      if (m.awaitingTrust){ bits.push(m.awaitingTrust + ' awaiting approval'); }
+      inner += '<div class="skhead">' + bits.join(' · ') + '</div><div class="sklist">';
+
+      for (const s of (m.servers || [])){
+        // State, most actionable first: a repo server that has never been approved is not broken, it is
+        // waiting for the user, and saying "not running" alone would send them debugging.
+        let state, cls;
+        if (s.running){ state = 'running'; cls = 'ok'; }
+        else if (s.trusted === false){ state = 'needs approval'; cls = 'warn'; }
+        else { state = 'not started'; cls = 'off'; }
+
+        const counts = s.running
+          ? (s.tools + ' tool' + (s.tools === 1 ? '' : 's')
+             + (s.allowed == null ? '' : ' · ' + s.allowed + ' allow-listed'))
+          : '';
+
+        inner += '<div class="mcprow">'
+          + '<div class="mcptop">'
+            + '<span class="skname">' + esc(s.name) + '</span>'
+            + '<span class="mcpstate ' + cls + '">' + esc(state) + '</span>'
+            + '<span class="mcpsrc">' + esc(s.source === 'settings' ? 'your settings' : (s.origin || 'workspace')) + '</span>'
+          + '</div>'
+          + '<div class="mcpcmd">' + esc(s.commandLine || '') + '</div>'
+          + (counts ? '<div class="skdesc">' + esc(counts) + '</div>' : '')
+          + (s.toolNames && s.toolNames.length
+              ? '<div class="mcptools">' + s.toolNames.map(t => '<code>' + esc(t) + '</code>').join(' ') + '</div>'
+              : '')
+          + '</div>';
+      }
+      inner += '</div>';
+
+      if (m.awaitingTrust){
+        inner += '<div class="skdesc">A repo-defined server starts only after you approve the exact command it would run. '
+          + 'Ask the agent to do something that needs it, and the approval card appears.</div>';
+      }
+    }
+
+    for (const p of (m.problems || [])){
+      inner += '<div class="mcpproblem ' + (p.level === 'error' ? 'bad' : 'warn') + '">' + esc(p.message) + '</div>';
+    }
+
+    d.innerHTML = inner + '</div>';
+    log.appendChild(d); scrollIfStuck();
+  }
+
   function renderSkillsList(m){
     clearEmpty(); clearStatus(); agentBubble = null;
     const d = document.createElement('div'); d.className = 'msg assistant';
@@ -3155,6 +3248,7 @@
     else if (m.type === 'checkpointRestored'){ applyCheckpointRestored(m); }
     else if (m.type === 'checkpointBusy'){ checkpointBusyNotice(m); }
     else if (m.type === 'skillsList'){ renderSkillsList(m); }
+    else if (m.type === 'mcpList'){ renderMcpList(m.mcp || {}); }
     else if (m.type === 'verifyRun'){ addVerifyRun(m); }
     else if (m.type === 'verifyOutput'){ verifyOutputAppend(m); }
     else if (m.type === 'verifyDone'){ verifyDoneFinish(m); }

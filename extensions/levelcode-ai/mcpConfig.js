@@ -592,6 +592,79 @@ function describeMcpLaunch(server) {
 	};
 }
 
+// ---- S5: visibility --------------------------------------------------------
+
+/**
+ * What `/mcp` shows: one row per CONFIGURED server, whether or not it is running.
+ *
+ * Configured-first, not running-first, on purpose. The interesting questions are "why is my server not
+ * being used?" and "what is this repo asking to run?", and both are about servers that are absent from
+ * the live set. A list built from live handles answers neither.
+ *
+ * Pure so it can be tested without the editor: the caller passes what it knows.
+ *
+ * @param {{servers?:Array<object>, problems?:Array<object>, active?:Array<object>,
+ *          policy?:object, trust?:object}} input
+ *   active — from mcpClient.listActive(), optionally carrying `tools` (the raw tools/list result) so
+ *            per-tool allow state can be reported; without it the row still shows a tool count.
+ *   policy — levelcode.ai.mcp.toolPolicy      trust — the G1 workspaceState launch-trust map
+ */
+function summarizeMcp(input) {
+	const o = input || {};
+	const servers = Array.isArray(o.servers) ? o.servers : [];
+	const policy = (o.policy && typeof o.policy === 'object' && !Array.isArray(o.policy)) ? o.policy : {};
+	const trust = (o.trust && typeof o.trust === 'object' && !Array.isArray(o.trust)) ? o.trust : {};
+
+	const live = new Map();
+	for (const a of (Array.isArray(o.active) ? o.active : [])) {
+		if (a && typeof a.name === 'string') { live.set(a.name, a); }
+	}
+
+	const rows = servers.map((s) => {
+		const handle = live.get(s.name);
+		const workspace = s.source !== 'settings';
+		const row = {
+			name: s.name,
+			source: s.source,
+			origin: s.origin,
+			running: !!(handle && handle.alive),
+			// Only meaningful for a repo-authored server; a settings server needs no consent, and
+			// reporting `false` for one would read as "blocked".
+			trusted: workspace ? isLaunchTrusted(s, trust) : null,
+			commandLine: describeMcpLaunch(s).commandLine,
+			tools: handle ? (handle.toolCount || 0) : 0,
+			allowed: null,
+			toolNames: []
+		};
+
+		// Names and allow state come from the SAME functions the agent uses, so the list cannot claim a
+		// tool is allow-listed while runTool refuses it.
+		if (handle && Array.isArray(handle.tools) && handle.tools.length) {
+			const built = buildAgentTools([ { name: s.name, tools: handle.tools } ]);
+			row.tools = built.tools.length;
+			row.toolNames = built.tools.map((t) => t.name);
+			row.allowed = built.tools.filter((t) => {
+				const route = built.routes.get(t.name);
+				return classifyMcpTool(t.name, policy, route && route.annotations).approve === 'allow';
+			}).length;
+		}
+		return row;
+	});
+
+	return {
+		configured: rows.length,
+		running: rows.filter((r) => r.running).length,
+		// Repo-authored servers still waiting on the G1 consent card — the answer to "why is it not
+		// running?" for the case that is a gate rather than a fault.
+		awaitingTrust: rows.filter((r) => r.trusted === false && !r.running).length,
+		servers: rows,
+		problems: (Array.isArray(o.problems) ? o.problems : []).map((p) => ({
+			level: String((p && p.level) || 'warn'),
+			message: String((p && p.message) || '')
+		}))
+	};
+}
+
 function describeMcpCall(name, args, route) {
 	const r = route || {};
 	const fallback = String(name == null ? '' : name).split(NAME_SEPARATOR);
@@ -605,6 +678,6 @@ module.exports = {
 	loadServerConfig, userScopedSetting, namespaceToolName, isNamespacedToolName, assignToolNames,
 	buildAgentTools, safeCopy,
 	toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
-	launchFingerprint, isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch,
+	launchFingerprint, isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch, summarizeMcp,
 	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_ARG_CHARS, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };
