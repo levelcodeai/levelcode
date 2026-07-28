@@ -15,17 +15,20 @@
  *
  *  TRUST: a server entry names A PROCESS TO SPAWN. The user's setting is user-authored. A workspace
  *  file is REPO-authored — i.e. attacker-controlled for any repo you clone — so entries from it are
- *  marked source:'workspace' and MUST NOT be started without explicit consent (the launch gate lives
- *  in a later slice; this module only reports the provenance it needs). For the same reason the
+ *  marked source:'workspace' and MUST NOT be started without explicit consent — the trust-on-first-use
+ *  gate at the bottom of this file (launchFingerprint / isLaunchTrusted / describeMcpLaunch), enforced
+ *  by approveMcpLaunch in agent.js. For the same reason the
  *  user's setting WINS on a name collision: a repo can never shadow a server the user defined.
  *
- *  Pure + dependency-free (path only) — file reading is injected as a readFile callback, so all of it
+ *  Pure + dependency-free (node builtins `path` and `crypto` only) — file reading is injected as a
+ *  readFile callback, so all of it
  *  is unit-testable (test/mcpConfig.test.js) without a filesystem, a child process, or the editor.
  *  Nothing here connects, spawns, or calls anything.
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
 const path = require('path');
+const crypto = require('crypto');
 
 // The agent's built-in tools (agent.js TOOLS). An MCP tool may never shadow one of these.
 const BUILTIN_TOOL_NAMES = [
@@ -487,6 +490,108 @@ function previewArgs(args) {
  * @param {{server?:string, tool?:string, annotations?:object}} [route]
  * @returns {{server:string, tool:string, argsText:string, destructive:boolean, canAllowAlways:boolean}}
  */
+// ---- G1: trust-on-first-use for repo-authored servers ----------------------
+// A `.levelcode/mcp.json` entry names a process to spawn, and the file is attacker-controlled for any
+// repo you clone. These four functions are the launch gate: fingerprint what would be spawned, compare
+// it to what this workspace has already trusted, and describe it for the consent card.
+
+/**
+ * A stable fingerprint of what a server entry would actually EXECUTE.
+ *
+ * Trust is remembered against this, not against the server's NAME, so a repo cannot be granted consent
+ * for `npx @modelcontextprotocol/server-filesystem` and then quietly swap in `sh -c 'curl … | sh'` under
+ * the same name — the fingerprint changes and the user is asked again.
+ *
+ * `env` is included, and that is not padding: `NODE_OPTIONS=--require /tmp/evil.js` turns an innocent
+ * `node` command into arbitrary code execution without touching command or args. Keys are sorted so an
+ * unrelated reordering of the JSON does not spuriously revoke trust.
+ *
+ * SHA-256, NOT the shortHash used for tool-name truncation. shortHash is a 32-bit djb2 variant emitted
+ * as 6 base36 chars — a ~2^31 space, and it is not collision-resistant by design or intent. Here the
+ * attacker both KNOWS the trusted value (they authored the command that earned trust) and controls the
+ * replacement, so they need a second preimage — measured at ~6.8M candidate hashes/sec on one core,
+ * i.e. roughly five minutes of offline work to forge a malicious command that inherits trust. A
+ * truncation helper is the wrong tool for an authorization decision; the cost of a real hash here is
+ * one call per server per run.
+ */
+/**
+ * The launch material, normalized ONCE — what would be executed, in canonical form.
+ *
+ * Shared by launchFingerprint and describeMcpLaunch on purpose. They were normalizing separately, and
+ * they drifted: the fingerprint learned to survive a non-array `args` while the card kept calling
+ * `.map` on it and threw. A consent card and the trust record it produces must describe the same thing,
+ * so they read it from the same place.
+ *
+ * MALFORMED SHAPES COLLAPSE TO `null`, which is the same value an ABSENT field gets. That is
+ * deliberate and conservative: normalizeServer rejects a non-array `args` or non-object `env` long
+ * before a server reaches the gate, so neither is reachable here, and "no usable args" is the honest
+ * reading of both. The command itself always differentiates. (An earlier comment claimed malformed and
+ * absent stayed distinct — they do not, and the tests assert the collapse.)
+ *
+ * Env pairs stay STRUCTURAL — [[k, v]] sorted — never joined into "k=v". Joining is ambiguous:
+ * { 'a': 'b=c' } and { 'a=b': 'c' } both flatten to "a=b=c", a collision handed over for free in the
+ * one place collisions are the threat.
+ */
+function launchMaterial(server) {
+	const s = server || {};
+	const env = (s.env && typeof s.env === 'object' && !Array.isArray(s.env)) ? s.env : null;
+	return {
+		command: String(s.command || ''),
+		args: Array.isArray(s.args) ? s.args.map(String) : null,
+		env: env ? Object.keys(env).sort().map((k) => [k, String(env[k])]) : null
+	};
+}
+
+function launchFingerprint(server) {
+	return crypto.createHash('sha256')
+		.update(JSON.stringify(launchMaterial(server)), 'utf8')
+		.digest('hex');
+}
+
+/**
+ * Has THIS workspace already approved launching exactly this server?
+ *
+ * `store` is a plain `{ serverName: fingerprint }` map held in workspaceState, so trust is per-workspace
+ * by construction: approving a server in one repo says nothing about another repo that happens to
+ * declare a server by the same name.
+ */
+function isLaunchTrusted(server, store) {
+	if (!server || !server.name) { return false; }
+	const known = store && store[server.name];
+	return typeof known === 'string' && known === launchFingerprint(server);
+}
+
+/** Record trust for one server. Pure: returns the new store, so the caller owns persistence. */
+function rememberLaunchTrust(server, store) {
+	const next = safeCopy(store || {});
+	if (server && server.name) { next[server.name] = launchFingerprint(server); }
+	return next;
+}
+
+/**
+ * The consent card's data. docs/MCP.md G1: "shows the literal command line — no summarizing."
+ *
+ * So `commandLine` is the real thing, quoted only where an argument contains a space (otherwise
+ * `--path /a b` reads as two arguments when it is one). Env is surfaced separately as NAME=value,
+ * because it is part of the execution surface the user is consenting to and hiding it would make the
+ * card a half-truth.
+ */
+function describeMcpLaunch(server) {
+	const s = server || {};
+	// Read from launchMaterial, not from `server` directly. Doing its own normalization is what let this
+	// throw on a string `args` (`.map` is not a function) and render `0=e 1=v 2=i 3=l` for a string
+	// `env` — junk on the one card whose whole purpose is showing the user exactly what will run.
+	const material = launchMaterial(s);
+	const quote = (a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a);
+	return {
+		server: String(s.name || ''),
+		origin: String(s.origin || ''),
+		commandLine: [material.command].concat((material.args || []).map(quote)).join(' ').trim(),
+		envLines: (material.env || []).map(([k, v]) => k + '=' + v),
+		fingerprint: launchFingerprint(s)
+	};
+}
+
 function describeMcpCall(name, args, route) {
 	const r = route || {};
 	const fallback = String(name == null ? '' : name).split(NAME_SEPARATOR);
@@ -500,5 +605,6 @@ module.exports = {
 	loadServerConfig, userScopedSetting, namespaceToolName, isNamespacedToolName, assignToolNames,
 	buildAgentTools, safeCopy,
 	toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
+	launchFingerprint, isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch,
 	BUILTIN_TOOL_NAMES, MAX_TOOL_NAME, MAX_TOOL_DESC, MAX_ARG_CHARS, MAX_SERVERS, MAX_TOOLS_PER_SERVER, WORKSPACE_CONFIG_PATH
 };

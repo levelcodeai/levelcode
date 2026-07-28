@@ -108,6 +108,30 @@ A workspace-file config names *a process to spawn*. A hostile repo shipping `.le
 - Servers from **user settings** start without prompting (the user typed them), but are still listed.
 - The consent card shows the literal command line — no summarizing.
 
+**Shipped (S4b).** `approveMcpLaunch` (`agent.js`) gates every non-`settings` server;
+`kind:'mcpLaunch'` renders the card. Trust lives in `workspaceState` under
+`levelcode.ai.mcpLaunchTrust` as `{ serverName: launchFingerprint }`.
+
+Two details the one-line rule above does not carry, both load-bearing:
+
+- **Trust is keyed on the fingerprint of what would RUN, not on the server's name.** Otherwise a repo
+  gets consent for `npx …server-filesystem` and then swaps in `sh -c 'curl … | sh'` under the same
+  name. Changing the command, args, *or* env re-prompts.
+- **`env` is part of that fingerprint**, because it is part of the execution surface:
+  `NODE_OPTIONS=--require /tmp/evil.js` is RCE without touching command or args at all. It is shown on
+  the card for the same reason.
+
+- **The fingerprint is SHA-256**, not the `shortHash` used for tool-name truncation. That helper is a
+  32-bit djb2 emitted as 6 base36 chars (~2^31), and here the attacker knows the trusted value — they
+  authored the command that earned trust — and controls the replacement, so a second preimage *is* the
+  attack. Measured at ~6.8M candidate hashes/sec on one core, that is roughly five minutes of offline
+  work to forge a malicious command that inherits trust. Env pairs are encoded structurally
+  (`[[k, v]]`, sorted) rather than joined into `k=v`, which would make `{'a': 'b=c'}` and `{'a=b': 'c'}`
+  collide for free.
+
+The gate **fails closed**: with no webview there is nobody to ask, so the server does not start. A
+headless or test context must never be the path that silently spawns a repo's process.
+
 ### G2 — Per-call approval
 Every MCP tool call goes through `ctx.approve({ kind: 'mcp', … })` by default. The webview branches on
 `kind` (`chat.html:1440-1466`), so this needs a third card variant showing **server · tool · arguments**.
@@ -153,8 +177,10 @@ today, `agent.js:40`, `:65`); the MCP router goes immediately before the `unknow
 (`agent.js:442`) — the one line every MCP call necessarily passes; an `agentTool` chip announces the
 servers, mirroring the project-rules chip (`agent.js:493`).
 
-**S4 — trust + approval UX.** The `kind:'mcp'` approval card, the G1 trust-on-first-use flow, and the
-autopilot policy. This is the slice that must not be skipped to "get it working."
+**S4 — trust + approval UX. DONE.** The slice that must not be skipped to "get it working."
+- **S4a** — the `kind:'mcp'` per-call approval card and the autopilot policy (G2, G3).
+- **S4b** — the G1 trust-on-first-use launch gate, which is what finally lets a `.levelcode/mcp.json`
+  server start at all. With it, every gate in §4 is enforced.
 
 **S5 — visibility.** `/mcp` slash command (a near-copy of `/skills`: `chat.html:2124` →
 `extension.js:1297`), and an `mcp` segment in the context-usage popover (`contextUsage` already carries a

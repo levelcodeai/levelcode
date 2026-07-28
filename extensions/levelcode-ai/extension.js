@@ -792,6 +792,21 @@ function isPlainObject(v) {
 	return proto === Object.prototype || proto === null;
 }
 
+// G1 launch trust for repo-authored MCP servers: { serverName: launchFingerprint }.
+// workspaceState keeps it scoped to this workspace, so trusting a server in one repo grants nothing in
+// another. safeCopy on the way out because it round-trips through stored JSON.
+const MCP_TRUST_KEY = 'levelcode.ai.mcpLaunchTrust';
+
+function mcpLaunchTrust() {
+	try { return safeCopy(ctx.workspaceState.get(MCP_TRUST_KEY, {}) || {}); } catch { return {}; }
+}
+
+async function saveMcpLaunchTrust(store) {
+	try { await ctx.workspaceState.update(MCP_TRUST_KEY, safeCopy(store || {})); } catch (e) {
+		dbg('mcp.launch.persistFailed', { error: String((e && e.message) || e) });
+	}
+}
+
 async function mcpAllowAlways(name) {
 	// isNamespacedToolName owns the rule (mcpConfig.js), rather than a second regex here: this used to
 	// hand-roll one that required a `__` separator, which REJECTED names namespaceToolName legitimately
@@ -1109,8 +1124,13 @@ async function agentFlow(text) {
 			// application-scoped in package.json; this is the defense-in-depth half. See userScopedSetting.
 			mcp: {
 				servers: userScopedSetting(cfg.inspect('mcp.servers'), {}),
-				toolPolicy: userScopedSetting(cfg.inspect('mcp.toolPolicy'), {})
+				toolPolicy: userScopedSetting(cfg.inspect('mcp.toolPolicy'), {}),
+				// G1 trust for repo-authored servers. workspaceState, NOT settings: consenting to a
+				// server in one repo must say nothing about another repo that declares one by the
+				// same name, and workspaceState is per-workspace by construction.
+				launchTrust: mcpLaunchTrust()
 			},
+			rememberMcpTrust: saveMcpLaunchTrust,
 			contextLimit: contextLimitFor(req.providerId, capsModel(req.model)), // Auto → flagship window; the model SENT stays req.model
 			openPreview: openPreview,           // background server advertised a local URL → show it in-editor
 			commandStops: commandStops,         // runId → stop() (process-group kill); used by Stop button / ■

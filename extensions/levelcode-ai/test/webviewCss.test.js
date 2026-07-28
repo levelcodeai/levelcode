@@ -131,4 +131,40 @@ test('a checkpoint restore prunes step maps and drops a group whose DOM was remo
 	assert.ok(/function pruneDetached\(map\)\{[^}]*\.card/.test(html), 'pruneDetached also follows step.card');
 });
 
+// ---- G1 launch-consent card ----
+// The card standing between "open a repo" and "run its command". Static assertions, matching how the
+// rest of this file tests chat.html: the DOM cannot be booted here (no acquireVsCodeApi), but these are
+// the invariants that break silently.
+
+test('the mcpLaunch card is reachable and uses the pendingApproval contract the keyboard handler reads', () => {
+	assert.ok(/kind === 'mcpLaunch'/.test(html), 'addApproval dispatches on the new kind');
+	assert.ok(/kind === 'mcpLaunch'[\s\S]{0,120}kind === 'mcp'/.test(html),
+		'mcpLaunch is matched BEFORE the plain mcp branch');
+
+	const fn = html.slice(html.indexOf('function addMcpLaunchApproval'),
+		html.indexOf('function addMcpApproval'));
+	assert.ok(fn.length > 200, 'found the card body');
+
+	// The bug this pins: the keydown handler calls pendingApproval.done(true|false). A card that
+	// publishes {approve, skip} instead throws on Enter — on a card whose Enter means "spawn this
+	// repo's process". Two shapes exist in this file, so the wrong one is easy to copy.
+	assert.ok(/pendingApproval = \{ done \}/.test(fn), 'publishes { done }, which is what keydown calls');
+	assert.ok(!/pendingApproval = \{ approve/.test(fn), 'must not publish the {approve, skip} shape');
+});
+
+test('the mcpLaunch card shows the literal command and offers no always-allow', () => {
+	const fn = html.slice(html.indexOf('function addMcpLaunchApproval'),
+		html.indexOf('function addMcpApproval'));
+
+	// docs/MCP.md G1: "shows the literal command line — no summarizing."
+	assert.ok(/esc\(m\.commandLine/.test(fn), 'the command line is rendered (escaped)');
+	assert.ok(/m\.envLines/.test(fn), 'env is surfaced — it is executable surface, not decoration');
+	assert.ok(/askdanger/.test(fn), 'carries the trust warning');
+
+	// Trust is remembered against a fingerprint of THIS command, so approval is already durable. A
+	// vaguer "always allow this server" button would blur exactly what was consented to.
+	assert.ok(!/mcp-always/.test(fn), 'no always-allow button on the launch card');
+	assert.ok(/remember: false/.test(fn), 'never rides the tool-policy remember path');
+});
+
 console.log('webviewCss: ' + n + ' tests passed');

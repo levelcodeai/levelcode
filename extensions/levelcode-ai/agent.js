@@ -17,7 +17,8 @@ const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
 const { loadProjectRules } = require('./projectRules');
-const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall } = require('./mcpConfig');
+const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
+	isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch } = require('./mcpConfig');
 const { connectAll, getServer } = require('./mcpClient');
 
 const SYSTEM_BASE = [
@@ -545,6 +546,56 @@ function isAgentAuthError(e) {
  *
  * Never throws: MCP is an enhancement, and no server misconfiguration may take down an agent run.
  */
+/**
+ * G1 launch gate for ONE repo-authored server. Returns true if it may be spawned.
+ *
+ * Trust is per workspace and keyed on the fingerprint of what would run, so a repo that was approved
+ * once cannot later swap the command, args, or env under the same server name — that reads as a new
+ * server and asks again.
+ *
+ * Fails CLOSED. With no webview there is nobody to ask, so the server does not start; a headless or
+ * test context must never be the path that spawns a repo's process silently.
+ */
+async function approveMcpLaunch(ctx, server, dbg) {
+	const store = (ctx.mcp && ctx.mcp.launchTrust) || {};
+	if (isLaunchTrusted(server, store)) {
+		dbg('mcp.launch.trusted', { server: server.name });
+		return true;
+	}
+
+	const card = describeMcpLaunch(server);
+	if (typeof ctx.approve !== 'function') {
+		dbg('mcp.launch.nonInteractive', { server: server.name });
+		ctx.post({ type: 'agentTool', icon: 'shield', text: '🔌 mcp · "' + server.name + '" not started — repo-defined servers need approval, and there is no prompt in this context' });
+		return false;
+	}
+
+	dbg('mcp.launch.prompt', { server: server.name, fingerprint: card.fingerprint });
+	const approved = await ctx.approve({
+		kind: 'mcpLaunch',
+		server: card.server,
+		origin: card.origin,
+		commandLine: card.commandLine,
+		envLines: card.envLines
+	});
+
+	if (!approved) {
+		dbg('mcp.launch.declined', { server: server.name });
+		ctx.post({ type: 'agentTool', icon: 'shield', text: '🔌 mcp · "' + server.name + '" not started (declined)' });
+		return false;
+	}
+
+	// Remembered only on approval, and only for this workspace. Best-effort: failing to persist means
+	// the user is asked again next run, which is the safe direction to fail.
+	if (typeof ctx.rememberMcpTrust === 'function') {
+		try { await ctx.rememberMcpTrust(rememberLaunchTrust(server, store)); } catch (e) {
+			dbg('mcp.launch.rememberFailed', { server: server.name, error: String((e && e.message) || e) });
+		}
+	}
+	ctx.post({ type: 'agentTool', icon: 'check', text: '🔌 mcp · trusted "' + server.name + '" for this workspace' });
+	return true;
+}
+
 async function setupMcp(ctx, wsFolders, dbg) {
 	const empty = { tools: [], routes: null };
 	const cfg = ctx.mcp || {};
@@ -557,11 +608,13 @@ async function setupMcp(ctx, wsFolders, dbg) {
 		for (const p of problems) { dbg('mcp.config', p); }
 		if (!servers.length) { return empty; }
 
-		const deferred = servers.filter((s) => s.source !== 'settings');
-		if (deferred.length) {
-			ctx.post({ type: 'agentTool', icon: 'shield', text: '🔌 mcp · ' + deferred.length + ' workspace server(s) not started — repo-defined servers need an approval step that ships later' });
-		}
+		// G1. Settings servers start unprompted — the user typed them. Repo-authored ones go through
+		// trust-on-first-use, per server, per workspace, keyed on what they would actually spawn.
 		const trusted = servers.filter((s) => s.source === 'settings');
+		for (const s of servers.filter((s) => s.source !== 'settings')) {
+			const ok = await approveMcpLaunch(ctx, s, dbg);
+			if (ok) { trusted.push(s); }
+		}
 		if (!trusted.length) { return empty; }
 
 		// Connecting is up-front work: the tool list must be complete before turn one, so there is no
