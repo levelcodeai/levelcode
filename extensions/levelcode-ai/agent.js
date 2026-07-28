@@ -699,6 +699,16 @@ async function runAgent(ctx) {
 	// Recomputed only when MCP actually contributed tools, so the no-MCP path keeps the module constant
 	// and pays nothing for a feature it isn't using.
 	const toolsTokensEst = mcp.tools.length ? Math.round(JSON.stringify(tools).length / 4) : TOOLS_TOKENS_EST;
+	// The MCP SHARE of that, reported separately so the context popover can show what these servers cost
+	// (docs/MCP.md S5). Every tool schema rides EVERY turn, so a chatty server is a standing tax on the
+	// window rather than a one-off — and until it has its own segment, that cost is invisible.
+	//
+	// Measured as the difference between the two tool arrays rather than by serializing mcp.tools alone:
+	// the JSON delimiters between entries belong to the total, and attributing them consistently is what
+	// keeps `tools` and `mcpTools` summing to the number the bar already draws.
+	const mcpToolsTokensEst = mcp.tools.length
+		? Math.max(0, toolsTokensEst - Math.round(JSON.stringify(TOOLS).length / 4))
+		: 0;
 
 	const messages = ctx.messages;
 	let step = 0;
@@ -826,7 +836,7 @@ async function runAgent(ctx) {
 				if (turn.usage.cost_micros != null) { runCostMicros += turn.usage.cost_micros; }
 				if (turn.usage.credits_remaining_micros != null) { ctx.credits = turn.usage.credits_remaining_micros; }
 				dbg('usage', { input: turn.usage.input_tokens, output: turn.usage.output_tokens, cacheRead: turn.usage.cache_read_input_tokens, cumulativeOutput: cumulativeOutputTokens, costMicros: turn.usage.cost_micros, creditsLeftMicros: turn.usage.credits_remaining_micros });
-				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: toolsTokensEst, cacheRead: turn.usage.cache_read_input_tokens || 0, cacheWrite: turn.usage.cache_creation_input_tokens || 0 });
+				ctx.post({ type: 'contextUsage', input: (turn.usage.input_tokens || 0) + (turn.usage.cache_read_input_tokens || 0) + (turn.usage.cache_creation_input_tokens || 0), output: turn.usage.output_tokens || 0, limit: ctx.contextLimit || 200000, model: ctx.model, system: systemTokensEst, tools: toolsTokensEst, mcpTools: mcpToolsTokensEst, cacheRead: turn.usage.cache_read_input_tokens || 0, cacheWrite: turn.usage.cache_creation_input_tokens || 0 });
 			}
 
 			// Reasoning models (e.g. Kimi K2.7 Code) emit <think>…</think> inline in the text

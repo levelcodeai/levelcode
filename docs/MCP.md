@@ -182,9 +182,17 @@ servers, mirroring the project-rules chip (`agent.js:493`).
 - **S4b** — the G1 trust-on-first-use launch gate, which is what finally lets a `.levelcode/mcp.json`
   server start at all. With it, every gate in §4 is enforced.
 
-**S5 — visibility.** `/mcp` slash command (a near-copy of `/skills`: `chat.html:2124` →
-`extension.js:1297`), and an `mcp` segment in the context-usage popover (`contextUsage` already carries a
-`tools:` field, `agent.js:618`) so users can see what these servers cost them in context.
+**S5 — visibility. DONE.**
+- **`/mcp`** lists CONFIGURED servers, not running ones — the questions it answers are "why is my
+  server not being used?" and "what is this repo asking to run?", and a list of live handles answers
+  neither. Each row: state (`running` / `needs approval` / `not started`), provenance, the literal
+  command, and — when live — tool names with their allow-list state, derived from the same
+  `buildAgentTools` + `classifyMcpTool` the agent uses, so the list can never claim a tool is allowed
+  while `runTool` refuses it. `summarizeMcp()` is pure and unit-tested.
+- **An `MCP tools` segment** in the context-usage popover, carved OUT of the existing `Tools` slice
+  rather than added alongside it: `tools` already counts every schema, so adding would double-count and
+  the bar would stop summing to `used`. Hidden entirely when no server contributed one. Every tool
+  schema rides every turn, so this is the standing cost a chatty server imposes, and it was invisible.
 
 **S6 — later.** Streamable HTTP transport + the `2026-07-28` revision; resources/prompts; a
 "Manage MCP servers…" QuickPick on the `pickModel` pattern (`extension.js:1165-1228`).
