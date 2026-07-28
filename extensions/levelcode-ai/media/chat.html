@@ -3132,7 +3132,7 @@
     let inner = '<div class="role">LevelCode AI</div><div class="body">';
 
     if (!m.configured){
-      inner += 'No MCP servers configured. Add one under <code>levelcode.ai.mcp.servers</code>, '
+      inner += 'No MCP servers configured. Add one with <b>Manage servers…</b> below, '
         + 'or commit a <code>.levelcode/mcp.json</code> to a repo — a repo-defined server asks before it starts.';
     } else {
       const bits = [ m.configured + ' configured', m.running + ' running' ];
@@ -3177,7 +3177,13 @@
       inner += '<div class="mcpproblem ' + (p.level === 'error' ? 'bad' : 'warn') + '">' + esc(p.message) + '</div>';
     }
 
+    // `/mcp` answers "what is going on"; every follow-up from here — add one, remove one, take back an
+    // approval — lives in the QuickPick. Without this link that command is only findable by name.
+    inner += '<div class="skdesc"><a href="#" class="mcpmanage">Manage servers…</a></div>';
+
     d.innerHTML = inner + '</div>';
+    const manage = d.querySelector('.mcpmanage');
+    if (manage){ manage.onclick = (e) => { e.preventDefault(); vscode.postMessage({ type: 'manageMcp' }); }; }
     log.appendChild(d); scrollIfStuck();
   }
 

@@ -120,6 +120,11 @@
         "category": "LevelCode"
       },
       {
+        "command": "levelcode.ai.manageMcp",
+        "title": "AI: Manage MCP Servers…",
+        "category": "LevelCode"
+      },
+      {
         "command": "levelcode.ai.sketch",
         "title": "AI: Agent Sketch…",
         "category": "LevelCode",
