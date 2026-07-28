@@ -226,27 +226,33 @@ function namespaceToolName(server, tool) {
  * It lives here, beside the function whose output it describes, because the caller was hand-rolling its
  * own regex, and two copies of one naming rule is how they drift apart.
  *
- * Deliberately does NOT require the `__` separator, however much the `server__tool` shape invites it.
- * When a server's name alone reaches the cap, truncation cuts INSIDE that first segment and the
- * hash-tagged result carries no separator at all:
+ * namespaceToolName emits exactly two SHAPES, and this accepts those two and nothing else:
+ *
+ *   1. `server__tool` — the separator survives whenever the joined name fits the cap.
+ *   2. `<57 chars>_<6-char hash>` — the truncated form, always exactly MAX_TOOL_NAME long.
+ *
+ * Shape 2 is why a plain "must contain `__`" test is wrong: when a server's name ALONE reaches the cap,
+ * the cut lands inside that first segment and the result carries no separator at all —
  *
  *   namespaceToolName('s'.repeat(70), 'tool')  ->  'sss…sss_a1b2c3'   // 64 chars, no '__'
  *
- * Requiring it would reject a name this module itself produced, and "Always allow" would then silently
- * do nothing for that server. The alphabet and the length are the real guarantee — they are what makes a
- * name safe to write into settings — so those are what this checks.
+ * — so requiring one rejects a name this module itself produced, and "Always allow" then silently does
+ * nothing for that server. Checking the two shapes keeps that case legal while still refusing a bare
+ * `read_file` or `x`.repeat(64), which namespacing can never emit and which would only sit inert in the
+ * policy map.
  *
- * UNSAFE_KEYS is then rejected EXPLICITLY. The separator requirement used to exclude `__proto__` by
- * accident (it has no non-underscore character before its `__`); dropping that requirement takes the
- * accident with it, since underscores are otherwise legal. Stating it outright means the protection no
- * longer depends on an unrelated rule staying a certain shape.
+ * UNSAFE_KEYS is rejected EXPLICITLY rather than left to fall out of the shape rules, so the protection
+ * does not depend on an unrelated rule keeping a particular form.
  */
+const HASH_TAGGED = /_[0-9a-z]{6}$/;   // shortHash is base36, lower-case, padded to 6
+
 function isNamespacedToolName(name) {
-	return typeof name === 'string'
-		&& name.length > 0
-		&& name.length <= MAX_TOOL_NAME
-		&& UNSAFE_KEYS.indexOf(name) === -1
-		&& /^[A-Za-z0-9_-]+$/.test(name);
+	if (typeof name !== 'string') { return false; }
+	if (name.length === 0 || name.length > MAX_TOOL_NAME) { return false; }
+	if (UNSAFE_KEYS.indexOf(name) !== -1) { return false; }
+	if (!/^[A-Za-z0-9_-]+$/.test(name)) { return false; }
+	return name.indexOf(NAME_SEPARATOR) !== -1                       // shape 1
+		|| (name.length === MAX_TOOL_NAME && HASH_TAGGED.test(name));  // shape 2
 }
 
 /**

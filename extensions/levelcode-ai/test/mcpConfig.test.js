@@ -566,15 +566,54 @@ test('PERSIST: accepts every name namespaceToolName can produce', () => {
 	assert.ok(M.isNamespacedToolName(noSeparator));
 });
 
+test('PERSIST: every name namespaceToolName can emit validates — swept, not sampled', () => {
+	// isNamespacedToolName is deliberately strict, and the failure mode of being too strict is SILENT:
+	// "Always allow" writes nothing and the user is simply asked again forever. A handful of examples
+	// cannot cover the boundary where truncation starts, so sweep both segment lengths across it.
+	let checked = 0;
+	let sawTruncated = 0;
+	let sawNoSeparator = 0;
+
+	for (let s = 1; s <= 80; s++) {
+		for (const t of [1, 2, 7, 30, 63, 64, 90]) {
+			const name = M.namespaceToolName('s'.repeat(s), 't'.repeat(t));
+			assert.ok(LEGAL.test(name), 'precondition: emitted name must be provider-legal: ' + name);
+			assert.ok(M.isNamespacedToolName(name),
+				'rejected a name namespaceToolName produced (server=' + s + ', tool=' + t + '): ' + name);
+			checked++;
+			if (name.length === M.MAX_TOOL_NAME) { sawTruncated++; }
+			if (!name.includes('__')) { sawNoSeparator++; }
+		}
+	}
+
+	// Assert the sweep actually reached the interesting regions, so it cannot quietly become vacuous.
+	assert.ok(checked > 500, 'swept a meaningful space');
+	assert.ok(sawTruncated > 0, 'the sweep must include truncated names');
+	assert.ok(sawNoSeparator > 0, 'the sweep must include the separator-less truncation case');
+});
+
 test('PERSIST: rejects prototype-pollution keys, junk, and unbounded names', () => {
 	for (const bad of ['__proto__', 'constructor', 'prototype']) {
 		assert.ok(!M.isNamespacedToolName(bad), bad + ' must never become a settings key');
 	}
 	assert.ok(!M.isNamespacedToolName('x'.repeat(M.MAX_TOOL_NAME + 1)), 'must be bounded by MAX_TOOL_NAME');
-	assert.ok(M.isNamespacedToolName('x'.repeat(M.MAX_TOOL_NAME)), 'the cap itself is legal');
 	for (const bad of ['', 'has space', 'semi;colon', 'quote"', 'slash/es', null, undefined, 42, {}, []]) {
 		assert.ok(!M.isNamespacedToolName(bad), 'must reject ' + JSON.stringify(bad));
 	}
+});
+
+test('PERSIST: rejects safe-looking names that namespacing can never emit', () => {
+	// Length and alphabet alone are not the contract. These are all "safe" strings, but none can come
+	// out of namespaceToolName, so none belongs in the tool-policy map — an entry like `read_file` would
+	// just sit there inert, looking like it did something.
+	assert.ok(!M.isNamespacedToolName('read_file'), 'a built-in name is not an MCP tool name');
+	assert.ok(!M.isNamespacedToolName('abc'), 'no separator, not the truncated shape');
+	assert.ok(!M.isNamespacedToolName('x'.repeat(M.MAX_TOOL_NAME)),
+		'exactly at the cap but with no hash tag — truncation always appends one');
+	assert.ok(!M.isNamespacedToolName('x'.repeat(57) + '_ABCDEF'),
+		'the hash tag is lower-case base36; upper-case is not a shape this module emits');
+	assert.ok(!M.isNamespacedToolName('short_a1b2c3'),
+		'a hash-looking tail only counts at exactly MAX_TOOL_NAME, which is the only way truncation ends');
 });
 
 test('PERSIST: safeCopy drops the keys that reach the prototype setter', () => {
