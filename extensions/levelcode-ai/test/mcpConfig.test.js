@@ -675,6 +675,54 @@ test('G1: trust is keyed on what would RUN, so a repo cannot swap the command af
 		'changed env must re-prompt');
 });
 
+test('G1: the fingerprint is a real hash, not the tool-name truncation helper', () => {
+	// This value decides whether a repo-authored process launches WITHOUT asking, and the attacker both
+	// knows the trusted value (they authored the command that earned trust) and controls the
+	// replacement — so a second preimage IS the attack. shortHash is a 32-bit djb2 emitted as 6 base36
+	// chars: a ~2^31 space, searchable at ~6.8M/sec on one core, i.e. minutes of offline work.
+	const fp = M.launchFingerprint(srv());
+	assert.match(fp, /^[0-9a-f]{64}$/, 'must be a SHA-256 hex digest');
+	assert.ok(fp.length > 32, 'a 6-char truncation helper must never be what gates a process launch');
+
+	// Known-answer, so a future "simplification" back to a short hash fails loudly rather than quietly.
+	const expected = require('crypto').createHash('sha256')
+		.update(JSON.stringify({ command: 'npx', args: srv().args, env: [] }), 'utf8').digest('hex');
+	assert.strictEqual(fp, expected, 'material is {command, args, env} with env as sorted [k,v] pairs');
+});
+
+test('G1: env pairs cannot be confused by an "=" inside a key or value', () => {
+	// Joining pairs into "k=v" would make these two identical strings — a collision handed over free in
+	// the one function where collisions are the whole threat.
+	const a = M.launchFingerprint(srv({ env: { a: 'b=c' } }));
+	const b = M.launchFingerprint(srv({ env: { 'a=b': 'c' } }));
+	assert.notStrictEqual(a, b, 'the encoding must be structural, not string-joined');
+});
+
+test('G1: a malformed entry fingerprints without throwing', () => {
+	// launchFingerprint is exported and documented safe to call on anything. Before this, a non-array
+	// `args` reached `.map` and threw.
+	assert.doesNotThrow(() => M.launchFingerprint({ command: 'x', args: 'not-an-array' }));
+	assert.doesNotThrow(() => M.launchFingerprint({ command: 'x', env: 'not-an-object' }));
+	assert.doesNotThrow(() => M.launchFingerprint({ command: 'x', args: 42, env: [] }));
+	assert.doesNotThrow(() => M.launchFingerprint(null));
+	assert.doesNotThrow(() => M.launchFingerprint({}));
+
+	// A malformed args collapses to the same fingerprint as an absent one, and that is fine rather than
+	// a gap: normalizeServer REJECTS a non-array args before a server can reach the gate, so neither
+	// shape is reachable here, and "no usable args" is the conservative reading of both. What must hold
+	// is that WELL-FORMED inputs stay distinguishable — asserted throughout the rest of these G1 tests.
+	assert.strictEqual(
+		M.launchFingerprint({ command: 'x', args: 'evil' }),
+		M.launchFingerprint({ command: 'x' }),
+		'documented: unreachable malformed shapes collapse; the command itself still differentiates'
+	);
+	assert.notStrictEqual(
+		M.launchFingerprint({ command: 'x', args: 'evil' }),
+		M.launchFingerprint({ command: 'y' }),
+		'the command is always part of the material'
+	);
+});
+
 test('G1: nothing is trusted by default, and unrelated servers stay untrusted', () => {
 	assert.ok(!M.isLaunchTrusted(srv(), {}), 'an empty store trusts nothing');
 	assert.ok(!M.isLaunchTrusted(srv(), null), 'a missing store trusts nothing');

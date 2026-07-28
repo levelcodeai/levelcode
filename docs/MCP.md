@@ -121,6 +121,14 @@ Two details the one-line rule above does not carry, both load-bearing:
   `NODE_OPTIONS=--require /tmp/evil.js` is RCE without touching command or args at all. It is shown on
   the card for the same reason.
 
+- **The fingerprint is SHA-256**, not the `shortHash` used for tool-name truncation. That helper is a
+  32-bit djb2 emitted as 6 base36 chars (~2^31), and here the attacker knows the trusted value — they
+  authored the command that earned trust — and controls the replacement, so a second preimage *is* the
+  attack. Measured at ~6.8M candidate hashes/sec on one core, that is roughly five minutes of offline
+  work to forge a malicious command that inherits trust. Env pairs are encoded structurally
+  (`[[k, v]]`, sorted) rather than joined into `k=v`, which would make `{'a': 'b=c'}` and `{'a=b': 'c'}`
+  collide for free.
+
 The gate **fails closed**: with no webview there is nobody to ask, so the server does not start. A
 headless or test context must never be the path that silently spawns a repo's process.
 

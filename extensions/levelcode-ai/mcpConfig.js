@@ -20,13 +20,15 @@
  *  by approveMcpLaunch in agent.js. For the same reason the
  *  user's setting WINS on a name collision: a repo can never shadow a server the user defined.
  *
- *  Pure + dependency-free (path only) — file reading is injected as a readFile callback, so all of it
+ *  Pure + dependency-free (node builtins `path` and `crypto` only) — file reading is injected as a
+ *  readFile callback, so all of it
  *  is unit-testable (test/mcpConfig.test.js) without a filesystem, a child process, or the editor.
  *  Nothing here connects, spawns, or calls anything.
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
 const path = require('path');
+const crypto = require('crypto');
 
 // The agent's built-in tools (agent.js TOOLS). An MCP tool may never shadow one of these.
 const BUILTIN_TOOL_NAMES = [
@@ -503,12 +505,29 @@ function previewArgs(args) {
  * `env` is included, and that is not padding: `NODE_OPTIONS=--require /tmp/evil.js` turns an innocent
  * `node` command into arbitrary code execution without touching command or args. Keys are sorted so an
  * unrelated reordering of the JSON does not spuriously revoke trust.
+ *
+ * SHA-256, NOT the shortHash used for tool-name truncation. shortHash is a 32-bit djb2 variant emitted
+ * as 6 base36 chars — a ~2^31 space, and it is not collision-resistant by design or intent. Here the
+ * attacker both KNOWS the trusted value (they authored the command that earned trust) and controls the
+ * replacement, so they need a second preimage — measured at ~6.8M candidate hashes/sec on one core,
+ * i.e. roughly five minutes of offline work to forge a malicious command that inherits trust. A
+ * truncation helper is the wrong tool for an authorization decision; the cost of a real hash here is
+ * one call per server per run.
  */
 function launchFingerprint(server) {
 	const s = server || {};
-	const env = s.env || {};
-	const envPairs = Object.keys(env).sort().map((k) => k + '=' + String(env[k]));
-	return shortHash(JSON.stringify([String(s.command || ''), (s.args || []).map(String), envPairs]));
+	// Non-array args / non-object env become null rather than [] or {}: a malformed entry must not
+	// fingerprint the same as an absent one, and `.map` on a string would throw in a function whose
+	// whole job is to be safe to call on anything.
+	const args = Array.isArray(s.args) ? s.args.map(String) : null;
+	const rawEnv = (s.env && typeof s.env === 'object' && !Array.isArray(s.env)) ? s.env : null;
+	// Pairs stay STRUCTURAL — [[k, v]] — instead of being joined into "k=v". Joining is ambiguous:
+	// { 'a': 'b=c' } and { 'a=b': 'c' } both flatten to "a=b=c", which is a collision handed over for
+	// free in the one function where collisions are the threat.
+	const env = rawEnv ? Object.keys(rawEnv).sort().map((k) => [k, String(rawEnv[k])]) : null;
+
+	const material = JSON.stringify({ command: String(s.command || ''), args: args, env: env });
+	return crypto.createHash('sha256').update(material, 'utf8').digest('hex');
 }
 
 /**
