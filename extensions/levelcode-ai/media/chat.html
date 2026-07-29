@@ -288,6 +288,14 @@
   .tl { display: flex; gap: 11px; margin: 0 4px; position: relative; }
   .tl-rail { flex: 0 0 22px; position: relative; }
   .tl-rail::before { content: ''; position: absolute; left: 11px; top: 0; bottom: 0; width: 2px; transform: translateX(-1px); background: var(--border); }
+  /* Thread the rail across #log's flex-gap between CONSECUTIVE top-level rows, so a run of tool /
+     approval / group nodes reads as ONE connected line (GitHub/Cursor/Claude-style) instead of the
+     disconnected stubs a per-row rail otherwise leaves — this is what made an MCP run (approval →
+     tool → approval → tool …) look "cut in the middle". A narration bubble between two rows still
+     breaks the rail (intended — a new train of thought). The -12px MUST equal #log's `gap`; it is
+     scoped to #log's DIRECT children so group members (nested .tl rows inside a .groupbody, already
+     contiguous within their own rail) are never touched. */
+  #log > .tl + .tl > .tl-rail::before { top: -12px; }
   .tl-node { position: absolute; left: 0; top: 3px; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
     background: var(--vscode-editor-background, var(--field-bg)); border: 1.5px solid var(--border); color: var(--muted); z-index: 1; }
   .tl-node .ci { width: 12px; height: 12px; }
@@ -1849,12 +1857,25 @@
   function addAgentLine(icon, text, label, kind, path){
     clearEmpty(); clearStatus();
     const st = chipStep(icon, text, label, kind, path); st.status = 'done';
-    const d = document.createElement('div'); d.className = 'tl tl-tool';
     // Inside a group the row reads as the model's sentence ("Read the runAgent call site"); the raw
     // tool text stays as the tooltip so the underlying path/query is never lost.
     const shown = (groupsOn && st.base) ? st.base : String(text || '');
-    d.innerHTML = '<div class="tl-rail"><span class="tl-node">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span></div>'
+    const rowHtml = '<div class="tl-rail"><span class="tl-node">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span></div>'
       + '<div class="tl-body"><span class="toolt" title="' + escAttr(text || '') + '">' + esc(shown) + '</span></div>';
+    // MCP: an APPROVED tool call's run-node folds INTO the approval chip that gated it (mcpMergePending,
+    // set in addMcpApproval) so the pair is ONE row — Copilot-style — instead of "Approved …" plus a
+    // separate "🔌 …". An allow-listed call has no pending chip and renders its own node below; a
+    // skipped call never posts a node at all.
+    if (kind === 'mcp' && mcpMergePending){
+      mcpMergePending.className = 'tl tl-tool';
+      mcpMergePending.innerHTML = rowHtml;
+      mcpMergePending = null;
+      scrollIfStuck();
+      return;
+    }
+    mcpMergePending = null;   // any other timeline row closes a stale merge window
+    const d = document.createElement('div'); d.className = 'tl tl-tool';
+    d.innerHTML = rowHtml;
     groupAppend(d, st);
     scrollIfStuck();
   }
@@ -1894,6 +1915,10 @@
   // I being asked", which is exactly what it is for. On decision it collapses to a one-line verdict;
   // the live run card follows with the output.
   let pendingApproval = null;   // { done } while a decision is awaited — Enter approves, Esc skips
+  // An APPROVED MCP tool call's run-node folds into the approval chip that gated it (set in
+  // addMcpApproval's done(), consumed in addAgentLine) so the call is ONE timeline row, not "Approved …"
+  // plus a separate "🔌 …". Null except in the brief window between granting approval and the node arriving.
+  let mcpMergePending = null;
   // MCP tool call (S4) — its own card: server · tool · arguments, so the user sees exactly what a
   // third-party tool is about to do. Args are shown in full (capped host-side): that IS the decision.
   // G1 consent card: a repo-authored .levelcode/mcp.json wants to SPAWN A PROCESS. This is the one
@@ -1982,6 +2007,9 @@
         '<div class="cmdhead"><span class="cmdverb">' + verb + '</span>'
         + '<span class="cmdchips"><code>' + esc(m.server || '') + '</code><code>' + esc(m.tool || '') + '</code></span>'
         + '<span class="cmdstate ' + (approved ? 'ok' : 'bad') + '">' + codicon(approved ? 'check-circle' : 'circle-slash') + '</span></div>';
+      // Approved → the tool runs next and posts its own run-node; hand THIS row to it so the two merge
+      // into one line (addAgentLine). Skipped → nothing runs, so the chip stays as the record.
+      mcpMergePending = approved ? card : null;
       forceStick();
     };
     card.querySelector('.approve').onclick = () => done(true, false);   // Allow once (primary)
@@ -3238,7 +3266,7 @@
     else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
     else if (m.type === 'mode'){ applyMode(!!m.agent); }
     else if (m.type === 'autopilot'){ applyAutopilot(!!m.on); }
-    else if (m.type === 'agentStart'){ closeGroup(); setStreaming(true); agentBubble = null; agentRaw = ''; turnLabeled = false; renderPlan([]); setAgentStatus('thinking…'); }
+    else if (m.type === 'agentStart'){ closeGroup(); setStreaming(true); agentBubble = null; agentRaw = ''; turnLabeled = false; mcpMergePending = null; renderPlan([]); setAgentStatus('thinking…'); }
     else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); }
     else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
     else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
