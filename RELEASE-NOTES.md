@@ -1,29 +1,45 @@
-# LevelCode v1.0.2
+# LevelCode v1.0.4
 
-A UI-polish release. The model picker is **name-forward** instead of a wall of detail, a finished plan **folds away** on its own, and the footer shed a redundant chip.
+The big one: **the agent can now use external tools over MCP** — a filesystem server, GitHub, Postgres, an internal company server — alongside its own built-in tools, with a security model that treats an MCP server as exactly what it is: arbitrary code that runs with your privileges. Plus autopilot now honors a changed step limit live.
 
 ## Highlights
 
-### A cleaner model picker
+### Bring your own tools, over MCP
 
-Picking a model used to mean reading three technical fields per row — the raw id (`anthropic/claude-opus-5`), the context size, and a `6.67× credits · 1000K ctx · ≈103 turns left` second line. Handy for debugging, noise for choosing. Each model is now a single, **name-forward** line: just the name, an active check, and a lock on "coming soon" models — the way Cursor and Claude Code present them.
+Point LevelCode at any [Model Context Protocol](https://modelcontextprotocol.io) server and its tools join the agent's own — namespaced `server__tool`, usable by every model LevelCode supports, with no code to write. This first release speaks **stdio** (a server you run as a local subprocess), which covers the overwhelming majority of servers and sidesteps the remote-transport spec churn landing this year; remote/HTTP servers come later.
 
-Your plan and remaining credits still sit in the picker's header, so the number that matters isn't lost; only the per-row debug detail is gone. Type to filter by model name.
+You declare a server in one of two places, and they are trusted differently on purpose:
 
-### A finished plan cleans up after itself
+- **`levelcode.ai.mcp.servers`** (your own settings) — you typed it, so it starts.
+- **`.levelcode/mcp.json`** (committed in a repo) — read and listed, but it **never starts on its own**.
 
-When the agent works from a checklist, a completed plan used to sit fully expanded in the sticky bar — a large part of the panel — long after the run had ended. Now, matching how Claude Code and Cursor handle a finished plan:
+### Security is the feature, not a footnote
 
-- **It auto-collapses** to its green header the moment every item is done: still there, still one click to expand, just no longer hogging the view.
-- **A dismiss (×)** closes it outright — and also clears a plan left **stranded by a run that was stopped or errored**. It's keyboard-operable (Tab to it, Enter / Space to close), like the other controls in the plan bar.
+Spawning an MCP server is at least as dangerous as running a shell command, so every edge is gated:
 
-### A slimmer footer
+- **A launch gate for repo servers.** A `.levelcode/mcp.json` server asks before it ever runs, showing you the **literal command, arguments, and environment** — no summarizing. Approve once and it's remembered, but trust is bound to a **SHA-256 fingerprint of exactly what would run**: change the command, an argument, *or* an env var and it asks again — so a repo can't get `npx …server-filesystem` approved and then quietly swap in `curl … | sh` under the same name. With no window to ask in (a headless or test context) it **fails closed** and simply doesn't start.
+- **Every tool call asks by default**, showing server · tool · arguments before it runs.
+- **Autopilot doesn't relax this.** MCP tools are third-party code, so autopilot still prompts for them — the *only* thing that grants a silent run is your own per-tool allow-list (`"github__list_issues": "allow"`). A server's own "this is safe" hint grants nothing on its own; its "this is destructive" hint forces a prompt regardless.
 
-Dropped the redundant home-icon **"LevelCode Cloud"** chip from the status bar. The mode-and-plan chip on the right (`Gateway · Pro+`, `BYO key`, `Direct · no key`) already tells you where your requests go.
+### Manage MCP servers without touching JSON
+
+A new **`AI: Manage MCP Servers…`** command (and a link at the foot of `/mcp`) lets you:
+
+- **Add or remove a server** through a prompt instead of hand-editing settings — it writes your global settings only, never a repo's, so adding one can never weaken the launch gate above. The arguments box takes a real command line and splits it quote-aware, so `-y @modelcontextprotocol/server-filesystem "/Users/me/My Documents"` stays one path.
+- **Revoke trust** you granted a repo server, per server or workspace-wide — the missing other half of "trust on first use," which used to be a write-once decision.
+- **See a stale approval for what it is** — a server whose command changed since you approved it now reads `command changed — needs approval`, not a bland "not started," because that gap is exactly the attack the launch gate exists to stop.
+
+### See what's configured with `/mcp`
+
+`/mcp` lists every **configured** server — running or not — with its state, where it came from, its exact command, and (once live) its tools and whether each is allow-listed. It answers the two questions you actually have — *why isn't my server being used?* and *what is this repo asking to run?* — that a list of only-running servers can't. The context-usage popover now also breaks out an **MCP tools** line, so the standing per-turn cost of a chatty server is no longer invisible.
+
+### Autopilot honors a changed step limit, live
+
+Raising **Maximum tool-use steps** mid-run now takes effect on the very next step, instead of being frozen at the value from when the goal started — so bumping it from 25 to 1000 when autopilot pauses at "step limit" actually lets it keep going.
 
 ## Test coverage
 
-- **24 suites** across the bundled extensions, all green on every release.
-- These are webview / picker UI changes, so they're verified by parsing the shipped `chat.html` — every script block, plus the `webviewCss` and `creditFormat` suites that read it — rather than by snapshot.
+- **27 suites** across the bundled extensions, all green.
+- The MCP core is pure, testable modules by design: config merge + tool-name namespacing + the approval policy (`mcpConfig`), the launch fingerprint and trust logic, and the `/mcp` + manage-servers row builders are all unit-tested **without spawning a process or opening the editor** — in the same two-corpus style the command-danger classifier uses, where the test banner states the load-bearing direction.
 
-**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.1...v1.0.2
+**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.3...v1.0.4
