@@ -218,6 +218,36 @@ Awwwards juries read the empty states. Ours have quiet personality without cuten
 
 ---
 
+### 4.9 Lifecycle — seal · done · archive · delete (and why never "remove on complete")
+
+Completion is where a naïve design does real harm, so it gets its own model. **Two independent axes, and conflating them is the trap:**
+
+- **Run state** (derived, automatic) — what the *agent* did last: `done · interrupted · error · resumed-from-summary`. This is the state pill (§4.2). Never user-set.
+- **Lifecycle state** (user intent) — what *you* decided about the session: `active → done/archived → trashed`. This is "completion."
+
+A session can be run-state `interrupted` yet lifecycle `done` (you gave up on it and filed it away). The two are drawn differently and never merged into one chip.
+
+**Four verbs, three of them cheap:**
+
+1. **Seal** (automatic — *not* completion). New Chat finalizes the *live* session (index write, async title). A sealed session is still **Active**. Seal just means "no longer the one you're typing into"; it is not a judgment that the work is done.
+2. **Done / Archive** (the completion action). You mark a session complete: it **leaves the Active list** — the decluttering that is the entire point — and enters **Archive**, where it stays **fully searchable and resumable**. Reversible in one click. Implemented as a `{"kind":"label","lifecycle":"archived","t":…}` event **appended** to the JSONL — no file move, no rewrite — so it is crash-safe and greppable like everything else.
+3. **Delete** (separate, heavier, recoverable). Moves the file to the **OS trash** — never `unlink` — and drops it from the index. For junk or privacy. Rare, because Archive already absorbs the clutter.
+4. **Pin** (orthogonal). Keep a session prominent regardless of age; a pinned session is **exempt from auto-archive**.
+
+**The best-practice call: archive on complete, never remove.** Removing a session when a user "finishes" it destroys the one thing the feature exists to provide — the ability to return to *how* you solved something. "I shipped the fix" is not "erase the record of it." Worse, an *irreversible* completion makes people afraid to mark done, so they never declutter and the feature fails at its single job. Storage is plain text and effectively free; there is no space pressure to delete. Every mature analog agrees: Gmail archives and trashes as separate acts; Arc auto-archives tabs; Linear and Things keep a completed view rather than deleting. So — **Done = archive (reversible); Delete = a deliberate, separate, recoverable act.**
+
+**Manual, plus opt-in smart-auto:**
+
+- **Manual Done** is primary — a checkmark on the card (`d`), a **bulk archive** for a day of one-offs, and a gentle offer at New-Chat seal *only* for short, clearly-finished one-offs (*"Archive this quick one?"* — dismissible, never forced).
+- **Auto-archive** (`sessions.autoArchiveDays`, default **30**, `0` = off) — a session untouched for the window auto-archives, Arc-style, keeping Active fresh with zero janitorial work. It is **honest** (the card reads `archived · inactive 30d`), **exempts pinned**, and **never deletes**.
+- **Never auto-delete.** Automatic destruction without consent is the one thing we don't do. An optional `sessions.trashArchivedAfterDays` (default `0` / off) exists for the rare aggressive-cleanup user — and even it only *trashes* (recoverable), only *archived*, never *pinned*.
+
+**Reversibility everywhere:** archiving raises a toast with **Undo** (`⌘Z`); resuming an archived session offers *"reopen"* (un-archive); delete is trash, not unlink (spine §retention — one level of oops-protection).
+
+**UI:** the panel shows **Active** by default; a scope pill toggles **Archive** (with its count — *"142 archived"*) and **Trash**. Archived cards render dimmed and re-activate inline. Card actions become **Resume · Done · Rename · Fork · Export · Delete** (`⏎ · d · r · f · e · ⌫`). The run-state pill and a small lifecycle glyph (active / archived) stay visually distinct.
+
+**The one call that is genuinely yours:** whether auto-archive ships **on at 30 days** (my recommendation — it is the Arc magic that keeps the list alive for free) or **opt-in, off** (more conservative). And the verb: I lean **"Done"** (the decluttering framing users reach for) with *archive* as the mechanism underneath.
+
 ## 5. Signature interactions & motion (the differentiators)
 
 Each is specific, cheap, and reduced-motion-safe:
@@ -293,6 +323,7 @@ The webview never reads JSONL directly for the list — it reads this index (fas
   | `⌃⌘P` | switcher (fuzzy jump) |
   | `↑ ↓` | move selection |
   | `⏎` | resume · `⇧⏎` fork · `⌘⏎` split |
+  | `d` | mark **done** (archive) · `⇧d` un-archive |
   | `r` `f` `e` `⌫` | rename · fork · export · delete (on focused card) |
   | `⌘F` | focus search · `⌘\` compact toggle |
   | `esc` | close (restores composer focus) |
