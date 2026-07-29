@@ -508,7 +508,9 @@ async function runTool(tu, ctx) {
 						+ 'continue without it, or tell the user what you needed it for.';
 				}
 			}
-			ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🔌 ' + route.server + ' · ' + route.tool });
+			// kind:'mcp' lets the webview fold this run-node into the approval chip that gated it (one row
+			// instead of "Approved …" + "🔌 …"); harmless for an allow-listed call, which has no chip to fold into.
+			ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🔌 ' + route.server + ' · ' + route.tool, kind: 'mcp' });
 			return await server.call(route.tool, input);   // never throws — failures come back as `ERROR: …`
 		}
 		return 'ERROR: unknown tool ' + tu.name;

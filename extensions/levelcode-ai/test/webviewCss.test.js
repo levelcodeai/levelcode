@@ -184,4 +184,34 @@ test('the /mcp command is wired end to end and lists CONFIGURED servers', () => 
 	assert.ok(/mcpcmd/.test(html) && /overflow-wrap: anywhere/.test(html), 'and wraps rather than truncating');
 });
 
+test('the timeline rail bridges the #log gap between consecutive rows (offsets stay in sync)', () => {
+	// The rail is drawn per-row (.tl-rail::before spans ONE row). #log stacks rows with a flex `gap`,
+	// so a run of tool/approval/group nodes only reads as one connected line if each consecutive row's
+	// rail is pulled UP by exactly that gap. Drift re-breaks it: a smaller bridge leaves the "cut in
+	// the middle" MCP-run stubs; a larger one paints the rail through an intended narration break.
+	const gap = css.match(/#log\s*\{[^}]*?\bgap:\s*(\d+)px/);
+	assert.ok(gap, '#log declares a flex gap');
+	const bridge = css.match(/#log\s*>\s*\.tl\s*\+\s*\.tl\s*>\s*\.tl-rail::before\s*\{\s*top:\s*-(\d+)px/);
+	assert.ok(bridge, 'consecutive top-level .tl rows bridge the gap (scoped to #log > direct children)');
+	assert.strictEqual(bridge[1], gap[1], 'the rail-bridge offset must equal #log gap, or the rail drifts');
+});
+
+test('an approved MCP tool call folds its run-node into the approval chip (one row, not two)', () => {
+	// Removes the redundancy where a manually-approved MCP call showed BOTH an "Approved …" chip AND a
+	// separate "🔌 server · tool" node. It is a three-part handshake; break any leg and the pair splits
+	// back into two rows (or folds into a stale chip):
+	//   1. agent.js tags the run-node kind:'mcp' so the webview can recognise it,
+	//   2. addMcpApproval arms the fold ONLY on approval (a skip keeps its own chip as the record),
+	//   3. addAgentLine folds a kind==='mcp' node into that pending row, and clears the window otherwise.
+	const agent = fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8');
+	assert.ok(/type: 'agentTool'[^}]*route\.tool[^}]*kind: 'mcp'/.test(agent), 'agent.js posts the MCP run-node with kind:mcp');
+
+	const done = html.slice(html.indexOf('function addMcpApproval'), html.indexOf('function addApproval'));
+	assert.ok(/mcpMergePending = approved \? card : null/.test(done), 'addMcpApproval arms the fold only when approved');
+
+	const line = html.slice(html.indexOf('function addAgentLine'), html.indexOf('function setAgentStatus'));
+	assert.ok(/kind === 'mcp' && mcpMergePending/.test(line), 'addAgentLine folds an MCP node into the pending chip');
+	assert.ok(/mcpMergePending = null;/.test(line), 'and closes a stale merge window on any other row');
+});
+
 console.log('webviewCss: ' + n + ' tests passed');
