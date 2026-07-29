@@ -109,14 +109,12 @@ Reached by the **clock icon** in the chat header, `⇧⌘H`, or `LevelCode: Chat
 ├────────────────────────────────────────────────┤
 │  TODAY                                          │   ← time buckets, mono uppercase
 │  ┌──────────────────────────────────────────┐  │
-│  │ Idempotent refunds via Redis keys      ★  │  │   ← session card (see 4.2)
-│  │ 2h ago · Opus 5 · 41 turns · ⣀⣠⣴⣶ ▏       │  │
-│  │ refund.rb  redis_lock.rb  +3   · ✓ done   │  │
+│  │ Idempotent refunds via Redis keys       ★ │  │   ← minimal card (see 4.2)
+│  │ refund.rb · 2h                            │  │
 │  └──────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────┐  │
+│ ⚠┌──────────────────────────────────────────┐  │   ← 2px left-edge = interrupted (only marker)
 │  │ Debug the flaky payment webhook test      │  │
-│  │ 5h ago · Kimi K2.7 · 12 turns · ⣀⣄⡀       │  │
-│  │ webhook_spec.rb  · ⚠ interrupted          │  │
+│  │ webhook_spec.rb · 5h                       │  │
 │  └──────────────────────────────────────────┘  │
 │  YESTERDAY                                      │
 │  …                                              │
@@ -124,29 +122,44 @@ Reached by the **clock icon** in the chat header, `⇧⌘H`, or `LevelCode: Chat
 ```
 
 - **Time buckets:** Today / Yesterday / This week / Earlier (then by month). Sticky bucket headers on scroll. This is how a human actually remembers work ("that was Tuesday"), and it beats a flat reverse-chron list.
-- **Density:** default is the rich card above. A **compact** toggle (`⌘\`) collapses to a single mono line (title · time · turns) for users who prefer Copilot-terseness — respecting that some people want the dropdown. The preference persists.
+- **Density:** the default is the calm two-line card (§4.2); hover/focus expands it to the rich detail, and a **compact** toggle (`⌘\`) drops it to one mono line for Copilot-terseness. Density is a spectrum the user sets; the preference persists.
 - **Virtualized** list (§8) so 5,000 sessions scroll at 60fps.
 - The panel **does not steal the conversation** — it slides over it from the right at `--mo-base`, and the conversation stays warm underneath (dimmed 40%), so dismissing feels like closing a drawer, not navigating away.
 
-### 4.2 The session card — information design
+### 4.2 The session card — minimal at rest, rich on demand
 
-This is the piece Cursor doesn't have. Every field earns its place by helping you recognize the session you want:
+The first draft of this card showed everything at once — title, model, turns, a sparkline, file chips, a state pill. That is *dense*, and dense is noise: on a list of a hundred sessions you scan **titles**, not sparklines. **Awwwards-minimal is not fewer features — it is fewer things visible at once.** So the card has two states, and the richness lives in the second.
 
+**At rest — two lines, one signal, silent when nothing's wrong:**
 ```
 ┌────────────────────────────────────────────────┐
-│  Idempotent refunds via Redis keys           ★ │  ← title (14/600, 1 line, ellipsis); star = pinned
-│  2h ago · Opus 5 · 41 turns · ⣀⣠⣴⣶⣶⣦⣀ ▏        │  ← meta row (11.5 mono): when · model · size · activity sparkline
-│  refund.rb · redis_lock.rb · +3    ✓ done      │  ← files-touched chips (max 2 + overflow) · state pill
+│  Idempotent refunds via Redis keys           ★ │  title owns the card · ★ only when pinned
+│  refund.rb · 2h                                │  one quiet line: primary file it edited · when
 └────────────────────────────────────────────────┘
-        hover ▸ reveals: [Resume ⏎] [Rename] [Fork] [Export] [Delete]
+⚠│ Debug the flaky payment webhook test          │  a 2px left-edge is the ONLY state marker,
+ │ webhook_spec.rb · 5h                           │  and only when noteworthy (here: interrupted)
 ```
+- **Title owns the card** — 14px/500, one line, ellipsis, full title on hover. It is 90% of recognition; give it the room.
+- **One quiet meta line** — muted mono: the single highest-signal cue, **the primary file it edited**, + relative time (`refund.rb · 2h`). A chat-only session with no edits reads just `2h ago`. No model, no turn count, no sparkline, no chip row at rest.
+- **State is silent when normal.** A `done` session shows *nothing* — "done" is the default, and a `✓ done` on every row is pure noise. Only a noteworthy run-state surfaces, as a **2px colored left-edge**: `⚠` interrupted (`--cc-warn`), `✕` error (`--cc-danger`), `↻` resumed-from-summary (accent). **Absence means it finished.** One move, and ~90% of cards lose a chip.
+- **Pin (★)** appears only when pinned — a small accent star, right-aligned; otherwise absent.
 
-- **Title** — auto-generated (cheap-lane, per spine §Titles) or user-renamed. One line, `text-overflow: ellipsis`, full title on hover title-attr.
-- **Activity sparkline** — a ~28px Unicode/`<canvas>` micro-bar of tool-calls-per-turn across the session. It tells you *shape* at a glance: a long ramp (big feature), a short spike (quick fix), a flat line then a cliff (interrupted). No incumbent shows this; it's cheap (the data is already in the JSONL) and instantly legible.
-- **Files-touched chips** — the top 2 files this session *edited* (not read), + `+N` overflow. This is the single most useful recognition cue for developers ("the one that touched `refund.rb`") and is impossible in Cursor's title-only search. Derived from the `agent` edit events already stored.
-- **State pill** — `✓ done` (`--cc-ok`), `⚠ interrupted` (`--cc-warn`), `✕ error` (`--cc-danger`), `↻ resumed-from-summary` (accent). This is the honesty layer as UI. A session that ended mid-run is *marked*, so History never lies about what finished.
-- **Pin (★)** — pinned sessions float to a "Pinned" bucket above Today. For the handful of chats you return to (a long-running refactor, a design thread).
-- **Hover/focus actions** — appear inline (not a `…` menu): Resume (primary, ⏎), Rename, **Fork** (see §6), Export as Markdown, Delete. Keyboard: arrow to a card, actions are on `⏎` (resume), `r`, `f`, `e`, `⌫`.
+Calmer than Cursor *and* more useful than Copilot: Copilot gives you title + time, full stop; we add the one cue a developer recognizes work by — *the file it changed* — and a state edge that speaks only when something is off.
+
+**On hover / focus / selection — the card earns its detail:**
+It expands (`--mo-base`) into a third zone, so nothing is lost, only deferred to the moment you're choosing:
+```
+┌────────────────────────────────────────────────┐
+│  Idempotent refunds via Redis keys           ★ │
+│  refund.rb · redis_lock.rb · +3                │  all files it edited
+│  Opus 5 · 41 turns · ⣀⣠⣴⣶⣦⣀            ✓ done │  model · size · sparkline · full state
+│  [Resume ⏎] [Done d] [Rename] [Fork] [⋯]       │  inline actions — no "…" menu
+└────────────────────────────────────────────────┘
+```
+- model, turn count, the **activity sparkline** (drawn-in on expand, §5), all files, the full state, and inline actions (`⏎ d r f e ⌫`). The sparkline still tells you *shape* — a long ramp vs a quick spike vs a cliff — but only when you're looking at that one card, not on every row.
+- Mouse: hover-intent (120ms) so a fast scroll-by doesn't flicker. Keyboard: the focused card *is* the expanded one.
+
+**Compact mode** (`⌘\`) goes further the other way — one mono row of `title · time` — for people who want Copilot-terseness. Density is a spectrum the user sets; the *default* is this calm two-line card, not the dense original.
 
 ### 4.3 The switcher — keyboard-first resume
 
@@ -198,10 +211,39 @@ Resuming is where LevelCode earns the award, because it is the one moment that i
 
 - **What died is said.** If the session had background commands, MCP servers, or a running agent when it was last open, resume renders a quiet **"since you left"** strip: *"3 background processes and 1 MCP server were stopped when this chat was last closed. The agent will re-establish anything it needs."* — turning the spine's honesty events into UI. No incumbent does this; it is the difference between resuming a *state* and resuming a *transcript*.
 
-### 4.6 New Chat — seal & rotate
+### 4.6 New Chat — what "seal" saves when the window goes inactive
 
-- `⌘N` (in-panel) / the `+` in the header. The current session **seals** (final index write, async title if untitled) and a fresh one opens.
-- **The affordance, taught once:** the sealed session doesn't just vanish — its card **flies to the History icon** (a `--mo-base` translate+scale to the clock, then the icon pulses once). First time only, a one-line toast: *"Saved to History (⇧⌘H)."* Dismiss = never shown again. This teaches the entire feature in one gesture, then gets out of the way.
+New Chat is not "clear the screen." It **seals** the current session — a precise finalization — then opens a fresh one, and the window you were in becomes an inactive History entry with *nothing lost that mattered*. "What happens to my work when I switch?" is the question that decides whether people trust New Chat at all, so seal is specified exactly.
+
+**The state ledger — what the live window holds, and where each piece goes on seal:**
+
+| Live-window state | On New Chat (seal) | On resume |
+|---|---|---|
+| Transcript (user / assistant / agent turns) | already appended per-turn; seal **force-flushes** the last one | replayed verbatim (or summarized to fit, §4.5) |
+| Applied file edits (Keep/Undo review) | **kept on disk**; review finalized; session records the era | already in your working tree; era noted |
+| A running agent turn | **confirm first**, then abort → recorded `interrupted` | shown as `⚠`; never auto-resumed |
+| Background commands / MCP servers | **reaped** (killed) → recorded `stopped` | "since you left" strip; agent re-establishes deliberately |
+| Checkpoints (per-turn file-restore) | boundaries recorded; **file-restore is live-only** | shown as markers (no cross-seal rewind — yet) |
+| Composer draft (typed, unsent) | **saved** as a per-session `draft` (not a turn) | **restored into the input box** |
+| Live-session pointer (`workspaceState`) | **moves to the new session** | a window reload re-opens the right one |
+| Model / provider mode | unchanged (these are global, not per-session) | unchanged |
+
+Reading the table top to bottom is the whole design, but three rows deserve their reasoning:
+
+- **A running agent → confirm, don't silently abort.** A mid-run agent may be halfway through editing files, so New Chat asks: *"A run is in progress. Start a new chat? The run stops and this chat is saved to History."* Only on confirm does it abort; the abort is an `interrupted` event, so the sealed card shows `⚠` and resume tells the truth. This is the one place seal pauses to ask — everywhere else it is silent and instant.
+- **Background processes → reaped, never orphaned, never auto-restarted.** Killing them matches today's `newChat()` and avoids leaking processes across sessions; recording them as events is what lets the resumed session's "since you left" strip (§4.5) tell the agent what died, so it re-establishes state on purpose rather than inheriting a half-alive environment.
+- **The composer draft → preserved.** Half-typed text is the cheapest thing to lose and the most annoying; it rides the session file as a non-transcript `draft` and comes back on resume. Small touch, disproportionate goodwill.
+
+**The new session starts clean — deliberately.** Empty transcript, fresh checkpoint sequence, no inherited background state. It keeps only what is *global* (model, provider mode), never per-session context. New Chat is a clean slate **by definition**; if you want continuity you **Resume**, you don't New Chat.
+
+**Three verbs, kept distinct** — the mental model that prevents the "where did my chat go?" panic:
+- **New Chat / Seal** → *this* session freezes into History; a *fresh* one opens.
+- **Resume** → a History session becomes the live one again (§4.5).
+- **Compact** → the *current* session summarizes its own head to keep going *in place* (context management, same session); it does **not** start a new session and does **not** touch History. Seal ≠ Resume ≠ Compact, and the UI labels them so.
+
+**The gesture (taught once).** The sealed session doesn't just vanish — its card **flies to the History icon** (`--mo-base` translate+scale to the clock; the icon pulses once). First time only, a one-line toast: *"Saved to History (⇧⌘H)."* Dismiss = never shown again. One gesture teaches the whole feature, then gets out of the way.
+
+**Multi-window.** Two windows on one project each own their *own* live session; New Chat in one never touches the other. A session file is owned by one window at a time (lockfile beside it, 30s stale timeout, spine §UI); resuming a session already live elsewhere offers a read-only *"open a copy?"* — no merge semantics, ever.
 
 ### 4.7 Empty & edge states — where character lives
 
@@ -246,7 +288,7 @@ A session can be run-state `interrupted` yet lifecycle `done` (you gave up on it
 
 **UI:** the panel shows **Active** by default; a scope pill toggles **Archive** (with its count — *"142 archived"*) and **Trash**. Archived cards render dimmed and re-activate inline. Card actions become **Resume · Done · Rename · Fork · Export · Delete** (`⏎ · d · r · f · e · ⌫`). The run-state pill and a small lifecycle glyph (active / archived) stay visually distinct.
 
-**The one call that is genuinely yours:** whether auto-archive ships **on at 30 days** (my recommendation — it is the Arc magic that keeps the list alive for free) or **opt-in, off** (more conservative). And the verb: I lean **"Done"** (the decluttering framing users reach for) with *archive* as the mechanism underneath.
+**Decided:** auto-archive ships **on, at 30 days** — the Arc magic that keeps History alive for free (`sessions.autoArchiveDays: 30`; pinned exempt; never deletes). The button reads **"Done"**, with *archive* as the mechanism underneath — still a one-line change if a later usability pass prefers "Archive" on the label.
 
 ## 5. Signature interactions & motion (the differentiators)
 
@@ -254,13 +296,13 @@ Each is specific, cheap, and reduced-motion-safe:
 
 1. **Card focus lift** (`--mo-fast`): border → `--cc-accent`, `translateY(-1px)`, soft shadow in. Communicates focusability; the whole list is arrow-navigable.
 2. **Resume morph** (`--mo-morph`): the shared-element card→conversation transition (§4.5). The single most memorable moment; the thing a juror screenshots.
-3. **Sparkline draw-in** (`--mo-base`, staggered 8ms/bar on first paint of a card entering the viewport): the activity bars grow from baseline. Ambient life, not noise; only on enter, never on scroll-back.
+3. **Sparkline draw-in** (`--mo-base`, staggered 8ms/bar **on hover/focus expand**, §4.2): when a card opens to its rich detail the activity bars grow from baseline. It never draws on scroll — the resting row has no sparkline to animate — so a fast scroll stays calm.
 4. **Filter reflow** (`--mo-base`): cards that leave fade+collapse; remaining cards ease to new positions (FLIP). Turns filtering from a repaint into a legible rearrangement.
 5. **Seal-to-history fly** (§4.6): the New Chat teaching moment.
 6. **Search match shimmer** (`--mo-fast`): matched substrings get an accent underline that draws left-to-right — shows *why* a result matched.
 7. **Portal drift** (`7s`, empty state + switcher glyph only): the brand's ambient signature, used with extreme restraint.
 
-Global rule: **nothing animates on scroll** except the one-time sparkline draw-in; scrolling a history of your own work must feel like paper, not a parallax site. Restraint is the awwwards move here, not maximalism.
+Global rule: **nothing animates on scroll at all** — the sparkline lives in the hover-expanded card, not the resting row, so scrolling a history of your own work feels like paper, not a parallax site. Restraint is the awwwards move here, not maximalism.
 
 ---
 
