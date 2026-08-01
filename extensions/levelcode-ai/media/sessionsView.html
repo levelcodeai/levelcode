@@ -25,25 +25,28 @@
   .sessbucket { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 7px; }
   .sessbucket .cnt { letter-spacing: 0; }
   .sessempty { padding: 44px 16px; text-align: center; color: var(--cc-text3); font-size: 13px; line-height: 1.6; }
-  .sesscard { position: relative; background: var(--cc-bg); border: 1px solid var(--cc-line); border-radius: 7px; padding: 9px 11px; margin-bottom: 7px; cursor: pointer; transition: border-color .12s, transform .12s, box-shadow .12s; }
-  .sesscard:hover, .sesscard:focus-visible, .sesscard:focus-within { border-color: var(--cc-accent); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.22); outline: none; }
-  .sesscard.warn { border-left: 2px solid var(--cc-warn); }
-  .sesscard.err { border-left: 2px solid var(--cc-danger); }
-  .sesscard.res { border-left: 2px solid var(--cc-accent); }
-  .sesscard .sesstop { display: flex; align-items: center; gap: 8px; }
-  .sesscard .sessname { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-  .sesscard .sessstar { color: var(--cc-accent); font-size: 13px; }
-  .sesscard .sesssub { margin-top: 3px; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; color: var(--cc-text3); }
-  .sesscard .sessrich { display: none; margin-top: 8px; }
+  /* flat, VS Code-minimal rows: a status dot + title + time, no card box; selection is a subtle full-row tint */
+  .sesscard { position: relative; padding: 7px 8px 8px; margin-bottom: 1px; border-radius: 6px; cursor: pointer; transition: background .1s; }
+  .sesscard:hover { background: color-mix(in srgb, var(--cc-text3) 13%, transparent); }
+  .sesscard:focus-visible { background: color-mix(in srgb, var(--cc-accent) 15%, transparent); outline: none; }
+  .sesscard .sesstop { display: flex; align-items: center; gap: 10px; }
+  .sesscard .sesstop::before { content: ''; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-text3); }
+  .sesscard.warn .sesstop::before { background: var(--cc-warn); }
+  .sesscard.err .sesstop::before { background: var(--cc-danger); }
+  .sesscard.res .sesstop::before { background: var(--cc-accent); }
+  .sesscard .sessname { font-weight: 400; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .sesscard .sessstar { flex: 0 0 auto; color: var(--cc-accent); font-size: 12px; }
+  .sesscard .sesssub { margin: 2px 0 0 16px; font-size: 12px; color: var(--cc-text3); }
+  .sesscard .sessrich { display: none; margin: 6px 0 0 16px; }
   .sesscard:hover .sessrich, .sesscard:focus-within .sessrich { display: block; }
   .sesscard .sessfiles { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .sesscard .sesschip { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; color: var(--cc-text2); background: var(--cc-surface); border: 1px solid var(--cc-line); border-radius: 4px; padding: 1px 6px; }
+  .sesscard .sesschip { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; color: var(--cc-text2); background: color-mix(in srgb, var(--cc-text3) 12%, transparent); border-radius: 4px; padding: 1px 6px; }
   .sesscard .sessmeta { display: flex; align-items: center; gap: 7px; margin-top: 6px; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; color: var(--cc-text3); }
   .sesscard .sessacts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
-  .sesscard .sessbtn { font: inherit; font-size: 11px; color: var(--cc-text); background: var(--cc-surface); border: 1px solid var(--cc-line); border-radius: 5px; padding: 3px 9px; cursor: pointer; }
+  .sesscard .sessbtn { font: inherit; font-size: 11px; color: var(--cc-text2); background: transparent; border: 1px solid var(--cc-line); border-radius: 5px; padding: 2px 8px; cursor: pointer; }
   .sesscard .sessbtn.pri { color: #fff; background: var(--cc-accent); border-color: transparent; }
-  .sesscard .sessbtn:hover { border-color: var(--cc-accent); }
-  @media (prefers-reduced-motion: reduce) { .sesscard { transition: none; } .sesscard:hover, .sesscard:focus-visible, .sesscard:focus-within { transform: none; } }
+  .sesscard .sessbtn:hover { border-color: var(--cc-accent); color: var(--cc-text); }
+  @media (prefers-reduced-motion: reduce) { .sesscard { transition: none; } }
 </style>
 </head>
 <body>
