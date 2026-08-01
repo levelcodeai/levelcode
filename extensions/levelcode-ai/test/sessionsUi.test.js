@@ -133,4 +133,40 @@ test('WIRING: /sessions opens the panel, and a "sessions" message renders real e
 	assert.match(html, /id="sessList"/, 'and its list container');
 });
 
+// ── the Sessions sidebar view (a second WebviewView) ─────────────────────────────────────────────
+
+const pkg = require('../package.json');
+const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+const view = fs.readFileSync(path.join(__dirname, '..', 'media', 'sessionsView.html'), 'utf8');
+
+test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {
+	const grab = (s) => s.slice(s.indexOf('// [SESSIONS-PURE-START]'), s.indexOf('// [SESSIONS-PURE-END]'));
+	assert.ok(grab(view).length > 500, 'the view carries the pure block');
+	assert.strictEqual(grab(view), grab(html), 'the two blocks must be byte-identical, or the two surfaces drift');
+});
+
+test('VIEW: contributed as a second webview view in the levelcodeAi container, with a palette command', () => {
+	const views = (pkg.contributes.views || {}).levelcodeAi || [];
+	const ids = views.map((v) => v.id);
+	assert.ok(ids.includes('levelcodeAi.chat') && ids.includes('levelcodeAi.sessions'), 'both Chat and Sessions views present');
+	assert.strictEqual(views.find((v) => v.id === 'levelcodeAi.sessions').type, 'webview');
+	assert.ok((pkg.contributes.commands || []).some((c) => c.command === 'levelcode.ai.sessions'), 'a Command Palette entry exists');
+});
+
+test('VIEW: extension.js registers the provider and builds the HTML with a nonce/CSP', () => {
+	assert.match(ext, /registerWebviewViewProvider\('levelcodeAi\.sessions', new SessionsViewProvider\(\)/);
+	assert.match(ext, /function getSessionsHtml/);
+	assert.match(ext, /sessionsView\.html/);
+	assert.match(ext, /case 'newSession': newChat\(\)/, 'New Session starts a fresh chat');
+	assert.match(view, /content="__CSP__"/);
+	assert.match(view, /nonce="__NONCE__"/);
+});
+
+test('VIEW: theme-true across the three kinds and reduced-motion-safe', () => {
+	assert.match(view, /:root\s*\{[^}]*--cc-accent:\s*#7d6bff/, 'One Dark defaults');
+	assert.match(view, /body\.vscode-light\s*\{[^}]*--cc-accent:\s*#5b3fd6/, 'One Light');
+	assert.match(view, /body\.vscode-high-contrast[^{]*\{[^}]*--vscode-contrastBorder/, 'high-contrast defers to editor tokens');
+	assert.match(view, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,120}\.sesscard[\s\S]{0,80}transition:\s*none/);
+});
+
 console.log('sessionsUi: ' + n + ' tests passed');

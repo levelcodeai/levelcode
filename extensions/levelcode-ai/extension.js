@@ -1763,6 +1763,38 @@ function getHtml() {
 	return html.replace(/__CSP__/g, csp).replace(/__NONCE__/g, nonce);
 }
 
+// The Sessions sidebar view (History) — a second WebviewView in the levelcodeAi container, so it docks
+// as its own collapsible panel beside Chat. Same render/theming as the /sessions modal (the SESSIONS-PURE
+// block is byte-shared; test/sessionsUi.test.js pins them identical). Until the persistence adapter lands
+// it renders placeholder data; then it will list the real index and act on resume/done/etc.
+class SessionsViewProvider {
+	/** @param {vscode.WebviewView} view */
+	resolveWebviewView(view) {
+		view.webview.options = { enableScripts: true, localResourceRoots: [ctx.extensionUri] };
+		view.webview.html = getSessionsHtml();
+		view.webview.onDidReceiveMessage((msg) => {
+			switch (msg.type) {
+				// TODO(adapter): post the real session index here; until then the view shows its own mock.
+				case 'listSessions': break;
+				case 'newSession': newChat(); vscode.commands.executeCommand('levelcodeAi.chat.focus'); break;
+				// TODO(adapter): resume/done/rename/delete once sessions are persisted.
+				case 'sessionAction': dbg('sessions.action', { action: msg.action, id: msg.id }); break;
+			}
+		});
+	}
+}
+
+function getSessionsHtml() {
+	const nonce = String(Math.random()).slice(2) + String(Date.now());
+	const csp = [
+		"default-src 'none'",
+		"style-src 'unsafe-inline'",
+		"script-src 'nonce-" + nonce + "'"
+	].join('; ');
+	const html = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'sessionsView.html'), 'utf8');
+	return html.replace(/__CSP__/g, csp).replace(/__NONCE__/g, nonce);
+}
+
 // ---- LevelCode Cloud account (sign-in + sync) -------------------------------------------------
 // IMPORTANT: this is a SEPARATE, optional layer. The AI path stays BYO-key / no-backend — the
 // account only syncs settings/skills/profile, never proxies AI or sees your provider keys.
@@ -2006,6 +2038,10 @@ function activate(context) {
 		vscode.window.registerWebviewViewProvider('levelcodeAi.chat', new ChatViewProvider(), {
 			webviewOptions: { retainContextWhenHidden: true }
 		}),
+		vscode.window.registerWebviewViewProvider('levelcodeAi.sessions', new SessionsViewProvider(), {
+			webviewOptions: { retainContextWhenHidden: true }
+		}),
+		vscode.commands.registerCommand('levelcode.ai.sessions', () => vscode.commands.executeCommand('levelcodeAi.sessions.focus')),
 		vscode.window.onDidChangeActiveTextEditor(() => postActiveFile()),
 		vscode.commands.registerCommand('levelcode.ai.focus', () => vscode.commands.executeCommand('levelcodeAi.chat.focus')),
 		vscode.commands.registerCommand('levelcode.customize', () => openCustomize(context)),

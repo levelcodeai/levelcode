@@ -89,6 +89,11 @@
           "id": "levelcodeAi.chat",
           "name": "Chat",
           "type": "webview"
+        },
+        {
+          "id": "levelcodeAi.sessions",
+          "name": "Sessions",
+          "type": "webview"
         }
       ]
     },
@@ -122,6 +127,11 @@
       {
         "command": "levelcode.ai.manageMcp",
         "title": "AI: Manage MCP Servers…",
+        "category": "LevelCode"
+      },
+      {
+        "command": "levelcode.ai.sessions",
+        "title": "AI: Sessions",
         "category": "LevelCode"
       },
       {
