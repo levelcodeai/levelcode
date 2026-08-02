@@ -430,6 +430,17 @@
           "default": true,
           "description": "Let the agent self-select bundled skills (expert playbooks) for matching tasks like code review, bug fixes, and test writing. Each skill is a SKILL.md the agent loads on demand."
         },
+        "levelcode.ai.sessions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Save each chat/agent session to History so you can browse and reopen past work. Sessions are stored as plain-text JSONL files under levelcode.ai.sessions.dir (default ~/.levelcode/sessions), one folder per project, and listed with /sessions or the Sessions panel. Turn off to stop recording new sessions (existing files are left untouched)."
+        },
+        "levelcode.ai.sessions.dir": {
+          "type": "string",
+          "default": "",
+          "description": "Folder to store session History in. Empty = ~/.levelcode/sessions. Each project gets its own subfolder; the files are append-only JSONL you can back up, diff, or delete by hand.",
+          "scope": "machine"
+        },
         "levelcode.ai.verify.enabled": {
           "type": "boolean",
           "default": true,

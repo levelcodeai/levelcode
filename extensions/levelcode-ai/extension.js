@@ -11,6 +11,7 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const cp = require('child_process');
 const crypto = require('crypto');
 const providers = require('./providers/index');
@@ -21,6 +22,8 @@ const { registerLmProvider } = require('./lmProvider');
 const { registerInlineComplete } = require('./inlineComplete');
 const { runAgent } = require('./agent');
 const { findCompactionCut, estimateMsgTokens } = require('./agentMemory');
+const sessionStore = require('./sessionStore');
+const { createSessions } = require('./sessions');
 const { registerReview } = require('./reviewSession');
 const { formatDiagnosticLines, diagKey, createPreviewGate } = require('./verify');
 const { loadSkills, skillsMenu, getSkillBody } = require('./skills');
@@ -636,7 +639,43 @@ function workspaceMapBlock(allFiles) {
 	return 'Project files (paths only, for orientation):\n```\n' + list + '\n```';
 }
 
+// ── Sessions (History) persistence adapter ───────────────────────────────────────────────────────
+// A lazy, per-workspace lifecycle manager (sessions.js) wrapping the pure engine (sessionStore +
+// sessionEvents). It persists every turn to ~/.levelcode/sessions/<project>/ and lists the index for the
+// /sessions modal + the sidebar view. Everything here is best-effort: a persistence failure must never
+// disturb a chat turn — callers guard, and the manager swallows index errors (the index is a rebuildable
+// cache). Off entirely when levelcode.ai.sessions.enabled is false.
+let _sessionsMgr = null, _sessionsSlug = null;
+function sessionsRoot() {
+	const dir = String(aiConfig().get('sessions.dir', '') || '').trim();
+	return dir ? dir : path.join(os.homedir(), '.levelcode', 'sessions');
+}
+/** The session manager for the current workspace, or null (feature off / no folder / init failed). */
+function sessionsManager() {
+	if (!aiConfig().get('sessions.enabled', true)) { return null; }
+	const folder = (vscode.workspace.workspaceFolders || [])[0];
+	if (!folder) { return null; }                       // no workspace → nowhere to scope a project's sessions
+	const projectPath = folder.uri.fsPath;
+	const slug = sessionStore.projectSlug(projectPath);
+	if (_sessionsMgr && _sessionsSlug === slug) { return _sessionsMgr; }
+	try {
+		_sessionsMgr = createSessions({
+			root: sessionsRoot(), slug, projectPath,
+			// A tiny workspaceState-backed pointer to the live session id (a reload can tell what was live;
+			// used later by resume). Namespaced + guarded — a state failure must not break persistence.
+			state: ctx ? { get: (k) => ctx.workspaceState.get('levelcode.ai.session.' + k), set: (k, v) => ctx.workspaceState.update('levelcode.ai.session.' + k, v) } : null
+		});
+		_sessionsSlug = slug;
+	} catch (e) { dbg('sessions.init.error', { msg: String((e && e.message) || e) }); return null; }
+	return _sessionsMgr;
+}
+/** The session index for the current workspace (what the panel/view list). Empty, never throws. */
+function sessionList() { const m = sessionsManager(); return m ? m.list() : []; }
+
 function newChat() {
+	// Seal the outgoing session (its terminal state + a final index row) BEFORE the transcript is cleared,
+	// so it lands in History as a finished session and the next turn opens a fresh one.
+	try { const m = sessionsManager(); if (m) { m.seal('done'); } } catch (e) { dbg('sessions.seal.error', { msg: String((e && e.message) || e) }); }
 	conversation = [];
 	agentMessages = [];
 	checkpoints.length = 0; currentCheckpoint = null;   // drop the per-turn restore stack
@@ -1109,6 +1148,10 @@ async function agentFlow(text) {
 	post({ type: 'checkpointOpened', turnId: currentCheckpoint.turnId });
 	agentMessages.push(goalMsg);
 	trimAgentMemory();
+	// Sessions: mark where THIS turn's messages begin (the goal, post-trim). agentMessages is a trimmed
+	// live window, but a persisted session is the FULL append-only history — so after the run we persist
+	// exactly agentMessages.slice(from here). See sessions.js / recordTurn.
+	const sessTurnStart = agentMessages.indexOf(goalMsg);
 	dbg('agent.start', { provider: req.providerId, model: req.model, maxSteps: cfg.get('agent.maxSteps', 25), transcriptMsgs: agentMessages.length, goalChars: text.length });
 	// Auto-verify: capture a pre-run diagnostics baseline (so we only flag NEW problems) and a fresh
 	// per-run set of edited files to verify afterward.
@@ -1191,6 +1234,13 @@ async function agentFlow(text) {
 		clearQuestions();
 		abort = null;
 		if (currentCheckpoint) { post({ type: 'checkpointClosed', turnId: currentCheckpoint.turnId, fileCount: currentCheckpoint.files.size }); currentCheckpoint = null; }
+		// Sessions: persist this turn's slice (goal + the agent's messages) verbatim. In the finally so an
+		// interrupted or errored turn is recorded too. Best-effort — a persistence failure never surfaces
+		// into the chat, and never re-throws past this turn's own error.
+		try {
+			const m = sessionsManager();
+			if (m && sessTurnStart >= 0) { m.recordTurn(agentMessages.slice(sessTurnStart), req.model); }
+		} catch (e) { dbg('sessions.record.error', { msg: String((e && e.message) || e) }); }
 	}
 }
 
@@ -1725,6 +1775,8 @@ class ChatViewProvider {
 				case 'restoreCheckpoint': dbg('restoreCheckpoint', { turnId: msg.turnId, running: !!abort }); await restoreCheckpoint(msg.turnId); break;
 				case 'listSkills': { const en = aiConfig().get('skills.enabled', true); const idx = en ? loadSkills(ctx.extensionPath, dbg) : new Map(); dbg('listSkills', { enabled: en, count: idx.size }); post({ type: 'skillsList', enabled: en, skills: skillsMenu(idx) }); break; }
 				case 'listMcp': post({ type: 'mcpList', mcp: mcpOverview() }); break;
+				case 'listSessions': post({ type: 'sessions', entries: sessionList(), open: false }); break; // reply into the already-open modal
+				case 'sessionAction': dbg('sessions.action', { action: msg.action, id: msg.id }); break; // TODO(next): resume/done/rename/delete
 				case 'feedback': dbg('feedback', { value: msg.value, model: msg.model }); await recordFeedback(msg.value, msg.model); break;
 				case 'openFile': await openWorkspaceFile(msg.path); break;
 				case 'reviewKeepFile': dbg('review.keep', { id: msg.id }); review.keepFile(msg.id, 'kept'); break;
@@ -1774,10 +1826,11 @@ class SessionsViewProvider {
 		view.webview.html = getSessionsHtml();
 		view.webview.onDidReceiveMessage((msg) => {
 			switch (msg.type) {
-				// TODO(adapter): post the real session index here; until then the view shows its own mock.
-				case 'listSessions': break;
+				// The real session index for this workspace (empty on a fresh install — the view shows its
+				// own empty state). Posted to THIS view's webview, not the chat's.
+				case 'listSessions': view.webview.postMessage({ type: 'sessions', entries: sessionList() }); break;
 				case 'newSession': newChat(); vscode.commands.executeCommand('levelcodeAi.chat.focus'); break;
-				// TODO(adapter): resume/done/rename/delete once sessions are persisted.
+				// TODO(next): resume/done/rename/delete once the read side (planResume + replay) lands.
 				case 'sessionAction': dbg('sessions.action', { action: msg.action, id: msg.id }); break;
 			}
 		});
