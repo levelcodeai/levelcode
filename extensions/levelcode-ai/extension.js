@@ -687,23 +687,32 @@ function sessionList() {
 
 // Push the current list to whichever surfaces are open — the /sessions modal (in the chat webview) and the
 // Sessions sidebar. Called after any lifecycle edit so both stay live.
-function refreshSessions() {
-	const entries = sessionList();
-	try { post({ type: 'sessions', entries, open: false }); } catch (e) { /* chat webview may be closed */ }
-	try { if (sessionsWebview) { sessionsWebview.postMessage({ type: 'sessions', entries }); } } catch (e) { /* sidebar may be closed */ }
+// Post a message to whichever session surfaces are open — the /sessions modal (chat webview) and the
+// Sessions sidebar. Both guarded (either may be closed).
+function postSessions(msg) {
+	try { post(msg); } catch (e) { /* chat webview may be closed */ }
+	try { if (sessionsWebview) { sessionsWebview.postMessage(msg); } } catch (e) { /* sidebar may be closed */ }
 }
+function refreshSessions() { postSessions({ type: 'sessions', entries: sessionList(), open: false }); }
 
-// A card action from either surface. resume reopens the session; done/rename/delete are append-only edits
-// (§4.9): Done archives (reversible, never deletes), Delete soft-trashes, Rename retitles. All refresh both
-// surfaces. Best-effort — a History action must never throw into the UI.
+// A card action from either surface. resume reopens the session; done/delete/rename/pin are append-only edits
+// (§4.9): Done archives (reversible, never deletes), Delete soft-trashes, Rename retitles, Pin toggles.
+// Done/Delete offer an Undo (restore) so an accidental click is recoverable. Best-effort — a History action
+// must never throw into the UI.
 async function handleSessionAction(action, id) {
 	const m = sessionsManager();
 	if (!m || !id) { return; }
 	dbg('sessions.action', { action, id });
 	try {
 		if (action === 'resume') { await resumeSession(id); return; }
-		if (action === 'done') { m.archive(id); refreshSessions(); return; }
-		if (action === 'delete') { m.trash(id); refreshSessions(); return; }
+		if (action === 'done' || action === 'delete') {
+			const title = (m.list().find((e) => e.id === id) || {}).title || 'this session';
+			if (action === 'done') { m.archive(id); } else { m.trash(id); }
+			refreshSessions();
+			postSessions({ type: 'sessionUndo', action, id, title });   // offer to undo — the card just vanished
+			return;
+		}
+		if (action === 'restore') { m.restore(id); refreshSessions(); return; }
 		if (action === 'pin') { const cur = (m.list().find((e) => e.id === id) || {}).pinned; m.setPinned(id, !cur); refreshSessions(); return; }
 		if (action === 'rename') {
 			const cur = (m.list().find((e) => e.id === id) || {}).title || '';

@@ -119,6 +119,8 @@ function createSessions(opts) {
 	function archive(id) { return appendTo(id, events.labelEvent({ lifecycle: 'archived' }, iso())); }
 	/** Soft delete — moves to the `trashed` lifecycle (reversible, append-only; the file is left on disk). */
 	function trash(id) { return appendTo(id, events.labelEvent({ lifecycle: 'trashed' }, iso())); }
+	/** Bring an archived/trashed session back into the active list — the Undo behind Done/Delete. */
+	function restore(id) { return appendTo(id, events.labelEvent({ lifecycle: 'active' }, iso())); }
 	function setPinned(id, on) { return appendTo(id, events.labelEvent({ pinned: !!on }, iso())); }
 	function rename(id, title) {
 		if (title == null || !String(title).trim()) { return false; }
@@ -152,7 +154,7 @@ function createSessions(opts) {
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, setPinned, rename, autoArchiveStale, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, list, liveId };
 }
 
 module.exports = { createSessions };

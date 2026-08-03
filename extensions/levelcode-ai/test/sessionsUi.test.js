@@ -145,6 +145,16 @@ test('HOUSEKEEPING: a Pin toggle on the card, and a 30-day auto-archive sweep on
 	assert.ok(/sessActBtn\('pin'/.test(html) && /sessActBtn\('pin'/.test(view), 'both surfaces render a Pin action');
 });
 
+test('UNDO: Done/Delete offer a recoverable Undo (restore) on both surfaces', () => {
+	assert.match(ext, /type: 'sessionUndo'/, 'the host offers an undo after Done/Delete');
+	assert.match(ext, /action === 'restore'\) \{ m\.restore\(id\)/, 'and handles restore (reverses the lifecycle change)');
+	for (const [name, src, uid] of [['modal', html, 'sessUndo'], ['sidebar', view, 'svUndo']]) {
+		assert.match(src, new RegExp('id="' + uid + '"'), name + ': has an undo toast element');
+		assert.match(src, /m\.type === 'sessionUndo'/, name + ': handles the sessionUndo message');
+		assert.match(src, /action: 'restore'/, name + ': the Undo button posts a restore');
+	}
+});
+
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {
 	const grab = (s) => s.slice(s.indexOf('// [SESSIONS-PURE-START]'), s.indexOf('// [SESSIONS-PURE-END]'));
 	assert.ok(grab(view).length > 500, 'the view carries the pure block');

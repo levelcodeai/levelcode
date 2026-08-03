@@ -1079,6 +1079,12 @@
   .sesspanel .sessbar { display: flex; align-items: center; gap: 9px; padding: 12px 14px 10px; border-bottom: 1px solid var(--cc-line); }
   .sesspanel .sesstitle { font-weight: 600; font-size: 14px; }
   .sesspanel .sesslist { flex: 1 1 auto; overflow-y: auto; padding: 2px 12px 14px; }
+  /* Undo toast pinned at the panel foot after Done/Delete (an accidental click is recoverable). */
+  .sesspanel .sessundo { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 12px 12px; padding: 8px 12px; background: var(--cc-surface); border: 1px solid var(--cc-line); border-radius: 8px; font-size: 12.5px; color: var(--cc-text2); }
+  .sesspanel .sessundo[hidden] { display: none; }
+  .sesspanel .sessundo .ut { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sesspanel .sessundo .ub { flex: 0 0 auto; background: transparent; border: none; color: var(--cc-accent); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+  .sesspanel .sessundo .ub:hover { text-decoration: underline; }
   .sesspanel .sessbucket { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 7px; }
   .sesspanel .sessempty { padding: 44px 18px; text-align: center; color: var(--cc-text3); font-size: 13px; line-height: 1.6; }
   .sesscard { position: relative; background: var(--cc-bg); border: 1px solid var(--cc-line); border-radius: 7px; padding: 9px 11px; margin-bottom: 7px; cursor: pointer; transition: border-color .12s, transform .12s, box-shadow .12s; }
@@ -1231,6 +1237,7 @@
       <button class="ovclose" id="sessClose" title="Close" aria-label="Close">&#10005;</button>
       <div class="sessbar"><span class="sesstitle">Sessions</span></div>
       <div class="sesslist" id="sessList"></div>
+      <div class="sessundo" id="sessUndo" hidden></div>
     </div>
   </div>
 
@@ -3372,6 +3379,15 @@
     renderSessions(); ov.style.display = 'flex';
   }
   function closeSessions(){ const ov = document.getElementById('sessOverlay'); if (ov) { ov.style.display = 'none'; } }
+  // The Undo toast for Done/Delete — a quick, recoverable safety net. Auto-hides after a few seconds.
+  let sessUndoTimer = null;
+  function showUndo(m){
+    const el = document.getElementById('sessUndo'); if (!el) { return; }
+    const verb = m.action === 'delete' ? 'Deleted' : 'Archived';
+    el.innerHTML = '<span class="ut">' + verb + ' “' + esc(m.title || 'session') + '”</span><button class="ub" data-id="' + escAttr(m.id || '') + '">Undo</button>';
+    el.hidden = false;
+    clearTimeout(sessUndoTimer); sessUndoTimer = setTimeout(function(){ el.hidden = true; }, 7000);
+  }
   // Replay a resumed session into the chat: a compact "Resumed" banner (+ the honest summary note, if the
   // transcript was too big to carry verbatim) followed by the readable conversation — user prompts and the
   // assistant's prose, tool plumbing dropped. The host has already reset the log and restored the model's
@@ -3401,6 +3417,12 @@
       const action = btn ? btn.getAttribute('data-act') : 'resume';
       vscode.postMessage({ type: 'sessionAction', action: action, id: id });
       if (action === 'resume') { closeSessions(); }
+    }); }
+    const undo = document.getElementById('sessUndo');
+    if (undo) { undo.addEventListener('click', (e) => {
+      const b = e.target.closest && e.target.closest('.ub'); if (!b) { return; }
+      vscode.postMessage({ type: 'sessionAction', action: 'restore', id: b.getAttribute('data-id') });
+      undo.hidden = true; clearTimeout(sessUndoTimer);
     }); }
     document.addEventListener('keydown', (e) => { const o = document.getElementById('sessOverlay'); if (e.key === 'Escape' && o && o.style.display !== 'none'){ e.preventDefault(); closeSessions(); } });
   })();
@@ -3460,6 +3482,7 @@
     else if (m.type === 'mcpList'){ renderMcpList(m.mcp || {}); }
     else if (m.type === 'sessions'){ sessData = Array.isArray(m.entries) ? m.entries : []; if (m.open === false) { renderSessions(); } else { openSessions(); } }
     else if (m.type === 'sessionResumed'){ resumeTranscript(m); }
+    else if (m.type === 'sessionUndo'){ showUndo(m); }
     else if (m.type === 'verifyRun'){ addVerifyRun(m); }
     else if (m.type === 'verifyOutput'){ verifyOutputAppend(m); }
     else if (m.type === 'verifyDone'){ verifyDoneFinish(m); }

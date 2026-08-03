@@ -176,6 +176,20 @@ test('MANAGER: archive / rename / trash are append-only edits that update the in
 	assert.strictEqual(m.list().find((e) => e.id === id).lifecycle, 'trashed', 'the latest label event wins');
 });
 
+test('MANAGER: restore reverses Done/Delete (the Undo behind them)', () => {
+	const root = freshRoot(), slug = store.projectSlug('/pu');
+	const m = createSessions({ root, slug, projectPath: '/pu' });
+	m.recordTurn([{ role: 'user', content: 'x' }], 'm');
+	const id = m.liveId();
+	m.archive(id);
+	assert.strictEqual(m.list().find((e) => e.id === id).lifecycle, 'archived');
+	m.restore(id);
+	assert.strictEqual(m.list().find((e) => e.id === id).lifecycle, 'active', 'restore brings an archived session back');
+	m.trash(id);
+	m.restore(id);
+	assert.strictEqual(m.list().find((e) => e.id === id).lifecycle, 'active', 'and a trashed one too');
+});
+
 test('MANAGER: autoArchiveStale fades stale, non-pinned sessions and exempts pinned + recent', () => {
 	const root = freshRoot(), slug = store.projectSlug('/aa');
 	const DAY = 86400000;
