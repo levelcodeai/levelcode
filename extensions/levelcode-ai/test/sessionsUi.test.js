@@ -186,4 +186,12 @@ test('VIEW: theme-true across the three kinds and reduced-motion-safe', () => {
 	assert.match(view, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,120}\.sesscard[\s\S]{0,80}transition:\s*none/);
 });
 
+test('NO-JUMP: the hover detail is an absolute drawer on BOTH surfaces (stable row height, not an in-flow expand)', () => {
+	for (const [name, src] of [['modal', html], ['sidebar', view]]) {
+		assert.match(src, /\.sesscard \.sessrich \{[^}]*position: absolute/, name + ': the drawer is absolutely positioned, so revealing it never reflows the row');
+		assert.match(src, /\.sesscard:last-child \.sessrich \{[^}]*bottom:/, name + ': the last row opens upward so the scroll container never clips it');
+		assert.ok(!/\.sesscard \.sessrich \{ display: none;/.test(src), name + ': not the old display:none → block expand that pushed the list around');
+	}
+});
+
 console.log('sessionsUi: ' + n + ' tests passed');

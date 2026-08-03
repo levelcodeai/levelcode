@@ -18,7 +18,7 @@
   .sessview { display: flex; flex-direction: column; height: 100vh; }
   .sessnew { margin: 2px 10px 8px; padding: 7px 10px; background: var(--cc-bg); border: 1px solid var(--cc-line); border-radius: 6px; color: var(--cc-text); font: inherit; font-size: 12.5px; cursor: pointer; text-align: center; }
   .sessnew:hover { border-color: var(--cc-accent); }
-  .sesslist { flex: 1 1 auto; overflow-y: auto; padding: 0 10px 12px; }
+  .sesslist { flex: 1 1 auto; overflow-y: auto; padding: 0 10px 76px; }   /* runway so a down-opening drawer near the end is not clipped */
   .sessbucket { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 7px; }
   .sessbucket .cnt { letter-spacing: 0; }
   .sessempty { padding: 44px 16px; text-align: center; color: var(--cc-text3); font-size: 13px; line-height: 1.6; }
@@ -34,8 +34,18 @@
   .sesscard .sessname { font-weight: 400; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
   .sesscard .sessstar { flex: 0 0 auto; color: var(--cc-accent); font-size: 12px; }
   .sesscard .sesssub { margin: 2px 0 0 16px; font-size: 12px; color: var(--cc-text3); }
-  .sesscard .sessrich { display: none; margin: 6px 0 0 16px; }
-  .sesscard:hover .sessrich, .sesscard:focus-within .sessrich { display: block; }
+  /* Actions/detail float as a hover DRAWER anchored to the card, so the row height never changes and the
+     list no longer jumps when the mouse moves over it. Opens downward; the last row opens upward so the
+     scroll container never clips it. */
+  .sesscard .sessrich { position: absolute; left: 6px; right: 6px; top: calc(100% - 3px); z-index: 30;
+    margin: 0; padding: 8px 10px 9px; background: var(--cc-bg); border: 1px solid var(--cc-line);
+    border-radius: 7px; box-shadow: 0 10px 24px rgba(0,0,0,.30);
+    opacity: 0; visibility: hidden; transform: translateY(-4px); pointer-events: none;
+    transition: opacity .11s ease, transform .11s ease, visibility 0s linear .12s; }
+  .sesscard:hover, .sesscard:focus-within { z-index: 20; }
+  .sesscard:hover .sessrich, .sesscard:focus-within .sessrich { opacity: 1; visibility: visible; transform: none; pointer-events: auto; transition: opacity .11s ease, transform .11s ease; }
+  .sesscard:last-child .sessrich { top: auto; bottom: calc(100% - 3px); transform: translateY(4px); }
+  .sesscard:last-child:hover .sessrich, .sesscard:last-child:focus-within .sessrich { transform: none; }
   .sesscard .sessfiles { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   .sesscard .sesschip { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; color: var(--cc-text2); background: color-mix(in srgb, var(--cc-text3) 12%, transparent); border-radius: 4px; padding: 1px 6px; }
   .sesscard .sessmeta { display: flex; align-items: center; gap: 7px; margin-top: 6px; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; color: var(--cc-text3); }
@@ -43,7 +53,7 @@
   .sesscard .sessbtn { font: inherit; font-size: 11px; color: var(--cc-text2); background: transparent; border: 1px solid var(--cc-line); border-radius: 5px; padding: 2px 8px; cursor: pointer; }
   .sesscard .sessbtn.pri { color: #fff; background: var(--cc-accent); border-color: transparent; }
   .sesscard .sessbtn:hover { border-color: var(--cc-accent); color: var(--cc-text); }
-  @media (prefers-reduced-motion: reduce) { .sesscard { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .sesscard, .sesscard .sessrich { transition: none; } .sesscard .sessrich, .sesscard:last-child .sessrich { transform: none; } }
 </style>
 </head>
 <body>
