@@ -16,7 +16,7 @@ const path = require('path');
 const html = fs.readFileSync(path.join(__dirname, '..', 'media', 'chat.html'), 'utf8');
 const block = html.slice(html.indexOf('// [SESSIONS-PURE-START]'), html.indexOf('// [SESSIONS-PURE-END]'));
 // eslint-disable-next-line no-new-func
-const P = new Function(block + '; return { sessRelTime, sessBucket, sessMatch, sessModelShort, sessSparkSvg, sessGroup, sessCardHtml };')();
+const P = new Function(block + '; return { sessRelTime, sessBucket, sessModelShort, sessSparkSvg, sessGroup, sessCardHtml };')();
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('  ok - ' + name); }
@@ -43,15 +43,6 @@ test('BUCKET: today / yesterday / this week / earlier by local calendar day', ()
 	assert.strictEqual(P.sessBucket(msAgo(20 * 3600), NOW), 'Yesterday');
 	assert.strictEqual(P.sessBucket(msAgo(4 * 86400), NOW), 'This week');
 	assert.strictEqual(P.sessBucket(msAgo(20 * 86400), NOW), 'Earlier');
-});
-
-test('MATCH: search hits title, files, and preview; empty query matches all', () => {
-	const e = { title: 'Refund retries', filesEdited: ['refund.rb'], preview: 'add idempotency' };
-	assert.ok(P.sessMatch(e, ''));
-	assert.ok(P.sessMatch(e, 'refund'), 'title');
-	assert.ok(P.sessMatch(e, 'refund.rb'), 'file — the lead over Cursor');
-	assert.ok(P.sessMatch(e, 'idempotency'), 'preview');
-	assert.ok(!P.sessMatch(e, 'zzz'));
 });
 
 test('GROUP: pinned floats to its own bucket above the time buckets', () => {
@@ -160,6 +151,12 @@ test('VIEW: extension.js registers the provider and builds the HTML with a nonce
 	assert.match(ext, /case 'newSession': newChat\(\)/, 'New Session starts a fresh chat');
 	assert.match(view, /content="__CSP__"/);
 	assert.match(view, /nonce="__NONCE__"/);
+});
+
+test('CAP: the surfaces list at most 30 sessions (no search → a bounded working set), pinned exempt', () => {
+	assert.match(ext, /SESSIONS_SHOWN\s*=\s*30/, 'the displayed list is capped at 30');
+	assert.match(ext, /function sessionList\(\)[\s\S]{0,400}pinned/, 'and a pinned session is never dropped for being old');
+	assert.ok(!/id="sessSearch"|id="svSearch"/.test(html + view), 'neither surface still ships a search field');
 });
 
 test('VIEW: theme-true across the three kinds and reduced-motion-safe', () => {

@@ -1071,8 +1071,6 @@
     --cc-warn: var(--vscode-editorWarning-foreground, var(--vscode-foreground)); --cc-danger: var(--vscode-errorForeground); }
   .sesspanel .sessbar { display: flex; align-items: center; gap: 9px; padding: 12px 14px 10px; border-bottom: 1px solid var(--cc-line); }
   .sesspanel .sesstitle { font-weight: 600; font-size: 14px; }
-  .sesspanel .sesssearch { margin: 10px 12px 6px; display: flex; align-items: center; gap: 7px; padding: 7px 10px; background: var(--cc-bg); border: 1px solid var(--cc-line); border-radius: 6px; color: var(--cc-text3); }
-  .sesspanel .sesssearch input { flex: 1; background: transparent; border: none; outline: none; color: var(--cc-text); font: inherit; font-size: 12.5px; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
   .sesspanel .sesslist { flex: 1 1 auto; overflow-y: auto; padding: 2px 12px 14px; }
   .sesspanel .sessbucket { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 7px; }
   .sesspanel .sessempty { padding: 44px 18px; text-align: center; color: var(--cc-text3); font-size: 13px; line-height: 1.6; }
@@ -1224,7 +1222,6 @@
     <div class="sesspanel" role="dialog" aria-modal="true" aria-label="Sessions">
       <button class="ovclose" id="sessClose" title="Close" aria-label="Close">&#10005;</button>
       <div class="sessbar"><span class="sesstitle">Sessions</span></div>
-      <div class="sesssearch"><span aria-hidden="true">&#8981;</span><input id="sessSearch" type="text" placeholder="Search sessions, files…" aria-label="Search sessions" /></div>
       <div class="sesslist" id="sessList"></div>
     </div>
   </div>
@@ -3298,13 +3295,6 @@
     if (days <= 7) { return 'This week'; }
     return 'Earlier';
   }
-  function sessMatch(entry, q){
-    if (!q) { return true; }
-    const s = String(q).toLowerCase();
-    if (String(entry.title || '').toLowerCase().indexOf(s) >= 0) { return true; }
-    if (String(entry.preview || '').toLowerCase().indexOf(s) >= 0) { return true; }
-    return (entry.filesEdited || []).some((f) => String(f).toLowerCase().indexOf(s) >= 0);
-  }
   function sessModelShort(m){ const s = String(m || ''); const i = s.lastIndexOf('/'); return i >= 0 ? s.slice(i + 1) : s; }
   function sessSparkSvg(spark){
     const a = (Array.isArray(spark) ? spark : []).map((x) => Math.max(0, Number(x) || 0));
@@ -3344,12 +3334,12 @@
     { id: 's2', title: 'Debug the flaky payment webhook test', createdAt: '2026-07-28T05:00:00Z', updatedAt: '2026-07-28T05:30:00Z', turns: 12, model: 'moonshotai/kimi-k2.7-code', state: 'interrupted', lifecycle: 'active', pinned: false, filesEdited: ['webhook_spec.rb'], spark: [2, 6, 3, 1] },
     { id: 's3', title: 'Tidy the CHANGELOG for v1.0.4', createdAt: '2026-07-27T12:00:00Z', updatedAt: '2026-07-27T12:20:00Z', turns: 6, model: 'anthropic/claude-opus-5', state: 'done', lifecycle: 'active', pinned: false, filesEdited: ['RELEASE-NOTES.md'], spark: [1, 2, 1] }
   ];
-  let sessData = null, sessQuery = '';
+  let sessData = null;
   function renderSessions(){
     const list = document.getElementById('sessList'); if (!list) { return; }
-    const entries = (sessData || []).filter((e) => (e.lifecycle || 'active') === 'active' && sessMatch(e, sessQuery));
+    const entries = (sessData || []).filter((e) => (e.lifecycle || 'active') === 'active');
     if (!entries.length){
-      list.innerHTML = '<div class="sessempty">' + (sessQuery ? 'Nothing matches “' + esc(sessQuery) + '”.' : 'Every chat you have is saved here — automatically, on your machine.') + '</div>';
+      list.innerHTML = '<div class="sessempty">Every chat you have is saved here — automatically, on your machine.</div>';
       return;
     }
     const now = Date.now(); let html = '';
@@ -3362,15 +3352,12 @@
   function openSessions(){
     const ov = document.getElementById('sessOverlay'); if (!ov) { return; }
     if (sessData == null) { vscode.postMessage({ type: 'listSessions' }); sessData = MOCK_SESSIONS.slice(); }  // TODO(adapter): drop the mock once extension.js posts 'sessions'
-    sessQuery = ''; const inp = document.getElementById('sessSearch'); if (inp) { inp.value = ''; }
     renderSessions(); ov.style.display = 'flex';
-    if (inp && inp.focus) { try { inp.focus(); } catch (e) {} }
   }
   function closeSessions(){ const ov = document.getElementById('sessOverlay'); if (ov) { ov.style.display = 'none'; } }
   (function wireSessions(){
     const close = document.getElementById('sessClose'); if (close) { close.onclick = closeSessions; }
     const ov = document.getElementById('sessOverlay'); if (ov) { ov.addEventListener('click', (e) => { if (e.target === ov) { closeSessions(); } }); }
-    const inp = document.getElementById('sessSearch'); if (inp) { inp.addEventListener('input', () => { sessQuery = inp.value; renderSessions(); }); }
     const list = document.getElementById('sessList');
     if (list) { list.addEventListener('click', (e) => {
       const card = e.target.closest && e.target.closest('.sesscard'); if (!card) { return; }

@@ -669,8 +669,20 @@ function sessionsManager() {
 	} catch (e) { dbg('sessions.init.error', { msg: String((e && e.message) || e) }); return null; }
 	return _sessionsMgr;
 }
-/** The session index for the current workspace (what the panel/view list). Empty, never throws. */
-function sessionList() { const m = sessionsManager(); return m ? m.list() : []; }
+// The sessions shown in the /sessions modal + the sidebar: the 30 most-recently-touched, plus any pinned
+// session (a pin is never dropped just for being old). Capped because the surfaces carry no search — 30 is
+// a comfortable working set; older/archived work fades out (and stays reachable by resume later).
+const SESSIONS_SHOWN = 30;
+function sessionList() {
+	const m = sessionsManager(); if (!m) { return []; }
+	const all = m.list();
+	if (all.length <= SESSIONS_SHOWN) { return all; }
+	const recent = all.slice().sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+	const shown = recent.slice(0, SESSIONS_SHOWN);
+	const have = new Set(shown.map((e) => e.id));
+	for (const e of recent.slice(SESSIONS_SHOWN)) { if (e.pinned && !have.has(e.id)) { shown.push(e); } }
+	return shown;
+}
 
 function newChat() {
 	// Seal the outgoing session (its terminal state + a final index row) BEFORE the transcript is cleared,
