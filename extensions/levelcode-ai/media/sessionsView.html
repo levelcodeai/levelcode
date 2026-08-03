@@ -18,7 +18,7 @@
   .sessview { display: flex; flex-direction: column; height: 100vh; }
   .sessnew { margin: 2px 10px 8px; padding: 7px 10px; background: var(--cc-bg); border: 1px solid var(--cc-line); border-radius: 6px; color: var(--cc-text); font: inherit; font-size: 12.5px; cursor: pointer; text-align: center; }
   .sessnew:hover { border-color: var(--cc-accent); }
-  .sesslist { flex: 1 1 auto; overflow-y: auto; padding: 0 10px 76px; }   /* runway so a down-opening drawer near the end is not clipped */
+  .sesslist { flex: 1 1 auto; overflow-y: auto; padding: 0 10px 12px; }
   .sessbucket { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 7px; }
   .sessbucket .cnt { letter-spacing: 0; }
   .sessempty { padding: 44px 16px; text-align: center; color: var(--cc-text3); font-size: 13px; line-height: 1.6; }
@@ -26,34 +26,25 @@
   .sesscard { position: relative; padding: 7px 8px 8px; margin-bottom: 1px; border-radius: 6px; cursor: pointer; transition: background .1s; }
   .sesscard:hover { background: color-mix(in srgb, var(--cc-text3) 13%, transparent); }
   .sesscard:focus-visible { background: color-mix(in srgb, var(--cc-accent) 15%, transparent); outline: none; }
-  .sesscard .sesstop { display: flex; align-items: center; gap: 10px; }
+  .sesscard .sesstop { display: flex; align-items: center; gap: 10px; min-height: 20px; }
   .sesscard .sesstop::before { content: ''; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-text3); }
   .sesscard.warn .sesstop::before { background: var(--cc-warn); }
   .sesscard.err .sesstop::before { background: var(--cc-danger); }
   .sesscard.res .sesstop::before { background: var(--cc-accent); }
-  .sesscard .sessname { font-weight: 400; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-  .sesscard .sessstar { flex: 0 0 auto; color: var(--cc-accent); font-size: 12px; }
+  .sesscard .sessname { font-weight: 400; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
   .sesscard .sesssub { margin: 2px 0 0 16px; font-size: 12px; color: var(--cc-text3); }
-  /* Actions/detail float as a hover DRAWER anchored to the card, so the row height never changes and the
-     list no longer jumps when the mouse moves over it. Opens downward; the last row opens upward so the
-     scroll container never clips it. */
-  .sesscard .sessrich { position: absolute; left: 6px; right: 6px; top: calc(100% - 3px); z-index: 30;
-    margin: 0; padding: 8px 10px 9px; background: var(--cc-bg); border: 1px solid var(--cc-line);
-    border-radius: 7px; box-shadow: 0 10px 24px rgba(0,0,0,.30);
-    opacity: 0; visibility: hidden; transform: translateY(-4px); pointer-events: none;
-    transition: opacity .11s ease, transform .11s ease, visibility 0s linear .12s; }
-  .sesscard:hover, .sesscard:focus-within { z-index: 20; }
-  .sesscard:hover .sessrich, .sesscard:focus-within .sessrich { opacity: 1; visibility: visible; transform: none; pointer-events: auto; transition: opacity .11s ease, transform .11s ease; }
-  .sesscard:last-child .sessrich { top: auto; bottom: calc(100% - 3px); transform: translateY(4px); }
-  .sesscard:last-child:hover .sessrich, .sesscard:last-child:focus-within .sessrich { transform: none; }
-  .sesscard .sessfiles { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .sesscard .sesschip { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; color: var(--cc-text2); background: color-mix(in srgb, var(--cc-text3) 12%, transparent); border-radius: 4px; padding: 1px 6px; }
-  .sesscard .sessmeta { display: flex; align-items: center; gap: 7px; margin-top: 6px; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; color: var(--cc-text3); }
-  .sesscard .sessacts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
-  .sesscard .sessbtn { font: inherit; font-size: 11px; color: var(--cc-text2); background: transparent; border: 1px solid var(--cc-line); border-radius: 5px; padding: 2px 8px; cursor: pointer; }
-  .sesscard .sessbtn.pri { color: #fff; background: var(--cc-accent); border-color: transparent; }
-  .sesscard .sessbtn:hover { border-color: var(--cc-accent); color: var(--cc-text); }
-  @media (prefers-reduced-motion: reduce) { .sesscard, .sesscard .sessrich { transition: none; } .sesscard .sessrich, .sesscard:last-child .sessrich { transform: none; } }
+  /* Row actions: compact icon buttons on the right, revealed on hover — no drawer, so the row never reflows
+     or floats over its neighbours. sesstop reserves the icon height (min-height) so the appearing icons
+     don't nudge the line. The pin stays visible at rest when pinned. */
+  .sesscard .sessacts { display: none; align-items: center; gap: 1px; flex: 0 0 auto; }
+  .sesscard:hover .sessacts, .sesscard:focus-within .sessacts { display: flex; }
+  .sesscard .sessact { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 20px; padding: 0; border: none; background: transparent; color: var(--cc-text3); border-radius: 4px; cursor: pointer; }
+  .sesscard .sessact:hover { background: color-mix(in srgb, var(--cc-text3) 22%, transparent); color: var(--cc-text); }
+  .sesscard .sessact.sesspin { display: none; }
+  .sesscard.pinned .sesspin, .sesscard:hover .sesspin, .sesscard:focus-within .sesspin { display: inline-flex; }
+  .sesscard.pinned .sesspin { color: var(--cc-accent); }
+  .sesscard .ci { width: 13px; height: 13px; }
+  @media (prefers-reduced-motion: reduce) { .sesscard { transition: none; } }
 </style>
 </head>
 <body>
@@ -86,14 +77,17 @@
     return 'Earlier';
   }
   function sessModelShort(m){ const s = String(m || ''); const i = s.lastIndexOf('/'); return i >= 0 ? s.slice(i + 1) : s; }
-  function sessSparkSvg(spark){
-    const a = (Array.isArray(spark) ? spark : []).map((x) => Math.max(0, Number(x) || 0));
-    if (!a.length) { return ''; }
-    const max = Math.max(1, Math.max.apply(null, a)), bw = 4, gap = 2, h = 15;
-    let bars = '';
-    for (let i = 0; i < a.length; i++){ const bh = Math.max(1, Math.round((a[i] / max) * h)); bars += '<rect x="' + (i * (bw + gap)) + '" y="' + (h - bh) + '" width="' + bw + '" height="' + bh + '" opacity="' + (0.4 + 0.5 * (a[i] / max)).toFixed(2) + '"/>'; }
-    const w = a.length * (bw + gap);
-    return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true"><g fill="var(--cc-accent)">' + bars + '</g></svg>';
+  // Inline codicons (self-contained — the shared block can't reach the chat's codicon() helper). play is a
+  // plain triangle; edit/check/trash are the editor's own glyphs; star doubles as the pin toggle.
+  var SESS_IC = {
+    play: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.3 L12.6 8 L5 12.7 Z"/></svg>',
+    edit: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M14.236 1.76386C13.2123 0.740172 11.5525 0.740171 10.5289 1.76386L2.65722 9.63549C2.28304 10.0097 2.01623 10.4775 1.88467 10.99L1.01571 14.3755C0.971767 14.5467 1.02148 14.7284 1.14646 14.8534C1.27144 14.9783 1.45312 15.028 1.62432 14.9841L5.00978 14.1151C5.52234 13.9836 5.99015 13.7168 6.36433 13.3426L14.236 5.47097C15.2596 4.44728 15.2596 2.78755 14.236 1.76386ZM11.236 2.47097C11.8691 1.8378 12.8957 1.8378 13.5288 2.47097C14.162 3.10413 14.162 4.1307 13.5288 4.76386L12.75 5.54269L10.4571 3.24979L11.236 2.47097ZM9.75002 3.9569L12.0429 6.24979L5.65722 12.6355C5.40969 12.883 5.10023 13.0595 4.76117 13.1465L2.19447 13.8053L2.85327 11.2386C2.9403 10.8996 3.1168 10.5901 3.36433 10.3426L9.75002 3.9569Z"/></svg>',
+    check: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.6572 3.13573C13.8583 2.9465 14.175 2.95614 14.3643 3.15722C14.5535 3.35831 14.5438 3.675 14.3428 3.86425L5.84277 11.8642C5.64597 12.0494 5.33756 12.0446 5.14648 11.8535L1.64648 8.35351C1.45121 8.15824 1.45121 7.84174 1.64648 7.64647C1.84174 7.45121 2.15825 7.45121 2.35351 7.64647L5.50976 10.8027L13.6572 3.13573Z"/></svg>',
+    trash: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M10 3h3v1h-1v9l-1 1H4l-1-1V4H2V3h3V2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zM9 2H6v1h3V2zM4 13h7V4H4v9zm2-8H5v7h1V5zm1 0h1v7H7V5zm2 0h1v7H9V5z"/></svg>',
+    star: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 L9.53 5.9 L14.18 5.99 L10.47 8.8 L11.82 13.26 L8 10.6 L4.18 13.26 L5.53 8.8 L1.82 5.99 L6.47 5.9 Z"/></svg>'
+  };
+  function sessActBtn(act, label, svg, cls){
+    return '<button type="button" class="sessact' + (cls ? ' ' + cls : '') + '" data-act="' + act + '" title="' + label + '" aria-label="' + label + '">' + svg + '</button>';
   }
   var SESS_BUCKETS = ['Pinned', 'Today', 'Yesterday', 'This week', 'Earlier'];
   function sessGroup(entries, nowMs){
@@ -102,20 +96,26 @@
     return SESS_BUCKETS.filter((b) => by[b].length).map((b) => ({ bucket: b, entries: by[b] }));
   }
   // esc/escAttr are INJECTED so this whole block stays pure (unit-testable without the webview globals).
+  // The card is two fixed-height lines: title + (primary file · time). Actions are compact icon buttons on
+  // the RIGHT of the title row — hidden at rest, revealed on hover — so nothing reflows or floats. The pin
+  // stays visible at rest when pinned. Secondary detail (model · turns · files) rides the native tooltip.
   function sessCardHtml(e, nowMs, escFn, escAttrFn){
     const st = e.state === 'interrupted' ? ' warn' : e.state === 'error' ? ' err' : e.state === 'resumed' ? ' res' : '';
     const files = e.filesEdited || [];
     const sub = (files.length ? escFn(files[0]) + ' · ' : '') + escFn(sessRelTime(e.updatedAt || e.createdAt, nowMs));
-    const chips = files.slice(0, 3).map((f) => '<span class="sesschip">' + escFn(f) + '</span>').join('') + (files.length > 3 ? '<span class="sesschip">+' + (files.length - 3) + '</span>' : '');
     const turns = e.turns || 0;
-    const rich = '<div class="sessrich">'
-      + (files.length ? '<div class="sessfiles">' + chips + '</div>' : '')
-      + '<div class="sessmeta">' + (e.model ? escFn(sessModelShort(e.model)) + ' · ' : '') + turns + ' turn' + (turns === 1 ? '' : 's') + ' ' + sessSparkSvg(e.spark) + '</div>'
-      + '<div class="sessacts"><button class="sessbtn pri" data-act="resume">Resume &#9166;</button><button class="sessbtn" data-act="pin">' + (e.pinned ? 'Unpin' : 'Pin') + '</button><button class="sessbtn" data-act="done">Done</button><button class="sessbtn" data-act="rename">Rename</button><button class="sessbtn" data-act="delete">Delete</button></div>'
-      + '</div>';
-    return '<div class="sesscard' + st + '" data-id="' + escAttrFn(e.id || '') + '" tabindex="0" role="button" aria-label="' + escAttrFn(e.title || 'Untitled') + '">'
-      + '<div class="sesstop"><span class="sessname" title="' + escAttrFn(e.title || '') + '">' + escFn(e.title || 'Untitled') + '</span>' + (e.pinned ? '<span class="sessstar" aria-label="pinned">★</span>' : '') + '</div>'
-      + '<div class="sesssub">' + sub + '</div>' + rich + '</div>';
+    const detail = (e.title || 'Untitled') + ' — ' + turns + ' turn' + (turns === 1 ? '' : 's')
+      + (e.model ? ' · ' + sessModelShort(e.model) : '') + (files.length ? ' · ' + files.join(', ') : '');
+    const acts = '<span class="sessacts">'
+      + sessActBtn('resume', 'Resume', SESS_IC.play)
+      + sessActBtn('rename', 'Rename', SESS_IC.edit)
+      + sessActBtn('done', 'Archive', SESS_IC.check)
+      + sessActBtn('delete', 'Delete', SESS_IC.trash)
+      + '</span>'
+      + sessActBtn('pin', e.pinned ? 'Unpin' : 'Pin', SESS_IC.star, 'sesspin');
+    return '<div class="sesscard' + st + (e.pinned ? ' pinned' : '') + '" data-id="' + escAttrFn(e.id || '') + '" tabindex="0" role="button" aria-label="' + escAttrFn(e.title || 'Untitled') + '" title="' + escAttrFn(detail) + '">'
+      + '<div class="sesstop"><span class="sessname">' + escFn(e.title || 'Untitled') + '</span>' + acts + '</div>'
+      + '<div class="sesssub">' + sub + '</div></div>';
   }
   // [SESSIONS-PURE-END]
   const D = Date.now();

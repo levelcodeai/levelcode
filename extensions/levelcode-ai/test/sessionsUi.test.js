@@ -16,7 +16,7 @@ const path = require('path');
 const html = fs.readFileSync(path.join(__dirname, '..', 'media', 'chat.html'), 'utf8');
 const block = html.slice(html.indexOf('// [SESSIONS-PURE-START]'), html.indexOf('// [SESSIONS-PURE-END]'));
 // eslint-disable-next-line no-new-func
-const P = new Function(block + '; return { sessRelTime, sessBucket, sessModelShort, sessSparkSvg, sessGroup, sessCardHtml };')();
+const P = new Function(block + '; return { sessRelTime, sessBucket, sessModelShort, sessGroup, sessCardHtml };')();
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('  ok - ' + name); }
@@ -55,43 +55,35 @@ test('GROUP: pinned floats to its own bucket above the time buckets', () => {
 	assert.strictEqual(g[0].entries[0].id, 'p', 'a pinned old session is Pinned, not Earlier');
 });
 
-test('SPARK: an array of counts becomes one <rect> per bar; empty is nothing', () => {
-	assert.strictEqual(P.sessSparkSvg([]), '');
-	const svg = P.sessSparkSvg([1, 2, 4]);
-	assert.match(svg, /^<svg/);
-	assert.strictEqual((svg.match(/<rect/g) || []).length, 3);
-});
-
-test('CARD (rest): two lines — title + primary-file·time; done shows NO state marker; pin only when pinned', () => {
+test('CARD (rest): two lines — title + primary-file·time; done has no state class; pinned adds the class', () => {
 	const done = { id: 's1', title: 'Idempotent refunds', updatedAt: msAgo(2 * 3600), turns: 41,
-		model: 'anthropic/claude-opus-5', state: 'done', pinned: true, filesEdited: ['refund.rb', 'lock.rb', 'a', 'b'], spark: [1, 3, 5] };
+		model: 'anthropic/claude-opus-5', state: 'done', pinned: true, filesEdited: ['refund.rb', 'lock.rb'] };
 	const h = P.sessCardHtml(done, NOW, esc, escAttr);
-	assert.match(h, /class="sesscard"/, 'a finished session carries no state class (silent when normal)');
+	assert.match(h, /class="sesscard pinned"/, 'done = no state class; pinned adds .pinned (resting star + accent)');
 	assert.match(h, /data-id="s1"/);
 	assert.match(h, /Idempotent refunds/);
 	assert.match(h, /refund\.rb · 2h/, 'the quiet line = primary file · relative time');
-	assert.match(h, /sessstar/, 'pinned → a star');
-	assert.match(h, /data-act="pin">Unpin</, 'a pinned session offers Unpin');
+	assert.match(h, /data-act="pin"[^>]*aria-label="Unpin"/, 'the pin toggle offers Unpin when pinned');
 });
 
-test('CARD (state): interrupted gets the warn left-edge; a done card and an unpinned card stay bare', () => {
+test('CARD (state): interrupted gets the warn class; an unpinned card has no pinned class', () => {
 	const intr = { id: 's2', title: 'flaky test', updatedAt: msAgo(3600), state: 'interrupted', filesEdited: ['w.rb'], turns: 3 };
 	const h = P.sessCardHtml(intr, NOW, esc, escAttr);
-	assert.match(h, /class="sesscard warn"/, 'interrupted → the only resting marker, a 2px edge');
-	assert.ok(!/sessstar/.test(h), 'not pinned → no star');
+	assert.match(h, /class="sesscard warn"/, 'interrupted → the warn class (status dot / left edge)');
+	assert.ok(!/pinned/.test(h), 'not pinned → no pinned class');
+	assert.match(h, /data-act="pin"[^>]*aria-label="Pin"/, 'and the toggle offers Pin');
 });
 
-test('CARD (rich): the hover detail carries files, model, turns, sparkline, and actions', () => {
+test('CARD (actions): resume/rename/done/delete/pin as icon buttons on the row — no drawer, no text labels', () => {
 	const e = { id: 's3', title: 't', updatedAt: msAgo(3600), turns: 41, model: 'anthropic/claude-opus-5',
-		state: 'done', filesEdited: ['refund.rb', 'lock.rb', 'a', 'b'], spark: [1, 3, 5] };
+		state: 'done', filesEdited: ['refund.rb', 'lock.rb'] };
 	const h = P.sessCardHtml(e, NOW, esc, escAttr);
-	assert.match(h, /sessrich/);
-	assert.match(h, /claude-opus-5/, 'model shown short (no provider prefix)');
-	assert.match(h, /41 turns/);
-	assert.match(h, /<svg/, 'sparkline lives in the expand, not the resting row');
-	assert.match(h, /data-act="resume"/, 'inline actions, no … menu');
-	assert.match(h, /data-act="pin">Pin</, 'an unpinned session offers Pin');
-	assert.match(h, /class="sesschip">\+1</, '4 files → 3 chips + overflow');
+	for (const a of ['resume', 'rename', 'done', 'delete', 'pin']) { assert.match(h, new RegExp('data-act="' + a + '"'), a + ' action present'); }
+	assert.match(h, /class="sessacts">/, 'actions live in the row…');
+	assert.ok(!/sessrich|sessbtn|sesschip|sessmeta/.test(h), '…not the old drawer/chip/meta markup');
+	assert.match(h, /<svg class="ci"/, 'actions are icon buttons');
+	assert.match(h, /aria-label="Resume"/, 'labelled for a11y (icon-only)');
+	assert.match(h, /title="t — 41 turns · claude-opus-5 · refund\.rb, lock\.rb"/, 'model · turns · files fold into the tooltip');
 });
 
 test('CARD (safety): the title is escaped, never injected raw', () => {
@@ -147,7 +139,7 @@ test('HOUSEKEEPING: a Pin toggle on the card, and a 30-day auto-archive sweep on
 	assert.match(ext, /autoArchiveStale\(\{ days \}\)/, 'startup runs the auto-archive sweep');
 	assert.match(ext, /sessions\.autoArchiveDays/, 'gated by the setting');
 	assert.ok((pkg.contributes.configuration.properties || {})['levelcode.ai.sessions.autoArchiveDays'], 'the setting is contributed');
-	assert.ok(/data-act="pin">/.test(html) && /data-act="pin">/.test(view), 'both surfaces render the Pin action');
+	assert.ok(/sessActBtn\('pin'/.test(html) && /sessActBtn\('pin'/.test(view), 'both surfaces render a Pin action');
 });
 
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {
@@ -186,11 +178,12 @@ test('VIEW: theme-true across the three kinds and reduced-motion-safe', () => {
 	assert.match(view, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,120}\.sesscard[\s\S]{0,80}transition:\s*none/);
 });
 
-test('NO-JUMP: the hover detail is an absolute drawer on BOTH surfaces (stable row height, not an in-flow expand)', () => {
+test('NO-JUMP: actions reveal as row icon buttons (no drawer), so the row height stays fixed on hover', () => {
 	for (const [name, src] of [['modal', html], ['sidebar', view]]) {
-		assert.match(src, /\.sesscard \.sessrich \{[^}]*position: absolute/, name + ': the drawer is absolutely positioned, so revealing it never reflows the row');
-		assert.match(src, /\.sesscard:last-child \.sessrich \{[^}]*bottom:/, name + ': the last row opens upward so the scroll container never clips it');
-		assert.ok(!/\.sesscard \.sessrich \{ display: none;/.test(src), name + ': not the old display:none → block expand that pushed the list around');
+		assert.ok(!/\.sesscard \.sessrich/.test(src), name + ': the old hover drawer is gone (nothing floats over neighbours)');
+		assert.match(src, /\.sesscard \.sessacts \{[^}]*display: none/, name + ': actions are hidden at rest');
+		assert.match(src, /\.sesscard:hover \.sessacts[^{]*\{[^}]*display: flex/, name + ': and revealed on hover');
+		assert.match(src, /\.sesscard \.sesstop \{[^}]*min-height/, name + ': the row reserves the icon height so appearing icons never nudge it');
 	}
 });
 
