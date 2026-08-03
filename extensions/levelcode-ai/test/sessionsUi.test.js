@@ -71,6 +71,7 @@ test('CARD (rest): two lines — title + primary-file·time; done shows NO state
 	assert.match(h, /Idempotent refunds/);
 	assert.match(h, /refund\.rb · 2h/, 'the quiet line = primary file · relative time');
 	assert.match(h, /sessstar/, 'pinned → a star');
+	assert.match(h, /data-act="pin">Unpin</, 'a pinned session offers Unpin');
 });
 
 test('CARD (state): interrupted gets the warn left-edge; a done card and an unpinned card stay bare', () => {
@@ -89,6 +90,7 @@ test('CARD (rich): the hover detail carries files, model, turns, sparkline, and 
 	assert.match(h, /41 turns/);
 	assert.match(h, /<svg/, 'sparkline lives in the expand, not the resting row');
 	assert.match(h, /data-act="resume"/, 'inline actions, no … menu');
+	assert.match(h, /data-act="pin">Pin</, 'an unpinned session offers Pin');
 	assert.match(h, /class="sesschip">\+1</, '4 files → 3 chips + overflow');
 });
 
@@ -138,6 +140,14 @@ test('RESUME WIRING: the host acts on card actions and the chat replays a resume
 	assert.match(ext, /m\.archive\(id\)[\s\S]{0,60}refreshSessions|refreshSessions\(\)/, 'Done archives (reversible), then the list refreshes');
 	assert.match(html, /m\.type === 'sessionResumed'/, 'and the chat handles it');
 	assert.match(html, /function resumeTranscript/, 'via a dedicated replay (prompts + prose, tool plumbing dropped)');
+});
+
+test('HOUSEKEEPING: a Pin toggle on the card, and a 30-day auto-archive sweep on startup', () => {
+	assert.match(ext, /action === 'pin'[\s\S]{0,120}setPinned\(id, !cur\)/, 'Pin toggles the pinned flag');
+	assert.match(ext, /autoArchiveStale\(\{ days \}\)/, 'startup runs the auto-archive sweep');
+	assert.match(ext, /sessions\.autoArchiveDays/, 'gated by the setting');
+	assert.ok((pkg.contributes.configuration.properties || {})['levelcode.ai.sessions.autoArchiveDays'], 'the setting is contributed');
+	assert.ok(/data-act="pin">/.test(html) && /data-act="pin">/.test(view), 'both surfaces render the Pin action');
 });
 
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {

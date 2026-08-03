@@ -176,4 +176,30 @@ test('MANAGER: archive / rename / trash are append-only edits that update the in
 	assert.strictEqual(m.list().find((e) => e.id === id).lifecycle, 'trashed', 'the latest label event wins');
 });
 
+test('MANAGER: autoArchiveStale fades stale, non-pinned sessions and exempts pinned + recent', () => {
+	const root = freshRoot(), slug = store.projectSlug('/aa');
+	const DAY = 86400000;
+	const T0 = Date.parse('2026-06-01T12:00:00Z');   // "now" for the sweep
+	// stamp a whole session at a chosen wall-clock time (clock injected), optionally pinned at that same time
+	const sessionAt = (ms, prompt, pin) => {
+		const mm = createSessions({ root, slug, projectPath: '/aa', now: () => new Date(ms) });
+		mm.recordTurn([{ role: 'user', content: prompt }], 'm');
+		const id = mm.liveId();
+		if (pin) { mm.setPinned(id, true); }         // pin stamped old too, so it's genuinely old AND pinned
+		mm.seal('done');
+		return id;
+	};
+	const oldId = sessionAt(T0 - 40 * DAY, 'ancient');            // 40d old, unpinned → stale
+	const recentId = sessionAt(T0 - 5 * DAY, 'recent');          // 5d old → kept
+	const pinnedOldId = sessionAt(T0 - 90 * DAY, 'kept', true);  // 90d old but pinned → exempt
+
+	const m = createSessions({ root, slug, projectPath: '/aa', now: () => new Date(T0) });
+	assert.strictEqual(m.autoArchiveStale({ days: 30, nowMs: T0 }), 1, 'only the stale, non-pinned session faded');
+	const byId = (id) => m.list().find((e) => e.id === id);
+	assert.strictEqual(byId(oldId).lifecycle, 'archived', 'the 40-day-old session auto-archived');
+	assert.strictEqual(byId(recentId).lifecycle, 'active', 'the 5-day-old session stayed');
+	assert.strictEqual(byId(pinnedOldId).lifecycle, 'active', 'a pinned session is exempt however old');
+	assert.strictEqual(m.autoArchiveStale({ days: 30, nowMs: T0 }), 0, 'idempotent — already-archived are skipped');
+});
+
 console.log('sessions: ' + n + ' tests passed');

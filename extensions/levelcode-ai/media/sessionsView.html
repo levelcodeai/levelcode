@@ -101,7 +101,7 @@
     const rich = '<div class="sessrich">'
       + (files.length ? '<div class="sessfiles">' + chips + '</div>' : '')
       + '<div class="sessmeta">' + (e.model ? escFn(sessModelShort(e.model)) + ' · ' : '') + turns + ' turn' + (turns === 1 ? '' : 's') + ' ' + sessSparkSvg(e.spark) + '</div>'
-      + '<div class="sessacts"><button class="sessbtn pri" data-act="resume">Resume &#9166;</button><button class="sessbtn" data-act="done">Done</button><button class="sessbtn" data-act="rename">Rename</button><button class="sessbtn" data-act="delete">Delete</button></div>'
+      + '<div class="sessacts"><button class="sessbtn pri" data-act="resume">Resume &#9166;</button><button class="sessbtn" data-act="pin">' + (e.pinned ? 'Unpin' : 'Pin') + '</button><button class="sessbtn" data-act="done">Done</button><button class="sessbtn" data-act="rename">Rename</button><button class="sessbtn" data-act="delete">Delete</button></div>'
       + '</div>';
     return '<div class="sesscard' + st + '" data-id="' + escAttrFn(e.id || '') + '" tabindex="0" role="button" aria-label="' + escAttrFn(e.title || 'Untitled') + '">'
       + '<div class="sesstop"><span class="sessname" title="' + escAttrFn(e.title || '') + '">' + escFn(e.title || 'Untitled') + '</span>' + (e.pinned ? '<span class="sessstar" aria-label="pinned">★</span>' : '') + '</div>'

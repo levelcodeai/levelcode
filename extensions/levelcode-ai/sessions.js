@@ -125,12 +125,34 @@ function createSessions(opts) {
 		return appendTo(id, events.titleEvent(String(title).trim(), iso()));
 	}
 
+	/**
+	 * Fade stale sessions out of the working set (§4.9 — "auto-archive at 30 days, keep the magic"): archive
+	 * every ACTIVE, non-pinned, non-live session whose last activity is older than `days`. Pinned means
+	 * "keep" (exempt); already archived/trashed are skipped; the live session is never touched. Append-only
+	 * (a label event each) — it NEVER deletes — and best-effort. Returns how many it archived.
+	 */
+	function autoArchiveStale(opts) {
+		const o = opts || {};
+		const days = Number.isFinite(o.days) && o.days > 0 ? o.days : 30;
+		const nowMs = Number.isFinite(o.nowMs) ? o.nowMs : clock().getTime();
+		const cutoff = nowMs - days * 86400000;
+		const liveNow = live ? live.id : null;
+		let archived = 0;
+		for (const e of list()) {
+			if (!e || e.pinned || e.id === liveNow) { continue; }
+			if ((e.lifecycle || 'active') !== 'active') { continue; }
+			const last = Date.parse(e.updatedAt || e.createdAt || '');
+			if (Number.isFinite(last) && last < cutoff && archive(e.id)) { archived++; }
+		}
+		return archived;
+	}
+
 	/** The session index for this project (what the panel/view list). Empty (never throws) if unreadable. */
 	function list() { try { return store.loadIndex(root, slug).entries; } catch (e) { return []; } }
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, setPinned, rename, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, setPinned, rename, autoArchiveStale, list, liveId };
 }
 
 module.exports = { createSessions };

@@ -704,6 +704,7 @@ async function handleSessionAction(action, id) {
 		if (action === 'resume') { await resumeSession(id); return; }
 		if (action === 'done') { m.archive(id); refreshSessions(); return; }
 		if (action === 'delete') { m.trash(id); refreshSessions(); return; }
+		if (action === 'pin') { const cur = (m.list().find((e) => e.id === id) || {}).pinned; m.setPinned(id, !cur); refreshSessions(); return; }
 		if (action === 'rename') {
 			const cur = (m.list().find((e) => e.id === id) || {}).title || '';
 			const title = await vscode.window.showInputBox({ prompt: 'Rename this session', value: cur, validateInput: (v) => (v && v.trim() ? null : 'Enter a name') });
@@ -2236,6 +2237,16 @@ function activate(context) {
 		complete: providers.complete,
 		fastCompletionModel: catalog.fastCompletionModel
 	});
+
+	// Sessions housekeeping: fade sessions untouched for a while out of the working set (§4.9 — auto-archive
+	// at 30 days, pinned exempt, NEVER deletes). Deferred + guarded so it never slows or breaks activation;
+	// off when levelcode.ai.sessions.autoArchiveDays is 0.
+	setTimeout(() => {
+		try {
+			const days = aiConfig().get('sessions.autoArchiveDays', 30);
+			if (days > 0) { const mgr = sessionsManager(); if (mgr) { const nArch = mgr.autoArchiveStale({ days }); if (nArch) { dbg('sessions.autoArchive', { archived: nArch, days }); refreshSessions(); } } }
+		} catch (e) { /* housekeeping is best-effort */ }
+	}, 1500);
 
 	// AI-first: reveal the chat (in the secondary side bar) on EVERY launch until the user has actually
 	// engaged (sent their first message). This makes sure new users always see it, instead of it only

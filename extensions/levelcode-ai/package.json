@@ -441,6 +441,12 @@
           "description": "Folder to store session History in. Empty = ~/.levelcode/sessions. Each project gets its own subfolder; the files are append-only JSONL you can back up, diff, or delete by hand.",
           "scope": "machine"
         },
+        "levelcode.ai.sessions.autoArchiveDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "description": "Automatically archive sessions you haven't touched in this many days, to keep History focused on recent work. Archived sessions are hidden from the list but never deleted (the JSONL stays on disk), and pinned sessions are always kept. Set to 0 to turn auto-archiving off."
+        },
         "levelcode.ai.sessions.resumeBudgetPct": {
           "type": "number",
           "default": 40,
