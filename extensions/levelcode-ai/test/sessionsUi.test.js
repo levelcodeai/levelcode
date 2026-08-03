@@ -79,11 +79,13 @@ test('CARD (actions): four row icon buttons (rename/done/delete/pin); clicking t
 		state: 'done', filesEdited: ['refund.rb', 'lock.rb'] };
 	const h = P.sessCardHtml(e, NOW, esc, escAttr);
 	for (const a of ['rename', 'done', 'delete', 'pin']) { assert.match(h, new RegExp('data-act="' + a + '"'), a + ' action present'); }
-	assert.ok(!/data-act="resume"/.test(h), 'no Resume icon — clicking the card body resumes (default action)');
-	assert.match(h, /class="sessacts">/, 'actions live in the row…');
-	assert.ok(!/sessrich|sessbtn|sesschip|sessmeta/.test(h), '…not the old drawer/chip/meta markup');
-	assert.match(h, /<svg class="ci"/, 'actions are icon buttons');
-	assert.match(h, /aria-label="Rename"/, 'labelled for a11y (icon-only)');
+	assert.ok(!/data-act="resume"/.test(h), 'no Resume button — clicking the card body resumes (default action)');
+	assert.match(h, /class="sessline2">.*class="sesssub">/, 'file·time and the actions share line 2 (swap on hover)');
+	assert.ok(!/sessrich|sessbtn|sesschip|sessmeta/.test(h), 'not the old drawer/chip/meta markup');
+	assert.match(h, /<span class="sesslbl">Rename<\/span>/, 'buttons carry a visible text label…');
+	assert.match(h, /<span class="sesslbl">Done<\/span>.*<span class="sesslbl">Delete<\/span>/, '…Done and Delete too');
+	assert.match(h, /<svg class="ci"/, 'with an icon alongside (hidden by CSS on the narrow sidebar)');
+	assert.match(h, /aria-label="Rename"/, 'and an a11y label');
 	assert.match(h, /title="t — 41 turns · claude-opus-5 · refund\.rb, lock\.rb"/, 'model · turns · files fold into the tooltip');
 });
 
@@ -179,12 +181,12 @@ test('VIEW: theme-true across the three kinds and reduced-motion-safe', () => {
 	assert.match(view, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,120}\.sesscard[\s\S]{0,80}transition:\s*none/);
 });
 
-test('NO-JUMP: actions reveal as row icon buttons (no drawer), so the row height stays fixed on hover', () => {
+test('NO-JUMP: line 2 swaps file·time ⇄ actions in a fixed min-height row (no drawer, no float, title intact)', () => {
 	for (const [name, src] of [['modal', html], ['sidebar', view]]) {
 		assert.ok(!/\.sesscard \.sessrich/.test(src), name + ': the old hover drawer is gone (nothing floats over neighbours)');
-		assert.match(src, /\.sesscard \.sessacts \{[^}]*display: none/, name + ': actions are hidden at rest');
-		assert.match(src, /\.sesscard:hover \.sessacts[^{]*\{[^}]*display: flex/, name + ': and revealed on hover');
-		assert.match(src, /\.sesscard \.sesstop \{[^}]*min-height/, name + ': the row reserves the icon height so appearing icons never nudge it');
+		assert.match(src, /\.sesscard \.sessline2 \{[^}]*min-height/, name + ': line 2 reserves a fixed height, so the card never grows');
+		assert.match(src, /\.sesscard:hover \.sesssub[^{]*\{[^}]*display: none/, name + ': file·time hides on hover…');
+		assert.match(src, /\.sesscard:hover \.sessacts[^{]*\{[^}]*display: flex/, name + ': …and the actions take that same row');
 	}
 });
 

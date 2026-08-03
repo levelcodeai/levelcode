@@ -1086,19 +1086,19 @@
   .sesscard.warn { border-left: 2px solid var(--cc-warn); }
   .sesscard.err { border-left: 2px solid var(--cc-danger); }
   .sesscard.res { border-left: 2px solid var(--cc-accent); }
-  .sesscard .sesstop { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+  .sesscard .sesstop { display: flex; align-items: center; gap: 8px; }
   .sesscard .sessname { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-  .sesscard .sesssub { margin-top: 4px; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; color: var(--cc-text3); }
-  /* Row actions: compact icon buttons on the right, revealed on hover — no drawer, so the card never
-     reflows or floats over its neighbours. sesstop reserves the icon height so appearing icons don't
-     nudge the line. The pin stays visible at rest when pinned. */
-  .sesscard .sessacts { display: none; align-items: center; gap: 1px; flex: 0 0 auto; }
+  /* Line 2 swaps file·time ⇄ the labeled action buttons on hover — same fixed-height row, full width, so
+     nothing wraps, reflows, or floats and the title above is left intact. The modal keeps icons + labels. */
+  .sesscard .sessline2 { margin-top: 4px; min-height: 26px; display: flex; align-items: center; }
+  .sesscard .sesssub { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; color: var(--cc-text3); }
+  .sesscard .sessacts { display: none; align-items: center; gap: 6px; flex-wrap: nowrap; }
+  .sesscard:hover .sesssub, .sesscard:focus-within .sesssub { display: none; }
   .sesscard:hover .sessacts, .sesscard:focus-within .sessacts { display: flex; }
-  .sesscard .sessact { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; padding: 0; border: none; background: transparent; color: var(--cc-text2); border-radius: 5px; cursor: pointer; }
-  .sesscard .sessact:hover { background: var(--cc-surface); color: var(--cc-text); }
-  .sesscard .sessact.sesspin { display: none; }
-  .sesscard.pinned .sesspin, .sesscard:hover .sesspin, .sesscard:focus-within .sesspin { display: inline-flex; }
-  .sesscard.pinned .sesspin { color: var(--cc-accent); }
+  .sesscard .sessact { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border: 1px solid var(--cc-line); background: var(--cc-surface); color: var(--cc-text); border-radius: 5px; cursor: pointer; font: inherit; font-size: 11.5px; white-space: nowrap; }
+  .sesscard .sessact:hover { border-color: var(--cc-accent); }
+  .sesscard .sessact[data-act="delete"]:hover { border-color: var(--cc-danger); color: var(--cc-danger); }
+  .sesscard.pinned [data-act="pin"] { color: var(--cc-accent); border-color: color-mix(in srgb, var(--cc-accent) 45%, var(--cc-line)); }
   .sesscard .ci { width: 14px; height: 14px; }
   @media (prefers-reduced-motion: reduce) { .sesscard { transition: none; } .sesscard:hover, .sesscard:focus-visible, .sesscard:focus-within { transform: none; } }
 </style>
@@ -3313,7 +3313,7 @@
     star: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 L9.53 5.9 L14.18 5.99 L10.47 8.8 L11.82 13.26 L8 10.6 L4.18 13.26 L5.53 8.8 L1.82 5.99 L6.47 5.9 Z"/></svg>'
   };
   function sessActBtn(act, label, svg, cls){
-    return '<button type="button" class="sessact' + (cls ? ' ' + cls : '') + '" data-act="' + act + '" title="' + label + '" aria-label="' + label + '">' + svg + '</button>';
+    return '<button type="button" class="sessact' + (cls ? ' ' + cls : '') + '" data-act="' + act + '" title="' + label + '" aria-label="' + label + '">' + svg + '<span class="sesslbl">' + label + '</span></button>';
   }
   var SESS_BUCKETS = ['Pinned', 'Today', 'Yesterday', 'This week', 'Earlier'];
   function sessGroup(entries, nowMs){
@@ -3322,10 +3322,11 @@
     return SESS_BUCKETS.filter((b) => by[b].length).map((b) => ({ bucket: b, entries: by[b] }));
   }
   // esc/escAttr are INJECTED so this whole block stays pure (unit-testable without the webview globals).
-  // The card is two fixed-height lines: title + (primary file · time). Actions are compact icon buttons on
-  // the RIGHT of the title row — hidden at rest, revealed on hover — so nothing reflows or floats. Clicking
-  // the card body resumes (so there is no Resume icon); the pin stays visible at rest when pinned. Secondary
-  // detail (model · turns · files) rides the native tooltip.
+  // Two fixed-height lines: the title, then (primary file · time). On hover the SECOND line swaps to the
+  // labeled action buttons — Rename · Done · Delete · Pin — in the same fixed-height row, at full width, so
+  // nothing wraps, reflows, or floats and the title is left intact. Clicking the card body resumes (no
+  // Resume button). Pinned is shown by the Pinned bucket + the accent Unpin button; secondary detail
+  // (model · turns · files) rides the native tooltip.
   function sessCardHtml(e, nowMs, escFn, escAttrFn){
     const st = e.state === 'interrupted' ? ' warn' : e.state === 'error' ? ' err' : e.state === 'resumed' ? ' res' : '';
     const files = e.filesEdited || [];
@@ -3335,13 +3336,13 @@
       + (e.model ? ' · ' + sessModelShort(e.model) : '') + (files.length ? ' · ' + files.join(', ') : '');
     const acts = '<span class="sessacts">'
       + sessActBtn('rename', 'Rename', SESS_IC.edit)
-      + sessActBtn('done', 'Archive', SESS_IC.check)
+      + sessActBtn('done', 'Done', SESS_IC.check)
       + sessActBtn('delete', 'Delete', SESS_IC.trash)
-      + '</span>'
-      + sessActBtn('pin', e.pinned ? 'Unpin' : 'Pin', SESS_IC.star, 'sesspin');
+      + sessActBtn('pin', e.pinned ? 'Unpin' : 'Pin', SESS_IC.star)
+      + '</span>';
     return '<div class="sesscard' + st + (e.pinned ? ' pinned' : '') + '" data-id="' + escAttrFn(e.id || '') + '" tabindex="0" role="button" aria-label="' + escAttrFn(e.title || 'Untitled') + '" title="' + escAttrFn(detail) + '">'
-      + '<div class="sesstop"><span class="sessname">' + escFn(e.title || 'Untitled') + '</span>' + acts + '</div>'
-      + '<div class="sesssub">' + sub + '</div></div>';
+      + '<div class="sesstop"><span class="sessname">' + escFn(e.title || 'Untitled') + '</span></div>'
+      + '<div class="sessline2"><span class="sesssub">' + sub + '</span>' + acts + '</div></div>';
   }
   // [SESSIONS-PURE-END]
   // Placeholder data so /sessions renders the panel before the extension.js adapter posts real entries.
