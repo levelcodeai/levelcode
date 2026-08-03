@@ -17,6 +17,7 @@
 
 const store = require('./sessionStore');
 const events = require('./sessionEvents');
+const planner = require('./sessionResume');
 
 /**
  * @param {{ root: string, slug: string, projectPath: string,
@@ -32,16 +33,18 @@ function createSessions(opts) {
 
 	const iso = () => clock().toISOString();
 
-	// Refresh this session's index row from its file. Best-effort: the index is a cache (scan rebuilds it),
-	// so a failure here must never surface into a chat turn.
-	function reindex() {
-		if (!live) { return; }
+	// Refresh a session's index row from its file. Best-effort: the index is a cache (scan rebuilds it), so
+	// a failure here must never surface into a chat turn. Works for any id, so lifecycle actions on a past
+	// (non-live) session update the list too.
+	function reindexId(id) {
+		if (!id) { return; }
 		try {
-			const s = store.readSession(live.file);
+			const s = store.readSession(store.sessionFile(root, slug, id));
 			const idx = store.loadIndex(root, slug);
 			store.writeIndex(root, slug, store.upsertEntry(idx.entries, store.deriveEntry(s.meta, s.events)));
 		} catch (e) { /* index is a rebuildable cache */ }
 	}
+	function reindex() { if (live) { reindexId(live.id); } }
 
 	/** Open a fresh session (its dir + meta birth line) if none is live. Idempotent while one is live. */
 	function ensure() {
@@ -81,12 +84,53 @@ function createSessions(opts) {
 		if (state) { try { state.set('liveSessionId', null); } catch (e) { /* convenience */ } }
 	}
 
+	/**
+	 * Reopen a past session as the LIVE one. Rebuilds its full transcript, plans how much fits the model's
+	 * window (three-tier, §4.5), and re-attaches so further turns append to THIS session. Returns:
+	 *   full     — the whole conversation (for the visible replay),
+	 *   messages — the budget-fitted subset the model resumes with (== full for a verbatim/tier-1 resume),
+	 *   plan     — the resume plan (tier + cut), note — the honest "resumed from a summary" line, entry.
+	 * null if the session is gone/unreadable. Append-only: the prior `end` event is harmless (rebuild skips
+	 * it, and the next turn's events simply extend the history).
+	 */
+	function resume(id, opts) {
+		let s;
+		try { s = store.readSession(store.sessionFile(root, slug, id)); } catch (e) { return null; }
+		const full = events.eventsToMessages(s.events);
+		const plan = planner.planResume(full, opts || {});
+		const messages = plan.tier === 1 ? full : (Array.isArray(plan.tail) ? plan.tail : full);
+		const head = full.slice(0, plan.cutIndex || 0);
+		const turnsSummarized = head.filter((m) => m && m.role === 'user').length;
+		live = { id, file: store.sessionFile(root, slug, id) };
+		if (state) { try { state.set('liveSessionId', id); } catch (e) { /* convenience */ } }
+		reindexId(id);
+		return { id, meta: s.meta, entry: store.deriveEntry(s.meta, s.events), full, messages, plan,
+			turns: events.toDisplayTurns(full),   // the readable transcript to replay in the webview
+			note: planner.describeResume(plan, turnsSummarized) };
+	}
+
+	// Append-only lifecycle edits (§4.9): each writes one event, then refreshes that id's index row. All
+	// best-effort (return false rather than throw) — a History edit must never disrupt anything.
+	function appendTo(id, event) {
+		try { store.appendEvent(store.sessionFile(root, slug, id), event); reindexId(id); return true; }
+		catch (e) { return false; }
+	}
+	/** Completion = ARCHIVE (reversible, keeps the work), never delete. Drops out of the active list. */
+	function archive(id) { return appendTo(id, events.labelEvent({ lifecycle: 'archived' }, iso())); }
+	/** Soft delete — moves to the `trashed` lifecycle (reversible, append-only; the file is left on disk). */
+	function trash(id) { return appendTo(id, events.labelEvent({ lifecycle: 'trashed' }, iso())); }
+	function setPinned(id, on) { return appendTo(id, events.labelEvent({ pinned: !!on }, iso())); }
+	function rename(id, title) {
+		if (title == null || !String(title).trim()) { return false; }
+		return appendTo(id, events.titleEvent(String(title).trim(), iso()));
+	}
+
 	/** The session index for this project (what the panel/view list). Empty (never throws) if unreadable. */
 	function list() { try { return store.loadIndex(root, slug).entries; } catch (e) { return []; } }
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, setPinned, rename, list, liveId };
 }
 
 module.exports = { createSessions };

@@ -93,4 +93,20 @@ test('END-TO-END: events built here derive the right card in sessionStore (one s
 	assert.deepStrictEqual(card.filesEdited, ['refund.rb', 'redis_lock.rb'], 'and so did the files-edited chips');
 });
 
+test('DISPLAY: toDisplayTurns folds a raw transcript into the readable prompts + prose to replay', () => {
+	const turns = E.toDisplayTurns(conversation());
+	assert.deepStrictEqual(turns, [
+		{ role: 'user', text: 'add idempotency to refunds' },   // the user's typed prompt
+		{ role: 'assistant', text: 'reading' },                 // the text block, not the read_file tool_use
+		{ role: 'assistant', text: 'Done: idempotent refunds via Redis keys' }
+	], 'tool_result user messages and tool_use-only assistant turns are dropped');
+});
+
+test('DISPLAY: toDisplayTurns is tolerant of junk and joins multiple text blocks', () => {
+	assert.deepStrictEqual(E.toDisplayTurns(null), []);
+	assert.deepStrictEqual(E.toDisplayTurns([null, { role: 'system', content: 'x' }, { role: 'user', content: '' }]), [], 'empty/other roles skipped');
+	const joined = E.toDisplayTurns([{ role: 'assistant', content: [{ type: 'text', text: 'one' }, { type: 'tool_use', id: 'a', name: 'x' }, { type: 'text', text: 'two' }] }]);
+	assert.deepStrictEqual(joined, [{ role: 'assistant', text: 'one\n\ntwo' }]);
+});
+
 console.log('sessionEvents: ' + n + ' tests passed');

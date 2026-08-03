@@ -130,6 +130,16 @@ const pkg = require('../package.json');
 const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
 const view = fs.readFileSync(path.join(__dirname, '..', 'media', 'sessionsView.html'), 'utf8');
 
+test('RESUME WIRING: the host acts on card actions and the chat replays a resumed transcript', () => {
+	assert.match(ext, /async function handleSessionAction/, 'a dispatcher for resume/done/rename/delete');
+	assert.match(ext, /async function resumeSession/, 'and a resume path');
+	assert.match(ext, /case 'sessionAction': await handleSessionAction\(/, 'both providers route actions to it');
+	assert.match(ext, /type: 'sessionResumed'/, 'the host posts a resumed transcript');
+	assert.match(ext, /m\.archive\(id\)[\s\S]{0,60}refreshSessions|refreshSessions\(\)/, 'Done archives (reversible), then the list refreshes');
+	assert.match(html, /m\.type === 'sessionResumed'/, 'and the chat handles it');
+	assert.match(html, /function resumeTranscript/, 'via a dedicated replay (prompts + prose, tool plumbing dropped)');
+});
+
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {
 	const grab = (s) => s.slice(s.indexOf('// [SESSIONS-PURE-START]'), s.indexOf('// [SESSIONS-PURE-END]'));
 	assert.ok(grab(view).length > 500, 'the view carries the pure block');

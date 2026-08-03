@@ -441,6 +441,13 @@
           "description": "Folder to store session History in. Empty = ~/.levelcode/sessions. Each project gets its own subfolder; the files are append-only JSONL you can back up, diff, or delete by hand.",
           "scope": "machine"
         },
+        "levelcode.ai.sessions.resumeBudgetPct": {
+          "type": "number",
+          "default": 40,
+          "minimum": 5,
+          "maximum": 100,
+          "description": "When you resume a session, the share of the model's context window its restored transcript may fill before it is summarized to fit. Lower = resume with less history (cheaper, faster); higher = carry more of the past conversation verbatim. The full transcript is always kept on disk and shown in the replay regardless."
+        },
         "levelcode.ai.verify.enabled": {
           "type": "boolean",
           "default": true,

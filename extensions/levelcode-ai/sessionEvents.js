@@ -84,6 +84,37 @@ function eventsToMessages(events) {
 	return out;
 }
 
+// ── the readable transcript for a resume replay (pure) ───────────────────────────────────────────
+
+/** The human-visible text of a provider message: a string as-is, or the joined `text` blocks of an array. */
+function messageText(content) {
+	if (content == null) { return ''; }
+	if (typeof content === 'string') { return content; }
+	if (Array.isArray(content)) {
+		return content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n\n');
+	}
+	return '';
+}
+
+/**
+ * Fold a rebuilt messages array into the readable conversation to REPLAY on resume: one entry per user
+ * prompt and per assistant answer, in order. Tool plumbing is dropped — a user message that is only a
+ * `tool_result`, and an assistant turn that is only `tool_use` (no prose) — so the replay reads like the
+ * chat did, not like the raw transcript. Pure, so the webview never has to know provider message shapes.
+ */
+function toDisplayTurns(messages) {
+	const out = [];
+	for (const m of (Array.isArray(messages) ? messages : [])) {
+		if (!m || (m.role !== 'user' && m.role !== 'assistant')) { continue; }
+		// a user message whose content is purely tool_result blocks is plumbing, not something the user typed
+		if (m.role === 'user' && Array.isArray(m.content) && m.content.length && m.content.every((b) => b && b.type === 'tool_result')) { continue; }
+		const text = messageText(m.content);
+		if (!text.trim()) { continue; }   // e.g. an assistant turn that was only tool calls
+		out.push({ role: m.role, text });
+	}
+	return out;
+}
+
 /** How many messages are already persisted — so a per-turn append stores only the new tail, not the lot. */
 function tailFrom(messages, storedCount) {
 	const msgs = Array.isArray(messages) ? messages : [];
@@ -95,5 +126,5 @@ module.exports = {
 	EDIT_TOOLS,
 	toolStatsFromMessages,
 	userTurnEvent, agentTurnEvent, endEvent, titleEvent, labelEvent,
-	eventsToMessages, tailFrom
+	eventsToMessages, messageText, toDisplayTurns, tailFrom
 };

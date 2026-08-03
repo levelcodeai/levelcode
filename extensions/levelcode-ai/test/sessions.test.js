@@ -117,4 +117,63 @@ test('MANAGER: an interrupted run seals as interrupted (honest history)', () => 
 	assert.strictEqual(m.list().find((x) => x.id === id).state, 'interrupted');
 });
 
+test('MANAGER: resume reopens a past session live, rebuilds the transcript verbatim, and continues it', () => {
+	const root = freshRoot(), slug = store.projectSlug('/pr'), st = fakeState();
+	const m = createSessions({ root, slug, projectPath: '/pr', state: st });
+	m.recordTurn(turn('Build the parser', 'parser.js'), 'anthropic/claude-opus-5');
+	const id = m.liveId();
+	m.seal('done');
+	assert.strictEqual(m.liveId(), null, 'sealed → nothing live');
+
+	const r = m.resume(id, { contextWindow: 200000 }); // roomy window → tier 1, verbatim
+	assert.ok(r, 'resume returns a plan');
+	assert.strictEqual(r.plan.tier, 1, 'fits the window → verbatim');
+	assert.strictEqual(r.note, '', 'nothing to apologize for on a verbatim resume');
+	assert.deepStrictEqual(r.messages, turn('Build the parser', 'parser.js'), 'the model resumes with the exact transcript');
+	assert.deepStrictEqual(r.full, r.messages, 'full == messages when verbatim');
+	assert.strictEqual(m.liveId(), id, 're-attached: this session is live again');
+	assert.strictEqual(st.store.liveSessionId, id, 'the pointer follows the resume');
+
+	m.recordTurn([{ role: 'user', content: 'add error recovery' }, { role: 'assistant', content: 'done' }], 'm');
+	assert.strictEqual(m.list().length, 1, 'still one session — resume continued it, did not fork');
+	assert.strictEqual(m.list()[0].turns, 2, 'the new turn appended to the same session');
+});
+
+test('MANAGER: resume on a session too big for the window plans a compacted load + an honest note', () => {
+	const root = freshRoot(), slug = store.projectSlug('/pr2');
+	const m = createSessions({ root, slug, projectPath: '/pr2' });
+	for (let i = 0; i < 6; i++) {
+		m.recordTurn([{ role: 'user', content: 'turn ' + i + ' ' + 'x'.repeat(400) }, { role: 'assistant', content: 'ok ' + 'y'.repeat(400) }], 'm');
+	}
+	const id = m.liveId(); m.seal('done');
+	// ~400-token budget, transcript far bigger → compacts; keepTailTurns:2 keeps the last two turns verbatim
+	const r = m.resume(id, { contextWindow: 1000, budgetPct: 40, keepTailTurns: 2 });
+	assert.ok(r.plan.tier >= 2, 'too big to load verbatim → a compacted tier');
+	assert.ok(r.messages.length < r.full.length, 'the model gets only the recent tail, not the whole history');
+	assert.match(r.note, /Resumed from/, 'and the user is told it was summarized');
+});
+
+test('MANAGER: resume of a missing session returns null (deleted out from under us)', () => {
+	const root = freshRoot(), slug = store.projectSlug('/pr3');
+	const m = createSessions({ root, slug, projectPath: '/pr3' });
+	assert.strictEqual(m.resume('nope-does-not-exist', { contextWindow: 1000 }), null);
+});
+
+test('MANAGER: archive / rename / trash are append-only edits that update the index row', () => {
+	const root = freshRoot(), slug = store.projectSlug('/pl');
+	const m = createSessions({ root, slug, projectPath: '/pl' });
+	m.recordTurn([{ role: 'user', content: 'original prompt' }], 'm');
+	const id = m.liveId();
+	assert.strictEqual(m.list()[0].lifecycle, 'active');
+
+	assert.ok(m.rename(id, '  Refund idempotency  '));
+	assert.strictEqual(m.list().find((e) => e.id === id).title, 'Refund idempotency', 'rename trims + overrides the derived title');
+	assert.ok(!m.rename(id, '   '), 'a blank rename is refused');
+
+	assert.ok(m.archive(id));
+	assert.strictEqual(m.list().find((e) => e.id === id).lifecycle, 'archived', 'Done archives (reversible), never deletes');
+	assert.ok(m.trash(id));
+	assert.strictEqual(m.list().find((e) => e.id === id).lifecycle, 'trashed', 'the latest label event wins');
+});
+
 console.log('sessions: ' + n + ' tests passed');

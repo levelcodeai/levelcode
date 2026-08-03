@@ -622,6 +622,13 @@
   .diff .dl.del .s { color: var(--vscode-gitDecoration-deletedResourceForeground, #e06c75); }
   .diff .dl.ctx { opacity: .55; }
   .autoctx { font-size: 11px; opacity: .55; margin: -4px 2px 2px; }
+  /* The "Resumed" banner at the top of a replayed session (message-list notice, so it uses log tokens). */
+  .sessresumed { margin: 2px 2px 12px; padding: 8px 11px; border: 1px solid var(--border); border-left: 2px solid var(--vscode-textLink-foreground, #6a9955); border-radius: 8px; background: var(--field-bg); }
+  .sessresumed .rrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .sessresumed .ci { width: 13px; height: 13px; opacity: .8; flex: 0 0 auto; }
+  .sessresumed .rtag { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--vscode-descriptionForeground); flex: 0 0 auto; }
+  .sessresumed .rtitle { font-size: 12.5px; font-weight: 600; color: var(--vscode-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sessresumed .rnote { margin-top: 5px; font-size: 11px; color: var(--vscode-descriptionForeground); }
   .autoctx .files { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
   #empty { margin: auto; max-width: min(560px, 92vw); text-align: center; opacity: .65; line-height: 1.55; padding: 20px; }
   #empty .empty-copy { max-width: 280px; margin: 0 auto; }
@@ -3355,6 +3362,25 @@
     renderSessions(); ov.style.display = 'flex';
   }
   function closeSessions(){ const ov = document.getElementById('sessOverlay'); if (ov) { ov.style.display = 'none'; } }
+  // Replay a resumed session into the chat: a compact "Resumed" banner (+ the honest summary note, if the
+  // transcript was too big to carry verbatim) followed by the readable conversation — user prompts and the
+  // assistant's prose, tool plumbing dropped. The host has already reset the log and restored the model's
+  // context; this is the visible half, so it feels like stepping back into the session.
+  function resumeTranscript(m){
+    closeSessions();
+    clearEmpty();
+    const banner = document.createElement('div');
+    banner.className = 'sessresumed';
+    banner.innerHTML = '<div class="rrow">' + codicon('sync') + '<span class="rtag">Resumed</span>'
+      + '<span class="rtitle" title="' + escAttr(m.title || '') + '">' + esc(m.title || 'Session') + '</span></div>'
+      + (m.note ? '<div class="rnote">' + esc(m.note) + '</div>' : '');
+    log.appendChild(banner);
+    turnLabeled = false;
+    for (const t of (Array.isArray(m.turns) ? m.turns : [])){
+      add(t.role, t.role === 'user' ? esc(t.text) : render(t.text));
+    }
+    forceStick();
+  }
   (function wireSessions(){
     const close = document.getElementById('sessClose'); if (close) { close.onclick = closeSessions; }
     const ov = document.getElementById('sessOverlay'); if (ov) { ov.addEventListener('click', (e) => { if (e.target === ov) { closeSessions(); } }); }
@@ -3423,6 +3449,7 @@
     else if (m.type === 'skillsList'){ renderSkillsList(m); }
     else if (m.type === 'mcpList'){ renderMcpList(m.mcp || {}); }
     else if (m.type === 'sessions'){ sessData = Array.isArray(m.entries) ? m.entries : []; if (m.open === false) { renderSessions(); } else { openSessions(); } }
+    else if (m.type === 'sessionResumed'){ resumeTranscript(m); }
     else if (m.type === 'verifyRun'){ addVerifyRun(m); }
     else if (m.type === 'verifyOutput'){ verifyOutputAppend(m); }
     else if (m.type === 'verifyDone'){ verifyDoneFinish(m); }

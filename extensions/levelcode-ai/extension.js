@@ -43,6 +43,7 @@ const SYSTEM_PROMPT =
 let ctx;
 /** @type {vscode.Webview | undefined} */
 let activeWebview;
+let sessionsWebview;   // the Sessions sidebar webview (for pushing list refreshes after a History action)
 /** @type {{role:string,content:string}[]} */
 let conversation = [];
 /** @type {string | null} */
@@ -682,6 +683,68 @@ function sessionList() {
 	const have = new Set(shown.map((e) => e.id));
 	for (const e of recent.slice(SESSIONS_SHOWN)) { if (e.pinned && !have.has(e.id)) { shown.push(e); } }
 	return shown;
+}
+
+// Push the current list to whichever surfaces are open — the /sessions modal (in the chat webview) and the
+// Sessions sidebar. Called after any lifecycle edit so both stay live.
+function refreshSessions() {
+	const entries = sessionList();
+	try { post({ type: 'sessions', entries, open: false }); } catch (e) { /* chat webview may be closed */ }
+	try { if (sessionsWebview) { sessionsWebview.postMessage({ type: 'sessions', entries }); } } catch (e) { /* sidebar may be closed */ }
+}
+
+// A card action from either surface. resume reopens the session; done/rename/delete are append-only edits
+// (§4.9): Done archives (reversible, never deletes), Delete soft-trashes, Rename retitles. All refresh both
+// surfaces. Best-effort — a History action must never throw into the UI.
+async function handleSessionAction(action, id) {
+	const m = sessionsManager();
+	if (!m || !id) { return; }
+	dbg('sessions.action', { action, id });
+	try {
+		if (action === 'resume') { await resumeSession(id); return; }
+		if (action === 'done') { m.archive(id); refreshSessions(); return; }
+		if (action === 'delete') { m.trash(id); refreshSessions(); return; }
+		if (action === 'rename') {
+			const cur = (m.list().find((e) => e.id === id) || {}).title || '';
+			const title = await vscode.window.showInputBox({ prompt: 'Rename this session', value: cur, validateInput: (v) => (v && v.trim() ? null : 'Enter a name') });
+			if (title != null && title.trim()) { m.rename(id, title); refreshSessions(); }
+			return;
+		}
+	} catch (e) { dbg('sessions.action.error', { action, id, msg: String((e && e.message) || e) }); }
+}
+
+// Reopen a past session: restore its transcript as the live agent context (budget-fitted, §4.5), reset the
+// per-turn UI, and replay the readable conversation into the chat so it feels like walking back in.
+async function resumeSession(id) {
+	const m = sessionsManager();
+	if (!m) { return; }
+	if (abort) { abort.abort(); }               // stop any running turn before we swap the context out
+	let r = null;
+	try { r = m.resume(id, { contextWindow: currentContextLimit(), budgetPct: aiConfig().get('sessions.resumeBudgetPct', 40) }); }
+	catch (e) { dbg('sessions.resume.error', { id, msg: String((e && e.message) || e) }); }
+	if (!r) { post({ type: 'agentError', message: 'That session could not be opened — it may have been deleted.' }); return; }
+
+	agentMessages = Array.isArray(r.messages) ? r.messages.slice() : [];   // what the model resumes with
+	// Tier 2/3: the head didn't fit the window, so only the recent tail is in context. Prepend a factual
+	// note so the model KNOWS earlier turns exist (a real head-summary is a later refinement) — the user
+	// still sees the whole transcript in the replay. Ephemeral: never persisted (recordTurn appends only
+	// new turns from the goal onward).
+	if (r.plan && r.plan.tier > 1) {
+		const omitted = Math.max(0, (Array.isArray(r.full) ? r.full.length : 0) - agentMessages.length);
+		agentMessages.unshift({ role: 'user', content: '[Resumed session — the earlier part of this conversation (' + omitted + ' message' + (omitted === 1 ? '' : 's') + ') was omitted to fit the context window. It is shown above in the transcript but not included here; ask if you need details from it.]' });
+	}
+	conversation = [];
+	checkpoints.length = 0; currentCheckpoint = null;                       // old file-snapshots can't be restored
+	if (!agentMode) { agentMode = true; post({ type: 'mode', agent: true }); }
+	const turns = Array.isArray(r.turns) ? r.turns : [];
+	const lastUser = turns.filter((t) => t.role === 'user').pop();
+	if (lastUser) { lastAgentGoal = lastUser.text; }                        // keep Continue/Retry meaningful
+	post({ type: 'reset' });
+	post({ type: 'sessionResumed', id, title: (r.entry && r.entry.title) || 'Session', note: r.note || '', tier: r.plan && r.plan.tier, turns });
+	postContextFiles();
+	refreshSessions();                          // the resumed session bumps to the top — keep both surfaces current
+	vscode.commands.executeCommand('levelcodeAi.chat.focus');
+	dbg('sessions.resumed', { id, tier: r.plan && r.plan.tier, restored: agentMessages.length, shown: turns.length });
 }
 
 function newChat() {
@@ -1788,7 +1851,7 @@ class ChatViewProvider {
 				case 'listSkills': { const en = aiConfig().get('skills.enabled', true); const idx = en ? loadSkills(ctx.extensionPath, dbg) : new Map(); dbg('listSkills', { enabled: en, count: idx.size }); post({ type: 'skillsList', enabled: en, skills: skillsMenu(idx) }); break; }
 				case 'listMcp': post({ type: 'mcpList', mcp: mcpOverview() }); break;
 				case 'listSessions': post({ type: 'sessions', entries: sessionList(), open: false }); break; // reply into the already-open modal
-				case 'sessionAction': dbg('sessions.action', { action: msg.action, id: msg.id }); break; // TODO(next): resume/done/rename/delete
+				case 'sessionAction': await handleSessionAction(msg.action, msg.id); break;
 				case 'feedback': dbg('feedback', { value: msg.value, model: msg.model }); await recordFeedback(msg.value, msg.model); break;
 				case 'openFile': await openWorkspaceFile(msg.path); break;
 				case 'reviewKeepFile': dbg('review.keep', { id: msg.id }); review.keepFile(msg.id, 'kept'); break;
@@ -1834,16 +1897,16 @@ function getHtml() {
 class SessionsViewProvider {
 	/** @param {vscode.WebviewView} view */
 	resolveWebviewView(view) {
+		sessionsWebview = view.webview;
 		view.webview.options = { enableScripts: true, localResourceRoots: [ctx.extensionUri] };
 		view.webview.html = getSessionsHtml();
-		view.webview.onDidReceiveMessage((msg) => {
+		view.webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
 				// The real session index for this workspace (empty on a fresh install — the view shows its
 				// own empty state). Posted to THIS view's webview, not the chat's.
 				case 'listSessions': view.webview.postMessage({ type: 'sessions', entries: sessionList() }); break;
 				case 'newSession': newChat(); vscode.commands.executeCommand('levelcodeAi.chat.focus'); break;
-				// TODO(next): resume/done/rename/delete once the read side (planResume + replay) lands.
-				case 'sessionAction': dbg('sessions.action', { action: msg.action, id: msg.id }); break;
+				case 'sessionAction': await handleSessionAction(msg.action, msg.id); break;
 			}
 		});
 	}
