@@ -74,15 +74,16 @@ test('CARD (state): interrupted gets the warn class; an unpinned card has no pin
 	assert.match(h, /data-act="pin"[^>]*aria-label="Pin"/, 'and the toggle offers Pin');
 });
 
-test('CARD (actions): resume/rename/done/delete/pin as icon buttons on the row — no drawer, no text labels', () => {
+test('CARD (actions): four row icon buttons (rename/done/delete/pin); clicking the card body resumes', () => {
 	const e = { id: 's3', title: 't', updatedAt: msAgo(3600), turns: 41, model: 'anthropic/claude-opus-5',
 		state: 'done', filesEdited: ['refund.rb', 'lock.rb'] };
 	const h = P.sessCardHtml(e, NOW, esc, escAttr);
-	for (const a of ['resume', 'rename', 'done', 'delete', 'pin']) { assert.match(h, new RegExp('data-act="' + a + '"'), a + ' action present'); }
+	for (const a of ['rename', 'done', 'delete', 'pin']) { assert.match(h, new RegExp('data-act="' + a + '"'), a + ' action present'); }
+	assert.ok(!/data-act="resume"/.test(h), 'no Resume icon — clicking the card body resumes (default action)');
 	assert.match(h, /class="sessacts">/, 'actions live in the row…');
 	assert.ok(!/sessrich|sessbtn|sesschip|sessmeta/.test(h), '…not the old drawer/chip/meta markup');
 	assert.match(h, /<svg class="ci"/, 'actions are icon buttons');
-	assert.match(h, /aria-label="Resume"/, 'labelled for a11y (icon-only)');
+	assert.match(h, /aria-label="Rename"/, 'labelled for a11y (icon-only)');
 	assert.match(h, /title="t — 41 turns · claude-opus-5 · refund\.rb, lock\.rb"/, 'model · turns · files fold into the tooltip');
 });
 

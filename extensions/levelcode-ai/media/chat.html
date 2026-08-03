@@ -3307,7 +3307,6 @@
   // Inline codicons (self-contained — the shared block can't reach the chat's codicon() helper). play is a
   // plain triangle; edit/check/trash are the editor's own glyphs; star doubles as the pin toggle.
   var SESS_IC = {
-    play: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.3 L12.6 8 L5 12.7 Z"/></svg>',
     edit: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M14.236 1.76386C13.2123 0.740172 11.5525 0.740171 10.5289 1.76386L2.65722 9.63549C2.28304 10.0097 2.01623 10.4775 1.88467 10.99L1.01571 14.3755C0.971767 14.5467 1.02148 14.7284 1.14646 14.8534C1.27144 14.9783 1.45312 15.028 1.62432 14.9841L5.00978 14.1151C5.52234 13.9836 5.99015 13.7168 6.36433 13.3426L14.236 5.47097C15.2596 4.44728 15.2596 2.78755 14.236 1.76386ZM11.236 2.47097C11.8691 1.8378 12.8957 1.8378 13.5288 2.47097C14.162 3.10413 14.162 4.1307 13.5288 4.76386L12.75 5.54269L10.4571 3.24979L11.236 2.47097ZM9.75002 3.9569L12.0429 6.24979L5.65722 12.6355C5.40969 12.883 5.10023 13.0595 4.76117 13.1465L2.19447 13.8053L2.85327 11.2386C2.9403 10.8996 3.1168 10.5901 3.36433 10.3426L9.75002 3.9569Z"/></svg>',
     check: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.6572 3.13573C13.8583 2.9465 14.175 2.95614 14.3643 3.15722C14.5535 3.35831 14.5438 3.675 14.3428 3.86425L5.84277 11.8642C5.64597 12.0494 5.33756 12.0446 5.14648 11.8535L1.64648 8.35351C1.45121 8.15824 1.45121 7.84174 1.64648 7.64647C1.84174 7.45121 2.15825 7.45121 2.35351 7.64647L5.50976 10.8027L13.6572 3.13573Z"/></svg>',
     trash: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M10 3h3v1h-1v9l-1 1H4l-1-1V4H2V3h3V2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zM9 2H6v1h3V2zM4 13h7V4H4v9zm2-8H5v7h1V5zm1 0h1v7H7V5zm2 0h1v7H9V5z"/></svg>',
@@ -3324,8 +3323,9 @@
   }
   // esc/escAttr are INJECTED so this whole block stays pure (unit-testable without the webview globals).
   // The card is two fixed-height lines: title + (primary file · time). Actions are compact icon buttons on
-  // the RIGHT of the title row — hidden at rest, revealed on hover — so nothing reflows or floats. The pin
-  // stays visible at rest when pinned. Secondary detail (model · turns · files) rides the native tooltip.
+  // the RIGHT of the title row — hidden at rest, revealed on hover — so nothing reflows or floats. Clicking
+  // the card body resumes (so there is no Resume icon); the pin stays visible at rest when pinned. Secondary
+  // detail (model · turns · files) rides the native tooltip.
   function sessCardHtml(e, nowMs, escFn, escAttrFn){
     const st = e.state === 'interrupted' ? ' warn' : e.state === 'error' ? ' err' : e.state === 'resumed' ? ' res' : '';
     const files = e.filesEdited || [];
@@ -3334,7 +3334,6 @@
     const detail = (e.title || 'Untitled') + ' — ' + turns + ' turn' + (turns === 1 ? '' : 's')
       + (e.model ? ' · ' + sessModelShort(e.model) : '') + (files.length ? ' · ' + files.join(', ') : '');
     const acts = '<span class="sessacts">'
-      + sessActBtn('resume', 'Resume', SESS_IC.play)
       + sessActBtn('rename', 'Rename', SESS_IC.edit)
       + sessActBtn('done', 'Archive', SESS_IC.check)
       + sessActBtn('delete', 'Delete', SESS_IC.trash)
