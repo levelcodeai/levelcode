@@ -110,10 +110,40 @@ function latestBySession(entries) {
  * @param {string} query
  * @param {{ limit?: number }} [opts]
  */
+/** Normalize a query into searchable terms (lowercased, punctuation-trimmed, ≥2 chars). Shared by recall. */
+function queryTerms(query) {
+	return String(query || '').toLowerCase().split(/\s+/).map((t) => t.replace(/[^a-z0-9_.-]/g, '')).filter((t) => t.length >= 2);
+}
+
+/**
+ * Find the first place a query term appears in a session's readable transcript and return a short, cited
+ * snippet around it (role-prefixed). Pure — the caller feeds display turns; this never reads files. Empty
+ * when nothing matches. `terms` may be a pre-split array or a raw query string.
+ */
+function snippetFor(displayTurns, terms) {
+	const ts = Array.isArray(terms) ? terms : queryTerms(terms);
+	if (!ts.length) { return ''; }
+	for (const turn of (Array.isArray(displayTurns) ? displayTurns : [])) {
+		const text = String((turn && turn.text) || '');
+		const low = text.toLowerCase();
+		for (const term of ts) {
+			const i = low.indexOf(term);
+			if (i >= 0) {
+				const start = Math.max(0, i - 40);
+				let snip = text.slice(start, i + term.length + 90).replace(/\s+/g, ' ').trim();
+				if (start > 0) { snip = '…' + snip; }
+				if (i + term.length + 90 < text.length) { snip += '…'; }
+				return (turn.role === 'user' ? 'you: ' : 'ai: ') + snip;
+			}
+		}
+	}
+	return '';
+}
+
 function recallRank(entries, query, opts) {
 	const o = opts || {};
 	const limit = Number.isFinite(o.limit) && o.limit > 0 ? o.limit : 6;
-	const terms = String(query || '').toLowerCase().split(/\s+/).map((t) => t.replace(/[^a-z0-9_.-]/g, '')).filter((t) => t.length >= 2);
+	const terms = queryTerms(query);
 	if (!terms.length) { return []; }
 	const scored = [];
 	for (const e of (Array.isArray(entries) ? entries : [])) {
@@ -193,5 +223,5 @@ module.exports = {
 	SCHEMA_V,
 	memoryDir, journalFile, factsFile, memoryMdFile,
 	outcomeEntry, appendJournal, readJournal, latestBySession, writeMemoryMd,
-	recallRank, buildDigest, digestSummary, digestMarkdown
+	queryTerms, snippetFor, recallRank, buildDigest, digestSummary, digestMarkdown
 };

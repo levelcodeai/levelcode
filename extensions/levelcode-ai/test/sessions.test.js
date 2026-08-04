@@ -274,6 +274,21 @@ test('MEMORY: recall finds a past session by a query over its outcome + files', 
 	assert.deepStrictEqual(m.recall('zzz-nomatch'), [], 'no match → empty');
 });
 
+test('MEMORY: recall DEEP-scans transcripts — finds a match that lives only in the conversation, with a snippet', () => {
+	const root = freshRoot(), slug = store.projectSlug('/pdeep');
+	const m = createSessions({ root, slug, projectPath: '/pdeep' });
+	// "kubernetes" appears in the conversation but NOT in the title / summary / files
+	m.recordTurn([
+		{ role: 'user', content: 'Set up the deploy' },
+		{ role: 'assistant', content: 'I configured the Kubernetes ingress and a health probe.' }
+	], 'm');
+	m.seal('done');
+	assert.strictEqual(m.recall('deploy').length, 1, 'metadata match (title) still works');
+	const deep = m.recall('kubernetes');
+	assert.strictEqual(deep.length, 1, 'found by the deep transcript scan, not the metadata');
+	assert.match(deep[0].snippet, /Kubernetes ingress/, 'and returns a cited snippet from the conversation');
+});
+
 test('MEMORY: forget drops a session from memory (digest/recall/panel) but keeps it in History', () => {
 	const root = freshRoot(), slug = store.projectSlug('/pfg');
 	const m = createSessions({ root, slug, projectPath: '/pfg' });

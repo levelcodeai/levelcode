@@ -165,10 +165,37 @@ function createSessions(opts) {
 		try { return memory.buildDigest(memory.readJournal(root, slug), Object.assign({ nowMs: clock().getTime() }, opts)); }
 		catch (e) { return { recently: [], pinned: [], total: 0 }; }
 	}
-	/** On-demand recall: the top past-session outcomes matching a query (journal search). Empty on error. */
+	/**
+	 * On-demand recall: past-session outcomes matching a query — ranked by journal metadata (summary/title/
+	 * files, all sessions) AND a bounded DEEP scan of recent transcripts, so a match that lives only in the
+	 * conversation (never the one-line summary) is still found and returns a cited snippet. Empty on error.
+	 */
 	function recall(query, opts) {
-		try { return memory.recallRank(memory.latestBySession(memory.readJournal(root, slug)), query, opts); }
-		catch (e) { return []; }
+		const o = opts || {};
+		const limit = Number.isFinite(o.limit) && o.limit > 0 ? o.limit : 6;
+		const scanMax = Number.isFinite(o.scanMax) ? o.scanMax : 40;   // bound the deep transcript reads
+		try {
+			const entries = memory.latestBySession(memory.readJournal(root, slug));   // newest-first
+			const terms = memory.queryTerms(query);
+			if (!terms.length) { return []; }
+			const metaIds = new Set(memory.recallRank(entries, query, { limit: entries.length }).map((e) => e.id));
+			const hits = [];
+			let scanned = 0;
+			for (const e of entries) {
+				let snippet = '';
+				if (scanned < scanMax) {
+					scanned++;
+					try {
+						const turns = events.toDisplayTurns(events.eventsToMessages(store.readSession(store.sessionFile(root, slug, e.id)).events));
+						snippet = memory.snippetFor(turns, terms);
+					} catch (err) { /* a gone/corrupt session just yields no snippet */ }
+				}
+				const score = (metaIds.has(e.id) ? 2 : 0) + (snippet ? 1 : 0);   // a metadata hit weighs more than a body hit
+				if (score > 0) { hits.push(Object.assign({}, e, { score, snippet })); }
+			}
+			hits.sort((a, b) => b.score - a.score || String(b.at || '').localeCompare(String(a.at || '')));
+			return hits.slice(0, limit);
+		} catch (e) { return []; }
 	}
 	/** All current memory outcomes (one per session, newest-first) — what the memory panel lists. */
 	function memoryItems() { try { return memory.latestBySession(memory.readJournal(root, slug)); } catch (e) { return []; } }

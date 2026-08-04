@@ -92,6 +92,18 @@ test('RECALL: ranks journal entries by term matches in summary/title/files, best
 	assert.ok(M.recallRank(j, 'the', { limit: 2 }).length <= 2, 'respects the limit');
 });
 
+test('SNIPPET: finds the first matching turn and returns a short, role-prefixed citation', () => {
+	const turns = [
+		{ role: 'user', text: 'Add idempotency to refunds' },
+		{ role: 'assistant', text: 'I used a Redis SETNX lock keyed on the idempotency-key header to dedupe retries.' }
+	];
+	const s = M.snippetFor(turns, 'redis');
+	assert.match(s, /^ai: /, 'role-prefixed');
+	assert.match(s, /Redis SETNX/, 'quotes around the match');
+	assert.strictEqual(M.snippetFor(turns, 'zzz'), '', 'no match → empty');
+	assert.strictEqual(M.snippetFor(turns, 'a'), '', 'too-short term → empty');
+});
+
 test('DIGEST: recent (windowed, newest-first) + pinned, built from the journal', () => {
 	const DAY = 86400000, T0 = Date.parse('2026-08-01T12:00:00Z');
 	const ago = (d) => new Date(T0 - d * DAY).toISOString();

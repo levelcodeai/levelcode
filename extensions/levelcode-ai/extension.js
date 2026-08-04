@@ -785,7 +785,9 @@ function formatRecall(hits, query) {
 	const lines = arr.map((e) => {
 		const when = e.at ? String(e.at).slice(0, 10) : 'undated';
 		const files = Array.isArray(e.files) && e.files.length ? ' — files: ' + e.files.slice(0, 4).join(', ') : '';
-		return '- ' + (e.summary || e.title || 'a session') + files + ' (' + when + ')';
+		let line = '- ' + (e.summary || e.title || 'a session') + files + ' (' + when + ')';
+		if (e.snippet) { line += '\n    ↳ ' + e.snippet; }   // a cited line from the actual transcript (deep recall)
+		return line;
 	});
 	return 'Recalled from earlier sessions in this project (memory — informative but possibly stale; verify against the current code):\n' + lines.join('\n');
 }
