@@ -98,6 +98,33 @@ function latestBySession(entries) {
 	return out;
 }
 
+// ── recall: on-demand search over the journal (design §3 — the recall tool's engine) ──────────────
+
+/**
+ * Rank journal entries against a free-text query — term matches in the outcome summary, title, and files
+ * (recency breaks ties). Pure and cheap (no file reads): the recall tool searches the small journal, not
+ * every transcript. Returns the top `limit` matching entries, best-first; [] for an empty/too-short query.
+ * @param {any[]} entries  journal entries (usually latestBySession)
+ * @param {string} query
+ * @param {{ limit?: number }} [opts]
+ */
+function recallRank(entries, query, opts) {
+	const o = opts || {};
+	const limit = Number.isFinite(o.limit) && o.limit > 0 ? o.limit : 6;
+	const terms = String(query || '').toLowerCase().split(/\s+/).map((t) => t.replace(/[^a-z0-9_.-]/g, '')).filter((t) => t.length >= 2);
+	if (!terms.length) { return []; }
+	const scored = [];
+	for (const e of (Array.isArray(entries) ? entries : [])) {
+		if (!e) { continue; }
+		const hay = ((e.summary || '') + ' ' + (e.title || '') + ' ' + (Array.isArray(e.files) ? e.files.join(' ') : '')).toLowerCase();
+		let score = 0;
+		for (const t of terms) { if (hay.indexOf(t) >= 0) { score++; } }
+		if (score > 0) { scored.push({ e, score }); }
+	}
+	scored.sort((a, b) => b.score - a.score || String(b.e.at || '').localeCompare(String(a.e.at || '')));
+	return scored.slice(0, limit).map((x) => x.e);
+}
+
 // ── the always-on digest (design §3/§8) ──────────────────────────────────────────────────────────
 
 /**
@@ -164,5 +191,5 @@ module.exports = {
 	SCHEMA_V,
 	memoryDir, journalFile, factsFile, memoryMdFile,
 	outcomeEntry, appendJournal, readJournal, latestBySession, writeMemoryMd,
-	buildDigest, digestSummary, digestMarkdown
+	recallRank, buildDigest, digestSummary, digestMarkdown
 };

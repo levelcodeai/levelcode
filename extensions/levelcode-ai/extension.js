@@ -778,6 +778,25 @@ function enrichMemoryAsync(id) {
 	}).catch(() => { /* best-effort */ });
 }
 
+// Format recall hits as a cited, verify-first tool result (the recall_sessions result the agent reads).
+function formatRecall(hits, query) {
+	const arr = Array.isArray(hits) ? hits : [];
+	if (!arr.length) { return 'No past sessions in this project match "' + query + '".'; }
+	const lines = arr.map((e) => {
+		const when = e.at ? String(e.at).slice(0, 10) : 'undated';
+		const files = Array.isArray(e.files) && e.files.length ? ' — files: ' + e.files.slice(0, 4).join(', ') : '';
+		return '- ' + (e.summary || e.title || 'a session') + files + ' (' + when + ')';
+	});
+	return 'Recalled from earlier sessions in this project (memory — informative but possibly stale; verify against the current code):\n' + lines.join('\n');
+}
+// The recall_sessions tool callback handed to the agent — only when memory + the recall setting are on.
+function recallSessionsTool(query) {
+	const m = sessionsManager();
+	if (!m) { return 'No project memory is available in this workspace.'; }
+	try { return formatRecall(m.recall(String(query || ''), { limit: 6 }), String(query || '')); }
+	catch (e) { return 'Recall failed.'; }
+}
+
 // A card action from either surface. resume reopens the session; done/delete/rename/pin are append-only edits
 // (§4.9): Done archives (reversible, never deletes), Delete soft-trashes, Rename retitles, Pin toggles.
 // Done/Delete offer an Undo (restore) so an accidental click is recoverable. Best-effort — a History action
@@ -1371,6 +1390,8 @@ async function agentFlow(text) {
 			},
 			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
 			projectMemory: projectMemoryMarkdown(), // cross-session memory: a verify-first digest of past sessions, injected like project rules
+			// The recall_sessions tool: search past-session outcomes on demand. Off → the tool isn't offered at all.
+			recallSessions: (aiConfig().get('sessions.memory.enabled', true) && aiConfig().get('sessions.memory.recallTool', true)) ? recallSessionsTool : undefined,
 
 			// MCP (docs/MCP.md S3). Config is read HERE and handed in, like verify/commandTimeout, so
 			// agent.js keeps doing the loading + connecting + naming without reaching for the editor API.

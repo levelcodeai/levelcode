@@ -175,6 +175,16 @@ test('MEMORY (enrichment): a cheap-lane model call refines the journal outcome w
 	assert.ok((pkg.contributes.configuration.properties || {})['levelcode.ai.sessions.memory.summarize'], 'gated by a contributed setting');
 });
 
+test('MEMORY (recall): a recall_sessions agent tool searches past-session outcomes on demand', () => {
+	const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8');
+	assert.match(agentSrc, /name: 'recall_sessions'/, 'the tool schema exists');
+	assert.match(agentSrc, /if \(ctx\.recallSessions\) \{ tools = tools\.concat\(\[RECALL_TOOL\]\)/, 'offered ONLY when the host wires it (host-gated)');
+	assert.match(agentSrc, /tu\.name === 'recall_sessions'/, 'and dispatched to ctx.recallSessions');
+	assert.match(ext, /function recallSessionsTool/, 'extension.js provides the recall callback');
+	assert.match(ext, /recallSessions: \(aiConfig\(\)\.get\('sessions\.memory\.enabled'.*recallTool/, 'gated by enabled + recallTool');
+	assert.ok((pkg.contributes.configuration.properties || {})['levelcode.ai.sessions.memory.recallTool'], 'the setting is contributed');
+});
+
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {
 	const grab = (s) => s.slice(s.indexOf('// [SESSIONS-PURE-START]'), s.indexOf('// [SESSIONS-PURE-END]'));
 	assert.ok(grab(view).length > 500, 'the view carries the pure block');

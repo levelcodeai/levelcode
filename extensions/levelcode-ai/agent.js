@@ -70,6 +70,11 @@ function buildSystem(menu) {
 }
 const TOOLS_TOKENS_EST = Math.round(JSON.stringify(TOOLS).length / 4);
 
+// Cross-session memory recall (docs/levelcode-sessions-memory.md). Added to a run's tools ONLY when the host
+// wires ctx.recallSessions (memory + the recall setting on), so it costs nothing otherwise. Read-only and
+// instant like use_skill — it searches the project's OWN past-session outcomes, never the file system.
+const RECALL_TOOL = { name: 'recall_sessions', description: 'Search THIS project\'s past sessions for relevant earlier work — their recorded outcomes (what was built/fixed/decided) and the files they touched. Use when the user refers to earlier work ("what did we do about refunds?", "did we already fix the webhook?") or when prior context would clearly help before you start. Returns cited past-session outcomes with dates; treat them as memory — informative but possibly stale, so verify against the current code.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'keywords or a short question, e.g. "refund retries" or "MCP timeline rail"' } }, required: ['query'] } };
+
 // How much of a background command's accumulated output the sniffers re-read on each chunk. Generous
 // next to any single log line, so a url split across chunk boundaries is still found, yet small enough
 // that a noisy watcher which never prints an address costs nothing to keep scanning.
@@ -479,6 +484,14 @@ async function runTool(tu, ctx) {
 			ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🧩 using skill: ' + name });   // quiet chip — only on success (🧩 is the marker; 'sparkle' falls back cleanly)
 			return body;                                                                       // SKILL.md body → tool_result, steers the next turns
 		}
+		if (tu.name === 'recall_sessions') {
+			if (typeof ctx.recallSessions !== 'function') { return 'ERROR: session recall is not available in this session.'; }
+			const query = String(input.query || '').trim();
+			if (!query) { return 'ERROR: pass a non-empty query describing what to recall.'; }
+			ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 recalling: ' + query });
+			try { return String(ctx.recallSessions(query) || 'No matching past sessions in this project.'); }
+			catch (e) { return 'ERROR: recall failed.'; }
+		}
 		// MCP tools (docs/MCP.md S3). An MCP name matches none of the built-in branches above, so every
 		// MCP call necessarily arrives HERE — which is why the router is one block at one line rather
 		// than a dispatch scattered through runTool.
@@ -706,10 +719,12 @@ async function runAgent(ctx) {
 	// as `system`/`systemTokensEst` two lines up — built once per run, then used for every turn.
 	const mcp = await setupMcp(ctx, wsFolders, dbg);
 	ctx.mcpRoutes = mcp.routes;                                        // runTool's router reads this
-	const tools = mcp.tools.length ? TOOLS.concat(mcp.tools) : TOOLS;
-	// Recomputed only when MCP actually contributed tools, so the no-MCP path keeps the module constant
-	// and pays nothing for a feature it isn't using.
-	const toolsTokensEst = mcp.tools.length ? Math.round(JSON.stringify(tools).length / 4) : TOOLS_TOKENS_EST;
+	let tools = mcp.tools.length ? TOOLS.concat(mcp.tools) : TOOLS;
+	if (ctx.recallSessions) { tools = tools.concat([RECALL_TOOL]); }  // cross-session recall (host-gated by memory settings)
+	const baseTools = ctx.recallSessions ? TOOLS.concat([RECALL_TOOL]) : TOOLS;   // built-ins + recall; MCP is the rest
+	// Recomputed only when MCP or recall actually contributed tools, so the plain path keeps the module
+	// constant and pays nothing for a feature it isn't using.
+	const toolsTokensEst = (mcp.tools.length || ctx.recallSessions) ? Math.round(JSON.stringify(tools).length / 4) : TOOLS_TOKENS_EST;
 	// The MCP SHARE of that, reported separately so the context popover can show what these servers cost
 	// (docs/MCP.md S5). Every tool schema rides EVERY turn, so a chatty server is a standing tax on the
 	// window rather than a one-off — and until it has its own segment, that cost is invisible.
@@ -718,7 +733,7 @@ async function runAgent(ctx) {
 	// the JSON delimiters between entries belong to the total, and attributing them consistently is what
 	// keeps `tools` and `mcpTools` summing to the number the bar already draws.
 	const mcpToolsTokensEst = mcp.tools.length
-		? Math.max(0, toolsTokensEst - Math.round(JSON.stringify(TOOLS).length / 4))
+		? Math.max(0, toolsTokensEst - Math.round(JSON.stringify(baseTools).length / 4))
 		: 0;
 
 	const messages = ctx.messages;

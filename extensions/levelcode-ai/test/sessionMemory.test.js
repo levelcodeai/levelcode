@@ -70,6 +70,19 @@ test('LATEST: one outcome per session — the latest supersedes, newest-first', 
 	assert.strictEqual(latest.find((e) => e.id === 'a').title, 'a-new', 'the later line supersedes the earlier');
 });
 
+test('RECALL: ranks journal entries by term matches in summary/title/files, best-first', () => {
+	const j = [
+		{ id: 'a', at: '2026-07-01', summary: 'Made refunds idempotent with a Redis lock', title: 'refund retries', files: ['refund.rb'] },
+		{ id: 'b', at: '2026-07-10', summary: 'Fixed the flaky payment webhook test', title: 'webhook', files: ['webhook_spec.rb'] },
+		{ id: 'c', at: '2026-07-20', summary: 'Tidied the CHANGELOG', title: 'changelog', files: ['RELEASE-NOTES.md'] }
+	];
+	assert.strictEqual(M.recallRank(j, 'refund redis', { limit: 5 })[0].id, 'a', 'two term hits rank first');
+	assert.deepStrictEqual(M.recallRank(j, 'webhook_spec.rb').map((e) => e.id), ['b'], 'matches on a file path too');
+	assert.deepStrictEqual(M.recallRank(j, 'zzz nothing'), [], 'no match → empty');
+	assert.deepStrictEqual(M.recallRank(j, 'a'), [], 'too-short terms are ignored (no accidental match-all)');
+	assert.ok(M.recallRank(j, 'the', { limit: 2 }).length <= 2, 'respects the limit');
+});
+
 test('DIGEST: recent (windowed, newest-first) + pinned, built from the journal', () => {
 	const DAY = 86400000, T0 = Date.parse('2026-08-01T12:00:00Z');
 	const ago = (d) => new Date(T0 - d * DAY).toISOString();

@@ -263,4 +263,15 @@ test('MEMORY: refineSummary supersedes the deterministic outcome (model enrichme
 	assert.ok(!m.refineSummary(id, '   '), 'a blank refinement is refused');
 });
 
+test('MEMORY: recall finds a past session by a query over its outcome + files', () => {
+	const root = freshRoot(), slug = store.projectSlug('/prc');
+	const m = createSessions({ root, slug, projectPath: '/prc' });
+	m.recordTurn(turn('Add idempotency to refunds', 'refund.rb'), 'm'); m.seal('done');
+	m.recordTurn(turn('Tidy the CHANGELOG', 'RELEASE-NOTES.md'), 'm'); m.seal('done');
+	const hits = m.recall('refund');
+	assert.strictEqual(hits.length, 1, 'only the refunds session matches');
+	assert.match(hits[0].title, /idempotency to refunds/);
+	assert.deepStrictEqual(m.recall('zzz-nomatch'), [], 'no match → empty');
+});
+
 console.log('sessions: ' + n + ' tests passed');

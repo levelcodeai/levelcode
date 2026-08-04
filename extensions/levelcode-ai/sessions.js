@@ -165,6 +165,11 @@ function createSessions(opts) {
 		try { return memory.buildDigest(memory.readJournal(root, slug), Object.assign({ nowMs: clock().getTime() }, opts)); }
 		catch (e) { return { recently: [], pinned: [], total: 0 }; }
 	}
+	/** On-demand recall: the top past-session outcomes matching a query (journal search). Empty on error. */
+	function recall(query, opts) {
+		try { return memory.recallRank(memory.latestBySession(memory.readJournal(root, slug)), query, opts); }
+		catch (e) { return []; }
+	}
 	/** The deterministic consolidation pass: rewrite MEMORY.md from the current journal. Returns the digest. */
 	function consolidate(opts) {
 		const o = Object.assign({ nowMs: clock().getTime() }, opts);
@@ -202,7 +207,7 @@ function createSessions(opts) {
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, memoryPaths, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, memoryPaths, list, liveId };
 }
 
 module.exports = { createSessions };
