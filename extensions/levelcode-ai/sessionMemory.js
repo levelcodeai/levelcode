@@ -93,7 +93,9 @@ function latestBySession(entries) {
 		if (!e || e.id == null) { continue; }
 		byId.set(String(e.id), e);                        // later lines overwrite earlier → latest wins
 	}
-	const out = [...byId.values()];
+	// A `forgotten` tombstone (the newest line for an id) drops it from all memory — digest, recall, panel —
+	// while the append-only journal.jsonl keeps the full history (a hand-edit can bring it back).
+	const out = [...byId.values()].filter((e) => !e.forgotten);
 	out.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
 	return out;
 }

@@ -70,6 +70,15 @@ test('LATEST: one outcome per session — the latest supersedes, newest-first', 
 	assert.strictEqual(latest.find((e) => e.id === 'a').title, 'a-new', 'the later line supersedes the earlier');
 });
 
+test('LATEST: a forgotten tombstone drops the session from memory', () => {
+	const entries = [
+		{ id: 'a', at: '2026-01-01', summary: 'alpha' },
+		{ id: 'b', at: '2026-02-01', summary: 'beta' },
+		{ id: 'a', at: '2026-03-01', forgotten: true }   // a is forgotten (its newest line)
+	];
+	assert.deepStrictEqual(M.latestBySession(entries).map((e) => e.id), ['b'], 'forgotten a is gone; b remains');
+});
+
 test('RECALL: ranks journal entries by term matches in summary/title/files, best-first', () => {
 	const j = [
 		{ id: 'a', at: '2026-07-01', summary: 'Made refunds idempotent with a Redis lock', title: 'refund retries', files: ['refund.rb'] },

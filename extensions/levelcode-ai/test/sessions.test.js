@@ -274,4 +274,17 @@ test('MEMORY: recall finds a past session by a query over its outcome + files', 
 	assert.deepStrictEqual(m.recall('zzz-nomatch'), [], 'no match → empty');
 });
 
+test('MEMORY: forget drops a session from memory (digest/recall/panel) but keeps it in History', () => {
+	const root = freshRoot(), slug = store.projectSlug('/pfg');
+	const m = createSessions({ root, slug, projectPath: '/pfg' });
+	m.recordTurn(turn('Add idempotency to refunds', 'refund.rb'), 'm'); m.seal('done');
+	assert.strictEqual(m.memoryItems().length, 1, 'the outcome is in memory');
+	const id = m.memoryItems()[0].id;
+	assert.ok(m.forget(id));
+	assert.deepStrictEqual(m.memoryItems(), [], 'forgotten → gone from the panel');
+	assert.deepStrictEqual(m.digest().recently, [], 'and from the welcome-back digest');
+	assert.deepStrictEqual(m.recall('refund'), [], 'and from recall');
+	assert.strictEqual(m.list().length, 1, 'but the session itself stays in History (resumable)');
+});
+
 console.log('sessions: ' + n + ' tests passed');

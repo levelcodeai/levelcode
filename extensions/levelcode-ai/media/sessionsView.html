@@ -24,6 +24,28 @@
   .sessundo .ut { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sessundo .ub { flex: 0 0 auto; background: transparent; border: none; color: var(--cc-accent); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
   .sessundo .ub:hover { text-decoration: underline; }
+  /* Memory tab (§M3): a second surface beside History for the recorded outcomes — edit or forget. */
+  .svtabs { display: flex; gap: 2px; padding: 6px 10px 0; flex: 0 0 auto; }
+  .svtab { flex: 1; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--cc-text3); font: inherit; font-size: 12px; padding: 6px 4px 7px; cursor: pointer; }
+  .svtab:hover { color: var(--cc-text); }
+  .svtab.on { color: var(--cc-text); border-bottom-color: var(--cc-accent); }
+  .svpane { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+  .svpane[hidden] { display: none; }
+  .svmemhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px 4px; font-size: 11px; color: var(--cc-text3); }
+  .svmemopen { background: transparent; border: none; color: var(--cc-accent); font: inherit; font-size: 11px; cursor: pointer; padding: 0; white-space: nowrap; }
+  .svmemopen:hover { text-decoration: underline; }
+  .memcard { position: relative; padding: 8px 8px 9px; margin-bottom: 1px; border-radius: 6px; cursor: pointer; }
+  .memcard:hover { background: color-mix(in srgb, var(--cc-text3) 13%, transparent); }
+  .memcard:focus-visible { background: color-mix(in srgb, var(--cc-accent) 15%, transparent); outline: none; }
+  .memcard .memtext { font-size: 13px; line-height: 1.45; color: var(--cc-text); }
+  .memcard .memline2 { display: flex; align-items: center; min-height: 22px; margin-top: 3px; }
+  .memcard .memmeta { flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--cc-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .memcard .memacts { display: none; align-items: center; gap: 4px; flex: 0 0 auto; }
+  .memcard:hover .memmeta, .memcard:focus-within .memmeta { display: none; }
+  .memcard:hover .memacts, .memcard:focus-within .memacts { display: flex; }
+  .memcard .memact { background: transparent; border: none; color: var(--cc-text2); border-radius: 4px; padding: 2px 8px; font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .memcard .memact:hover { background: color-mix(in srgb, var(--cc-text3) 20%, transparent); color: var(--cc-text); }
+  .memcard .memact[data-act="forget"]:hover { background: color-mix(in srgb, var(--cc-danger) 18%, transparent); color: var(--cc-danger); }
   .sesslist { flex: 1 1 auto; overflow-y: auto; padding: 0 10px 12px; }
   .sessbucket { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 7px; }
   .sessbucket .cnt { letter-spacing: 0; }
@@ -56,8 +78,18 @@
 </head>
 <body>
   <div class="sessview">
-    <button id="svNew" class="sessnew" type="button">New Session</button>
-    <div class="sesslist" id="svList"></div>
+    <div class="svtabs">
+      <button class="svtab on" data-tab="history" type="button">History</button>
+      <button class="svtab" data-tab="memory" type="button">Memory</button>
+    </div>
+    <div class="svpane" id="paneHistory">
+      <button id="svNew" class="sessnew" type="button">New Session</button>
+      <div class="sesslist" id="svList"></div>
+    </div>
+    <div class="svpane" id="paneMemory" hidden>
+      <div class="svmemhead"><span>What this project remembers</span><button class="svmemopen" id="svMemOpen" type="button">open file &#8599;</button></div>
+      <div class="sesslist" id="svMemList"></div>
+    </div>
     <div class="sessundo" id="svUndo" hidden></div>
   </div>
 <script nonce="__NONCE__">
@@ -154,6 +186,38 @@
     const id = card.getAttribute('data-id'); const btn = e.target.closest('[data-act]');
     vscode.postMessage({ type: 'sessionAction', action: btn ? btn.getAttribute('data-act') : 'resume', id: id });
   });
+  // ── Memory tab (§M3): the recorded outcomes, each with Edit / Forget; click the card to resume it ──
+  function memCardHtml(e){
+    const files = Array.isArray(e.files) ? e.files : [];
+    const when = e.at ? new Date(e.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+    const meta = (files.length ? esc(files[0]) + (files.length > 1 ? ' +' + (files.length - 1) : '') + ' · ' : '') + esc(when);
+    return '<div class="memcard" data-id="' + escAttr(e.id || '') + '" tabindex="0" role="button" title="' + escAttr(e.summary || '') + '">'
+      + '<div class="memtext">' + esc(e.summary || e.title || 'a session') + '</div>'
+      + '<div class="memline2"><span class="memmeta">' + meta + '</span>'
+      + '<span class="memacts"><button type="button" class="memact" data-act="edit" title="Edit this memory">Edit</button>'
+      + '<button type="button" class="memact" data-act="forget" title="Forget this session">Forget</button></span></div>'
+      + '</div>';
+  }
+  function renderMemory(items){
+    const list = document.getElementById('svMemList'); if (!list) { return; }
+    const arr = Array.isArray(items) ? items : [];
+    if (!arr.length){ list.innerHTML = '<div class="sessempty">Nothing remembered yet. As sessions finish, what they achieved appears here — plain text you can edit or forget.</div>'; return; }
+    list.innerHTML = arr.map(memCardHtml).join('');
+  }
+  document.getElementById('svMemList').addEventListener('click', (e) => {
+    const card = e.target.closest && e.target.closest('.memcard'); if (!card) { return; }
+    const id = card.getAttribute('data-id'); const btn = e.target.closest('[data-act]');
+    vscode.postMessage({ type: 'memoryAction', action: btn ? btn.getAttribute('data-act') : 'resume', id: id });
+  });
+  document.getElementById('svMemOpen').addEventListener('click', () => vscode.postMessage({ type: 'openMemory' }));
+  function showTab(tab){
+    const hist = tab === 'history';
+    document.getElementById('paneHistory').hidden = !hist;
+    document.getElementById('paneMemory').hidden = hist;
+    document.querySelectorAll('.svtab').forEach((b) => b.classList.toggle('on', b.getAttribute('data-tab') === tab));
+    if (!hist) { vscode.postMessage({ type: 'listMemory' }); }
+  }
+  document.querySelectorAll('.svtab').forEach((b) => b.addEventListener('click', () => showTab(b.getAttribute('data-tab'))));
   // The Undo toast for Done/Delete — a quick, recoverable safety net. Auto-hides after a few seconds.
   let sessUndoTimer = null;
   function showUndo(m){
@@ -168,7 +232,7 @@
     vscode.postMessage({ type: 'sessionAction', action: 'restore', id: b.getAttribute('data-id') });
     document.getElementById('svUndo').hidden = true; clearTimeout(sessUndoTimer);
   });
-  window.addEventListener('message', (ev) => { const m = ev.data; if (m && m.type === 'sessions'){ sessData = Array.isArray(m.entries) ? m.entries : []; renderSessions(); } else if (m && m.type === 'sessionUndo'){ showUndo(m); } });
+  window.addEventListener('message', (ev) => { const m = ev.data; if (m && m.type === 'sessions'){ sessData = Array.isArray(m.entries) ? m.entries : []; renderSessions(); } else if (m && m.type === 'memoryList'){ renderMemory(m.items); } else if (m && m.type === 'sessionUndo'){ showUndo(m); } });
   renderSessions();
   vscode.postMessage({ type: 'listSessions' });
 </script>

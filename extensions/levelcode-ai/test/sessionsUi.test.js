@@ -185,6 +185,18 @@ test('MEMORY (recall): a recall_sessions agent tool searches past-session outcom
 	assert.ok((pkg.contributes.configuration.properties || {})['levelcode.ai.sessions.memory.recallTool'], 'the setting is contributed');
 });
 
+test('MEMORY (panel M3): a Memory tab in the sidebar to view / edit / forget the recorded outcomes', () => {
+	assert.match(view, /data-tab="memory"/, 'a Memory tab beside History');
+	assert.match(view, /id="svMemList"/, 'a memory list container');
+	assert.match(view, /function renderMemory/, 'renders the outcomes');
+	assert.match(view, /type: 'memoryAction'/, 'posts edit/forget/resume');
+	assert.match(view, /data-act="forget"/, 'a Forget control');
+	assert.match(view, /type: 'listMemory'/, 'requests the list when the tab opens');
+	assert.match(ext, /case 'listMemory'/, 'the provider serves the memory list');
+	assert.match(ext, /async function handleMemoryAction/, 'and handles the actions');
+	assert.match(ext, /m\.forget\(id\)/, 'forget drops the contribution (session stays in History)');
+});
+
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {
 	const grab = (s) => s.slice(s.indexOf('// [SESSIONS-PURE-START]'), s.indexOf('// [SESSIONS-PURE-END]'));
 	assert.ok(grab(view).length > 500, 'the view carries the pure block');

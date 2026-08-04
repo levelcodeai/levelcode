@@ -170,6 +170,17 @@ function createSessions(opts) {
 		try { return memory.recallRank(memory.latestBySession(memory.readJournal(root, slug)), query, opts); }
 		catch (e) { return []; }
 	}
+	/** All current memory outcomes (one per session, newest-first) — what the memory panel lists. */
+	function memoryItems() { try { return memory.latestBySession(memory.readJournal(root, slug)); } catch (e) { return []; } }
+	/**
+	 * Forget a session's memory contribution: a tombstone that drops it from the digest/recall/panel while
+	 * the session itself stays in History. Append-only + re-consolidate MEMORY.md. Best-effort.
+	 */
+	function forget(id) {
+		if (!id) { return false; }
+		try { memory.appendJournal(root, slug, { v: memory.SCHEMA_V, id: String(id), at: iso(), forgotten: true }); consolidate(); return true; }
+		catch (e) { return false; }
+	}
 	/** The deterministic consolidation pass: rewrite MEMORY.md from the current journal. Returns the digest. */
 	function consolidate(opts) {
 		const o = Object.assign({ nowMs: clock().getTime() }, opts);
@@ -207,7 +218,7 @@ function createSessions(opts) {
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, memoryPaths, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, memoryItems, forget, memoryPaths, list, liveId };
 }
 
 module.exports = { createSessions };

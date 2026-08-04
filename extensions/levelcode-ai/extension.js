@@ -797,6 +797,27 @@ function recallSessionsTool(query) {
 	catch (e) { return 'Recall failed.'; }
 }
 
+// A memory-panel action (§M3): resume the source session, EDIT its recorded outcome (correct a wrong
+// memory), or FORGET it (drop its contribution — the session itself stays in History). Refreshes the panel
+// list + the welcome-back strip. Best-effort.
+async function handleMemoryAction(action, id, webview) {
+	const m = sessionsManager();
+	if (!m || !id) { return; }
+	dbg('sessions.memoryAction', { action, id });
+	try {
+		if (action === 'resume') { await resumeSession(id); return; }
+		if (action === 'forget') { m.forget(id); }
+		else if (action === 'edit') {
+			const cur = (m.memoryItems().find((e) => e.id === id) || {}).summary || '';
+			const text = await vscode.window.showInputBox({ prompt: 'Edit what this session is remembered for', value: cur, validateInput: (v) => (v && v.trim() ? null : 'Enter a one-line outcome') });
+			if (text == null || !text.trim()) { return; }
+			m.refineSummary(id, text);
+		} else { return; }
+		if (webview) { try { webview.postMessage({ type: 'memoryList', items: m.memoryItems() }); } catch (e) { /* view closed */ } }
+		postMemoryDigest();
+	} catch (e) { dbg('sessions.memoryAction.error', { action, id, msg: String((e && e.message) || e) }); }
+}
+
 // A card action from either surface. resume reopens the session; done/delete/rename/pin are append-only edits
 // (§4.9): Done archives (reversible, never deletes), Delete soft-trashes, Rename retitles, Pin toggles.
 // Done/Delete offer an Undo (restore) so an accidental click is recoverable. Best-effort — a History action
@@ -2025,6 +2046,10 @@ class SessionsViewProvider {
 				case 'listSessions': view.webview.postMessage({ type: 'sessions', entries: sessionList() }); break;
 				case 'newSession': newChat(); vscode.commands.executeCommand('levelcodeAi.chat.focus'); break;
 				case 'sessionAction': await handleSessionAction(msg.action, msg.id); break;
+				// Memory tab (§M3): list the recorded outcomes; act on them (resume / edit / forget); open the file.
+				case 'listMemory': { const mm = sessionsManager(); view.webview.postMessage({ type: 'memoryList', items: mm ? mm.memoryItems() : [] }); break; }
+				case 'memoryAction': await handleMemoryAction(msg.action, msg.id, view.webview); break;
+				case 'openMemory': await openMemory(); break;
 			}
 		});
 	}
