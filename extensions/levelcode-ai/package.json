@@ -441,6 +441,11 @@
           "description": "Folder to store session History in. Empty = ~/.levelcode/sessions. Each project gets its own subfolder; the files are append-only JSONL you can back up, diff, or delete by hand.",
           "scope": "machine"
         },
+        "levelcode.ai.sessions.memory.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Project memory: as each session finishes, record a one-line outcome (what it did, which files, its state) to a per-project journal at memory/journal.jsonl, so future sessions can recall what past ones achieved. Plain text you own — greppable, editable, local. Turn off to stop recording outcomes."
+        },
         "levelcode.ai.sessions.autoArchiveDays": {
           "type": "number",
           "default": 30,

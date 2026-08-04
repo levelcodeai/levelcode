@@ -662,6 +662,7 @@ function sessionsManager() {
 	try {
 		_sessionsMgr = createSessions({
 			root: sessionsRoot(), slug, projectPath,
+			memory: aiConfig().get('sessions.memory.enabled', true),   // journal a per-session outcome on seal
 			// A tiny workspaceState-backed pointer to the live session id (a reload can tell what was live;
 			// used later by resume). Namespaced + guarded — a state failure must not break persistence.
 			state: ctx ? { get: (k) => ctx.workspaceState.get('levelcode.ai.session.' + k), set: (k, v) => ctx.workspaceState.update('levelcode.ai.session.' + k, v) } : null

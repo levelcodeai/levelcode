@@ -216,4 +216,29 @@ test('MANAGER: autoArchiveStale fades stale, non-pinned sessions and exempts pin
 	assert.strictEqual(m.autoArchiveStale({ days: 30, nowMs: T0 }), 0, 'idempotent — already-archived are skipped');
 });
 
+test('MEMORY: sealing a session writes one journal line (the cross-session outcome record)', () => {
+	const memory = require('../sessionMemory');
+	const root = freshRoot(), slug = store.projectSlug('/pm');
+	const m = createSessions({ root, slug, projectPath: '/pm' });
+	m.recordTurn(turn('Tidy the CHANGELOG for v1.0.4', 'RELEASE-NOTES.md'), 'anthropic/claude-opus-5');
+	const id = m.liveId();
+	assert.deepStrictEqual(memory.readJournal(root, slug), [], 'nothing journaled until the session seals');
+	m.seal('done');
+	const j = memory.readJournal(root, slug);
+	assert.strictEqual(j.length, 1, 'one journal line per sealed session');
+	assert.strictEqual(j[0].id, id, 'sourced back to the session');
+	assert.match(j[0].title, /Tidy the CHANGELOG/);
+	assert.deepStrictEqual(j[0].files, ['RELEASE-NOTES.md'], 'the outcome carries the files it touched');
+	assert.strictEqual(j[0].state, 'done');
+});
+
+test('MEMORY: opts.memory=false disables journaling on seal', () => {
+	const memory = require('../sessionMemory');
+	const root = freshRoot(), slug = store.projectSlug('/pm2');
+	const m = createSessions({ root, slug, projectPath: '/pm2', memory: false });
+	m.recordTurn([{ role: 'user', content: 'x' }], 'm');
+	m.seal('done');
+	assert.deepStrictEqual(memory.readJournal(root, slug), [], 'no journal when memory is off');
+});
+
 console.log('sessions: ' + n + ' tests passed');

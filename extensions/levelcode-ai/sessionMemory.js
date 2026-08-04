@@ -1,0 +1,99 @@
+// @ts-check
+'use strict';
+
+/*
+ * sessionMemory.js — the project's cross-session memory store (docs/levelcode-sessions-memory.md).
+ *
+ * Plain, per-project, greppable files that live BESIDE the sessions they came from:
+ *   ~/.levelcode/sessions/<project-slug>/memory/
+ *     journal.jsonl   append-only, one line per sealed session — its outcome, files, state, link back
+ *     facts.jsonl     durable facts with provenance (later layers)
+ *     MEMORY.md       the always-on capped digest (later layers)
+ *
+ * This module is the STORE only — pure Node (fs/path), no vscode, no model, unit-tested against a temp dir
+ * like sessionStore. It is deliberately dumb: it writes and reads plain JSONL. The value layers on top —
+ * a model-refined summary on seal, the consolidated digest, the recall tool — are separate slices that use
+ * this as their substrate. Everything here is best-effort at the caller: memory must never disturb a chat.
+ *
+ * Four disciplines it upholds (design §0): the journal is the deep append-only record (never the always-on
+ * context — that is the capped digest); it is plain text the user owns; and every entry is SOURCED (its
+ * session id) and DATED, so a memory can always answer "says who, and when?" and be removed in one click.
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+const SCHEMA_V = 1;
+
+function memoryDir(root, slug) { return path.join(root, slug, 'memory'); }
+function journalFile(root, slug) { return path.join(memoryDir(root, slug), 'journal.jsonl'); }
+function factsFile(root, slug) { return path.join(memoryDir(root, slug), 'facts.jsonl'); }
+function memoryMdFile(root, slug) { return path.join(memoryDir(root, slug), 'MEMORY.md'); }
+
+/**
+ * Build a journal entry from a session's DERIVED index entry (deterministic — no model call). The `summary`
+ * is the session's title (its goal headline) for now; a later cheap-lane pass refines it into a 1–3 sentence
+ * outcome without changing this shape. `id` is the provenance link back to the full session JSONL.
+ * @param {any} derived  a sessionStore.deriveEntry(...) result
+ * @param {string} [t]   the seal time (ISO); falls back to the session's own updatedAt
+ */
+function outcomeEntry(derived, t) {
+	const d = derived || {};
+	const files = Array.isArray(d.filesEdited) ? d.filesEdited.slice(0, 6) : [];
+	const title = d.title != null ? String(d.title) : null;
+	return {
+		v: SCHEMA_V,
+		id: d.id != null ? String(d.id) : null,          // source_session — provenance
+		at: t || d.updatedAt || d.createdAt || null,      // learned_at
+		title: title,
+		summary: title,                                   // v1 outcome = the goal headline; model refines later
+		files: files,
+		turns: Number.isFinite(d.turns) ? d.turns : 0,
+		state: d.state != null ? String(d.state) : 'done',
+		pinned: !!d.pinned
+	};
+}
+
+/** Append one journal entry as a JSONL line (creates memory/ on first write). Returns the entry. */
+function appendJournal(root, slug, entry) {
+	fs.mkdirSync(memoryDir(root, slug), { recursive: true });
+	fs.appendFileSync(journalFile(root, slug), JSON.stringify(entry) + '\n');
+	return entry;
+}
+
+/** Read journal.jsonl → array of entries, oldest-first. Tolerant: skips blank/corrupt lines; [] if absent. */
+function readJournal(root, slug) {
+	let raw;
+	try { raw = fs.readFileSync(journalFile(root, slug), 'utf8'); }
+	catch (e) { return []; }                              // no journal yet
+	const out = [];
+	for (const line of raw.split('\n')) {
+		const s = line.trim();
+		if (!s) { continue; }
+		try { out.push(JSON.parse(s)); } catch (e) { /* skip a single corrupt line, keep the rest */ }
+	}
+	return out;
+}
+
+/**
+ * The journal collapsed to one entry per session — the LATEST outcome for each id wins (a resumed-then-sealed
+ * session supersedes its earlier line), newest-first. This is what recall + the digest read; the raw
+ * journal.jsonl stays the full append-only history.
+ */
+function latestBySession(entries) {
+	const arr = Array.isArray(entries) ? entries : [];
+	const byId = new Map();
+	for (const e of arr) {
+		if (!e || e.id == null) { continue; }
+		byId.set(String(e.id), e);                        // later lines overwrite earlier → latest wins
+	}
+	const out = [...byId.values()];
+	out.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+	return out;
+}
+
+module.exports = {
+	SCHEMA_V,
+	memoryDir, journalFile, factsFile, memoryMdFile,
+	outcomeEntry, appendJournal, readJournal, latestBySession
+};

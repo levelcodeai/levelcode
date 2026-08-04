@@ -18,15 +18,17 @@
 const store = require('./sessionStore');
 const events = require('./sessionEvents');
 const planner = require('./sessionResume');
+const memory = require('./sessionMemory');
 
 /**
  * @param {{ root: string, slug: string, projectPath: string,
  *           state?: { get: (k: string) => any, set: (k: string, v: any) => any } | null,
- *           now?: () => Date }} opts
+ *           memory?: boolean, now?: () => Date }} opts
  */
 function createSessions(opts) {
 	const root = opts.root, slug = opts.slug, projectPath = opts.projectPath;
 	const state = opts.state || null;
+	const memoryOn = opts.memory !== false;   // cross-session memory: journal a line on seal (off → skip)
 	const clock = opts.now || (() => new Date());
 	/** @type {{ id: string, file: string } | null} */
 	let live = null;
@@ -80,6 +82,14 @@ function createSessions(opts) {
 	function seal(endState) {
 		if (!live) { return; }
 		try { store.appendEvent(live.file, events.endEvent(endState || 'done', iso())); reindex(); } catch (e) { /* best-effort */ }
+		if (memoryOn) {
+			// Cross-session memory: one journal line per sealed session (deterministic outcome now; a cheap-lane
+			// model pass refines the summary later). Best-effort — memory must never disturb sealing a chat.
+			try {
+				const s = store.readSession(live.file);
+				memory.appendJournal(root, slug, memory.outcomeEntry(store.deriveEntry(s.meta, s.events), iso()));
+			} catch (e) { /* memory is best-effort */ }
+		}
 		live = null;
 		if (state) { try { state.set('liveSessionId', null); } catch (e) { /* convenience */ } }
 	}
