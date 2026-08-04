@@ -155,6 +155,17 @@ test('UNDO: Done/Delete offer a recoverable Undo (restore) on both surfaces', ()
 	}
 });
 
+test('MEMORY (welcome-back): the digest is injected into the agent AND shown as a dismissible strip', () => {
+	const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8');
+	assert.match(agentSrc, /\+ \(ctx\.projectMemory \?/, 'agent.js folds the digest into the cached system block (like project rules)');
+	assert.match(ext, /projectMemory: projectMemoryMarkdown\(\)/, 'extension.js passes the verify-first digest into runAgent');
+	assert.match(ext, /function postMemoryDigest/, 'and pushes the welcome-back strip to a fresh session');
+	assert.match(ext, /case 'openMemory': await openMemory/, '"what I remember" opens the plain memory file');
+	assert.match(html, /m\.type === 'memoryDigest'/, 'the chat handles the digest…');
+	assert.match(html, /function renderMemoryStrip/, '…via a dismissible strip in the empty state');
+	assert.match(html, /type: 'openMemory'/, 'whose link opens memory');
+});
+
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {
 	const grab = (s) => s.slice(s.indexOf('// [SESSIONS-PURE-START]'), s.indexOf('// [SESSIONS-PURE-END]'));
 	assert.ok(grab(view).length > 500, 'the view carries the pure block');

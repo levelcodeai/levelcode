@@ -23,6 +23,7 @@ const { registerInlineComplete } = require('./inlineComplete');
 const { runAgent } = require('./agent');
 const { findCompactionCut, estimateMsgTokens } = require('./agentMemory');
 const sessionStore = require('./sessionStore');
+const sessionMemory = require('./sessionMemory');
 const { createSessions } = require('./sessions');
 const { registerReview } = require('./reviewSession');
 const { formatDiagnosticLines, diagKey, createPreviewGate } = require('./verify');
@@ -696,6 +697,41 @@ function postSessions(msg) {
 }
 function refreshSessions() { postSessions({ type: 'sessions', entries: sessionList(), open: false }); }
 
+// ── Project memory: the welcome-back digest (§M2) ────────────────────────────────────────────────
+// The verify-first digest of what earlier sessions achieved, computed on the fly from the journal (always
+// fresh). Injected into the agent's system block so a new session's first reply is continuous, not
+// amnesiac. '' when memory is off or there is nothing yet.
+function projectMemoryMarkdown() {
+	if (!aiConfig().get('sessions.memory.enabled', true)) { return ''; }
+	const m = sessionsManager();
+	if (!m) { return ''; }
+	try {
+		const d = m.digest({ recentDays: aiConfig().get('sessions.memory.journalRecentDays', 21) });
+		return sessionMemory.digestMarkdown(d, { asOf: new Date().toISOString().slice(0, 10) });
+	} catch (e) { return ''; }
+}
+// Push the welcome-back strip to the chat — the webview shows it only in a fresh session's empty state.
+function postMemoryDigest() {
+	if (!aiConfig().get('sessions.memory.enabled', true)) { return; }
+	const m = sessionsManager();
+	if (!m) { return; }
+	try {
+		const d = m.digest({ recentDays: aiConfig().get('sessions.memory.journalRecentDays', 21) });
+		post({ type: 'memoryDigest', recently: d.recently, pinned: d.pinned, total: d.total });
+	} catch (e) { /* best-effort */ }
+}
+// Open the project's memory file — the transparency promise: it's plain text, yours to read + edit.
+async function openMemory() {
+	const m = sessionsManager();
+	if (!m) { return; }
+	try {
+		const p = m.memoryPaths();
+		const target = fs.existsSync(p.memoryMd) ? p.memoryMd : p.journal;
+		if (fs.existsSync(target)) { await vscode.window.showTextDocument(vscode.Uri.file(target)); }
+		else { vscode.window.showInformationMessage('No project memory yet — finish a session and it starts remembering.'); }
+	} catch (e) { dbg('sessions.openMemory.error', { msg: String((e && e.message) || e) }); }
+}
+
 // A card action from either surface. resume reopens the session; done/delete/rename/pin are append-only edits
 // (§4.9): Done archives (reversible, never deletes), Delete soft-trashes, Rename retitles, Pin toggles.
 // Done/Delete offer an Undo (restore) so an accidental click is recoverable. Best-effort — a History action
@@ -773,6 +809,7 @@ function newChat() {
 	if (review) { review.finalizeAll(); } // drop review UI without reverting the user's files
 	post({ type: 'reset' });
 	postContextFiles();
+	postMemoryDigest();                    // the fresh empty state shows the welcome-back strip
 }
 
 /** The currently open file as a context block (capped), or null. */
@@ -1287,6 +1324,8 @@ async function agentFlow(text) {
 				return (await refreshGatewayToken()) ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
 			},
 			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
+			projectMemory: projectMemoryMarkdown(), // cross-session memory: a verify-first digest of past sessions, injected like project rules
+
 			// MCP (docs/MCP.md S3). Config is read HERE and handed in, like verify/commandTimeout, so
 			// agent.js keeps doing the loading + connecting + naming without reaching for the editor API.
 			// SECURITY (PR #31 review): these two settings name processes to spawn and tools to auto-allow,
@@ -1828,7 +1867,7 @@ class ChatViewProvider {
 		view.webview.html = getHtml();
 		view.webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
-				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); autopilot = aiConfig().get('agent.autopilot', false); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); post({ type: 'autopilot', on: autopilot }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } break;
+				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); autopilot = aiConfig().get('agent.autopilot', false); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); post({ type: 'autopilot', on: autopilot }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } postMemoryDigest(); break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'setAutopilot': autopilot = !!msg.on; aiConfig().update('agent.autopilot', autopilot, vscode.ConfigurationTarget.Global); dbg('autopilot.set', { on: autopilot }); post({ type: 'autopilot', on: autopilot }); break;
 				case 'send': await handleSend(msg.text); break;
@@ -1862,6 +1901,7 @@ class ChatViewProvider {
 				case 'listSkills': { const en = aiConfig().get('skills.enabled', true); const idx = en ? loadSkills(ctx.extensionPath, dbg) : new Map(); dbg('listSkills', { enabled: en, count: idx.size }); post({ type: 'skillsList', enabled: en, skills: skillsMenu(idx) }); break; }
 				case 'listMcp': post({ type: 'mcpList', mcp: mcpOverview() }); break;
 				case 'listSessions': post({ type: 'sessions', entries: sessionList(), open: false }); break; // reply into the already-open modal
+				case 'openMemory': await openMemory(); break; // the welcome-back strip's "what I remember" link
 				case 'sessionAction': await handleSessionAction(msg.action, msg.id); break;
 				case 'feedback': dbg('feedback', { value: msg.value, model: msg.model }); await recordFeedback(msg.value, msg.model); break;
 				case 'openFile': await openWorkspaceFile(msg.path); break;

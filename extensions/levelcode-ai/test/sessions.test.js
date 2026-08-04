@@ -230,6 +230,12 @@ test('MEMORY: sealing a session writes one journal line (the cross-session outco
 	assert.match(j[0].title, /Tidy the CHANGELOG/);
 	assert.deepStrictEqual(j[0].files, ['RELEASE-NOTES.md'], 'the outcome carries the files it touched');
 	assert.strictEqual(j[0].state, 'done');
+	// seal also consolidates the always-on artifact + the on-the-fly digest reflects it
+	assert.ok(fs.existsSync(memory.memoryMdFile(root, slug)), 'MEMORY.md is written on seal');
+	assert.match(fs.readFileSync(memory.memoryMdFile(root, slug), 'utf8'), /Tidy the CHANGELOG/, 'the digest carries the outcome');
+	const d = m.digest();
+	assert.strictEqual(d.recently.length, 1, 'the welcome-back digest surfaces the just-finished session');
+	assert.match(d.recently[0].text, /Tidy the CHANGELOG/);
 });
 
 test('MEMORY: opts.memory=false disables journaling on seal', () => {

@@ -88,6 +88,7 @@ function createSessions(opts) {
 			try {
 				const s = store.readSession(live.file);
 				memory.appendJournal(root, slug, memory.outcomeEntry(store.deriveEntry(s.meta, s.events), iso()));
+				consolidate();   // refresh MEMORY.md from the now-updated journal
 			} catch (e) { /* memory is best-effort */ }
 		}
 		live = null;
@@ -159,12 +160,30 @@ function createSessions(opts) {
 		return archived;
 	}
 
+	/** The always-on memory digest (recent + pinned outcomes) built from this project's journal. Empty on error. */
+	function digest(opts) {
+		try { return memory.buildDigest(memory.readJournal(root, slug), Object.assign({ nowMs: clock().getTime() }, opts)); }
+		catch (e) { return { recently: [], pinned: [], total: 0 }; }
+	}
+	/** The deterministic consolidation pass: rewrite MEMORY.md from the current journal. Returns the digest. */
+	function consolidate(opts) {
+		const o = Object.assign({ nowMs: clock().getTime() }, opts);
+		let d = { recently: [], pinned: [], total: 0 };
+		try {
+			d = memory.buildDigest(memory.readJournal(root, slug), o);
+			memory.writeMemoryMd(root, slug, memory.digestMarkdown(d, { asOf: iso().slice(0, 10) }));
+		} catch (e) { /* memory is best-effort */ }
+		return d;
+	}
+	/** Where this project's memory lives (for opening it — the transparency promise). */
+	function memoryPaths() { return { dir: memory.memoryDir(root, slug), journal: memory.journalFile(root, slug), memoryMd: memory.memoryMdFile(root, slug) }; }
+
 	/** The session index for this project (what the panel/view list). Empty (never throws) if unreadable. */
 	function list() { try { return store.loadIndex(root, slug).entries; } catch (e) { return []; } }
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, memoryPaths, list, liveId };
 }
 
 module.exports = { createSessions };

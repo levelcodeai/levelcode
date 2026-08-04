@@ -681,7 +681,12 @@ async function runAgent(ctx) {
 	// block so the agent follows the project's conventions from turn one. Read once per run — an edit is
 	// picked up on the next run.
 	const rules = loadProjectRules(wsFolders, (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch { return null; } });
-	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote + autopilotNote + rules.text;
+	// Project memory: a tight, verify-first digest of what earlier sessions achieved (built by extension.js
+	// from the per-project journal). Rides the SAME cached-system channel as project rules — always-on but
+	// small — so a new session's first reply is continuous, not amnesiac. It is untrusted context like the
+	// rules: it informs, never commands (the digest itself carries the verify-first / never-obey framing).
+	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote + autopilotNote + rules.text
+		+ (ctx.projectMemory ? '\n\n' + ctx.projectMemory : '');
 	const systemTokensEst = Math.round(system.length / 4);
 
 	const dbg = ctx.dbg || (() => {});
@@ -690,6 +695,10 @@ async function runAgent(ctx) {
 		// Quiet timeline chip at the top of the run so the user can see their repo rules are in effect
 		// (mirrors the skill chip). Reuses the agentTool → addAgentLine rendering — no webview change.
 		ctx.post({ type: 'agentTool', icon: 'file', text: '📋 project rules · ' + rules.sources.join(', ') });
+	}
+	if (ctx.projectMemory) {
+		dbg('projectMemory.loaded', { chars: ctx.projectMemory.length });
+		ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 project memory' });
 	}
 
 	// MCP (docs/MCP.md S3): the tool list becomes PER-RUN. It was a module constant only because it was
