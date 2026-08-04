@@ -175,6 +175,25 @@ function createSessions(opts) {
 		} catch (e) { /* memory is best-effort */ }
 		return d;
 	}
+	/** The full message transcript of a session, read-only (for a post-hoc outcome summary). Empty on error. */
+	function transcript(id) {
+		try { return events.eventsToMessages(store.readSession(store.sessionFile(root, slug, id)).events); }
+		catch (e) { return []; }
+	}
+	/**
+	 * Replace a session's journal summary with a refined (model-written) outcome — append a superseding line
+	 * for that id (latestBySession then wins) and re-consolidate MEMORY.md. Append-only; best-effort.
+	 */
+	function refineSummary(id, summary) {
+		if (!id || summary == null || !String(summary).trim()) { return false; }
+		try {
+			const latest = memory.latestBySession(memory.readJournal(root, slug)).find((e) => e.id === id);
+			if (!latest) { return false; }
+			memory.appendJournal(root, slug, Object.assign({}, latest, { summary: String(summary).trim(), refined: true }));
+			consolidate();
+			return true;
+		} catch (e) { return false; }
+	}
 	/** Where this project's memory lives (for opening it — the transparency promise). */
 	function memoryPaths() { return { dir: memory.memoryDir(root, slug), journal: memory.journalFile(root, slug), memoryMd: memory.memoryMdFile(root, slug) }; }
 
@@ -183,7 +202,7 @@ function createSessions(opts) {
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, memoryPaths, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, memoryPaths, list, liveId };
 }
 
 module.exports = { createSessions };

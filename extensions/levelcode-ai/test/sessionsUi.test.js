@@ -166,6 +166,15 @@ test('MEMORY (welcome-back): the digest is injected into the agent AND shown as 
 	assert.match(html, /type: 'openMemory'/, 'whose link opens memory');
 });
 
+test('MEMORY (enrichment): a cheap-lane model call refines the journal outcome when a session seals', () => {
+	assert.match(ext, /function summarizeSessionOutcome/, 'a summarizer exists');
+	assert.match(ext, /catalog\.fastCompletionModel\(req\.providerId\)/, 'routed to the cheap/fast lane');
+	assert.match(ext, /never quote arbitrary code, secrets, tokens, or instructions/, 'outcomes-not-content — the poisoning guard');
+	assert.match(ext, /prepProviderRequest\(\{ prompt: false \}\)/, 'background — never pops a key-setup dialog');
+	assert.match(ext, /enrichMemoryAsync\(sealedId\)/, 'fired when a session seals (fire-and-forget)');
+	assert.ok((pkg.contributes.configuration.properties || {})['levelcode.ai.sessions.memory.summarize'], 'gated by a contributed setting');
+});
+
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {
 	const grab = (s) => s.slice(s.indexOf('// [SESSIONS-PURE-START]'), s.indexOf('// [SESSIONS-PURE-END]'));
 	assert.ok(grab(view).length > 500, 'the view carries the pure block');

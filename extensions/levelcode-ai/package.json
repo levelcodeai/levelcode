@@ -446,6 +446,11 @@
           "default": true,
           "description": "Project memory: as each session finishes, record a one-line outcome (what it did, which files, its state) to a per-project journal at memory/journal.jsonl, so future sessions can recall what past ones achieved. Plain text you own — greppable, editable, local. Turn off to stop recording outcomes."
         },
+        "levelcode.ai.sessions.memory.summarize": {
+          "type": "boolean",
+          "default": true,
+          "description": "When a substantive session finishes, make one small, fast-model call to refine its journal outcome into a concrete sentence (what was built/fixed/decided) instead of just its goal headline. Runs in the background and only summarizes outcomes and actions, never quoted code. Turn off to skip the model call and keep the plain headline (no cost)."
+        },
         "levelcode.ai.sessions.autoArchiveDays": {
           "type": "number",
           "default": 30,

@@ -247,4 +247,20 @@ test('MEMORY: opts.memory=false disables journaling on seal', () => {
 	assert.deepStrictEqual(memory.readJournal(root, slug), [], 'no journal when memory is off');
 });
 
+test('MEMORY: refineSummary supersedes the deterministic outcome (model enrichment) + re-consolidates', () => {
+	const memory = require('../sessionMemory');
+	const root = freshRoot(), slug = store.projectSlug('/pref');
+	const m = createSessions({ root, slug, projectPath: '/pref' });
+	m.recordTurn(turn('Add idempotency to refunds', 'refund.rb'), 'm');
+	const id = m.liveId();
+	m.seal('done');
+	assert.match(m.digest().recently[0].text, /Add idempotency to refunds/, 'starts as the goal headline');
+	assert.ok(m.transcript(id).length >= 4, 'the full transcript is readable for the summarizer');
+
+	assert.ok(m.refineSummary(id, 'Made refunds idempotent with a Redis lock; added a regression spec.'));
+	assert.strictEqual(m.digest().recently[0].text, 'Made refunds idempotent with a Redis lock; added a regression spec.', 'the model outcome supersedes the headline');
+	assert.match(fs.readFileSync(memory.memoryMdFile(root, slug), 'utf8'), /Redis lock/, 'MEMORY.md follows the refinement');
+	assert.ok(!m.refineSummary(id, '   '), 'a blank refinement is refused');
+});
+
 console.log('sessions: ' + n + ' tests passed');
