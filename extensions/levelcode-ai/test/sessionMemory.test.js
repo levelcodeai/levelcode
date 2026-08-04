@@ -122,6 +122,21 @@ test('FACTS: fold counts distinct sources, promotes at minSeen, honors confirm/r
 	assert.ok(!M.foldFacts(removed).some((f) => /changelog/i.test(f.text)), 'a removed fact drops out entirely (not-true)');
 });
 
+test('FACTS: supersede drops a fact from active (digest) but keeps it dimmed + restorable; Confirm overrides', () => {
+	const key = M.normalizeFactKey;
+	const obs = [
+		{ text: 'Uses Redis for idempotency', source: 's1', at: '2026-07-01' },
+		{ text: 'Uses Redis for idempotency', source: 's2', at: '2026-07-02' },   // seen 2× → would be active
+		{ control: 'supersede', key: key('Uses Redis for idempotency'), by: 'Moved idempotency to Postgres', at: '2026-07-10' }
+	];
+	const f = M.foldFacts(obs).find((x) => /Redis/.test(x.text));
+	assert.ok(f && f.superseded && !f.active, 'superseded → not active (leaves the digest)');
+	assert.strictEqual(f.supersededBy, 'Moved idempotency to Postgres', 'keeps the one-line history (surfaced, not lost)');
+	assert.deepStrictEqual(M.activeFacts(obs).filter((x) => /Redis/.test(x.text)), [], 'excluded from the injected facts');
+	const restored = obs.concat([{ control: 'confirm', key: key('Uses Redis for idempotency'), at: '2026-07-11' }]);
+	assert.ok(M.activeFacts(restored).some((x) => /Redis/.test(x.text)), 'a user Confirm overrides the supersede');
+});
+
 test('DIGEST: recent (windowed, newest-first) + pinned, built from the journal', () => {
 	const DAY = 86400000, T0 = Date.parse('2026-08-01T12:00:00Z');
 	const ago = (d) => new Date(T0 - d * DAY).toISOString();

@@ -111,9 +111,13 @@ function normalizeFactKey(text) {
 function factObservation(text, sourceId, t) {
 	return { v: SCHEMA_V, text: String(text == null ? '' : text).trim(), source: sourceId != null ? String(sourceId) : null, at: t || null };
 }
-/** A control event on a fact, by normalized key: the user confirmed it, or marked it not-true (remove). */
-function factControl(key, action, t) {
-	return { v: SCHEMA_V, key: String(key || ''), control: action === 'remove' ? 'remove' : 'confirm', at: t || null };
+/** A control event on a fact, by normalized key: confirm, remove (not-true), or supersede (a newer fact made
+ *  it obsolete — carries `by`, the replacing text, as the one-line history). */
+function factControl(key, action, t, by) {
+	const control = action === 'remove' ? 'remove' : action === 'supersede' ? 'supersede' : 'confirm';
+	const e = { v: SCHEMA_V, key: String(key || ''), control, at: t || null };
+	if (control === 'supersede' && by) { e.by = String(by); }   // the fact that replaced it — the one-line history
+	return e;
 }
 /** Append fact observations and/or control events (JSONL). Creates memory/ on first write. */
 function appendFacts(root, slug, entries) {
@@ -132,24 +136,26 @@ function readFacts(root, slug) {
 }
 /**
  * Fold raw fact observations + controls into the current fact set: group by normalized key, count DISTINCT
- * source sessions, and apply the latest confirm/remove control. A fact is `active` (load-bearing enough to
- * inject) when the user CONFIRMED it OR it was observed in ≥ minSeen sessions; it stays `inferred` (low
- * trust) until confirmed (design §6). Removed facts drop out. The latest phrasing wins — a reworded
- * observation supersedes the old text under the same key (the light-touch conflict handling of §4).
- * Best-first (confirmed, then most-observed, then recent).
+ * source sessions, and apply the latest control. A fact is `active` (load-bearing enough to inject) when the
+ * user CONFIRMED it OR it was observed in ≥ minSeen sessions and is not superseded; it stays `inferred` (low
+ * trust) until confirmed (§6). `removed` (not-true) drops it entirely. `superseded` (a newer session made it
+ * obsolete, §4) drops it from the digest but keeps it in the list — dimmed, restorable by Confirm — so the
+ * conflict is SURFACED, not silently guessed; a user Confirm overrides the supersede. Latest phrasing wins.
+ * Best-first (confirmed, then live, then most-observed, then recent).
  */
 function foldFacts(entries, opts) {
 	const o = opts || {};
 	const minSeen = Number.isFinite(o.minSeen) && o.minSeen > 0 ? o.minSeen : 2;
 	const byKey = new Map();
-	const get = (k) => { let g = byKey.get(k); if (!g) { g = { key: k, text: '', sources: new Set(), confirmed: false, removed: false, at: null }; byKey.set(k, g); } return g; };
+	const get = (k) => { let g = byKey.get(k); if (!g) { g = { key: k, text: '', sources: new Set(), confirmed: false, removed: false, superseded: false, supersededBy: '', at: null }; byKey.set(k, g); } return g; };
 	for (const e of (Array.isArray(entries) ? entries : [])) {
 		if (!e) { continue; }
 		if (e.control) {
 			if (!e.key) { continue; }
 			const g = get(String(e.key));
-			if (e.control === 'confirm') { g.confirmed = true; g.removed = false; }
+			if (e.control === 'confirm') { g.confirmed = true; g.removed = false; g.superseded = false; }  // Confirm restores a superseded fact
 			else if (e.control === 'remove') { g.removed = true; }
+			else if (e.control === 'supersede') { g.superseded = true; g.supersededBy = e.by || ''; }
 			continue;
 		}
 		const text = String(e.text || '').trim();
@@ -164,9 +170,10 @@ function foldFacts(entries, opts) {
 	for (const g of byKey.values()) {
 		if (g.removed || !g.text) { continue; }
 		const count = g.sources.size;
-		out.push({ key: g.key, text: g.text, count, confirmed: g.confirmed, inferred: !g.confirmed, active: g.confirmed || count >= minSeen, at: g.at });
+		const superseded = !!g.superseded && !g.confirmed;
+		out.push({ key: g.key, text: g.text, count, confirmed: g.confirmed, superseded, supersededBy: superseded ? g.supersededBy : '', inferred: !g.confirmed, active: g.confirmed || (!superseded && count >= minSeen), at: g.at });
 	}
-	out.sort((a, b) => (Number(b.confirmed) - Number(a.confirmed)) || (b.count - a.count) || String(b.at || '').localeCompare(String(a.at || '')));
+	out.sort((a, b) => (Number(b.confirmed) - Number(a.confirmed)) || (Number(a.superseded) - Number(b.superseded)) || (b.count - a.count) || String(b.at || '').localeCompare(String(a.at || '')));
 	return out;
 }
 /** The facts worth injecting/showing prominently — confirmed or repeated (§1: tight, always-on). */

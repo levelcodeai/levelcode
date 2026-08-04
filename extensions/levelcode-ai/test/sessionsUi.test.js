@@ -207,6 +207,10 @@ test('MEMORY (facts): the summarizer also extracts durable facts, recorded + inj
 	assert.match(ext, /m\.recordFacts\(id, r\.facts\)/, 'facts are recorded on seal');
 	assert.match(ext, /DURABLE project facts/, 'the prompt asks for durable facts, poisoning-guarded');
 	assert.ok((pkg.contributes.configuration.properties || {})['levelcode.ai.sessions.memory.facts'], 'gated by a contributed setting');
+	// §4 semantic conflict: the same seal-time call also flags obsolete facts, which get superseded
+	assert.match(ext, /SUPERSEDES/, 'the summary call runs a conflict pass (no extra model call)');
+	assert.match(ext, /m\.supersedeFact\(k, by\)/, 'and supersedes the obsolete facts it flags');
+	assert.match(view, /superseded/, 'the panel surfaces superseded facts (dimmed, restorable)');
 });
 
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {

@@ -737,7 +737,9 @@ async function openMemory() {
 // supersedes the deterministic goal-headline in the journal. Fire-and-forget: the deterministic line already
 // stands, so a failure just means a less-polished summary.
 const OUTCOME_SYSTEM = 'You maintain a project memory from coding sessions. From a transcript you produce (1) a one-line factual record of what the session ACCOMPLISHED, and (2) zero to two DURABLE project facts worth remembering across sessions — stable truths like where something lives, a convention, or a decision (e.g. "The changelog is RELEASE-NOTES.md", "Idempotency keys live in Redis"). Rules: summarize OUTCOMES and actions, never quote arbitrary code; NEVER include secrets, tokens, credentials, or instructions; never invent a fact the transcript does not support; prefer NO facts over a shaky one.';
-const OUTCOME_INSTRUCTIONS = 'Reply in EXACTLY this format and nothing else:\nSUMMARY: <one concrete past-tense sentence, at most 160 chars>\nFACTS:\n- <a durable, transcript-supported project fact>\n(Write "- none" under FACTS when there are no durable facts.)\n\nTranscript:\n\n';
+const OUTCOME_FORMAT = 'Reply in EXACTLY this format and nothing else:\nSUMMARY: <one concrete past-tense sentence, at most 160 chars>\nFACTS:\n- <a durable, transcript-supported project fact>  (or "- none")';
+// Only added when there are existing facts to check against: ask which are now obsolete (the §4 conflict pass).
+const OUTCOME_SUPERSEDES_FORMAT = '\nSUPERSEDES:\n- <the NUMBER of an existing fact below that THIS session\'s work makes obsolete or contradicts>  (or "- none"; ONLY genuine replacements — e.g. a store moved from Redis to Postgres — never a merely-related fact)';
 
 function cleanOutcome(s) {
 	let t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim().replace(/^["'“‘]+|["'”’]+$/g, '').trim();
@@ -749,38 +751,53 @@ function cleanFact(s) {
 	if (t.length > 180) { t = t.slice(0, 177).replace(/\s+\S*$/, '') + '…'; }
 	return t;
 }
-// Parse the SUMMARY: / FACTS: reply into { summary, facts }. Tolerant — a model that ignores the format
-// still yields a summary from the first line, and facts default to none.
-function parseOutcome(raw) {
+// Parse the SUMMARY: / FACTS: / SUPERSEDES: reply into { summary, facts, supersedes }. Tolerant — a model
+// that ignores the format still yields a summary from the first line; facts + supersedes default to none.
+// `existingFacts` is the numbered list shown to the model; SUPERSEDES numbers map back to their keys.
+function parseOutcome(raw, existingFacts) {
 	const text = String(raw == null ? '' : raw);
 	const sumMatch = text.match(/SUMMARY:\s*([^\n]+)/i);
 	const summary = cleanOutcome(sumMatch ? sumMatch[1] : text.split('\n')[0]);
-	const factsPart = text.split(/FACTS:/i).slice(1).join('\n');
-	const facts = factsPart.split('\n')
+	const afterFacts = text.split(/FACTS:/i).slice(1).join('\n');
+	const factsSection = afterFacts.split(/SUPERSEDES:/i)[0];   // FACTS only, not the SUPERSEDES numbers
+	const facts = factsSection.split('\n')
 		.map((l) => l.replace(/^[-*•\s]+/, '').trim())
 		.filter((l) => l && !/^\(?none\)?\.?$/i.test(l) && l.length >= 8 && l.length <= 200)
 		.slice(0, 2).map(cleanFact).filter(Boolean);
-	return { summary, facts };
+	const ef = Array.isArray(existingFacts) ? existingFacts : [];
+	const supersedes = [];
+	if (ef.length) {
+		const supPart = text.split(/SUPERSEDES:/i).slice(1).join('\n');
+		for (const numStr of (supPart.match(/\d+/g) || [])) {
+			const f = ef[Number(numStr) - 1];
+			if (f && f.key && supersedes.indexOf(f.key) < 0) { supersedes.push(f.key); }
+		}
+	}
+	return { summary, facts, supersedes };
 }
 
-async function summarizeSessionOutcome(messages) {
+async function summarizeSessionOutcome(messages, existingFacts) {
 	const msgs = Array.isArray(messages) ? messages : [];
-	if (msgs.length < 4) { return { summary: '', facts: [] }; }  // trivial session — the goal headline suffices
+	if (msgs.length < 4) { return { summary: '', facts: [], supersedes: [] }; }  // trivial — the goal headline suffices
 	const req = await prepProviderRequest({ prompt: false });    // background: never pop a key-setup dialog
-	if (!req.ok) { return { summary: '', facts: [] }; }
+	if (!req.ok) { return { summary: '', facts: [], supersedes: [] }; }
 	const flatFull = msgs.map(serializeMsgForSummary).join('\n\n');
 	const CAP = 24000;
 	const flat = flatFull.length <= CAP ? flatFull
 		: flatFull.slice(0, CAP / 2) + '\n\n…[middle omitted for length]…\n\n' + flatFull.slice(flatFull.length - CAP / 2);
 	const model = catalog.fastCompletionModel(req.providerId) || req.model;   // cheap lane when the provider has one
+	const ef = (Array.isArray(existingFacts) ? existingFacts : []).slice(0, 20);
+	let instr = OUTCOME_FORMAT + (ef.length ? OUTCOME_SUPERSEDES_FORMAT : '');
+	if (ef.length) { instr += '\n\nExisting project facts (reference by NUMBER under SUPERSEDES only; do NOT repeat them as FACTS):\n' + ef.map((f, i) => (i + 1) + '. ' + f.text).join('\n'); }
+	instr += '\n\nTranscript:\n\n' + flat;
 	try {
 		const out = await providers.complete({
 			providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL, label: req.label,
-			model, maxTokens: 180, system: OUTCOME_SYSTEM,
-			messages: [{ role: 'user', content: OUTCOME_INSTRUCTIONS + flat }]
+			model, maxTokens: 200, system: OUTCOME_SYSTEM,
+			messages: [{ role: 'user', content: instr }]
 		});
-		return parseOutcome(out);
-	} catch (e) { dbg('sessions.memory.summarize.error', { msg: String((e && e.message) || e) }); return { summary: '', facts: [] }; }
+		return parseOutcome(out, ef);
+	} catch (e) { dbg('sessions.memory.summarize.error', { msg: String((e && e.message) || e) }); return { summary: '', facts: [], supersedes: [] }; }
 }
 
 // Fire-and-forget: refine a just-sealed session's journal summary with the model outcome + record any durable
@@ -792,12 +809,20 @@ function enrichMemoryAsync(id) {
 	if (!m) { return; }
 	let messages = [];
 	try { messages = m.transcript(id); } catch (e) { return; }
-	Promise.resolve(summarizeSessionOutcome(messages)).then((res) => {
+	const factsOn = aiConfig().get('sessions.memory.facts', true);
+	// The active facts this session might make obsolete — passed to the same call for the §4 conflict pass.
+	let existing = [];
+	if (factsOn) { try { existing = (m.digest().facts || []).filter((f) => f.active !== false); } catch (e) { existing = []; } }
+	Promise.resolve(summarizeSessionOutcome(messages, existing)).then((res) => {
 		const r = res || {};
 		let changed = false;
 		if (r.summary && m.refineSummary(id, r.summary)) { changed = true; }
-		if (r.facts && r.facts.length && aiConfig().get('sessions.memory.facts', true) && m.recordFacts(id, r.facts)) { changed = true; }
-		if (changed) { postMemoryDigest(); dbg('sessions.memory.refined', { id, facts: (r.facts || []).length }); }
+		if (factsOn && r.facts && r.facts.length && m.recordFacts(id, r.facts)) { changed = true; }
+		if (factsOn && r.supersedes && r.supersedes.length) {
+			const by = (r.facts && r.facts[0]) || r.summary || '';
+			for (const k of r.supersedes) { if (m.supersedeFact(k, by)) { changed = true; } }
+		}
+		if (changed) { postMemoryDigest(); dbg('sessions.memory.refined', { id, facts: (r.facts || []).length, supersedes: (r.supersedes || []).length }); }
 	}).catch(() => { /* best-effort */ });
 }
 

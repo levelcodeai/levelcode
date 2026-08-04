@@ -321,4 +321,20 @@ test('MEMORY: facts — repeat promotes, confirm promotes, digest injects, not-t
 	assert.ok(!m.digest().facts.some((f) => /Tabs/.test(f.text)), 'not-true drops it');
 });
 
+test('MEMORY: supersedeFact drops a stale fact from the digest but keeps it (restorable) in the panel', () => {
+	const memory = require('../sessionMemory');
+	const root = freshRoot(), slug = store.projectSlug('/psup');
+	const m = createSessions({ root, slug, projectPath: '/psup' });
+	m.recordFacts('s1', ['Uses Redis for idempotency']);
+	m.recordFacts('s2', ['Uses Redis for idempotency']);   // seen 2× → active
+	const key = memory.normalizeFactKey('Uses Redis for idempotency');
+	assert.strictEqual(m.digest().facts.length, 1, 'the fact is injected');
+	assert.ok(m.supersedeFact(key, 'Moved idempotency to Postgres'));
+	assert.deepStrictEqual(m.digest().facts, [], 'superseded → out of the injected digest');
+	const panel = m.factsList().find((f) => /Redis/.test(f.text));
+	assert.ok(panel && panel.superseded && panel.supersededBy === 'Moved idempotency to Postgres', 'still in the panel, marked superseded, with the one-line history');
+	m.factAction(key, 'confirm');
+	assert.strictEqual(m.digest().facts.length, 1, 'Keep/Confirm restores it to the digest');
+});
+
 console.log('sessions: ' + n + ' tests passed');

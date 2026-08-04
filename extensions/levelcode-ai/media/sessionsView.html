@@ -51,6 +51,8 @@
   .factcard { position: relative; padding: 8px 8px 9px; margin-bottom: 1px; border-radius: 6px; }
   .factcard:hover { background: color-mix(in srgb, var(--cc-text3) 10%, transparent); }
   .factcard.inferred { opacity: .82; }
+  .factcard.superseded { opacity: .6; }
+  .factbadge.warn { color: var(--cc-warn); border-color: color-mix(in srgb, var(--cc-warn) 45%, var(--cc-line)); }
   .factcard .facttext { font-size: 13px; line-height: 1.5; color: var(--cc-text); }
   .factbadge { font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--cc-text3); border: 1px solid var(--cc-line); border-radius: 4px; padding: 0 4px; margin-left: 2px; white-space: nowrap; }
   .factbadge.ok { color: var(--cc-accent); border-color: color-mix(in srgb, var(--cc-accent) 45%, var(--cc-line)); }
@@ -214,14 +216,16 @@
       + '</div>';
   }
   function factCardHtml(f){
-    const badge = f.confirmed ? '<span class="factbadge ok">confirmed</span>' : '<span class="factbadge">inferred</span>';
+    const state = f.superseded ? 'superseded' : f.confirmed ? 'confirmed' : 'inferred';
+    const badge = '<span class="factbadge ' + (f.confirmed ? 'ok' : f.superseded ? 'warn' : '') + '">' + state + '</span>';
+    const meta = (f.superseded && f.supersededBy) ? 'superseded by: ' + esc(f.supersededBy) : 'seen ' + (f.count || 0) + '×';
     const acts = '<span class="memacts">'
-      + (f.confirmed ? '' : '<button type="button" class="memact" data-fact="confirm" title="Confirm — this is true">Confirm</button>')
+      + (f.confirmed ? '' : '<button type="button" class="memact" data-fact="confirm" title="' + (f.superseded ? 'Keep — still true' : 'Confirm — this is true') + '">' + (f.superseded ? 'Keep' : 'Confirm') + '</button>')
       + '<button type="button" class="memact" data-fact="remove" title="Not true — remove this fact">Not true</button>'
       + '</span>';
-    return '<div class="factcard ' + (f.confirmed ? 'confirmed' : 'inferred') + '" data-key="' + escAttr(f.key || '') + '">'
+    return '<div class="factcard ' + state + '" data-key="' + escAttr(f.key || '') + '">'
       + '<div class="facttext">' + esc(f.text || '') + ' ' + badge + '</div>'
-      + '<div class="memline2"><span class="memmeta">seen ' + (f.count || 0) + '×</span>' + acts + '</div></div>';
+      + '<div class="memline2"><span class="memmeta">' + meta + '</span>' + acts + '</div></div>';
   }
   function renderMemory(msg){
     const list = document.getElementById('svMemList'); if (!list) { return; }

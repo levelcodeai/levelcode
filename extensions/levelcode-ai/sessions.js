@@ -237,6 +237,12 @@ function createSessions(opts) {
 		try { memory.appendFacts(root, slug, memory.factControl(key, action, iso())); consolidate(); return true; }
 		catch (e) { return false; }
 	}
+	/** Supersede an old fact because a newer session made it obsolete (§4 conflict). Keeps `byText` as history. */
+	function supersedeFact(oldKey, byText) {
+		if (!oldKey) { return false; }
+		try { memory.appendFacts(root, slug, memory.factControl(oldKey, 'supersede', iso(), byText)); consolidate(); return true; }
+		catch (e) { return false; }
+	}
 	/** The full message transcript of a session, read-only (for a post-hoc outcome summary). Empty on error. */
 	function transcript(id) {
 		try { return events.eventsToMessages(store.readSession(store.sessionFile(root, slug, id)).events); }
@@ -264,7 +270,7 @@ function createSessions(opts) {
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, memoryItems, forget, recordFacts, factsList, factAction, memoryPaths, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, list, liveId };
 }
 
 module.exports = { createSessions };
