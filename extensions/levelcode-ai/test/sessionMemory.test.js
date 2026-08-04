@@ -104,6 +104,24 @@ test('SNIPPET: finds the first matching turn and returns a short, role-prefixed 
 	assert.strictEqual(M.snippetFor(turns, 'a'), '', 'too-short term → empty');
 });
 
+test('FACTS: fold counts distinct sources, promotes at minSeen, honors confirm/remove, latest phrasing wins', () => {
+	const key = M.normalizeFactKey;
+	const obs = [
+		{ text: 'The changelog is RELEASE-NOTES.md', source: 's1', at: '2026-07-01' },
+		{ text: 'the changelog is release-notes.md!', source: 's2', at: '2026-07-05' },  // same key, 2nd source → promotes
+		{ text: 'Idempotency keys live in Redis', source: 's1', at: '2026-07-02' },       // one source only
+		{ text: 'Tabs, not spaces', source: 's3', at: '2026-07-03' },
+		{ control: 'confirm', key: key('Tabs, not spaces'), at: '2026-07-06' }            // user-confirmed
+	];
+	const active = M.activeFacts(obs, { minSeen: 2 });
+	assert.ok(active.some((f) => /changelog is/i.test(f.text)), 'a fact seen in 2 sessions is active');
+	assert.ok(active.some((f) => f.confirmed && /Tabs/.test(f.text)), 'a confirmed fact is active even with one source');
+	assert.ok(!active.some((f) => /Redis/.test(f.text)), 'a once-seen unconfirmed fact is NOT active');
+	assert.ok(M.foldFacts(obs).some((f) => /Redis/.test(f.text) && f.inferred && !f.active), 'it is still there as inferred (for the panel to confirm)');
+	const removed = obs.concat([{ control: 'remove', key: key('The changelog is RELEASE-NOTES.md'), at: '2026-07-09' }]);
+	assert.ok(!M.foldFacts(removed).some((f) => /changelog/i.test(f.text)), 'a removed fact drops out entirely (not-true)');
+});
+
 test('DIGEST: recent (windowed, newest-first) + pinned, built from the journal', () => {
 	const DAY = 86400000, T0 = Date.parse('2026-08-01T12:00:00Z');
 	const ago = (d) => new Date(T0 - d * DAY).toISOString();

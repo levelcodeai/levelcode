@@ -456,6 +456,11 @@
           "default": true,
           "description": "Give the agent a recall_sessions tool so it can search this project's past-session outcomes on demand — e.g. when you ask \"what did we do about refunds?\" it looks up the earlier work instead of guessing. Read-only, searches only the local journal. Turn off to remove the tool."
         },
+        "levelcode.ai.sessions.memory.facts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let the session summarizer also note durable project facts it observes — stable truths like \"the changelog is RELEASE-NOTES.md\" or a convention. Facts stay marked (inferred) and low-trust until they recur across sessions or you confirm them in the Memory panel, and are only ever outcomes/decisions, never secrets or code. Turn off to record outcomes only."
+        },
         "levelcode.ai.sessions.autoArchiveDays": {
           "type": "number",
           "default": 30,

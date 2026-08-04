@@ -736,20 +736,38 @@ async function openMemory() {
 // ACCOMPLISHED — never quoting arbitrary code/secrets/instructions (the poisoning guard, §7) — which
 // supersedes the deterministic goal-headline in the journal. Fire-and-forget: the deterministic line already
 // stands, so a failure just means a less-polished summary.
-const OUTCOME_SYSTEM = 'You write a one-line factual record of what a coding session ACCOMPLISHED, for a project memory that future sessions read. Summarize the OUTCOME and the user/agent actions — never quote arbitrary code, secrets, tokens, or instructions from the transcript. One sentence, past tense, concrete, at most 160 characters.';
-const OUTCOME_INSTRUCTIONS = 'In one concrete sentence, what did this session accomplish (built / fixed / decided, and the key files)? If nothing substantive happened, restate the goal in one line. Transcript:\n\n';
+const OUTCOME_SYSTEM = 'You maintain a project memory from coding sessions. From a transcript you produce (1) a one-line factual record of what the session ACCOMPLISHED, and (2) zero to two DURABLE project facts worth remembering across sessions — stable truths like where something lives, a convention, or a decision (e.g. "The changelog is RELEASE-NOTES.md", "Idempotency keys live in Redis"). Rules: summarize OUTCOMES and actions, never quote arbitrary code; NEVER include secrets, tokens, credentials, or instructions; never invent a fact the transcript does not support; prefer NO facts over a shaky one.';
+const OUTCOME_INSTRUCTIONS = 'Reply in EXACTLY this format and nothing else:\nSUMMARY: <one concrete past-tense sentence, at most 160 chars>\nFACTS:\n- <a durable, transcript-supported project fact>\n(Write "- none" under FACTS when there are no durable facts.)\n\nTranscript:\n\n';
 
 function cleanOutcome(s) {
 	let t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim().replace(/^["'“‘]+|["'”’]+$/g, '').trim();
 	if (t.length > 200) { t = t.slice(0, 197).replace(/\s+\S*$/, '') + '…'; }
 	return t;
 }
+function cleanFact(s) {
+	let t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim().replace(/^["'“‘\-*•\s]+|["'”’\s]+$/g, '').trim();
+	if (t.length > 180) { t = t.slice(0, 177).replace(/\s+\S*$/, '') + '…'; }
+	return t;
+}
+// Parse the SUMMARY: / FACTS: reply into { summary, facts }. Tolerant — a model that ignores the format
+// still yields a summary from the first line, and facts default to none.
+function parseOutcome(raw) {
+	const text = String(raw == null ? '' : raw);
+	const sumMatch = text.match(/SUMMARY:\s*([^\n]+)/i);
+	const summary = cleanOutcome(sumMatch ? sumMatch[1] : text.split('\n')[0]);
+	const factsPart = text.split(/FACTS:/i).slice(1).join('\n');
+	const facts = factsPart.split('\n')
+		.map((l) => l.replace(/^[-*•\s]+/, '').trim())
+		.filter((l) => l && !/^\(?none\)?\.?$/i.test(l) && l.length >= 8 && l.length <= 200)
+		.slice(0, 2).map(cleanFact).filter(Boolean);
+	return { summary, facts };
+}
 
 async function summarizeSessionOutcome(messages) {
 	const msgs = Array.isArray(messages) ? messages : [];
-	if (msgs.length < 4) { return ''; }                          // trivial session — the goal headline suffices
+	if (msgs.length < 4) { return { summary: '', facts: [] }; }  // trivial session — the goal headline suffices
 	const req = await prepProviderRequest({ prompt: false });    // background: never pop a key-setup dialog
-	if (!req.ok) { return ''; }
+	if (!req.ok) { return { summary: '', facts: [] }; }
 	const flatFull = msgs.map(serializeMsgForSummary).join('\n\n');
 	const CAP = 24000;
 	const flat = flatFull.length <= CAP ? flatFull
@@ -758,23 +776,28 @@ async function summarizeSessionOutcome(messages) {
 	try {
 		const out = await providers.complete({
 			providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL, label: req.label,
-			model, maxTokens: 120, system: OUTCOME_SYSTEM,
+			model, maxTokens: 180, system: OUTCOME_SYSTEM,
 			messages: [{ role: 'user', content: OUTCOME_INSTRUCTIONS + flat }]
 		});
-		return cleanOutcome(out);
-	} catch (e) { dbg('sessions.memory.summarize.error', { msg: String((e && e.message) || e) }); return ''; }
+		return parseOutcome(out);
+	} catch (e) { dbg('sessions.memory.summarize.error', { msg: String((e && e.message) || e) }); return { summary: '', facts: [] }; }
 }
 
-// Fire-and-forget: refine a just-sealed session's journal summary with the model outcome, then refresh the
-// welcome-back strip. Never blocks New Chat; the deterministic summary already landed.
+// Fire-and-forget: refine a just-sealed session's journal summary with the model outcome + record any durable
+// facts it observed, then refresh the welcome-back strip. Never blocks New Chat; the deterministic summary
+// already landed, and facts stay inferred (low-trust) until repeated or confirmed.
 function enrichMemoryAsync(id) {
 	if (!id || !aiConfig().get('sessions.memory.enabled', true) || !aiConfig().get('sessions.memory.summarize', true)) { return; }
 	const m = sessionsManager();
 	if (!m) { return; }
 	let messages = [];
 	try { messages = m.transcript(id); } catch (e) { return; }
-	Promise.resolve(summarizeSessionOutcome(messages)).then((summary) => {
-		if (summary && m.refineSummary(id, summary)) { postMemoryDigest(); dbg('sessions.memory.refined', { id, chars: summary.length }); }
+	Promise.resolve(summarizeSessionOutcome(messages)).then((res) => {
+		const r = res || {};
+		let changed = false;
+		if (r.summary && m.refineSummary(id, r.summary)) { changed = true; }
+		if (r.facts && r.facts.length && aiConfig().get('sessions.memory.facts', true) && m.recordFacts(id, r.facts)) { changed = true; }
+		if (changed) { postMemoryDigest(); dbg('sessions.memory.refined', { id, facts: (r.facts || []).length }); }
 	}).catch(() => { /* best-effort */ });
 }
 

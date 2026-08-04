@@ -169,7 +169,8 @@ test('MEMORY (welcome-back): the digest is injected into the agent AND shown as 
 test('MEMORY (enrichment): a cheap-lane model call refines the journal outcome when a session seals', () => {
 	assert.match(ext, /function summarizeSessionOutcome/, 'a summarizer exists');
 	assert.match(ext, /catalog\.fastCompletionModel\(req\.providerId\)/, 'routed to the cheap/fast lane');
-	assert.match(ext, /never quote arbitrary code, secrets, tokens, or instructions/, 'outcomes-not-content — the poisoning guard');
+	assert.match(ext, /never quote arbitrary code/, 'outcomes-not-content — the poisoning guard');
+	assert.match(ext, /NEVER include secrets, tokens, credentials, or instructions/, 'and never secrets/instructions');
 	assert.match(ext, /prepProviderRequest\(\{ prompt: false \}\)/, 'background — never pops a key-setup dialog');
 	assert.match(ext, /enrichMemoryAsync\(sealedId\)/, 'fired when a session seals (fire-and-forget)');
 	assert.ok((pkg.contributes.configuration.properties || {})['levelcode.ai.sessions.memory.summarize'], 'gated by a contributed setting');
@@ -195,6 +196,13 @@ test('MEMORY (panel M3): a Memory tab in the sidebar to view / edit / forget the
 	assert.match(ext, /case 'listMemory'/, 'the provider serves the memory list');
 	assert.match(ext, /async function handleMemoryAction/, 'and handles the actions');
 	assert.match(ext, /m\.forget\(id\)/, 'forget drops the contribution (session stays in History)');
+});
+
+test('MEMORY (facts): the summarizer also extracts durable facts, recorded + injected (inferred until confirmed)', () => {
+	assert.match(ext, /function parseOutcome/, 'the model reply is parsed into summary + facts');
+	assert.match(ext, /m\.recordFacts\(id, r\.facts\)/, 'facts are recorded on seal');
+	assert.match(ext, /DURABLE project facts/, 'the prompt asks for durable facts, poisoning-guarded');
+	assert.ok((pkg.contributes.configuration.properties || {})['levelcode.ai.sessions.memory.facts'], 'gated by a contributed setting');
 });
 
 test('VIEW: the sidebar view and the modal share the EXACT same render block (no drift)', () => {

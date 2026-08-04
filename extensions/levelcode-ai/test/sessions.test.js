@@ -302,4 +302,23 @@ test('MEMORY: forget drops a session from memory (digest/recall/panel) but keeps
 	assert.strictEqual(m.list().length, 1, 'but the session itself stays in History (resumable)');
 });
 
+test('MEMORY: facts — repeat promotes, confirm promotes, digest injects, not-true removes', () => {
+	const memory = require('../sessionMemory');
+	const root = freshRoot(), slug = store.projectSlug('/pfacts');
+	const m = createSessions({ root, slug, projectPath: '/pfacts' });
+	m.recordFacts('s1', ['The changelog is RELEASE-NOTES.md']);
+	assert.deepStrictEqual(m.digest().facts, [], 'a once-seen fact is not injected yet (inferred)');
+	m.recordFacts('s2', ['the changelog is release-notes.md']);   // 2nd source, same key → active
+	assert.strictEqual(m.digest().facts.length, 1, 'seen in two sessions → active + injected');
+	assert.match(fs.readFileSync(memory.memoryMdFile(root, slug), 'utf8'), /## Facts/, 'MEMORY.md gains a Facts section');
+
+	m.recordFacts('s3', ['Tabs, not spaces']);
+	const inferred = m.factsList().find((f) => /Tabs/.test(f.text));
+	assert.ok(inferred && !inferred.active, 'the tabs fact is inferred until confirmed');
+	m.factAction(inferred.key, 'confirm');
+	assert.ok(m.digest().facts.some((f) => /Tabs/.test(f.text)), 'confirm promotes it into the digest');
+	m.factAction(inferred.key, 'remove');
+	assert.ok(!m.digest().facts.some((f) => /Tabs/.test(f.text)), 'not-true drops it');
+});
+
 console.log('sessions: ' + n + ' tests passed');

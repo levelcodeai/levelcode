@@ -162,8 +162,11 @@ function createSessions(opts) {
 
 	/** The always-on memory digest (recent + pinned outcomes) built from this project's journal. Empty on error. */
 	function digest(opts) {
-		try { return memory.buildDigest(memory.readJournal(root, slug), Object.assign({ nowMs: clock().getTime() }, opts)); }
-		catch (e) { return { recently: [], pinned: [], total: 0 }; }
+		try {
+			const d = memory.buildDigest(memory.readJournal(root, slug), Object.assign({ nowMs: clock().getTime() }, opts));
+			d.facts = memory.activeFacts(memory.readFacts(root, slug));
+			return d;
+		} catch (e) { return { recently: [], pinned: [], total: 0, facts: [] }; }
 	}
 	/**
 	 * On-demand recall: past-session outcomes matching a query — ranked by journal metadata (summary/title/
@@ -208,15 +211,31 @@ function createSessions(opts) {
 		try { memory.appendJournal(root, slug, { v: memory.SCHEMA_V, id: String(id), at: iso(), forgotten: true }); consolidate(); return true; }
 		catch (e) { return false; }
 	}
-	/** The deterministic consolidation pass: rewrite MEMORY.md from the current journal. Returns the digest. */
+	/** The consolidation pass: rewrite MEMORY.md from the current journal + facts. Returns the digest. */
 	function consolidate(opts) {
 		const o = Object.assign({ nowMs: clock().getTime() }, opts);
-		let d = { recently: [], pinned: [], total: 0 };
+		let d = { recently: [], pinned: [], total: 0, facts: [] };
 		try {
 			d = memory.buildDigest(memory.readJournal(root, slug), o);
+			d.facts = memory.activeFacts(memory.readFacts(root, slug));
 			memory.writeMemoryMd(root, slug, memory.digestMarkdown(d, { asOf: iso().slice(0, 10) }));
 		} catch (e) { /* memory is best-effort */ }
 		return d;
+	}
+	/** Record candidate durable facts observed in a session (extracted by the summarizer). Re-consolidates. */
+	function recordFacts(sourceId, texts) {
+		const arr = (Array.isArray(texts) ? texts : []).map((t) => String(t == null ? '' : t).trim()).filter(Boolean).slice(0, 3);
+		if (!arr.length) { return false; }
+		try { memory.appendFacts(root, slug, arr.map((t) => memory.factObservation(t, sourceId, iso()))); consolidate(); return true; }
+		catch (e) { return false; }
+	}
+	/** All folded facts (active + inferred) — what the memory panel lists. */
+	function factsList() { try { return memory.foldFacts(memory.readFacts(root, slug)); } catch (e) { return []; } }
+	/** Confirm ('confirm') or mark not-true ('remove') a fact by its normalized key. Re-consolidates. */
+	function factAction(key, action) {
+		if (!key) { return false; }
+		try { memory.appendFacts(root, slug, memory.factControl(key, action, iso())); consolidate(); return true; }
+		catch (e) { return false; }
 	}
 	/** The full message transcript of a session, read-only (for a post-hoc outcome summary). Empty on error. */
 	function transcript(id) {
@@ -245,7 +264,7 @@ function createSessions(opts) {
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, memoryItems, forget, memoryPaths, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, memoryItems, forget, recordFacts, factsList, factAction, memoryPaths, list, liveId };
 }
 
 module.exports = { createSessions };
