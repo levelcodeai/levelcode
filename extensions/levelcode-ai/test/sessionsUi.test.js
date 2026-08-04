@@ -196,6 +196,10 @@ test('MEMORY (panel M3): a Memory tab in the sidebar to view / edit / forget the
 	assert.match(ext, /case 'listMemory'/, 'the provider serves the memory list');
 	assert.match(ext, /async function handleMemoryAction/, 'and handles the actions');
 	assert.match(ext, /m\.forget\(id\)/, 'forget drops the contribution (session stays in History)');
+	// Facts controls (§6): inferred vs confirmed, with confirm / not-true
+	assert.match(view, /function factCardHtml/, 'facts render with an inferred/confirmed badge');
+	assert.match(view, /data-fact="confirm"|type: 'factAction'/, 'and a confirm / not-true control');
+	assert.match(ext, /async function handleFactAction/, 'the host confirms / removes a fact by key');
 });
 
 test('MEMORY (facts): the summarizer also extracts durable facts, recorded + injected (inferred until confirmed)', () => {

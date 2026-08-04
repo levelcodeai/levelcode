@@ -838,9 +838,22 @@ async function handleMemoryAction(action, id, webview) {
 			if (text == null || !text.trim()) { return; }
 			m.refineSummary(id, text);
 		} else { return; }
-		if (webview) { try { webview.postMessage({ type: 'memoryList', items: m.memoryItems() }); } catch (e) { /* view closed */ } }
+		if (webview) { try { webview.postMessage({ type: 'memoryList', items: m.memoryItems(), facts: m.factsList() }); } catch (e) { /* view closed */ } }
 		postMemoryDigest();
 	} catch (e) { dbg('sessions.memoryAction.error', { action, id, msg: String((e && e.message) || e) }); }
+}
+
+// A fact-panel action (§M3/§6): Confirm promotes an inferred fact to load-bearing; Not-true removes it. Keyed
+// by the fact's normalized text (not a session). Refreshes the panel + the injected digest.
+async function handleFactAction(action, key, webview) {
+	const m = sessionsManager();
+	if (!m || !key) { return; }
+	dbg('sessions.factAction', { action, key });
+	try {
+		m.factAction(key, action === 'remove' ? 'remove' : 'confirm');
+		if (webview) { try { webview.postMessage({ type: 'memoryList', items: m.memoryItems(), facts: m.factsList() }); } catch (e) { /* view closed */ } }
+		postMemoryDigest();
+	} catch (e) { dbg('sessions.factAction.error', { action, key, msg: String((e && e.message) || e) }); }
 }
 
 // A card action from either surface. resume reopens the session; done/delete/rename/pin are append-only edits
@@ -2071,9 +2084,10 @@ class SessionsViewProvider {
 				case 'listSessions': view.webview.postMessage({ type: 'sessions', entries: sessionList() }); break;
 				case 'newSession': newChat(); vscode.commands.executeCommand('levelcodeAi.chat.focus'); break;
 				case 'sessionAction': await handleSessionAction(msg.action, msg.id); break;
-				// Memory tab (§M3): list the recorded outcomes; act on them (resume / edit / forget); open the file.
-				case 'listMemory': { const mm = sessionsManager(); view.webview.postMessage({ type: 'memoryList', items: mm ? mm.memoryItems() : [] }); break; }
+				// Memory tab (§M3): list the recorded outcomes + facts; act on them; open the file.
+				case 'listMemory': { const mm = sessionsManager(); view.webview.postMessage({ type: 'memoryList', items: mm ? mm.memoryItems() : [], facts: mm ? mm.factsList() : [] }); break; }
 				case 'memoryAction': await handleMemoryAction(msg.action, msg.id, view.webview); break;
+				case 'factAction': await handleFactAction(msg.action, msg.key, view.webview); break;
 				case 'openMemory': await openMemory(); break;
 			}
 		});

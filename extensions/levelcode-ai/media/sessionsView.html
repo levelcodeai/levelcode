@@ -46,6 +46,21 @@
   .memcard .memact { background: transparent; border: none; color: var(--cc-text2); border-radius: 4px; padding: 2px 8px; font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
   .memcard .memact:hover { background: color-mix(in srgb, var(--cc-text3) 20%, transparent); color: var(--cc-text); }
   .memcard .memact[data-act="forget"]:hover { background: color-mix(in srgb, var(--cc-danger) 18%, transparent); color: var(--cc-danger); }
+  /* Facts section (§M3/§6): durable truths, marked inferred vs confirmed, with confirm / not-true. */
+  .memsection { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 6px; }
+  .factcard { position: relative; padding: 8px 8px 9px; margin-bottom: 1px; border-radius: 6px; }
+  .factcard:hover { background: color-mix(in srgb, var(--cc-text3) 10%, transparent); }
+  .factcard.inferred { opacity: .82; }
+  .factcard .facttext { font-size: 13px; line-height: 1.5; color: var(--cc-text); }
+  .factbadge { font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--cc-text3); border: 1px solid var(--cc-line); border-radius: 4px; padding: 0 4px; margin-left: 2px; white-space: nowrap; }
+  .factbadge.ok { color: var(--cc-accent); border-color: color-mix(in srgb, var(--cc-accent) 45%, var(--cc-line)); }
+  .factcard .memline2 { display: flex; align-items: center; min-height: 22px; margin-top: 3px; }
+  .factcard .memmeta { flex: 1 1 auto; font-size: 11px; color: var(--cc-text3); }
+  .factcard .memacts { display: none; align-items: center; gap: 4px; flex: 0 0 auto; }
+  .factcard:hover .memmeta, .factcard:focus-within .memmeta { display: none; }
+  .factcard:hover .memacts, .factcard:focus-within .memacts { display: flex; }
+  .factcard .memact[data-fact="remove"]:hover { background: color-mix(in srgb, var(--cc-danger) 18%, transparent); color: var(--cc-danger); }
+  .factcard .memact[data-fact="confirm"]:hover { background: color-mix(in srgb, var(--cc-accent) 18%, transparent); color: var(--cc-accent); }
   .sesslist { flex: 1 1 auto; overflow-y: auto; padding: 0 10px 12px; }
   .sessbucket { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 7px; }
   .sessbucket .cnt { letter-spacing: 0; }
@@ -198,13 +213,28 @@
       + '<button type="button" class="memact" data-act="forget" title="Forget this session">Forget</button></span></div>'
       + '</div>';
   }
-  function renderMemory(items){
+  function factCardHtml(f){
+    const badge = f.confirmed ? '<span class="factbadge ok">confirmed</span>' : '<span class="factbadge">inferred</span>';
+    const acts = '<span class="memacts">'
+      + (f.confirmed ? '' : '<button type="button" class="memact" data-fact="confirm" title="Confirm — this is true">Confirm</button>')
+      + '<button type="button" class="memact" data-fact="remove" title="Not true — remove this fact">Not true</button>'
+      + '</span>';
+    return '<div class="factcard ' + (f.confirmed ? 'confirmed' : 'inferred') + '" data-key="' + escAttr(f.key || '') + '">'
+      + '<div class="facttext">' + esc(f.text || '') + ' ' + badge + '</div>'
+      + '<div class="memline2"><span class="memmeta">seen ' + (f.count || 0) + '×</span>' + acts + '</div></div>';
+  }
+  function renderMemory(msg){
     const list = document.getElementById('svMemList'); if (!list) { return; }
-    const arr = Array.isArray(items) ? items : [];
-    if (!arr.length){ list.innerHTML = '<div class="sessempty">Nothing remembered yet. As sessions finish, what they achieved appears here — plain text you can edit or forget.</div>'; return; }
-    list.innerHTML = arr.map(memCardHtml).join('');
+    const items = Array.isArray(msg && msg.items) ? msg.items : [];
+    const facts = Array.isArray(msg && msg.facts) ? msg.facts : [];
+    let html = '';
+    if (facts.length){ html += '<div class="memsection">Facts</div>' + facts.map(factCardHtml).join(''); }
+    if (items.length){ html += '<div class="memsection">Sessions</div>' + items.map(memCardHtml).join(''); }
+    list.innerHTML = html || '<div class="sessempty">Nothing remembered yet. As sessions finish, what they achieved appears here — plain text you can edit or forget.</div>';
   }
   document.getElementById('svMemList').addEventListener('click', (e) => {
+    const fbtn = e.target.closest && e.target.closest('[data-fact]');
+    if (fbtn){ const fc = fbtn.closest('.factcard'); vscode.postMessage({ type: 'factAction', action: fbtn.getAttribute('data-fact'), key: fc ? fc.getAttribute('data-key') : '' }); return; }
     const card = e.target.closest && e.target.closest('.memcard'); if (!card) { return; }
     const id = card.getAttribute('data-id'); const btn = e.target.closest('[data-act]');
     vscode.postMessage({ type: 'memoryAction', action: btn ? btn.getAttribute('data-act') : 'resume', id: id });
@@ -232,7 +262,7 @@
     vscode.postMessage({ type: 'sessionAction', action: 'restore', id: b.getAttribute('data-id') });
     document.getElementById('svUndo').hidden = true; clearTimeout(sessUndoTimer);
   });
-  window.addEventListener('message', (ev) => { const m = ev.data; if (m && m.type === 'sessions'){ sessData = Array.isArray(m.entries) ? m.entries : []; renderSessions(); } else if (m && m.type === 'memoryList'){ renderMemory(m.items); } else if (m && m.type === 'sessionUndo'){ showUndo(m); } });
+  window.addEventListener('message', (ev) => { const m = ev.data; if (m && m.type === 'sessions'){ sessData = Array.isArray(m.entries) ? m.entries : []; renderSessions(); } else if (m && m.type === 'memoryList'){ renderMemory(m); } else if (m && m.type === 'sessionUndo'){ showUndo(m); } });
   renderSessions();
   vscode.postMessage({ type: 'listSessions' });
 </script>
