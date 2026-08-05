@@ -34,7 +34,8 @@
   .svmemhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px 4px; font-size: 11px; color: var(--cc-text3); }
   .svmemopen { background: transparent; border: none; color: var(--cc-accent); font: inherit; font-size: 11px; cursor: pointer; padding: 0; white-space: nowrap; }
   .svmemopen:hover { text-decoration: underline; }
-  .memcard { position: relative; padding: 8px 8px 9px; margin-bottom: 1px; border-radius: 6px; cursor: pointer; }
+  .memcard { position: relative; padding: 9px 8px; border-bottom: 1px solid var(--cc-line); cursor: pointer; }
+  .memcard:last-child { border-bottom: none; }
   .memcard:hover { background: color-mix(in srgb, var(--cc-text3) 13%, transparent); }
   .memcard:focus-visible { background: color-mix(in srgb, var(--cc-accent) 15%, transparent); outline: none; }
   .memcard .memtext { font-size: 13px; line-height: 1.45; color: var(--cc-text); }
@@ -48,7 +49,8 @@
   .memcard .memact[data-act="forget"]:hover { background: color-mix(in srgb, var(--cc-danger) 18%, transparent); color: var(--cc-danger); }
   /* Facts section (§M3/§6): durable truths, marked inferred vs confirmed, with confirm / not-true. */
   .memsection { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 6px; }
-  .factcard { position: relative; padding: 8px 8px 9px; margin-bottom: 1px; border-radius: 6px; }
+  .factcard { position: relative; padding: 9px 8px; border-bottom: 1px solid var(--cc-line); }
+  .factcard:last-child { border-bottom: none; }
   .factcard:hover { background: color-mix(in srgb, var(--cc-text3) 10%, transparent); }
   .factcard.inferred { opacity: .82; }
   .factcard.superseded { opacity: .6; }
@@ -68,7 +70,10 @@
   .sessbucket .cnt { letter-spacing: 0; }
   .sessempty { padding: 44px 16px; text-align: center; color: var(--cc-text3); font-size: 13px; line-height: 1.6; }
   /* flat, VS Code-minimal rows: a status dot + title + time, no card box; selection is a subtle full-row tint */
-  .sesscard { position: relative; padding: 7px 8px 8px; margin-bottom: 1px; border-radius: 6px; cursor: pointer; transition: background .1s; }
+  .sesscard { position: relative; padding: 9px 8px; border-bottom: 1px solid var(--cc-line); cursor: pointer; transition: background .1s; }
+  .sesscard:last-child { border-bottom: none; }
+  /* the last row of a group needs no divider — the header gap already separates it (progressive :has) */
+  .sesscard:has(+ .sessbucket), .memcard:has(+ .memsection), .factcard:has(+ .memsection) { border-bottom: none; }
   .sesscard:hover { background: color-mix(in srgb, var(--cc-text3) 13%, transparent); }
   .sesscard:focus-visible { background: color-mix(in srgb, var(--cc-accent) 15%, transparent); outline: none; }
   .sesscard .sesstop { display: flex; align-items: center; gap: 10px; }
