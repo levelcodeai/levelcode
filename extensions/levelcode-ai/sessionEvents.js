@@ -122,9 +122,60 @@ function tailFrom(messages, storedCount) {
 	return msgs.slice(from);
 }
 
+/**
+ * Render a session as a clean Markdown transcript — the "Copy as Markdown" export
+ * (levelcode-sessions-experience.md §6), and the seed of a later share-a-run.
+ *
+ * SCRUBBED, not raw. levelcode-chat-sessions-design.md §10 is explicit: transcripts at rest are the
+ * same trust class as your code, but "anything that later *shares* a session must scrub — that is
+ * that feature's burden." Export IS the first sharing surface — the doc's own framing is
+ * paste-into-a-PR — so the redaction added for project memory is applied here too. A credential
+ * pasted into chat to ask about it must not ride along into a pull request.
+ *
+ * STRUCTURE: bold role labels and a rule between turns, deliberately NOT headings. A turn's own text
+ * routinely contains `## …` and fenced code; heading-based roles would be visually outranked by the
+ * content they are supposed to delimit, and an `###` label looks broken next to a reply that opens
+ * with `#`. Bold + `---` survives every renderer and every nesting depth.
+ *
+ * @param {{title?:string, id?:string, model?:string, createdAt?:string, updatedAt?:string,
+ *          filesEdited?:string[], turns?:number}} meta  a sessionStore index entry
+ * @param {Array<{role:string, content:any}>} messages   the session's messages
+ * @param {{redact?:(s:string)=>string, now?:string}} [opts]  `redact` is injected so this module
+ *          stays dependency-free and the scrub is visible at the call site rather than implied
+ */
+function toMarkdown(meta, messages, opts) {
+	const m = meta || {};
+	const o = opts || {};
+	const scrub = typeof o.redact === 'function' ? o.redact : (s) => s;
+	const turns = toDisplayTurns(messages);
+
+	const title = scrub(String(m.title || 'Untitled session')).trim() || 'Untitled session';
+	const when = String(m.updatedAt || m.createdAt || '').slice(0, 10);
+	const files = (Array.isArray(m.filesEdited) ? m.filesEdited : []).map((f) => scrub(String(f)));
+
+	// One subtitle line of provenance. Everything on it is optional — an export of a session that
+	// never named a model or touched a file should read as a transcript, not as a form with blanks.
+	const bits = [];
+	if (when) { bits.push(when); }
+	bits.push(turns.length + ' turn' + (turns.length === 1 ? '' : 's'));
+	if (m.model) { bits.push('`' + scrub(String(m.model)) + '`'); }
+	if (files.length) { bits.push(files.slice(0, 6).map((f) => '`' + f + '`').join(', ')); }
+
+	let md = '# ' + title + '\n\n';
+	md += '_LevelCode session · ' + bits.join(' · ') + '_\n';
+
+	for (const t of turns) {
+		md += '\n---\n\n**' + (t.role === 'user' ? 'You' : 'LevelCode') + '**\n\n';
+		md += scrub(String(t.text)).trim() + '\n';
+	}
+	// An empty session still exports — a file with a header and no turns is a truthful answer, and
+	// silently producing nothing would read as a broken button.
+	return md;
+}
+
 module.exports = {
 	EDIT_TOOLS,
 	toolStatsFromMessages,
 	userTurnEvent, agentTurnEvent, endEvent, titleEvent, labelEvent,
-	eventsToMessages, messageText, toDisplayTurns, tailFrom
+	eventsToMessages, messageText, toDisplayTurns, tailFrom, toMarkdown
 };

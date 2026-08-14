@@ -109,4 +109,72 @@ test('DISPLAY: toDisplayTurns is tolerant of junk and joins multiple text blocks
 	assert.deepStrictEqual(joined, [{ role: 'assistant', text: 'one\n\ntwo' }]);
 });
 
+// ---- Export: "Copy as Markdown" -----------------------------------------------------------------
+
+const META = {
+	id: 's1', title: 'Idempotent refunds via Redis keys', model: 'anthropic/claude-opus-5',
+	createdAt: '2026-07-28T09:00:00Z', updatedAt: '2026-07-28T10:00:00Z',
+	filesEdited: ['refund.rb', 'redis_lock.rb']
+};
+
+test('EXPORT: a session renders as a transcript with provenance and one block per turn', () => {
+	const md = E.toMarkdown(META, conversation());
+	assert.match(md, /^# Idempotent refunds via Redis keys\n/, 'the title is the H1');
+	assert.match(md, /_LevelCode session · 2026-07-28 · 3 turns · `anthropic\/claude-opus-5` · `refund\.rb`, `redis_lock\.rb`_/,
+		'one subtitle line carries date, turn count, model and files');
+	// Roles read in order, and the plumbing toDisplayTurns drops stays dropped.
+	assert.deepStrictEqual(md.match(/\*\*(You|LevelCode)\*\*/g), ['**You**', '**LevelCode**', '**LevelCode**']);
+	assert.match(md, /add idempotency to refunds/);
+	assert.ok(!/tool_result|tool_use/.test(md), 'raw tool plumbing leaked into a shareable document');
+});
+
+test('EXPORT: roles are BOLD, never headings — a turn owns the heading levels', () => {
+	// A reply that opens with "# Plan" would visually outrank an "### LevelCode" label, and the
+	// document would read as though the model had written the section title.
+	const md = E.toMarkdown(META, [{ role: 'assistant', content: '# Plan\n\n## Step one\n\n```js\nconst x = 1;\n```' }]);
+	assert.ok(!/^#{2,6} (You|LevelCode)/m.test(md), 'a role was rendered as a heading');
+	assert.match(md, /\n---\n\n\*\*LevelCode\*\*\n/, 'turns are separated by a rule');
+	assert.match(md, /```js\nconst x = 1;\n```/, 'fenced code survives verbatim');
+	assert.match(md, /^## Step one$/m, "the turn's own headings are untouched");
+});
+
+test('EXPORT: scrubs, because export is the first surface that SHARES a session', () => {
+	// chat-sessions-design §10: "anything that later shares a session must scrub — that is that
+	// feature's burden." A token pasted into chat must not ride into a pull request.
+	const M = require('../sessionMemory');
+	const pat = ['ghp', '_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'].join('');   // split: push protection
+	const md = E.toMarkdown(
+		Object.assign({}, META, { title: 'Why is ' + pat + ' rejected?', filesEdited: ['key-' + pat + '.txt'] }),
+		[{ role: 'user', content: 'my token is ' + pat + ' — why 401?' }],
+		{ redact: M.redactSecrets }
+	);
+	assert.ok(!md.includes(pat), 'a credential reached the exported document: ' + md);
+	assert.ok(md.includes('[redacted]'), 'scrubbed invisibly — the reader cannot tell something was removed');
+	assert.match(md, /why 401\?/, 'redaction ate the surrounding message');
+});
+
+test('EXPORT: redaction is OPT-IN at the call site, so the scrub is never accidental', () => {
+	// No `redact` → identity. The caller must ask for it, which is what makes the wiring auditable
+	// rather than a property you have to remember this module has.
+	const md = E.toMarkdown(META, [{ role: 'user', content: 'plain text' }]);
+	assert.match(md, /plain text/);
+});
+
+test('EXPORT: degenerate sessions still produce a truthful document', () => {
+	const empty = E.toMarkdown({ title: 'Nothing happened' }, []);
+	assert.match(empty, /^# Nothing happened\n/, 'a header with no turns beats an empty string');
+	assert.match(empty, /0 turns/);
+	assert.ok(!/undefined|NaN|null/.test(empty), 'missing metadata leaked as a placeholder: ' + empty);
+
+	const bare = E.toMarkdown(null, null);
+	assert.match(bare, /^# Untitled session\n/);
+	assert.ok(!/undefined|NaN|null/.test(bare), bare);
+
+	assert.match(E.toMarkdown({ title: '   ' }, []), /^# Untitled session\n/, 'a whitespace title is no title');
+	// Also pins the no-blanks rule: with no model and no files, "1 turn" is simply the last bit —
+	// there is no trailing separator dangling where a value would have been.
+	assert.match(E.toMarkdown({ title: 'One', updatedAt: '2026-07-28T10:00:00Z' },
+		[{ role: 'user', content: 'hi' }]), /_LevelCode session · 2026-07-28 · 1 turn_/, 'singular, and no empty fields');
+});
+
 console.log('sessionEvents: ' + n + ' tests passed');

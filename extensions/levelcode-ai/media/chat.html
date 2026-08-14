@@ -1106,6 +1106,13 @@
      nothing wraps, reflows, or floats and the title above is left intact. The modal keeps icons + labels. */
   .sesscard .sessline2 { margin-top: 4px; min-height: 26px; display: flex; align-items: center; }
   .sesscard .sesssub { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; color: var(--cc-text3); }
+  /* The action row is nowrap by design (the card is two fixed-height lines — nothing may reflow), so
+     a fifth button cannot be allowed to overflow a narrow sidebar. Below the width where five
+     labelled buttons fit, the labels drop and the row becomes icon-only: ~184px instead of ~300px.
+     `title` + `aria-label` are on every button already, so nothing is lost to a pointer or a screen
+     reader — only to the eye, and only when there is no room for it. */
+  .sesscard { container-type: inline-size; }
+  @container (max-width: 360px) { .sesscard .sesslbl { display: none; } }
   .sesscard .sessacts { display: none; align-items: center; gap: 6px; flex-wrap: nowrap; }
   .sesscard:hover .sesssub, .sesscard:focus-within .sesssub { display: none; }
   .sesscard:hover .sessacts, .sesscard:focus-within .sessacts { display: flex; }
@@ -3343,7 +3350,8 @@
     edit: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M14.236 1.76386C13.2123 0.740172 11.5525 0.740171 10.5289 1.76386L2.65722 9.63549C2.28304 10.0097 2.01623 10.4775 1.88467 10.99L1.01571 14.3755C0.971767 14.5467 1.02148 14.7284 1.14646 14.8534C1.27144 14.9783 1.45312 15.028 1.62432 14.9841L5.00978 14.1151C5.52234 13.9836 5.99015 13.7168 6.36433 13.3426L14.236 5.47097C15.2596 4.44728 15.2596 2.78755 14.236 1.76386ZM11.236 2.47097C11.8691 1.8378 12.8957 1.8378 13.5288 2.47097C14.162 3.10413 14.162 4.1307 13.5288 4.76386L12.75 5.54269L10.4571 3.24979L11.236 2.47097ZM9.75002 3.9569L12.0429 6.24979L5.65722 12.6355C5.40969 12.883 5.10023 13.0595 4.76117 13.1465L2.19447 13.8053L2.85327 11.2386C2.9403 10.8996 3.1168 10.5901 3.36433 10.3426L9.75002 3.9569Z"/></svg>',
     check: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.6572 3.13573C13.8583 2.9465 14.175 2.95614 14.3643 3.15722C14.5535 3.35831 14.5438 3.675 14.3428 3.86425L5.84277 11.8642C5.64597 12.0494 5.33756 12.0446 5.14648 11.8535L1.64648 8.35351C1.45121 8.15824 1.45121 7.84174 1.64648 7.64647C1.84174 7.45121 2.15825 7.45121 2.35351 7.64647L5.50976 10.8027L13.6572 3.13573Z"/></svg>',
     trash: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M10 3h3v1h-1v9l-1 1H4l-1-1V4H2V3h3V2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zM9 2H6v1h3V2zM4 13h7V4H4v9zm2-8H5v7h1V5zm1 0h1v7H7V5zm2 0h1v7H9V5z"/></svg>',
-    star: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 L9.53 5.9 L14.18 5.99 L10.47 8.8 L11.82 13.26 L8 10.6 L4.18 13.26 L5.53 8.8 L1.82 5.99 L6.47 5.9 Z"/></svg>'
+    star: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 L9.53 5.9 L14.18 5.99 L10.47 8.8 L11.82 13.26 L8 10.6 L4.18 13.26 L5.53 8.8 L1.82 5.99 L6.47 5.9 Z"/></svg>',
+    copy: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2h7l1 1v1h1l1 1v8l-1 1H6l-1-1v-1H4l-1-1V3l1-1zm1 1v8h1V5l1-1h4V3H5zm2 3v8h6V6H7z"/></svg>'
   };
   function sessActBtn(act, label, svg, cls){
     return '<button type="button" class="sessact' + (cls ? ' ' + cls : '') + '" data-act="' + act + '" title="' + label + '" aria-label="' + label + '">' + svg + '<span class="sesslbl">' + label + '</span></button>';
@@ -3369,6 +3377,7 @@
       + (e.model ? ' · ' + sessModelShort(e.model) : '') + (files.length ? ' · ' + files.join(', ') : '');
     const acts = '<span class="sessacts">'
       + sessActBtn('rename', 'Rename', SESS_IC.edit)
+      + sessActBtn('export', 'Copy', SESS_IC.copy)
       + sessActBtn('done', 'Done', SESS_IC.check)
       + sessActBtn('delete', 'Delete', SESS_IC.trash)
       + sessActBtn('pin', e.pinned ? 'Unpin' : 'Pin', SESS_IC.star)

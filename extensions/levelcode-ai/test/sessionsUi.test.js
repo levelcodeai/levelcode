@@ -74,11 +74,11 @@ test('CARD (state): interrupted gets the warn class; an unpinned card has no pin
 	assert.match(h, /data-act="pin"[^>]*aria-label="Pin"/, 'and the toggle offers Pin');
 });
 
-test('CARD (actions): four row icon buttons (rename/done/delete/pin); clicking the card body resumes', () => {
+test('CARD (actions): five row icon buttons (rename/export/done/delete/pin); clicking the card body resumes', () => {
 	const e = { id: 's3', title: 't', updatedAt: msAgo(3600), turns: 41, model: 'anthropic/claude-opus-5',
 		state: 'done', filesEdited: ['refund.rb', 'lock.rb'] };
 	const h = P.sessCardHtml(e, NOW, esc, escAttr);
-	for (const a of ['rename', 'done', 'delete', 'pin']) { assert.match(h, new RegExp('data-act="' + a + '"'), a + ' action present'); }
+	for (const a of ['rename', 'export', 'done', 'delete', 'pin']) { assert.match(h, new RegExp('data-act="' + a + '"'), a + ' action present'); }
 	assert.ok(!/data-act="resume"/.test(h), 'no Resume button — clicking the card body resumes (default action)');
 	assert.match(h, /class="sessline2">.*class="sesssub">/, 'file·time and the actions share line 2 (swap on hover)');
 	assert.ok(!/sessrich|sessbtn|sesschip|sessmeta/.test(h), 'not the old drawer/chip/meta markup');
