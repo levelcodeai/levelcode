@@ -172,12 +172,84 @@ Full contract, rollout order, and risks: **`docs/AUTO-UPDATE.md`**.
 | Gatekeeper still warns after notarizing | Forgot to **staple**, or stapled the app but not the dmg. |
 | Chat won't open / shortcut dead in a build | `levelcode.ai.focus` is `Ctrl+Cmd+I` (moved off the `Cmd+Alt+I` DevTools collision); the chat also auto-reveals until the first message is sent. |
 
-## 7. CI build — hybrid model (`.github/workflows/release.yml`)
+## 7. CI release — automated, with one human gate (`.github/workflows/`)
 
-**CI builds both arches; you sign locally.** Your Developer ID cert never touches GitHub. CI exists to
-solve the awkward part — building the **Intel (x64)** dmg, which you can't easily do on an Apple-silicon
-Mac — by building each arch on its **native** runner (`macos-14` = arm64, `macos-15-intel` = x64). It
-produces **unsigned** `.app` bundles; you do the fast, sensitive sign + notarize + staple on your machine.
+**CI does everything; you approve the last step.** Three workflows, in order:
+
+| Workflow | Trigger | What it does |
+| --- | --- | --- |
+| `prepare-release.yml` | you, manually | Drafts `RELEASE-NOTES.md` and opens a `release/vX.Y.Z` PR |
+| `tag-on-merge.yml` | that PR merging | Refuses unfinished notes, then pushes the tag |
+| `release.yml` | the tag | Builds both arches, signs, notarizes, drafts the release, **waits for you**, publishes |
+
+There is no version file to bump. The release version comes from `git describe --tags` at build time
+(`scripts/build-macos.sh`), so **the tag is the version**.
+
+### One-time setup
+
+Six repository secrets — *Settings → Secrets and variables → Actions*:
+
+| Secret | Where it comes from |
+| --- | --- |
+| `APPLE_CERT_P12_BASE64` | Keychain Access → export the *Developer ID Application* cert **with its private key** as `.p12` → `base64 -i cert.p12 \| pbcopy` |
+| `APPLE_CERT_PASSWORD` | the password you set on that export |
+| `APPLE_SIGNING_IDENTITY` | `security find-identity -v -p codesigning` — the full `Developer ID Application: NAME (TEAMID)` string |
+| `APPLE_ID` | the Apple ID owning the Developer Program membership |
+| `APPLE_TEAM_ID` | the `(TEAMID)` from that identity |
+| `APPLE_APP_SPECIFIC_PASSWORD` | appleid.apple.com → Sign-In and Security → App-Specific Passwords |
+
+> ⚠️ **And the gate itself** — *Settings → Environments → New environment → `release`* → tick
+> **Required reviewers** and add yourself. **This is not optional.** GitHub creates a missing
+> environment implicitly, with no protection rules, so without this the publish job runs
+> straight through and the approval gate is decorative. Verify by opening the environment and
+> confirming a reviewer is listed.
+
+### Cutting a release
+
+```sh
+# 1. Draft the notes.  Actions → "Prepare release" → Run workflow → version: 1.0.5
+#    → opens PR "release: v1.0.5" with every FACT filled in and TODO markers where prose is needed.
+
+# 2. Write the prose in that PR: replace the TODOs, check the "excluded as internal" list at the
+#    bottom for anything user-visible, delete the scaffolding block. Merge it.
+#    → tag-on-merge.yml refuses to tag while a TODO or the scaffolding survives, or if the first
+#      line doesn't name this version. Then it pushes v1.0.5.
+
+# 3. Wait (~30–60 min/arch). release.yml builds both arches on native runners, signs with the
+#    Developer ID cert, notarizes with Apple, staples, verifies with spctl, and creates a DRAFT
+#    release carrying all four assets and RELEASE-NOTES.md as the body.
+
+# 4. Verify on a real Mac — §3. Download the dmg from the draft:
+gh release download v1.0.5 --pattern 'LevelCode-arm64.dmg'
+
+# 5. Approve. Actions → the running "Publish (requires approval)" job → Review deployments →
+#    Approve. It flips draft=false and then polls the update feed to confirm it went live.
+```
+
+### Why the pause is where it is
+
+Steps 1–3 are all reversible: delete a branch, delete a tag, delete a draft. Step 5 is not.
+Publishing **is** deploying — §5 — and the rollback pin cannot un-update anyone who already took
+the release. So the automation runs right up to that line and stops, which is a better place for
+your attention than remembering the `gh release upload` argument order.
+
+### The trade-off, stated plainly
+
+Earlier revisions of this doc described the hybrid model — CI builds unsigned, you sign locally —
+and noted its one real virtue: *"puts your signing identity in the cloud — the hybrid flow above
+deliberately doesn't."* That is now the cost we have accepted. The `.p12` and its password live in
+GitHub secrets, and anyone who can push a workflow to this repo can, in principle, use them.
+What limits the blast radius:
+
+- The cert is imported into a **temporary keychain in `RUNNER_TEMP`**, unlocked for that job only,
+  and deleted in an `if: always()` step.
+- Secrets are **not exposed to workflows triggered from forks**, so a fork PR cannot reach them.
+- Revocation is real and quick: revoke the cert in the Apple Developer portal and re-issue. Do that
+  the moment a repo admin leaves, or if a workflow file is ever changed by someone unexpected.
+
+If you'd rather not hold that risk, the hybrid model still works — remove the *Import the Developer
+ID certificate* and *Sign, notarize…* steps from `release.yml`, upload the unsigned zips instead,
+and sign locally with `NOTARY_PROFILE` as before.
 
 > **Intel runner note.** `macos-13` (the old x64 runner) was retired 2025-12-04, so we build x64 on
 > `macos-15-intel` — GitHub's last native x86_64 image. It's a premium/large runner (bills ~2× minutes)
@@ -185,38 +257,11 @@ produces **unsigned** `.app` bundles; you do the fast, sensitive sign + notarize
 > arm64 runner (set `VSCODE_ARCH=x64`/`npm_config_arch=x64`, rebuild native modules for x64) rather than
 > build natively — a `scripts/build-macos.sh` + `scripts/bootstrap.sh` change, not just a runner swap.
 
-The whole release becomes:
-
-```sh
-# 1. Kick off CI (builds both arches, ~30–60 min/arch; free on public repos, 10× minutes while private)
-git tag v0.1.0 && git push --tags
-#    → workflow builds → creates a DRAFT release with UNSIGNED-LevelCode-<arch>.app.zip attached
-
-# 2. Sign + notarize LOCALLY (needs the one-time setup from §1)
-gh release download v0.1.0 --pattern 'UNSIGNED-*.app.zip'
-for A in arm64 x64; do
-  rm -rf "VSCode-darwin-$A" && ditto -x -k "UNSIGNED-LevelCode-$A.app.zip" "VSCode-darwin-$A"
-  CODESIGN_IDENTITY="Developer ID Application: SERGII DEMIANCHUK (AJ27Y4Z2HS)" \
-    NOTARY_PROFILE=levelcode-notary ./scripts/make-dmg.sh "$A"     # → LevelCode-$A.dmg + LevelCode-$A.app.zip
-done
-
-# 3. Verify (§3), then attach the dmgs AND the update zips, drop the unsigned zips, and publish.
-#    The .app.zip.sha256 files stay local on purpose — the feed uses GitHub's own asset digest (§5).
-gh release upload v0.1.0 LevelCode-arm64.dmg LevelCode-x64.dmg \
-                         LevelCode-arm64.app.zip LevelCode-x64.app.zip
-# `gh release delete-asset` takes ONE asset per call — drop each unsigned zip separately (`-y` skips the prompt).
-gh release delete-asset v0.1.0 UNSIGNED-LevelCode-arm64.app.zip -y
-gh release delete-asset v0.1.0 UNSIGNED-LevelCode-x64.app.zip -y
-gh release edit v0.1.0 --draft=false --notes-file RELEASE-NOTES.md
-```
-
 Notes:
-- **No secrets required** — the workflow is credential-free by design (that's the whole point of hybrid).
 - The dmg names (`LevelCode-arm64.dmg` / `LevelCode-x64.dmg`) are exactly what the download funnel at
   `levelcode.ai/download/<arch>` expects — don't rename them.
 - `releases/latest` only resolves once this is a **published, non-prerelease** release with both dmgs.
-- **Fully-automated alternative** (signing in CI) if you ever want zero local steps: base64 the `.p12`
-  Developer ID export + store it and an App Store Connect API key as secrets behind a *protected
-  Environment*, import into a temp keychain at job start, and run `make-dmg.sh` with `CODESIGN_IDENTITY`
-  set. Standard (VSCodium does this) but puts your signing identity in the cloud — the hybrid flow above
-  deliberately doesn't.
+- The draft job **fails if any of the four assets is missing**, rather than publishing a half release —
+  losing just the x64 job would otherwise strand every Intel user, silently, since the feed is per-arch.
+- The `.app.zip.sha256` files `make-dmg.sh` writes are still local-only: the feed reads GitHub's own
+  asset `digest` (§5), never a sidecar.
