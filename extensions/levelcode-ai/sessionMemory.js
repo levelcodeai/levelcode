@@ -40,7 +40,10 @@ function memoryMdFile(root, slug) { return path.join(memoryDir(root, slug), 'MEM
 function outcomeEntry(derived, t) {
 	const d = derived || {};
 	const files = Array.isArray(d.filesEdited) ? d.filesEdited.slice(0, 6) : [];
-	const title = d.title != null ? String(d.title) : null;
+	// The title is derived from the session's opening message, so a user who pasted a token into
+	// chat to ask about it would otherwise have it copied into journal.jsonl and MEMORY.md — files
+	// that outlive the session and are meant to be greppable and checkinable.
+	const title = d.title != null ? redactSecrets(String(d.title)) : null;
 	return {
 		v: SCHEMA_V,
 		id: d.id != null ? String(d.id) : null,          // source_session — provenance
@@ -107,9 +110,86 @@ function latestBySession(entries) {
 function normalizeFactKey(text) {
 	return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
+// ---- Hardening: memory is an attack surface (design §7) ---------------------------------------
+//
+// Everything a session records passes through here on its way to disk. The two guards below are
+// DETERMINISTIC on purpose. The extractor's system prompt already asks the model never to emit
+// secrets or instructions, and that instruction is worth keeping — but a request is not a filter,
+// and the transcript it summarizes contains repo file contents, command output and MCP tool
+// results, all of which are attacker-controlled for any repo you clone.
+
+/** Credential shapes worth refusing outright. Named prefixes only — see redactSecrets. */
+const SECRET_PATTERNS = [
+	/-----BEGIN[A-Z ]*PRIVATE KEY-----[\s\S]*?-----END[A-Z ]*PRIVATE KEY-----/g,
+	/-----BEGIN[A-Z ]*PRIVATE KEY-----/g,        // a truncated block still names a key
+	/\bsk-ant-[A-Za-z0-9_-]{20,}/g,              // Anthropic
+	/\bsk-[A-Za-z0-9]{32,}/g,                    // OpenAI-shaped
+	/\bsk_(?:live|test)_[A-Za-z0-9]{16,}/g,      // Stripe
+	/\bgh[pousr]_[A-Za-z0-9]{20,}/g,             // GitHub PAT / OAuth / server / refresh
+	/\bgithub_pat_[A-Za-z0-9_]{20,}/g,
+	/\bAKIA[0-9A-Z]{16}\b/g,                     // AWS access key id
+	/\bAIza[0-9A-Za-z_-]{30,}/g,                 // Google API key (39 chars today; unanchored length, since
+	                                             // pinning it exactly means a format tweak slips straight through)
+	/\bxox[baprs]-[A-Za-z0-9-]{10,}/g,           // Slack
+	/\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/gi       // a bearer token pasted from a curl
+];
+
+/**
+ * Replace credential-shaped substrings with a marker, before the text is written anywhere.
+ *
+ * Deliberately NAMED shapes rather than a "long random-looking string" heuristic. The generic
+ * version flags git SHAs, content hashes, base64 fixtures and long identifiers — all legitimate
+ * things for a project fact to mention — and a memory system that quietly corrupts true facts is
+ * a worse failure than one that misses an exotic token shape. These prefixes cover what actually
+ * leaks in practice.
+ *
+ * The marker is left IN PLACE rather than dropping the whole line, so the surrounding fact stays
+ * readable and the user can see that something was scrubbed instead of wondering why a sentence
+ * ends abruptly.
+ */
+function redactSecrets(text) {
+	let s = String(text == null ? '' : text);
+	for (const re of SECRET_PATTERNS) { s = s.replace(re, '[redacted]'); }
+	return s;
+}
+
+/**
+ * Does this read as an INSTRUCTION rather than a fact?
+ *
+ * A project fact is a stable truth — "the changelog is RELEASE-NOTES.md", "idempotency keys live
+ * in Redis". An instruction is a command that will be replayed into the system prompt of every
+ * future session in this project, which is the exact shape of a persistent prompt injection:
+ * poison once, influence every run.
+ *
+ * This does not delete anything. It only withholds AUTOMATIC promotion — see foldFacts. The fact
+ * is still recorded, still listed, and one Confirm click still activates it. That asymmetry is the
+ * whole design: a false positive costs the user one click, a false negative is an attacker-authored
+ * line injected into every session indefinitely.
+ *
+ * So yes, "Never commit .env files" — a real and useful convention — needs confirming. That is the
+ * right trade at this price.
+ */
+const INSTRUCTION_PATTERNS = [
+	// Imperative openers. Anchored: "the team should never…" is a description, "Never…" is an order.
+	/^\s*(always|never|do not|don't|dont|ignore|disregard|forget|instead of|make sure|be sure|remember to|ensure that|you must|you should|you are|from now on)\b/i,
+	// Injection boilerplate, wherever it appears.
+	/\b(ignore (all )?(previous|prior|earlier) (instructions|prompts|rules)|system prompt|new instructions|override .{0,20}(instructions|rules))\b/i,
+	// Piping anything into a shell is never a "fact".
+	/\|\s*(sudo\s+)?(sh|bash|zsh|python3?)\b/i,
+	/\b(curl|wget)\b[^\n]{0,80}\|/i
+];
+function looksLikeInstruction(text) {
+	const s = String(text == null ? '' : text).trim();
+	if (!s) { return false; }
+	return INSTRUCTION_PATTERNS.some((re) => re.test(s));
+}
+
 /** One observation of a candidate fact (append-only), sourced + dated — the raw material foldFacts counts. */
 function factObservation(text, sourceId, t) {
-	return { v: SCHEMA_V, text: String(text == null ? '' : text).trim(), source: sourceId != null ? String(sourceId) : null, at: t || null };
+	// Redact HERE, at the boundary, not at read time: facts.jsonl is a plain file the user can open,
+	// grep, and check into a dotfiles repo. A secret scrubbed only on the way out would still be
+	// sitting on disk.
+	return { v: SCHEMA_V, text: redactSecrets(String(text == null ? '' : text).trim()), source: sourceId != null ? String(sourceId) : null, at: t || null };
 }
 /** A control event on a fact, by normalized key: confirm, remove (not-true), or supersede (a newer fact made
  *  it obsolete — carries `by`, the replacing text, as the one-line history). */
@@ -171,7 +251,25 @@ function foldFacts(entries, opts) {
 		if (g.removed || !g.text) { continue; }
 		const count = g.sources.size;
 		const superseded = !!g.superseded && !g.confirmed;
-		out.push({ key: g.key, text: g.text, count, confirmed: g.confirmed, superseded, supersededBy: superseded ? g.supersededBy : '', inferred: !g.confirmed, active: g.confirmed || (!superseded && count >= minSeen), at: g.at });
+		// Instruction-shaped text never rides the repetition path — only an explicit Confirm.
+		//
+		// Repetition is the weaker of the two promotion routes, and against a hostile repo it is not
+		// evidence at all: the poisoned file is still checked out on the next session, so the
+		// extractor reads the same line again and "seen in 2 distinct sessions" counts one planted
+		// string twice. That is fine for a genuine observation, which is why the rule stays for
+		// ordinary facts — but it means repetition cannot be what promotes an order into the system
+		// prompt of every future run.
+		const instruction = looksLikeInstruction(g.text);
+		out.push({
+			key: g.key, text: g.text, count, confirmed: g.confirmed, superseded,
+			supersededBy: superseded ? g.supersededBy : '',
+			inferred: !g.confirmed,
+			// Surfaced, not hidden: the panel can show WHY this one is sitting inactive, the same way
+			// a superseded fact is dimmed rather than dropped.
+			instruction,
+			active: g.confirmed || (!superseded && !instruction && count >= minSeen),
+			at: g.at
+		});
 	}
 	out.sort((a, b) => (Number(b.confirmed) - Number(a.confirmed)) || (Number(a.superseded) - Number(b.superseded)) || (b.count - a.count) || String(b.at || '').localeCompare(String(a.at || '')));
 	return out;
@@ -308,5 +406,6 @@ module.exports = {
 	memoryDir, journalFile, factsFile, memoryMdFile,
 	outcomeEntry, appendJournal, readJournal, latestBySession, writeMemoryMd,
 	normalizeFactKey, factObservation, factControl, appendFacts, readFacts, foldFacts, activeFacts,
+	redactSecrets, looksLikeInstruction,
 	queryTerms, snippetFor, recallRank, buildDigest, digestSummary, digestMarkdown
 };
