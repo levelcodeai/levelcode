@@ -128,7 +128,9 @@ This is the part most designs skip, and LevelCode can't (it's the security-forwa
 
 - **Poisoning via untrusted content.** Sessions contain workspace text, which in a hostile repo is attacker-controlled. A naïve extractor could be steered into writing a false "memory" (*"the deploy token is safe to print"*). Mitigations: extraction summarizes **outcomes and user/agent actions, not arbitrary quoted content**; the digest is **bounded and reviewable**; and injected memory is **framed as untrusted, verify-first** (§4) — it can inform, never command.
 - **Memory never executes.** It is context in the system block, exactly like project rules. It cannot run a tool, approve an MCP call, or edit a file. An injected instruction inside a "memory" is treated like any other untrusted text (the project's existing prompt-injection posture).
-- **Provenance limits blast radius.** Because every item is sourced and dated, a poisoned entry is traceable to its session and removable in one click — and its low, *inferred* confidence keeps it from being load-bearing until a human confirms it.
+- **Provenance limits blast radius.** Because every item is sourced and dated, a poisoned entry is traceable to its session and removable in one click.
+- **Instruction-shaped text never self-promotes.** ⚠️ This bullet used to claim that "low, *inferred* confidence keeps it from being load-bearing until a human confirms it." **That was not what the code did.** `foldFacts` promoted anything observed in ≥ 2 distinct sessions with no human in the loop — and against a hostile repo, repetition is not corroboration: the planted file is still checked out next session, so one piece of evidence gets counted twice. Repetition still promotes ordinary facts, but text that reads as an *order* (`always …`, `never …`, `you must …`, `ignore previous instructions`, anything piping into a shell) now requires an explicit Confirm. It is still recorded and listed — surfaced, not silently dropped, so you can see what a repo tried to plant. Pinned by `test/memoryPoisoning.test.js`.
+- **Secrets are scrubbed at the write boundary.** The extractor's prompt asks the model not to emit credentials, and a request is not a filter. `redactSecrets()` strips the named key shapes (GitHub, Anthropic, OpenAI, Stripe, AWS, Google, Slack, bearer tokens, PEM private keys) from fact text, session titles and refined summaries *before* they reach `facts.jsonl` / `journal.jsonl` — files the user is explicitly invited to open, grep and check into a dotfiles repo. Named prefixes only, never a "looks random" heuristic: git SHAs, content hashes and asset names are legitimate things for a fact to mention, and corrupting a true fact is a worse failure than missing an exotic token shape.
 - **Local & private.** Memory never leaves the machine (BYOK promise); M9 sync, if enabled later, encrypts it like the sessions themselves.
 
 ---
@@ -165,7 +167,13 @@ The magic, delivered quietly (never a wall of text):
 
 **M3 — the memory surface & control** *(M)*. The "Project memory" panel tab: view/edit/pin/delete/"not true", inferred-vs-confirmed, per-project off. Exit: a user corrects a wrong memory and the agent stops repeating it.
 
-**M4 — polish & safety hardening** *(S)*. Conflict reconciliation UI, poisoning red-team pass, decayed-entry recall, export. Exit: an adversarial repo cannot plant a load-bearing memory; EXIT-TEST.md green.
+**M4 — polish & safety hardening** *(S)*.
+
+- ✅ **Conflict reconciliation** — semantic supersede: a newer session's fact marks an older one obsolete, dimmed and restorable rather than silently replaced.
+- ✅ **Poisoning red-team pass.** `test/memoryPoisoning.test.js` — 34 cases, an adversarial corpus in the style of `commandSafety.test.js`: ten hostile shapes that must never self-promote, benign project facts that must keep working, nine credential shapes that must never reach disk, and the near-misses (git SHAs, content hashes, asset names) that must survive untouched. It found the gap it was written to look for — see §7. Every case verified non-vacuous by bypassing each guard and confirming failure.
+  *Exit met: an adversarial repo cannot plant a load-bearing memory.* The original wording said "EXIT-TEST.md green", but that file is the **M0** fork/build checklist and was never the right home for this; an executable corpus is a better exit test than a checklist anyway, since it re-runs on every change.
+- ⬜ **Decayed-entry recall** — surfacing an aged-out fact when a query matches it directly.
+- ⬜ **Export** — "Copy as Markdown" for a session, and for the memory set. Cheap, since the storage is already plain text, and it seeds LevelLinks.
 
 **Deliberately later:** cross-*project* memory ("how did I do idempotency in the *other* service?"); a vector cache over the plain files for large corpora; team-shared project memory (rides M9 sync).
 

@@ -257,7 +257,9 @@ function createSessions(opts) {
 		try {
 			const latest = memory.latestBySession(memory.readJournal(root, slug)).find((e) => e.id === id);
 			if (!latest) { return false; }
-			memory.appendJournal(root, slug, Object.assign({}, latest, { summary: String(summary).trim(), refined: true }));
+			// Model output summarizing a transcript that contained repo files, command output and MCP
+			// results — redact before it lands in journal.jsonl and, from there, MEMORY.md.
+			memory.appendJournal(root, slug, Object.assign({}, latest, { summary: memory.redactSecrets(String(summary).trim()), refined: true }));
 			consolidate();
 			return true;
 		} catch (e) { return false; }
