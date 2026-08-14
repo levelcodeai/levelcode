@@ -161,6 +161,50 @@ test('SECRET: the session TITLE is scrubbed too, not just facts', () => {
 	assert.ok(!e.summary.includes(pat), 'token survived into the summary: ' + e.summary);
 });
 
+test('SECRET: the supersede history is scrubbed — the same text, a different door', () => {
+	// `by` is a SECOND copy of the replacing fact, taken from the model's raw output rather than
+	// from the observation factObservation already cleaned, and it surfaces as `supersededBy`.
+	// Redacting only the obvious writer leaves the quiet one open.
+	const pat = tok('ghp', '_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8');
+	const c = M.factControl('old key', 'supersede', at(1), 'Superseded by the token ' + pat);
+	assert.ok(!c.by.includes(pat), 'token survived into facts.jsonl via supersede: ' + c.by);
+	assert.ok(c.by.includes('[redacted]'));
+
+	// …and it stays scrubbed once folded, which is the value the panel renders.
+	const folded = M.foldFacts([ M.factObservation('Tokens live in Redis', 's1', at(1)), c ].map((e) => e))
+		.find((f) => f.supersededBy);
+	if (folded) { assert.ok(!folded.supersededBy.includes(pat)); }
+});
+
+test('SECRET: edited file PATHS are scrubbed — digestMarkdown prints them into MEMORY.md', () => {
+	const pat = tok('ghp', '_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8');
+	const e = M.outcomeEntry({ id: 's1', title: 'Rotated the deploy key', updatedAt: at(1),
+		filesEdited: ['src/app.js', 'tmp/key-' + pat + '.txt'] });
+	assert.ok(!JSON.stringify(e.files).includes(pat), 'token survived in the file list: ' + JSON.stringify(e.files));
+	assert.strictEqual(e.files[0], 'src/app.js', 'an ordinary path was mangled');
+
+	// End to end: the rendered digest is what actually lands in MEMORY.md.
+	const md = M.digestMarkdown(M.buildDigest([e]), { asOf: at(2) });
+	assert.ok(!md.includes(pat), 'token reached MEMORY.md through the file list');
+});
+
+test('COMPLETENESS: every field that reaches disk goes through redactSecrets', () => {
+	// The boundary is only as good as its narrowest gap, and the last two were found by review
+	// rather than by this suite. Walk every writer with the same poisoned string so a NEW field
+	// added to any of them fails here instead of shipping.
+	const pat = tok('ghp', '_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8');
+	const carriers = [
+		['outcomeEntry', M.outcomeEntry({ id: 's1', title: 'x ' + pat, updatedAt: at(1),
+			filesEdited: ['a-' + pat + '.js'] })],
+		['factObservation', M.factObservation('the key is ' + pat, 's1', at(1))],
+		['factControl(supersede)', M.factControl('k', 'supersede', at(1), 'replaced by ' + pat)]
+	];
+	for (const [what, entry] of carriers) {
+		const serialized = JSON.stringify(entry);   // exactly what appendJournal/appendFacts write
+		assert.ok(!serialized.includes(pat), what + ' writes an unredacted secret to disk: ' + serialized);
+	}
+});
+
 // ---- 4. Things that must NOT be mistaken for secrets --------------------------------------------
 
 test('NOT-SECRETS: hashes, SHAs and identifiers survive intact', () => {

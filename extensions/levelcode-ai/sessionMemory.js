@@ -39,7 +39,11 @@ function memoryMdFile(root, slug) { return path.join(memoryDir(root, slug), 'MEM
  */
 function outcomeEntry(derived, t) {
 	const d = derived || {};
-	const files = Array.isArray(d.filesEdited) ? d.filesEdited.slice(0, 6) : [];
+	// Paths get redacted too. They are not free text, but they are not safe either: digestMarkdown
+	// prints them straight into MEMORY.md ("- did X (a.js, b.js)"), and a path is attacker-influenced
+	// in a hostile repo and user-influenced everywhere else — a downloaded `key-ghp_….txt`, an `.env`
+	// backup named after the token it holds. Cheap, and no legitimate path carries a credential prefix.
+	const files = (Array.isArray(d.filesEdited) ? d.filesEdited.slice(0, 6) : []).map((f) => redactSecrets(String(f)));
 	// The title is derived from the session's opening message, so a user who pasted a token into
 	// chat to ask about it would otherwise have it copied into journal.jsonl and MEMORY.md — files
 	// that outlive the session and are meant to be greppable and checkinable.
@@ -196,7 +200,11 @@ function factObservation(text, sourceId, t) {
 function factControl(key, action, t, by) {
 	const control = action === 'remove' ? 'remove' : action === 'supersede' ? 'supersede' : 'confirm';
 	const e = { v: SCHEMA_V, key: String(key || ''), control, at: t || null };
-	if (control === 'supersede' && by) { e.by = String(by); }   // the fact that replaced it — the one-line history
+	// `by` is a SECOND copy of the replacing fact's text, taken straight from the model's output
+	// (extension.js: `r.facts[0] || r.summary`) rather than from the observation that factObservation
+	// already scrubbed. It persists to facts.jsonl and surfaces as `supersededBy` in the panel, so
+	// without this it was a way around the boundary — same text, different door.
+	if (control === 'supersede' && by) { e.by = redactSecrets(String(by)); }   // the fact that replaced it — the one-line history
 	return e;
 }
 /** Append fact observations and/or control events (JSONL). Creates memory/ on first write. */
