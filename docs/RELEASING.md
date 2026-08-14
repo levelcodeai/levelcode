@@ -207,7 +207,9 @@ Six repository secrets — *Settings → Secrets and variables → Actions*:
 ### Cutting a release
 
 ```sh
-# 1. Draft the notes.  Actions → "Prepare release" → Run workflow → version: 1.0.5
+# 1. Draft the notes.  Actions → "Prepare release" → Run workflow
+#      Use workflow from: develop      ← the run FAILS from any other ref, because tag-on-merge.yml
+#      version:           1.0.5           only tags PRs merged into develop
 #    → opens PR "release: v1.0.5" with every FACT filled in and TODO markers where prose is needed.
 
 # 2. Write the prose in that PR: replace the TODOs, check the "excluded as internal" list at the

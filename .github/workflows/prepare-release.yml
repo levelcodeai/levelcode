@@ -53,7 +53,18 @@ jobs:
           # Through the environment, never interpolated into the script body: `${{ inputs.version }}`
           # inline would splice user text straight into the shell.
           VERSION: ${{ inputs.version }}
+          REF: ${{ github.ref_name }}
         run: |
+          # The Run-workflow dropdown lets you pick ANY branch or tag, and the PR this opens targets
+          # whatever you picked. But tag-on-merge.yml only listens for PRs into develop, so a release
+          # PR opened anywhere else merges cleanly and then simply never tags — a dead end with no
+          # error, discovered whenever someone next wonders where the release went. Fail here, where
+          # the cause is still on screen. (Coupled to the `branches:` filter in tag-on-merge.yml —
+          # change both together.)
+          if [ "$REF" != "develop" ]; then
+            echo "::error::Run this from develop, not \"$REF\" — tag-on-merge.yml only tags PRs merged into develop, so a release PR opened here would never ship."
+            exit 1
+          fi
           if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "::error::\"$VERSION\" is not X.Y.Z. Pass the version without a leading v."
             exit 1

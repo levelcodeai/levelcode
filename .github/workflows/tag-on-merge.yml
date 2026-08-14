@@ -24,8 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # The merge commit on the base branch, not the PR head — that is the state being released.
-          ref: ${{ github.event.pull_request.base.ref }}
+          # The MERGE COMMIT itself, by SHA — not the PR head, and not the base branch by name.
+          #
+          # Not the head: the notes are only final once merged.
+          # Not `base.ref`: that resolves to whatever develop points at when this job starts, and
+          # anything merged in the seconds or minutes after the release PR would be swept into the
+          # tag. The build stamps its version from `git describe --tags`, so that ships code the
+          # release notes do not describe — silently, and only discoverable after the fact.
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
 
       - name: Take the version from the branch name
@@ -48,9 +54,14 @@ jobs:
         # deploying here (docs/RELEASING.md §5) — there is no second chance to notice.
         run: |
           FAILED=0
-          if grep -qF 'TODO' RELEASE-NOTES.md; then
+          # Match the generator's exact marker, `<!-- TODO`, not the bare word. Release prose can
+          # legitimately contain "TODO" — describing a known gap, quoting a code comment — and
+          # blocking a finished release over that would be a false alarm the author cannot fix
+          # except by rewording. What this gate is actually asking is narrower: did you fill in the
+          # placeholders draft-release-notes.mjs left behind?
+          if grep -qF '<!-- TODO' RELEASE-NOTES.md; then
             echo "::error file=RELEASE-NOTES.md::Unfilled TODO markers remain:"
-            grep -nF 'TODO' RELEASE-NOTES.md | sed 's/^/  /'
+            grep -nF '<!-- TODO' RELEASE-NOTES.md | sed 's/^/  /'
             FAILED=1
           fi
           if grep -qF 'EVERYTHING BELOW IS SCAFFOLDING' RELEASE-NOTES.md; then

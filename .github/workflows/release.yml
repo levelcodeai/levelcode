@@ -159,8 +159,11 @@ jobs:
           # Without this, codesign blocks on a GUI "allow access to your keychain?" prompt that no
           # one is there to click, and the job hangs until it times out rather than failing.
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
-          # Put it on the search list so codesign finds the identity by name.
-          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          # Put it on the search list so codesign finds the identity by name. Note the PLURAL
+          # subcommand: `security` accepts unambiguous prefixes, so `list-keychain` happens to work
+          # today, but that is prefix-matching rather than a real name — one more Apple subcommand
+          # starting `list-keychain…` and it becomes ambiguous.
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
 
           rm -f "$CERT_PATH"
 
