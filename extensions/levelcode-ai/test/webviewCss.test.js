@@ -214,4 +214,33 @@ test('an approved MCP tool call folds its run-node into the approval chip (one r
 	assert.ok(/mcpMergePending = null;/.test(line), 'and closes a stale merge window on any other row');
 });
 
+test('SESSION CARD: five nowrap action buttons cannot overflow a narrow pane', () => {
+	// The card is two fixed-height lines and the action row is `flex-wrap: nowrap`, so buttons that
+	// do not fit do not wrap — they overflow. Five LABELLED buttons need roughly 300px; a sidebar is
+	// routinely narrower. The labels therefore have to disappear before that happens.
+	//
+	// This is pinned because the failure is invisible in a wide window: whoever adds a sixth button
+	// will not see it break, and the person who does see it will be a user with a narrow sidebar.
+	const both = [
+		['chat.html', css],
+		['sessionsView.html', fs.readFileSync(path.join(__dirname, '..', 'media', 'sessionsView.html'), 'utf8')]
+	];
+	for (const [where, sheet] of both) {
+		assert.match(sheet, /\.sesscard\s*\{[^}]*container-type:\s*inline-size/,
+			where + ': the card must be a container for the query below to resolve against IT rather than the viewport');
+		assert.match(sheet, /@container\s*\(max-width:\s*3[0-9]{2}px\)\s*\{\s*\.sesscard \.sesslbl\s*\{\s*display:\s*none/,
+			where + ': no width at which the labels collapse — a narrow pane will overflow');
+		assert.match(sheet, /\.sesscard \.sessacts \{[^}]*flex-wrap:\s*nowrap/,
+			where + ': the row stopped being nowrap, so this guard is now testing the wrong failure');
+	}
+});
+
+test('SESSION CARD: every action button keeps a label for pointers and screen readers', () => {
+	// The collapse above hides `.sesslbl` VISUALLY. If the buttons had no title/aria-label, an
+	// icon-only row in a narrow pane would be unusable rather than merely compact.
+	const pure = html.slice(html.indexOf('function sessActBtn'), html.indexOf('var SESS_BUCKETS'));
+	assert.match(pure, /title="' \+ label \+ '"/, 'no tooltip on an icon-only button');
+	assert.match(pure, /aria-label="' \+ label \+ '"/, 'no accessible name on an icon-only button');
+});
+
 console.log('webviewCss: ' + n + ' tests passed');

@@ -74,11 +74,11 @@ test('CARD (state): interrupted gets the warn class; an unpinned card has no pin
 	assert.match(h, /data-act="pin"[^>]*aria-label="Pin"/, 'and the toggle offers Pin');
 });
 
-test('CARD (actions): four row icon buttons (rename/done/delete/pin); clicking the card body resumes', () => {
+test('CARD (actions): five row icon buttons (rename/export/done/delete/pin); clicking the card body resumes', () => {
 	const e = { id: 's3', title: 't', updatedAt: msAgo(3600), turns: 41, model: 'anthropic/claude-opus-5',
 		state: 'done', filesEdited: ['refund.rb', 'lock.rb'] };
 	const h = P.sessCardHtml(e, NOW, esc, escAttr);
-	for (const a of ['rename', 'done', 'delete', 'pin']) { assert.match(h, new RegExp('data-act="' + a + '"'), a + ' action present'); }
+	for (const a of ['rename', 'export', 'done', 'delete', 'pin']) { assert.match(h, new RegExp('data-act="' + a + '"'), a + ' action present'); }
 	assert.ok(!/data-act="resume"/.test(h), 'no Resume button — clicking the card body resumes (default action)');
 	assert.match(h, /class="sessline2">.*class="sesssub">/, 'file·time and the actions share line 2 (swap on hover)');
 	assert.ok(!/sessrich|sessbtn|sesschip|sessmeta/.test(h), 'not the old drawer/chip/meta markup');
@@ -256,6 +256,11 @@ test('NO-JUMP: line 2 swaps file·time ⇄ actions in a fixed min-height row (no
 		assert.match(src, /\.sesscard:hover \.sesssub[^{]*\{[^}]*display: none/, name + ': file·time hides on hover…');
 		assert.match(src, /\.sesscard:hover \.sessacts[^{]*\{[^}]*display: flex/, name + ': …and the actions take that same row');
 	}
+});
+
+test('EXPORT: the body is scrubbed on the way out, and the save-dialog filename is redacted too', () => {
+	assert.match(ext, /toMarkdown\(entry, m\.transcript\(id\), \{ redact: sessionMemory\.redactSecrets \}\)/, 'the exported body is scrubbed');
+	assert.match(ext, /redactSecrets\(String\(entry\.title[\s\S]{0,140}stem/, 'and the default filename is redacted BEFORE the save path (a title token cannot leak into the dialog)');
 });
 
 console.log('sessionsUi: ' + n + ' tests passed');

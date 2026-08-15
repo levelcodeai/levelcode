@@ -23,6 +23,7 @@ const { registerInlineComplete } = require('./inlineComplete');
 const { runAgent } = require('./agent');
 const { findCompactionCut, estimateMsgTokens } = require('./agentMemory');
 const sessionStore = require('./sessionStore');
+const sessionEvents = require('./sessionEvents');
 const sessionMemory = require('./sessionMemory');
 const { createSessions } = require('./sessions');
 const { registerReview } = require('./reviewSession');
@@ -898,6 +899,7 @@ async function handleSessionAction(action, id) {
 			postSessions({ type: 'sessionUndo', action, id, title });   // offer to undo — the card just vanished
 			return;
 		}
+		if (action === 'export') { await exportSession(id); return; }
 		if (action === 'restore') { m.restore(id); refreshSessions(); return; }
 		if (action === 'pin') { const cur = (m.list().find((e) => e.id === id) || {}).pinned; m.setPinned(id, !cur); refreshSessions(); return; }
 		if (action === 'rename') {
@@ -907,6 +909,54 @@ async function handleSessionAction(action, id) {
 			return;
 		}
 	} catch (e) { dbg('sessions.action.error', { action, id, msg: String((e && e.message) || e) }); }
+}
+
+/**
+ * Copy a session to the clipboard as Markdown, and offer to save it (experience doc §6).
+ *
+ * SCRUBBED on the way out. chat-sessions-design §10: transcripts at rest are the same trust class as
+ * your code, but "anything that later *shares* a session must scrub — that is that feature's burden."
+ * This is the first surface that shares one — the doc's own framing is paste-into-a-PR — so
+ * `redactSecrets` (built for project memory) is passed in explicitly rather than left implied.
+ */
+async function exportSession(id) {
+	const m = sessionsManager();
+	if (!m || !id) { return; }
+	const entry = (m.list().find((e) => e.id === id)) || {};
+	const md = sessionEvents.toMarkdown(entry, m.transcript(id), { redact: sessionMemory.redactSecrets });
+
+	try { await vscode.env.clipboard.writeText(md); }
+	catch (e) {
+		vscode.window.showErrorMessage('Could not copy the session: ' + String((e && e.message) || e));
+		return;
+	}
+	dbg('sessions.export', { id, chars: md.length });
+
+	// Report the size in TURNS, not characters: "Copied 14 turns" tells you whether you got the
+	// session you meant; "Copied 8,214 characters" tells you nothing you can act on.
+	const turns = sessionEvents.toDisplayTurns(m.transcript(id)).length;
+	const pick = await vscode.window.showInformationMessage(
+		'Copied ' + turns + ' turn' + (turns === 1 ? '' : 's') + ' as Markdown.', 'Save as file…');
+	if (pick !== 'Save as file…') { return; }
+
+	// Derive a filename from the title so a folder of exports stays readable. REDACT it first: the exported
+	// body was scrubbed, but `entry.title` here is the raw index title (toMarkdown redacts its own copy, not
+	// this variable), and the filesystem sanitiser below only strips slashes/colons — a credential's own
+	// characters survive it (`ghp_ABC…` → `ghp-abc…`), so a token in a title would leak into the save path.
+	const safeTitle = sessionMemory.redactSecrets(String(entry.title || 'session'));
+	const stem = safeTitle.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'session';
+	const target = await vscode.window.showSaveDialog({
+		filters: { Markdown: ['md'] },
+		defaultUri: vscode.Uri.file(path.join(os.homedir(), stem + '.md'))
+	});
+	if (!target) { return; }
+	try {
+		await vscode.workspace.fs.writeFile(target, Buffer.from(md, 'utf8'));
+		vscode.window.showInformationMessage('Saved ' + path.basename(target.fsPath) + '.');
+	} catch (e) {
+		vscode.window.showErrorMessage('Could not save the session: ' + String((e && e.message) || e));
+	}
 }
 
 // Reopen a past session: restore its transcript as the live agent context (budget-fitted, §4.5), reset the
