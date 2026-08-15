@@ -130,6 +130,12 @@
         "category": "LevelCode"
       },
       {
+        "command": "levelcode.ai.openChatInEditor",
+        "title": "AI: Open Chat in Editor",
+        "category": "LevelCode",
+        "icon": "$(link-external)"
+      },
+      {
         "command": "levelcode.ai.sessions",
         "title": "AI: Sessions",
         "category": "LevelCode"
