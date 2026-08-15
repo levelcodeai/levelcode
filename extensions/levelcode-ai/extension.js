@@ -2287,10 +2287,18 @@ function replayLiveTranscript(tag) {
 	post({ type: 'sessionResumed', id, title: entry.title || 'Session', note: '', tag, icon: 'layout', turns });
 }
 
-/** The sidebar slot while the chat is an editor tab. Deliberately tiny — it is a signpost, not a UI. */
+/**
+ * The sidebar slot while the chat is an editor tab. Deliberately tiny — it is a signpost, not a UI.
+ *
+ * Small does not mean exempt: it enables scripts and carries an inline one, so it gets the same
+ * CSP + nonce as the chat and sessions documents. Anything less and this would be the one webview
+ * whose script surface is undescribed.
+ */
 function detachedHtml() {
+	const { nonce, csp } = webviewCsp();
 	const bg = 'var(--vscode-sideBar-background)', fg = 'var(--vscode-foreground)';
 	return '<!DOCTYPE html><html><head><meta charset="utf-8">'
+		+ '<meta http-equiv="Content-Security-Policy" content="' + csp + '">'
 		+ '<style>'
 		+ 'body{margin:0;padding:28px 22px;background:' + bg + ';color:' + fg + ';'
 		+ 'font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);text-align:center}'
@@ -2303,17 +2311,30 @@ function detachedHtml() {
 		+ '<div class="t">Chat is open in the editor</div>'
 		+ '<div class="s">The conversation moved to a tab so it has room. Closing that tab brings it back here.</div>'
 		+ '<button id="b">Bring it back</button>'
-		+ '<script>const v=acquireVsCodeApi();document.getElementById("b").onclick=()=>v.postMessage({type:"reattach"});</script>'
+		+ '<script nonce="' + nonce + '">const v=acquireVsCodeApi();document.getElementById("b").onclick=()=>v.postMessage({type:"reattach"});</script>'
 		+ '</body></html>';
 }
 
-function getHtml() {
+/**
+ * A webview Content-Security-Policy and the nonce it authorises.
+ *
+ * Every document this extension serves goes through here, so the script surface is described in ONE
+ * place: no remote anything (`default-src 'none'`), inline styles allowed because the documents are
+ * self-contained, and inline script allowed ONLY for the exact nonce minted per render. A document
+ * that forgets this is not merely inconsistent — a later CSP tightening elsewhere would silently
+ * stop its script from running.
+ */
+function webviewCsp() {
 	const nonce = String(Math.random()).slice(2) + String(Date.now());
-	const csp = [
+	return { nonce, csp: [
 		"default-src 'none'",
 		"style-src 'unsafe-inline'",
 		"script-src 'nonce-" + nonce + "'"
-	].join('; ');
+	].join('; ') };
+}
+
+function getHtml() {
+	const { nonce, csp } = webviewCsp();
 	const html = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'chat.html'), 'utf8');
 	return html.replace(/__CSP__/g, csp).replace(/__NONCE__/g, nonce);
 }
@@ -2346,12 +2367,7 @@ class SessionsViewProvider {
 }
 
 function getSessionsHtml() {
-	const nonce = String(Math.random()).slice(2) + String(Date.now());
-	const csp = [
-		"default-src 'none'",
-		"style-src 'unsafe-inline'",
-		"script-src 'nonce-" + nonce + "'"
-	].join('; ');
+	const { nonce, csp } = webviewCsp();
 	const html = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'sessionsView.html'), 'utf8');
 	return html.replace(/__CSP__/g, csp).replace(/__NONCE__/g, nonce);
 }

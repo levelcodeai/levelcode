@@ -170,6 +170,38 @@ test('COMMAND: it is registered and discoverable in the palette', () => {
 	assert.match(cmd.title, /Chat in Editor/);
 });
 
+// ---- 6. Every webview document describes its own script surface --------------------------------
+
+test('CSP: the hand-off card carries a policy and a nonced script, like the other documents', () => {
+	// It shipped without one. Small is not exempt: the card enables scripts and carries an inline one,
+	// so without a CSP it was the single webview in the extension whose script surface was undescribed
+	// — and a later tightening elsewhere would have silently stopped its button from working.
+	const card = fnBody(ext, 'detachedHtml');
+	assert.match(card, /Content-Security-Policy/, 'no CSP meta — the card is unlike every other document here');
+	assert.match(card, /<script nonce="' \+ nonce \+ '"/,
+		'the inline script is not nonced, so the policy above would block it');
+	assert.match(card, /const \{ nonce, csp \} = webviewCsp\(\)/,
+		'it must use the shared helper, not hand-roll a third copy of the policy');
+});
+
+test('CSP: one helper describes the policy for every document the extension serves', () => {
+	// The construction was duplicated in getHtml and getSessionsHtml before this; a third copy would
+	// have made "tighten the CSP" a three-file change with one of them easy to miss.
+	const helper = fnBody(ext, 'webviewCsp');
+	assert.match(helper, /default-src 'none'/, 'no remote origins');
+	assert.match(helper, /script-src 'nonce-/, 'inline script is nonce-gated');
+	assert.ok(!/style-src[^;]*http/.test(helper), 'no remote stylesheets');
+
+	// Nobody may build the policy by hand any more.
+	const handRolled = (ext.match(/"default-src 'none'"/g) || []).length;
+	assert.strictEqual(handRolled, 1, 'the policy string appears ' + handRolled + ' times — it should exist only inside webviewCsp()');
+
+	// And every document generator goes through it.
+	for (const fn of ['getHtml', 'getSessionsHtml', 'detachedHtml']) {
+		assert.match(fnBody(ext, fn), /webviewCsp\(\)/, fn + '() does not use the shared policy');
+	}
+});
+
 test('COMMAND: it has a BUTTON on the chat header, not only the palette', () => {
 	// A feature whose whole point is "I did not know I could do that" is not served by a
 	// palette-only entry — nobody searches for a capability they do not know exists. This shipped
