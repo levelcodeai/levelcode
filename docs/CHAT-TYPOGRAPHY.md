@@ -45,12 +45,16 @@ Two observations worth stating plainly, because they explain almost everything:
 
 ### D1 — Constrain the measure. This is the single biggest lever.
 
-`max-width` on the prose column, centred, with the container still full-bleed so cards, code blocks
-and the composer keep their current behaviour.
+`max-width` on the prose column, centred, with the container still full-bleed so cards and code blocks
+keep their current behaviour. *(D9 later brought the composer into the same column; T1 shipped with it
+still full-bleed.)*
 
-**Target 680px** — measured, not estimated. An earlier draft of this section said "~72ch, which lands
-near 640–700px". Both halves were wrong, and the correction is worth keeping because the mistake is
-easy to repeat:
+**Target 820px**. T1 shipped 680px, derived from first principles below. That number was later
+overruled by the reference itself — see the revision at the end of this decision. The derivation is
+kept because its correction is the reusable part; the figure it produced is not.
+
+An earlier draft of this section said "~72ch, which lands near 640–700px". Both halves were wrong, and
+that correction is worth keeping because the mistake is easy to repeat:
 
 | measured in the shipped font at 13px | |
 | --- | --- |
@@ -62,9 +66,21 @@ characters would be a 422px column, narrower than the sidebar. The print-typogra
 characters does not transfer to a technical chat: it assumes prose without identifiers, file paths or
 code, and a 422px column would wrap every code block constantly.
 
-680px is chosen against the measurement: **~116 characters at 13px**, down from 154 at editor width,
-while staying wide enough that a fenced block is still readable. When T2 raises the prose size the
-same cap tightens to ~108 characters, which is the right direction.
+680px was chosen against that measurement: ~116 characters at 13px, down from 154 at editor width,
+while staying wide enough that a fenced block is still readable.
+
+**Revised to 820px after comparing against the reference directly.** Side-by-side at the same window
+width, the Claude Code console's column is **~815px** against our 680 — it uses about half the
+available width where we used 41%. The user's report was "the content space is too narrow", and on a
+design parameter chosen from first principles versus the artefact we are explicitly trying to match,
+the artefact wins.
+
+Stated honestly: 820px is **~130 characters** at the shipped 14px prose size, which is well outside the
+print range this decision already argues does not transfer. Two things make that acceptable rather than
+sloppy — the reference demonstrably reads well at that width, and this column carries tables, file
+paths and fenced code, none of which wrap gracefully at 680. The risk section's "screenshots are not
+measurements" caveat applies: ~815px is read off a screenshot, so 820 is a round number near a
+measured one, not a precise transcription.
 
 The elegant part: **in the sidebar this is a no-op.** The container is already narrower than the cap,
 so nothing moves for existing users. It only takes effect in the editor tab, which is exactly the
@@ -196,6 +212,40 @@ Measured in headless Chrome at a 680px column, against `develop`:
 Tint stays as the secondary cue rather than being removed: side alone would fail on any surface that
 reflows the log to a single column.
 
+### D9 — One column for the whole panel, not just the transcript.
+
+T1 bounded the **transcript** and nothing else. `#composer`, `#status` and the four notice bars are
+siblings of `#log`, not children, so none of them saw the cap: at editor width the input was a
+**~1580px box sitting under an 820px conversation**. Side by side with the reference — where the
+composer sits directly under the text it answers — this was the single most obvious difference left,
+more than any type choice.
+
+**The measure moves from `#log` to `body`.** This is the load-bearing part, not tidying. A custom
+property declared on the log is invisible to the log's siblings, which is precisely how the split
+arose. On `body`, every element in the shell resolves the same value.
+
+Two consequences that are easy to miss:
+
+- **`--shell-x`.** The shell insets by `calc(100% - 2 * var(--shell-x))`, the same value `#log` pads
+  with, rather than a bare `width: 100%`. Without it the edges agree only where the cap binds, and
+  out-dent by the log's padding everywhere else — including every sidebar, which is the width most
+  users are actually in.
+- **The runtime override moves too.** `chat.proseWidth` used to be written onto `#log`. Left there it
+  would resize the conversation and leave the composer on the stylesheet default — reopening this exact
+  split, but only for users who set the setting, which is the worst place for it to hide.
+
+Verified in headless Chrome at four widths. Composer and prose edges, left and right:
+
+| viewport | before (prose / composer) | after |
+| --- | --- | --- |
+| 1600px | 680 / **1584** — 452px out-dent per side | 820 / 820 — **Δ 0.0** |
+| 900px | 680 / 884 | 820 / 820 — **Δ 0.0** |
+| 800px | 680 / 784 | 752 / 752 — **Δ 0.0** |
+| 420px (sidebar) | 476 / 484 | 476 / 476 — **Δ 0.0** |
+
+The 420px row is the argument for `--shell-x` on its own: the sidebar was misaligned by 4px a side
+before this, quietly, in the surface almost everyone uses.
+
 ---
 
 ## 3. Slices
@@ -226,6 +276,11 @@ left and full-measure. **Exit:** a short turn renders as a short right-flush bub
 below the column, the assistant is untouched, and the prose inside the bubble is still left-aligned —
 all four measured, not eyeballed.
 
+**T7 — the shell column** *(S)*. D9, plus D1's revision to 820px. Ships: the measure moves to `body`,
+`--shell-x`, the shell rule over the composer/status/notice bars, and the runtime override retargeted.
+**Exit:** composer and prose edges agree to **0.0px at 1600 / 900 / 800 / 420**, and `chat.proseWidth`
+moves both together — measured, not eyeballed.
+
 **T5 — the escape hatch** *(S)*. D7. **Folded into T2 and shipped with it.** Sequencing it last was a
 mistake: T2 is the one slice that changes what every existing user sees, and shipping a divisive
 change with no way back is worse than not shipping it. The plumbing is also shared — once one custom
@@ -234,10 +289,12 @@ property reaches the webview from settings, the second is a line — so splittin
 Sequencing: T1 first and alone — it may turn out to be most of the perceived fix, and shipping it
 by itself is the cheapest way to find out before spending effort on T2–T4.
 
-That held up: T1–T2, T4 and T6 have shipped in that order, each visible on its own. **T3 is the only
-slice of this plan still outstanding.** D8/T6 was not in the original decomposition — it came from
-looking at the reference again after T4, which is the argument for shipping slices small enough to
-look at.
+That held up: T1–T2, T4, T6 and T7 have shipped in that order, each visible on its own. **T3 is the
+only slice of this plan still outstanding.** Neither D8/T6 nor D9/T7 was in the original decomposition
+— both came from looking at the reference again after shipping, which is the argument for slices small
+enough to look at. D9 in particular was invisible from inside the plan: T1's own wording said the
+composer "keeps its current behaviour", and it took a side-by-side screenshot to notice that was the
+bug rather than the scope.
 
 ---
 
