@@ -2257,11 +2257,17 @@ class ChatViewProvider {
  * It is a MOVE. The sidebar hands over its slot and shows a card; the conversation continues in the
  * tab with one live surface throughout.
  */
-async function openChatInEditor() {
-	if (chatEditorPanel) { chatEditorPanel.reveal(); return; }
+async function openChatInEditor(opts) {
+	// `preserveFocus` exists for the STARTUP path only. Opening the chat centred is what the user asked
+	// for; stealing the caret from a file VS Code just restored is not, and at startup those happen in
+	// the same instant. The panel still opens and is still the visible tab — only keyboard focus stays
+	// put. Invoking the command by hand passes nothing and keeps today's take-focus behaviour.
+	const preserveFocus = !!(opts && opts.preserveFocus === true);
+	if (chatEditorPanel) { chatEditorPanel.reveal(undefined, preserveFocus); return; }
 
 	const panel = vscode.window.createWebviewPanel(
-		'levelcode.ai.chat', 'LevelCode AI', vscode.ViewColumn.Active,
+		'levelcode.ai.chat', 'LevelCode AI',
+		{ viewColumn: vscode.ViewColumn.Active, preserveFocus },
 		// retainContextWhenHidden: the transcript lives in this DOM, so switching to another tab and
 		// back must not wipe it — the same reason the contributed views set it.
 		{ enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [ctx.extensionUri] }
@@ -2293,6 +2299,45 @@ async function openChatInEditor() {
 		}
 		dbg('chat.closedEditor', {});
 	});
+}
+
+/**
+ * The other direction of the move: put the chat back in the right-hand bar.
+ *
+ * Disposing the panel IS the move — `onDidDispose` above already hands the slot back to the sidebar
+ * and replays the transcript. Going through it rather than duplicating that path is what makes this
+ * button and ⌘W behave identically; a second implementation would drift from it the first time the
+ * hand-over changed.
+ */
+function moveChatToSidebar() {
+	if (chatEditorPanel) { chatEditorPanel.dispose(); return; }
+	// Already there (or never moved) — just reveal it, so the command is never a silent no-op.
+	vscode.commands.executeCommand('levelcodeAi.chat.focus');
+}
+
+/**
+ * Where the chat opens when the window does.
+ *
+ * The default is the EDITOR: the chat is the thing most sessions are actually about, and a centred
+ * column is where the reference puts it. `secondarySidebar` is the old behaviour, kept because the
+ * sidebar is the right answer when you want the chat beside code rather than instead of it, and
+ * `none` is the honest opt-out for anyone who would rather open it themselves.
+ *
+ * Unknown values fall back to the default rather than throwing: this is read at startup, and a typo
+ * in settings.json should not be able to leave a window with no chat and no explanation.
+ */
+function chatStartLocation() {
+	const raw = String(aiConfig().get('chat.startLocation', 'editor') || 'editor');
+	return ['editor', 'secondarySidebar', 'none'].includes(raw) ? raw : 'editor';
+}
+
+/** Open the chat where `chat.startLocation` says, once, as the window finishes starting. */
+async function revealChatAtStartup() {
+	const where = chatStartLocation();
+	dbg('chat.startLocation', { where });
+	if (where === 'none') { return; }
+	if (where === 'secondarySidebar') { await vscode.commands.executeCommand('levelcodeAi.chat.focus'); return; }
+	await openChatInEditor({ preserveFocus: true });
 }
 
 /**
@@ -2662,7 +2707,11 @@ function activate(context) {
 		vscode.commands.registerCommand('levelcode.ai.newChat', newChat),
 		vscode.commands.registerCommand('levelcode.ai.pickModel', pickModel),
 		vscode.commands.registerCommand('levelcode.ai.manageMcp', manageMcpServers),
-		vscode.commands.registerCommand('levelcode.ai.openChatInEditor', openChatInEditor),
+		// Wrapped, NOT passed by reference: a menu invocation hands the command its context as the first
+		// argument, and openChatInEditor now reads an options object there. Bound directly, a title-bar
+		// click would pass whatever VS Code supplies and could set preserveFocus by accident.
+		vscode.commands.registerCommand('levelcode.ai.openChatInEditor', () => openChatInEditor()),
+		vscode.commands.registerCommand('levelcode.ai.moveChatToSidebar', () => moveChatToSidebar()),
 		vscode.commands.registerCommand('levelcode.ai.addSelection', addSelection),
 		vscode.commands.registerCommand('levelcode.ai.addFileContext', addContext),
 		vscode.commands.registerCommand('levelcode.ai.setApiKey', () => promptForKey()),
@@ -2729,16 +2778,17 @@ function activate(context) {
 	// engaged (sent their first message). This makes sure new users always see it, instead of it only
 	// showing once. Once they've sent a message (handleSend sets the flag) we stop forcing it and defer
 	// to VS Code's own per-workspace layout persistence, so closing it stays closed.
-	// Fallback guard: if the webview never renders (provider error, missing resource) hasSentMessage
-	// is never set, which would otherwise force the panel open forever. Stop after a few launches.
-	const AUTO_REVEAL_MAX_LAUNCHES = 5;
-	if (!context.globalState.get('levelcode.ai.hasSentMessage')) {
-		const launches = (Number(context.globalState.get('levelcode.ai.autoRevealLaunches')) || 0) + 1;
-		context.globalState.update('levelcode.ai.autoRevealLaunches', launches);
-		if (launches <= AUTO_REVEAL_MAX_LAUNCHES) {
-			setTimeout(() => { vscode.commands.executeCommand('levelcodeAi.chat.focus'); }, 600);
-		}
-	}
+	// Open the chat where `chat.startLocation` says — every launch, not just the first few.
+	//
+	// This replaces an onboarding-only auto-reveal that opened the SIDEBAR for at most five launches
+	// and then stopped. Two reasons it goes:
+	//   • It was the wrong surface. The default is now a centred editor tab, and leaving the old block
+	//     in place would open both — a sidebar reveal AND a tab — on every fresh install.
+	//   • Its launch cap was standing in for a setting that did not exist. The cap guarded against a
+	//     broken webview forcing the panel open forever; `chat.startLocation: none` is a better answer
+	//     to that, and a chat that silently stops appearing after five launches is worse to diagnose
+	//     than one that keeps showing you it is broken.
+	setTimeout(() => { revealChatAtStartup(); }, 600);
 
 	// First-launch onboarding: open the "Welcome to LevelCode" walkthrough once. Only mark it shown
 	// AFTER it actually opens (previously the flag was set up-front, so a first-launch race that failed

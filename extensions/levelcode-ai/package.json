@@ -136,6 +136,12 @@
         "icon": "$(link-external)"
       },
       {
+        "command": "levelcode.ai.moveChatToSidebar",
+        "title": "AI: Move Chat to Sidebar",
+        "category": "LevelCode",
+        "icon": "$(layout-sidebar-right)"
+      },
+      {
         "command": "levelcode.ai.sessions",
         "title": "AI: Sessions",
         "category": "LevelCode"
@@ -234,6 +240,11 @@
         }
       ],
       "editor/title": [
+        {
+          "command": "levelcode.ai.moveChatToSidebar",
+          "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
+          "group": "navigation@0"
+        },
         {
           "command": "levelcode.ai.review.keepActive",
           "when": "levelcode.ai.reviewActive",
@@ -374,6 +385,21 @@
           "type": "boolean",
           "default": false,
           "description": "Include a list of all project file paths with each chat message, so the AI knows the repo structure. Uses more tokens."
+        },
+        "levelcode.ai.chat.startLocation": {
+          "type": "string",
+          "enum": [
+            "editor",
+            "secondarySidebar",
+            "none"
+          ],
+          "enumDescriptions": [
+            "Open the chat as a centred editor tab, like any other file.",
+            "Reveal the chat in the right-hand sidebar.",
+            "Do not open the chat automatically."
+          ],
+          "default": "editor",
+          "markdownDescription": "Where the chat opens when a window opens.\n\nThe default puts it in the centre, where the transcript gets the full reading column. This is only the *starting* position \u2014 **AI: Move Chat to Sidebar** (a button on the chat tab) and **AI: Open Chat in Editor** (a button in the sidebar) move it either way at any time, without changing this setting."
         },
         "levelcode.ai.chat.fontSize": {
           "type": "number",
