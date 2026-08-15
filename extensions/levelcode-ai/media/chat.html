@@ -25,11 +25,26 @@
   }
 
   /* ---- conversation log ---- */
-  #log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+  #log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px;
+    /* T1 (docs/CHAT-TYPOGRAPHY.md D1) — the reading measure. A custom property so T5 can hand it to a
+       setting later without touching the rules below. */
+    --prose-max: 680px; }
   /* Log is a flex column → children default to flex-shrink:1. Any child with overflow:hidden (e.g. the
      approval/edit cards) then gets an auto min-size of 0 and the flex algorithm crushes it to an invisible
      line once the log overflows. Pin every child to its natural height; the log itself scrolls instead. */
   #log > * { flex-shrink: 0; }
+  /* THE MEASURE. Nothing constrained the transcript's line length before this: the 12 max-width rules
+     in this file are all cards, dialogs and the empty state. In a 380px sidebar the container bounded
+     it, so it never looked wrong — but the chat can now open as an editor tab (AI: Open Chat in
+     Editor), and at 900px the same CSS produced ~154-character lines.
+     Measured in the shipped font at 13px: the average prose character is 5.86px, so 680px is ~116
+     characters — a real improvement while staying wide enough that a fenced code block does not wrap
+     constantly. NOT expressed in `ch`: `0` is 8.13px here, 39% wider than average text, so a `ch` cap
+     silently overshoots by about a third.
+     Applied to EVERY direct child, not just .msg, so messages, cards and the activity timeline share
+     one column instead of drifting apart at width. Below 680px this is inert — which is why the
+     sidebar is untouched. */
+  #log > * { width: 100%; max-width: var(--prose-max); margin-inline: auto; box-sizing: border-box; }
   /* ---- per-response copy button (hover-reveal under a completed assistant message) ---- */
   .msgactions { margin-top: 5px; display: flex; gap: 6px; }
   .msgcopy {
@@ -111,6 +126,22 @@
   .msg .body li > ul, .msg .body li > ol { margin: 2px 0; }
   .msg .body h1, .msg .body h2, .msg .body h3, .msg .body h4, .msg .body h5, .msg .body h6 { margin: 12px 0 6px; line-height: 1.3; font-weight: 600; }
   .msg .body h1 { font-size: 1.3em; } .msg .body h2 { font-size: 1.18em; } .msg .body h3 { font-size: 1.07em; }
+
+  /* T1 (D3) — vertical rhythm, in `em` so it scales when T2 raises the prose size, and gated to the
+     width where the chat is actually being READ. The sidebar keeps today's density on purpose: this
+     slice's exit criterion is that a narrow panel renders unchanged, so a user who upgrades and never
+     opens the editor tab sees nothing move. `min-width` here is the WEBVIEW's own width — the iframe
+     is sized to the panel, which is why the existing #empty/dialog rules already use vw/vh. */
+  @media (min-width: 760px) {
+    #log { padding: 20px 24px; gap: 1.15em; }
+    .msg .body p { margin-bottom: 1em; }
+    .msg .body ul, .msg .body ol { margin-bottom: 1em; }
+    /* More space ABOVE a heading than below it, so it binds to the section it introduces rather than
+       floating between two. The old 12px/6px was already this shape; this keeps it and scales it. */
+    .msg .body h1, .msg .body h2, .msg .body h3,
+    .msg .body h4, .msg .body h5, .msg .body h6 { margin: 1.6em 0 .55em; }
+    .msg .body > :first-child { margin-top: 0; }
+  }
   .msg .body h4, .msg .body h5, .msg .body h6 { font-size: 1em; }
   .msg .body blockquote { margin: 0 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--muted); }
   .msg .body hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
