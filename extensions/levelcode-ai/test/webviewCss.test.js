@@ -410,7 +410,9 @@ test('TRANSCRIPT: the speaker label leaves the screen but NOT the accessibility 
 
 	// And it must still BE there to hide: both speakers labelled on a turn start, neither on a
 	// continuation (which is the same voice carrying on, and was never labelled).
-	const add = html.slice(html.indexOf('function add(role, html)'), html.indexOf('function add(role, html)') + 700);
+	const at = html.indexOf('function add(role, html)');
+	assert.ok(at !== -1, 'function add(role, html) is gone — cannot verify label emission');
+	const add = html.slice(at, at + 700);
 	assert.match(add, /role === 'user' \? 'You' : 'LevelCode AI'/, 'the label text is no longer emitted at all');
 	assert.match(add, /cont \? '' : '<div class="role">/, 'a continuation must still omit the label element entirely');
 });
