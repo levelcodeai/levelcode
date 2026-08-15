@@ -3438,7 +3438,11 @@
     clearEmpty();
     const banner = document.createElement('div');
     banner.className = 'sessresumed';
-    banner.innerHTML = '<div class="rrow">' + codicon('sync') + '<span class="rtag">Resumed</span>'
+    // The same renderer serves two events: resuming a past session, and the chat MOVING between the
+    // sidebar and an editor tab. They look identical (a replayed transcript) but mean different
+    // things, so the caller names it — a move labelled "Resumed" would tell the user their session
+    // had been reloaded from disk when nothing of the sort happened.
+    banner.innerHTML = '<div class="rrow">' + codicon(m.icon || 'sync') + '<span class="rtag">' + esc(m.tag || 'Resumed') + '</span>'
       + '<span class="rtitle" title="' + escAttr(m.title || '') + '">' + esc(m.title || 'Session') + '</span></div>'
       + (m.note ? '<div class="rnote">' + esc(m.note) + '</div>' : '');
     log.appendChild(banner);

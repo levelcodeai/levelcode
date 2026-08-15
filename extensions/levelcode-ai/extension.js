@@ -43,8 +43,25 @@ const SYSTEM_PROMPT =
 
 /** @type {vscode.ExtensionContext} */
 let ctx;
-/** @type {vscode.Webview | undefined} */
+/**
+ * THE chat surface — whichever webview is currently hosting the conversation. `post()` writes here.
+ *
+ * The chat can live in two places: the sidebar view it is contributed as, or an editor tab
+ * (openChatInEditor). Only ONE is ever live — a "move", not a mirror. Two live surfaces would mean
+ * fanning out every post() and making every handler idempotent, for a UI that can then disagree with
+ * itself; moving keeps one source of truth and is what "open in editor" means to a user anyway.
+ * @type {vscode.Webview | undefined}
+ */
 let activeWebview;
+/** @type {vscode.WebviewView | undefined} */
+let sidebarChatView;    // the contributed view, so the panel can hand the slot back when it closes
+/** @type {vscode.WebviewPanel | undefined} */
+let chatEditorPanel;    // set only while the chat is open as an editor tab
+let chatProvider;       // the single provider instance; both surfaces wire through it
+// The visible transcript lives in the webview's DOM, so swapping surfaces would blank it. Set before
+// handing over; the freshly-loaded surface replays on its `ready`, which is the first moment it can
+// receive anything at all.
+let pendingTranscriptReplay = '';
 let sessionsWebview;   // the Sessions sidebar webview (for pushing list refreshes after a History action)
 /** @type {{role:string,content:string}[]} */
 let conversation = [];
@@ -2109,12 +2126,36 @@ function sendConfigToWebview() {
 class ChatViewProvider {
 	/** @param {vscode.WebviewView} view */
 	resolveWebviewView(view) {
-		activeWebview = view.webview;
+		sidebarChatView = view;
 		view.webview.options = { enableScripts: true, localResourceRoots: [ctx.extensionUri] };
-		view.webview.html = getHtml();
-		view.webview.onDidReceiveMessage(async (msg) => {
+		this.wire(view.webview);
+		// If the chat is currently an editor tab, this slot shows a hand-off card rather than a second
+		// live copy. The view can resolve at any time (first reveal, a reload), so the check belongs
+		// here and not only at the moment the panel opens.
+		if (chatEditorPanel) { view.webview.html = detachedHtml(); return; }
+		this.makeLive(view.webview);
+	}
+
+	/** Point the conversation at `webview` and load the chat into it. Assumes it is already wired. */
+	makeLive(webview) {
+		activeWebview = webview;
+		webview.html = getHtml();
+	}
+
+	/**
+	 * Register the ONE message handler on a webview. Separate from makeLive because the sidebar's html
+	 * is swapped between the chat and the hand-off card, and a listener survives an html swap — wiring
+	 * on every swap would stack duplicate handlers and double-send every message.
+	 */
+	wire(webview) {
+		webview.onDidReceiveMessage(async (msg) => {
 			switch (msg.type) {
-				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); autopilot = aiConfig().get('agent.autopilot', false); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); post({ type: 'autopilot', on: autopilot }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } postMemoryDigest(); break;
+				// `ready` is the earliest a freshly-loaded webview can hear anything, so it is also where a
+				// surface that just took over replays the conversation it inherited (openChatInEditor).
+				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); autopilot = aiConfig().get('agent.autopilot', false); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); post({ type: 'autopilot', on: autopilot }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } postMemoryDigest(); if (pendingTranscriptReplay) { const t = pendingTranscriptReplay; pendingTranscriptReplay = ''; replayLiveTranscript(t); } break;
+				// The hand-off card's button. Disposing the panel runs its onDidDispose, which is the ONE
+				// place that restores the sidebar — so "bring it back" and closing the tab are one path.
+				case 'reattach': if (chatEditorPanel) { chatEditorPanel.dispose(); } break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'setAutopilot': autopilot = !!msg.on; aiConfig().update('agent.autopilot', autopilot, vscode.ConfigurationTarget.Global); dbg('autopilot.set', { on: autopilot }); post({ type: 'autopilot', on: autopilot }); break;
 				case 'send': await handleSend(msg.text); break;
@@ -2177,13 +2218,123 @@ class ChatViewProvider {
 	}
 }
 
-function getHtml() {
+/**
+ * Move the chat into an editor tab.
+ *
+ * A view cannot live in the editor grid — `ViewContainerLocation` is Sidebar | Panel | AuxiliaryBar
+ * and nothing else, which is why the panel can be dragged left or to the bottom but never to the
+ * middle. Only EDITORS live in the middle, so the centre needs a WebviewPanel: a real tab that
+ * splits, moves between groups, and can be dragged to another window like any other editor.
+ *
+ * It is a MOVE. The sidebar hands over its slot and shows a card; the conversation continues in the
+ * tab with one live surface throughout.
+ */
+async function openChatInEditor() {
+	if (chatEditorPanel) { chatEditorPanel.reveal(); return; }
+
+	const panel = vscode.window.createWebviewPanel(
+		'levelcode.ai.chat', 'LevelCode AI', vscode.ViewColumn.Active,
+		// retainContextWhenHidden: the transcript lives in this DOM, so switching to another tab and
+		// back must not wipe it — the same reason the contributed views set it.
+		{ enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [ctx.extensionUri] }
+	);
+	panel.iconPath = vscode.Uri.joinPath(ctx.extensionUri, 'media', 'levelcode-ai.svg');
+	chatEditorPanel = panel;
+
+	chatProvider.wire(panel.webview);
+	pendingTranscriptReplay = 'Moved to the editor';
+	chatProvider.makeLive(panel.webview);
+
+	// Hand the sidebar slot over. Its listener survives an html swap, so the card's button still
+	// reaches the same handler — see ChatViewProvider.wire.
+	if (sidebarChatView) { sidebarChatView.webview.html = detachedHtml(); }
+	dbg('chat.openInEditor', {});
+
+	panel.onDidDispose(() => {
+		chatEditorPanel = undefined;
+		if (sidebarChatView) {
+			pendingTranscriptReplay = 'Back in the sidebar';
+			chatProvider.makeLive(sidebarChatView.webview);
+			sidebarChatView.show?.(true);
+		} else {
+			// The view was never resolved (the container has not been opened this session). Reveal it —
+			// resolveWebviewView then makes it live, and without this the chat would have no surface at all.
+			activeWebview = undefined;
+			pendingTranscriptReplay = 'Back in the sidebar';
+			vscode.commands.executeCommand('levelcodeAi.chat.focus');
+		}
+		dbg('chat.closedEditor', {});
+	});
+}
+
+/**
+ * Replay the live session's visible turns into whichever surface just took over.
+ *
+ * The transcript is DOM state, so a hand-over would otherwise land you in an empty chat holding a
+ * conversation the model still remembers — the worst of both. This reuses the `sessionResumed`
+ * renderer rather than a second one, tagged so a move does not read as a resume.
+ */
+function replayLiveTranscript(tag) {
+	const m = sessionsManager();
+	if (!m) { return; }
+	const id = m.liveId();
+	if (!id) { return; }                       // nothing said yet — an empty chat is the honest state
+	let turns = [];
+	try { turns = sessionEvents.toDisplayTurns(m.transcript(id)); }
+	catch (e) { dbg('chat.replay.failed', { msg: String((e && e.message) || e) }); return; }
+	if (!turns.length) { return; }
+	const entry = m.list().find((e) => e.id === id) || {};
+	post({ type: 'sessionResumed', id, title: entry.title || 'Session', note: '', tag, icon: 'layout', turns });
+}
+
+/**
+ * The sidebar slot while the chat is an editor tab. Deliberately tiny — it is a signpost, not a UI.
+ *
+ * Small does not mean exempt: it enables scripts and carries an inline one, so it gets the same
+ * CSP + nonce as the chat and sessions documents. Anything less and this would be the one webview
+ * whose script surface is undescribed.
+ */
+function detachedHtml() {
+	const { nonce, csp } = webviewCsp();
+	const bg = 'var(--vscode-sideBar-background)', fg = 'var(--vscode-foreground)';
+	return '<!DOCTYPE html><html><head><meta charset="utf-8">'
+		+ '<meta http-equiv="Content-Security-Policy" content="' + csp + '">'
+		+ '<style>'
+		+ 'body{margin:0;padding:28px 22px;background:' + bg + ';color:' + fg + ';'
+		+ 'font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);text-align:center}'
+		+ '.t{font-size:14px;font-weight:600;margin-bottom:6px}'
+		+ '.s{opacity:.7;line-height:1.55;margin-bottom:18px}'
+		+ 'button{width:100%;padding:7px 10px;border:1px solid var(--vscode-button-border,transparent);'
+		+ 'border-radius:4px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);'
+		+ 'font:inherit;cursor:pointer}button:hover{background:var(--vscode-button-hoverBackground)}'
+		+ '</style></head><body>'
+		+ '<div class="t">Chat is open in the editor</div>'
+		+ '<div class="s">The conversation moved to a tab so it has room. Closing that tab brings it back here.</div>'
+		+ '<button id="b">Bring it back</button>'
+		+ '<script nonce="' + nonce + '">const v=acquireVsCodeApi();document.getElementById("b").onclick=()=>v.postMessage({type:"reattach"});</script>'
+		+ '</body></html>';
+}
+
+/**
+ * A webview Content-Security-Policy and the nonce it authorises.
+ *
+ * Every document this extension serves goes through here, so the script surface is described in ONE
+ * place: no remote anything (`default-src 'none'`), inline styles allowed because the documents are
+ * self-contained, and inline script allowed ONLY for the exact nonce minted per render. A document
+ * that forgets this is not merely inconsistent — a later CSP tightening elsewhere would silently
+ * stop its script from running.
+ */
+function webviewCsp() {
 	const nonce = String(Math.random()).slice(2) + String(Date.now());
-	const csp = [
+	return { nonce, csp: [
 		"default-src 'none'",
 		"style-src 'unsafe-inline'",
 		"script-src 'nonce-" + nonce + "'"
-	].join('; ');
+	].join('; ') };
+}
+
+function getHtml() {
+	const { nonce, csp } = webviewCsp();
 	const html = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'chat.html'), 'utf8');
 	return html.replace(/__CSP__/g, csp).replace(/__NONCE__/g, nonce);
 }
@@ -2216,12 +2367,7 @@ class SessionsViewProvider {
 }
 
 function getSessionsHtml() {
-	const nonce = String(Math.random()).slice(2) + String(Date.now());
-	const csp = [
-		"default-src 'none'",
-		"style-src 'unsafe-inline'",
-		"script-src 'nonce-" + nonce + "'"
-	].join('; ');
+	const { nonce, csp } = webviewCsp();
 	const html = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'sessionsView.html'), 'utf8');
 	return html.replace(/__CSP__/g, csp).replace(/__NONCE__/g, nonce);
 }
@@ -2466,7 +2612,7 @@ async function openWorkspaceFile(rel) {
 function activate(context) {
 	ctx = context;
 	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider('levelcodeAi.chat', new ChatViewProvider(), {
+		vscode.window.registerWebviewViewProvider('levelcodeAi.chat', (chatProvider = new ChatViewProvider()), {
 			webviewOptions: { retainContextWhenHidden: true }
 		}),
 		vscode.window.registerWebviewViewProvider('levelcodeAi.sessions', new SessionsViewProvider(), {
@@ -2488,6 +2634,7 @@ function activate(context) {
 		vscode.commands.registerCommand('levelcode.ai.newChat', newChat),
 		vscode.commands.registerCommand('levelcode.ai.pickModel', pickModel),
 		vscode.commands.registerCommand('levelcode.ai.manageMcp', manageMcpServers),
+		vscode.commands.registerCommand('levelcode.ai.openChatInEditor', openChatInEditor),
 		vscode.commands.registerCommand('levelcode.ai.addSelection', addSelection),
 		vscode.commands.registerCommand('levelcode.ai.addFileContext', addContext),
 		vscode.commands.registerCommand('levelcode.ai.setApiKey', () => promptForKey()),
