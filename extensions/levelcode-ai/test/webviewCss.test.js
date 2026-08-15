@@ -311,8 +311,11 @@ test('TRANSCRIPT: prose has its own type, and chrome does not follow it', () => 
 	const scoped = /\.msg \.body \{[^}]*font-size:\s*var\(--prose-size\)/.test(css);
 	const leaked = /\.msg \{[^}]*font-size:\s*var\(--prose-size\)/.test(css);
 	assert.ok(scoped && !leaked, 'the prose size leaked onto .msg — chrome inside a turn would scale with it');
-	assert.match(css, /\.msg \.role \{[^}]*font-size:\s*11px/,
-		'the turn label must keep an absolute size, or it grows with the prose it is labelling');
+	// The turn label used to be this test's example of in-turn chrome holding an absolute size. T4 took
+	// it out of the visual layer entirely (see below), so the checkpoint control carries the guard now:
+	// it still renders inside a .msg and still must not grow with the prose beside it.
+	assert.match(css, /\.ckrestore \{[^}]*font-size:\s*11px/,
+		'in-turn chrome must keep an absolute size, or it grows with the prose it sits next to');
 });
 
 test('TRANSCRIPT: the prose size TRACKS the workbench rather than pinning against it', () => {
@@ -382,6 +385,56 @@ test('TRANSCRIPT: settings are clamped at the host boundary, to the schema\'s ow
 		assert.strictEqual(clampSetting(1, lo, hi), lo, 'a below-floor value snaps to the floor');
 		assert.strictEqual(clampSetting(1e9, lo, hi), hi, 'an absurd value snaps to the ceiling');
 	}
+});
+
+test('TRANSCRIPT: the speaker label leaves the screen but NOT the accessibility tree', () => {
+	// docs/CHAT-TYPOGRAPHY.md D6/T4. Speakers are told apart by treatment — a tinted bubble for you,
+	// unadorned prose for the assistant — so a label restating it above every message was chrome.
+	//
+	// The trap this guards is the obvious "simplification". `display: none` and `visibility: hidden`
+	// both look like tidier ways to hide a label, and both remove it from the accessibility tree. The
+	// bubble is a purely VISUAL cue, so that would leave a screen reader with an unattributed wall of
+	// text and nothing anywhere in the document naming who is speaking — a worse transcript than the
+	// one we started with, and invisible to whoever makes the change.
+	const rule = /\.msg \.role \{([^}]*)\}/.exec(css);
+	assert.ok(rule, '.msg .role no longer has a rule');
+	const body = rule[1];
+
+	assert.ok(!/display\s*:\s*none/.test(body),
+		'display:none removes the label from the a11y tree — clip it instead (see the comment on the rule)');
+	assert.ok(!/visibility\s*:\s*hidden/.test(body),
+		'visibility:hidden removes the label from the a11y tree — clip it instead');
+	assert.match(body, /clip-path:\s*inset\(50%\)/, 'the label must be clipped out of the visual layer');
+	assert.match(body, /position:\s*absolute/, 'a clipped label must be taken out of flow, or it still reserves a line');
+	assert.match(body, /height:\s*1px/, 'the clipped box must not reserve height');
+
+	// And it must still BE there to hide: both speakers labelled on a turn start, neither on a
+	// continuation (which is the same voice carrying on, and was never labelled).
+	const at = html.indexOf('function add(role, html)');
+	assert.ok(at !== -1, 'function add(role, html) is gone — cannot verify label emission');
+	const add = html.slice(at, at + 700);
+	assert.match(add, /role === 'user' \? 'You' : 'LevelCode AI'/, 'the label text is no longer emitted at all');
+	assert.match(add, /cont \? '' : '<div class="role">/, 'a continuation must still omit the label element entirely');
+});
+
+test('TRANSCRIPT: dropping the label does not collapse the gap between speakers', () => {
+	// The label was doing spacing work nobody had accounted for: ~19px above every turn. Remove it and
+	// a new turn is separated from a continuation by 12px versus 7px — not a difference you can see, so
+	// the transcript reads as one undifferentiated column. That is the failure mode of T4 done naively,
+	// and it would look like "the spacing feels off" rather than like a missing rule.
+	assert.match(css, /#log > \.msg:not\(\.cont\) \{[^}]*margin-top:\s*[\d.]+em/,
+		'a turn start must buy back part of the height the label used to occupy, in em so T2 scales it');
+	assert.match(css, /#log > \.msg:first-child \{[^}]*margin-top:\s*0/,
+		'the first turn must not open the transcript with a stray gap');
+	assert.match(css, /\.msg\.cont \{[^}]*margin-top:\s*-\d+px/,
+		'continuations must stay pulled tight, or there is no hierarchy left to see');
+
+	// The whole design rests on the user bubble now: it is the ONLY remaining visual speaker cue.
+	// Flatten it and the transcript loses the distinction entirely, with no label left to fall back on.
+	assert.match(css, /\.msg\.user \.body \{[^}]*background:\s*var\(--field-bg\)/,
+		'the user bubble is the last visual speaker cue — D6 keeps it deliberately');
+	assert.match(css, /\.msg\.user \.body \{[^}]*border:\s*1px solid/,
+		'the bubble needs its border: --field-bg alone is near-invisible in some themes');
 });
 
 test('TRANSCRIPT: the heading scale has steps you can actually see', () => {
