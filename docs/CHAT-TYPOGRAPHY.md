@@ -10,7 +10,7 @@ activity. This doc takes the *visual layer*, which that one deliberately left al
 
 This became urgent the moment the chat could open as an editor tab (#70). In a 380px sidebar the
 line length is bounded by the container, so nothing looks badly wrong. At 900px it is unbounded,
-and the same CSS produces ~130-character lines — roughly twice the readable measure.
+and the same CSS produced **~154-character lines** — measured, at a 900px viewport.
 
 ---
 
@@ -130,8 +130,9 @@ Each ships independently and is visible on its own.
 
 **T1 — measure + rhythm** *(S)*. D1 and D3. The largest perceptual change for the least code, and the
 one that fixes the editor tab. Ships: a wrapper max-width, `em`-based prose spacing, wider `#log`
-padding at editor width. **Exit:** a long answer in the editor tab holds ~72 characters per line, and
-the sidebar renders byte-identically to today.
+padding at editor width. **Exit:** a long answer in the editor tab holds **~116 characters** per line
+(the 680px cap of D1, down from ~154), and the sidebar renders byte-identically to today — verified by
+comparing computed styles against `develop` at 520px, not by eye.
 
 **T2 — the reading type scale** *(S)*. D2 and D4. Ships: the prose size/leading custom properties and
 the widened heading scale. **Exit:** h1/h2/h3 are distinguishable at a glance in a screenshot with no
@@ -157,9 +158,11 @@ by itself is the cheapest way to find out before spending effort on T2–T4.
 - **Theme variance.** Inline-code colour already comes from the theme rather than from us (§1), so
   any judgement about "busy" colour must be checked across the light, dark and high-contrast themes
   the `webviewCss` suite already reasons about — not just the default.
-- **No test currently guards the measure.** `webviewCss.test.js` pins hidden-attribute defeats and the
-  session-card overflow; it should gain a guard that the prose column is bounded, or T1 will regress
-  silently the first time someone refactors the log container.
+- **~~No test currently guards the measure.~~ Closed by T1.** `webviewCss.test.js` now asserts the
+  column is bounded, that the cap covers every child of the log rather than just `.msg`, that it stays
+  an absolute length (not `ch`), and that the rhythm change stays width-gated. The risk was real: this
+  regression is invisible in a sidebar, so whoever refactors the log container would not see it break —
+  a user with the chat in an editor tab would.
 - **Screenshots are not measurements.** Everything here is derived from our own CSS plus a
   side-by-side comparison. The specific numbers (72ch, 14px, 1.65) are considered starting points to
   be tuned against the real thing at real widths, not values copied from the reference — we cannot

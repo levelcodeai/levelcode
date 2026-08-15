@@ -268,6 +268,22 @@ test('TRANSCRIPT: the prose column is bounded, and every child shares the one me
 		'the measure should be an absolute length, not `ch` — see CHAT-TYPOGRAPHY.md D1');
 });
 
+test('TRANSCRIPT: the design doc quotes the SAME measure the stylesheet ships', () => {
+	// Review found the doc contradicting itself in three places: the cap was corrected in D1 after
+	// measuring, and the intro, the exit criterion and the risks list kept the pre-measurement numbers.
+	// Prose drifts from code silently, so the one number that matters is pinned to the code instead of
+	// to a proofread.
+	const doc = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'docs', 'CHAT-TYPOGRAPHY.md'), 'utf8');
+	const shipped = /--prose-max:\s*(\d+)px/.exec(css);
+	assert.ok(shipped, 'the stylesheet no longer declares --prose-max');
+
+	assert.ok(doc.includes('**Target ' + shipped[1] + 'px**'),
+		'CHAT-TYPOGRAPHY.md D1 does not name the ' + shipped[1] + 'px cap the stylesheet actually ships');
+	// And no stray reference to the estimate that measuring disproved.
+	assert.ok(!/~72 characters per line/.test(doc),
+		'the doc still quotes the pre-measurement 72-character target somewhere');
+});
+
 test('TRANSCRIPT: the looser rhythm is gated to reading width, so the sidebar is untouched', () => {
 	// T1's exit criterion is that a narrow panel renders exactly as before — a user who upgrades and
 	// never opens the editor tab should see nothing move. Verified against develop's computed styles
