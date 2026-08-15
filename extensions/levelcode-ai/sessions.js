@@ -200,6 +200,16 @@ function createSessions(opts) {
 			return hits.slice(0, limit);
 		} catch (e) { return []; }
 	}
+	/**
+	 * Facts matching a query, INCLUDING the ones that decayed out of the always-on digest (§4:
+	 * "Decayed ≠ deleted — it's still in Recall"). Separate from recall() because they are a
+	 * different kind of answer — a curated truth, not "here is a session where that came up" — and
+	 * the caller labels them differently.
+	 */
+	function recallFacts(query, opts) {
+		try { return memory.recallFacts(memory.readFacts(root, slug), query, opts || {}); }
+		catch (e) { return []; }
+	}
 	/** All current memory outcomes (one per session, newest-first) — what the memory panel lists. */
 	function memoryItems() { try { return memory.latestBySession(memory.readJournal(root, slug)); } catch (e) { return []; } }
 	/**
@@ -272,7 +282,7 @@ function createSessions(opts) {
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, list, liveId };
+	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, list, liveId };
 }
 
 module.exports = { createSessions };
