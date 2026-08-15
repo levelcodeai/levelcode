@@ -246,6 +246,41 @@ test('SESSION CARD: the label-collapse threshold is above the width the labels a
 	}
 });
 
+test('TRANSCRIPT: the prose column is bounded, and every child shares the one measure', () => {
+	// docs/CHAT-TYPOGRAPHY.md T1. Nothing constrained line length before this — the other max-width
+	// rules in the file are cards, dialogs and the empty state. It went unnoticed for as long as the
+	// chat only ever lived in a ~380px sidebar, where the container did the bounding; opening it as an
+	// editor tab (#70) put the same CSS at 900px and produced ~154-character lines.
+	//
+	// This guard exists because the regression is INVISIBLE in a sidebar. Whoever refactors the log
+	// container will not see it break; a user with the chat open in an editor tab will.
+	assert.match(css, /#log\s*\{[^}]*--prose-max:\s*\d+px/,
+		'the measure is no longer a custom property — T5 hands this to a setting');
+	assert.match(css, /#log > \*\s*\{[^}]*max-width:\s*var\(--prose-max\)/,
+		'the cap must apply to EVERY direct child, or cards and the timeline drift wider than the prose');
+	assert.match(css, /#log > \*\s*\{[^}]*margin-inline:\s*auto/,
+		'an uncentred capped column pins the transcript to the left edge at width');
+
+	// `ch` is a trap here and the reason the first draft of the doc was wrong: `0` measures 8.13px in
+	// this font against a 5.86px average prose character, so a ch-based cap overshoots by ~39%.
+	const capRule = /#log\s*\{[^}]*--prose-max:\s*([^;]+);/.exec(css);
+	assert.ok(capRule && /px$/.test(capRule[1].trim()),
+		'the measure should be an absolute length, not `ch` — see CHAT-TYPOGRAPHY.md D1');
+});
+
+test('TRANSCRIPT: the looser rhythm is gated to reading width, so the sidebar is untouched', () => {
+	// T1's exit criterion is that a narrow panel renders exactly as before — a user who upgrades and
+	// never opens the editor tab should see nothing move. Verified against develop's computed styles
+	// at 520px: padding, gap, paragraph and heading margins, line-height and font-size all identical.
+	const at = css.indexOf('@media (min-width: 760px)');
+	assert.ok(at > 0, 'the width gate is gone — the rhythm change would now hit the sidebar too');
+	const block = css.slice(at, css.indexOf('\n  }', at));
+	assert.match(block, /#log \{[^}]*padding:/, 'the wider page margin belongs inside the gate');
+	assert.match(block, /margin-bottom:\s*1em/, 'prose spacing must be em-based so T2 scales it');
+	assert.match(block, /h1[\s\S]*margin:\s*1\.6em 0 \.55em/,
+		'headings need more space above than below, or they float between sections');
+});
+
 test('SESSION CARD: every action button keeps a label for pointers and screen readers', () => {
 	// The collapse above hides `.sesslbl` VISUALLY. If the buttons had no title/aria-label, an
 	// icon-only row in a narrow pane would be unusable rather than merely compact.
