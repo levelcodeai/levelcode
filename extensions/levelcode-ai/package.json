@@ -369,14 +369,14 @@
           "default": 0,
           "minimum": 0,
           "maximum": 24,
-          "markdownDescription": "Font size for chat **prose** (message bodies), in pixels. `0` follows the editor's UI font size.\n\nThe workbench size is tuned for menu labels and tree rows; message bodies default to a slightly larger size so a long answer reads comfortably. Controls, cards and the composer always follow the workbench."
+          "markdownDescription": "Font size for chat **prose** (message bodies), in pixels. `0` tracks the editor's UI font size, one step larger for reading — a 13px workbench gives 14px prose.\n\nThe workbench size is tuned for menu labels and tree rows; message bodies read a step above it so a long answer is comfortable. Controls, cards and the composer always match the workbench exactly. Values are clamped to 8–24."
         },
         "levelcode.ai.chat.proseWidth": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "maximum": 2000,
-          "markdownDescription": "Maximum width of the chat transcript, in pixels. `0` uses the default reading measure (680px).\n\nOnly has an effect when the panel is wider than the measure — in a narrow sidebar the container already bounds the line length. Set a large value to let the transcript fill the full width."
+          "markdownDescription": "Maximum width of the chat transcript, in pixels. `0` uses the default reading measure (680px) — it does **not** mean unconstrained.\n\nOnly has an effect when the panel is wider than the measure: in a narrow sidebar the container already bounds the line length. Raise it to let the transcript spread across a wide editor tab. Values are clamped to 320–2000."
         },
         "levelcode.ai.chat.groupActivity": {
           "type": "boolean",

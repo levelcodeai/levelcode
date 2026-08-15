@@ -78,9 +78,15 @@ This is the real trade-off in the whole document, so it gets stated rather than 
 paragraphs of explanation at that size, at `line-height: 1.5`, is why the panel feels cramped next to
 the reference.
 
-**Decision:** message bodies get their own size (~14px) and leading (~1.65), expressed relative to a
-single custom property. Everything else — the composer, buttons, session cards, the status row,
-approval chips — keeps inheriting the workbench size, so the panel still belongs to the editor.
+**Decision:** message bodies get their own size and leading (~1.65), expressed through a single custom
+property. Everything else — the composer, buttons, session cards, the status row, approval chips —
+keeps inheriting the workbench size, so the panel still belongs to the editor.
+
+The size is an **offset**, `calc(var(--vscode-font-size) + 1px)`, not a flat 14px. Review caught the
+reason: a flat value silently inverts the decision for anyone who has raised the editor's UI font for
+accessibility — an 18px workbench would read 14px prose inside 18px chrome, which is the divergence
+this decision argues for, pointing the wrong way. At the default 13px it resolves to the same 14px, so
+the change is invisible to everyone who has not touched it.
 
 **The cost, honestly:** the chat will no longer match workbench chrome exactly. That is a real
 inconsistency, and it is the deliberate price of the panel being a place you *read* rather than a
@@ -117,10 +123,22 @@ for exactly this case).
 
 ### D7 — It stays hackable: two settings, no hard-coded values.
 
-`levelcode.ai.chat.proseWidth` (px, `0` = unconstrained) and `levelcode.ai.chat.fontSize`
-(`0` = follow the workbench). Both flow through CSS custom properties set on the container, so the
-defaults are a starting point rather than a verdict — consistent with the editor's whole posture, and
-the honest answer to anyone who preferred the old density.
+`levelcode.ai.chat.proseWidth` (px) and `levelcode.ai.chat.fontSize` (px). Both flow through the CSS
+custom properties above, set on the container, so the defaults are a starting point rather than a
+verdict — consistent with the editor's whole posture, and the honest answer to anyone who preferred
+the old density.
+
+**`0` means "leave the stylesheet alone" for both**, and nothing more. The first draft of this line
+claimed `0` = *unconstrained* for the width and `0` = *follow the workbench* for the size; neither was
+what the code did, and review caught both. The width's default is a 680px measure, not the absence of
+one — the way to widen it is a large number. The size's default now does track the workbench, but by
+the D2 offset, which is a property of the stylesheet rather than of the sentinel.
+
+Both are **clamped at the host boundary** (`clampSetting`, 8–24 and 320–2000). `minimum`/`maximum` in
+the contribution schema only drive the settings *editor*; a hand-edited `settings.json` reaches
+`getConfiguration()` unchecked, and these values land directly in CSS. `proseWidth: 1` is a one-pixel
+transcript — a panel with nothing left on screen to open settings with, whose only exit is finding the
+JSON file again. `webviewCss.test.js` pins the clamp to the schema so the two cannot drift.
 
 ---
 

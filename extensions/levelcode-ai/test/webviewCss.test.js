@@ -302,7 +302,8 @@ test('TRANSCRIPT: prose has its own type, and chrome does not follow it', () => 
 	// size is tuned for menu labels; message bodies get their own. The scoping is the entire safety
 	// property: applied to `.msg` instead of `.msg .body` it would drag the role label, the copy
 	// button and the checkpoint control up with it, and the panel would stop matching the editor.
-	assert.match(css, /#log\s*\{[^}]*--prose-size:\s*\d+px/, 'the prose size is no longer a custom property');
+	assert.match(css, /#log\s*\{[^}]*--prose-size:\s*calc\(var\(--vscode-font-size[^)]*\)\s*\+\s*\d+px\)/,
+		'the prose size must be an OFFSET from the workbench, not a flat value — see below');
 	assert.match(css, /#log\s*\{[^}]*--prose-leading:\s*[\d.]+/, 'the prose leading is no longer a custom property');
 	assert.match(css, /\.msg \.body \{[^}]*font-size:\s*var\(--prose-size\)[^}]*line-height:\s*var\(--prose-leading\)/,
 		'prose type must be set on .msg .body');
@@ -312,6 +313,75 @@ test('TRANSCRIPT: prose has its own type, and chrome does not follow it', () => 
 	assert.ok(scoped && !leaked, 'the prose size leaked onto .msg — chrome inside a turn would scale with it');
 	assert.match(css, /\.msg \.role \{[^}]*font-size:\s*11px/,
 		'the turn label must keep an absolute size, or it grows with the prose it is labelling');
+});
+
+test('TRANSCRIPT: the prose size TRACKS the workbench rather than pinning against it', () => {
+	// The bug a flat `--prose-size: 14px` hides, and the reason review's "0 doesn't do what the
+	// description says" comment was worth more than a wording fix.
+	//
+	// D2 argues prose should read a step ABOVE workbench chrome. A flat value only satisfies that at
+	// the default 13px: raise the editor's UI font for accessibility and the relationship inverts —
+	// 14px prose inside 18px buttons, the divergence pointing the wrong way, for exactly the users who
+	// most need it not to. An offset holds the decision at every workbench size.
+	const decl = /--prose-size:\s*([^;]+);/.exec(css);
+	assert.ok(decl, 'the stylesheet no longer declares --prose-size');
+	const m = /calc\(\s*var\(--vscode-font-size(?:\s*,\s*(\d+)px)?\)\s*\+\s*(\d+)px\s*\)/.exec(decl[1]);
+	assert.ok(m, '--prose-size must be workbench-relative, got: ' + decl[1].trim());
+
+	// The offset stays small: this is "a step above for reading", not a second font scale. Past ~3px
+	// the panel stops looking like part of the editor and D2's cost is no longer the one we accepted.
+	assert.ok(Number(m[2]) >= 1 && Number(m[2]) <= 3,
+		'the reading offset is ' + m[2] + 'px; beyond ~3px the chat stops belonging to the workbench');
+	// A fallback is required: `--vscode-font-size` is injected by the host, and the file opens in a
+	// plain browser during development, where an unresolved var() would void the whole declaration.
+	assert.ok(m[1], '--vscode-font-size needs a px fallback, or the rule is void outside the webview');
+
+	// And the default must still land on the 14px the doc and T1's character count were measured at.
+	assert.strictEqual(Number(m[1]) + Number(m[2]), 14,
+		'at the default 13px workbench this must still resolve to 14px, or T1\'s ~108-character figure moves');
+});
+
+test('TRANSCRIPT: settings are clamped at the host boundary, to the schema\'s own bounds', () => {
+	// `minimum`/`maximum` in the contribution schema are advice for the settings EDITOR — it squiggles
+	// and saves anyway, and a hand-edited settings.json, a synced profile or a bad merge never passes
+	// through that UI at all. These two land straight in CSS, where `proseWidth: 1` is a one-pixel
+	// transcript: a panel with nothing left on screen to open settings with, whose only way out is
+	// finding the JSON file again.
+	const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+	const src = /function clampSetting\(raw, lo, hi\) \{[\s\S]*?\n\}/.exec(ext);
+	assert.ok(src, 'clampSetting is gone — the settings reach CSS unchecked again');
+	const clampSetting = new Function(src[0] + '\nreturn clampSetting;')(); // eslint-disable-line no-new-func
+
+	const props = require('../package.json').contributes.configuration.properties;
+	for (const key of ['fontSize', 'proseWidth']) {
+		const call = new RegExp('clampSetting\\(cfg\\.get\\(\'chat\\.' + key + '\', 0\\),\\s*(\\d+),\\s*(\\d+)\\)').exec(ext);
+		assert.ok(call, 'chat.' + key + ' is read without clampSetting — the bound is decorative again');
+		const lo = Number(call[1]), hi = Number(call[2]);
+		const schema = props['levelcode.ai.chat.' + key];
+
+		// The pin: the number the host enforces IS the number the settings UI advertises. Raising one
+		// without the other is the drift this test exists to catch.
+		assert.strictEqual(hi, schema.maximum,
+			'chat.' + key + ' clamps at ' + hi + ' but the schema advertises ' + schema.maximum);
+		assert.ok(lo > schema.minimum,
+			'the floor must be a real readability bound, not the schema minimum (which is 0, the sentinel)');
+		assert.ok(new RegExp('clamped to ' + lo + '.' + hi).test(schema.markdownDescription),
+			'chat.' + key + ' does not tell the user it is clamped to ' + lo + '-' + hi);
+
+		// 0 is the sentinel, and it must survive the clamp — clamping it up to `lo` would make the
+		// default un-expressible and permanently override the stylesheet.
+		assert.strictEqual(clampSetting(0, lo, hi), 0, '0 must stay 0 — it means "leave the stylesheet alone"');
+		assert.strictEqual(clampSetting(undefined, lo, hi), 0, 'an unset value falls back to the stylesheet');
+		assert.strictEqual(clampSetting('nonsense', lo, hi), 0, 'a non-number falls back rather than emitting NaNpx');
+		assert.strictEqual(clampSetting(-5, lo, hi), 0, 'a negative falls back — CSS would drop it and behave unpredictably');
+		assert.strictEqual(clampSetting(Infinity, lo, hi), 0, 'Infinity falls back rather than emitting "Infinitypx"');
+
+		// In range, untouched. Out of range, pulled in — someone asking for a 200px measure wants it
+		// narrow, so give them the narrowest readable one instead of ignoring them.
+		assert.strictEqual(clampSetting(lo + 1, lo, hi), lo + 1, 'an in-range value must pass through unchanged');
+		assert.strictEqual(clampSetting(1, lo, hi), lo, 'a below-floor value snaps to the floor');
+		assert.strictEqual(clampSetting(1e9, lo, hi), hi, 'an absurd value snaps to the ceiling');
+	}
 });
 
 test('TRANSCRIPT: the heading scale has steps you can actually see', () => {

@@ -32,8 +32,13 @@
     /* T2 (D2) — the READING type. `--vscode-font-size` is the size of menu labels and tree rows: right
        for chrome, wrong for three paragraphs of explanation. Message bodies alone get their own size
        and leading; every control around them keeps inheriting the workbench, so the panel still
-       belongs to the editor. Both are overridable at runtime by the settings (D7). */
-    --prose-size: 14px;
+       belongs to the editor. Both are overridable at runtime by the settings (D7).
+       An OFFSET, not a flat 14px, so prose TRACKS the workbench instead of pinning against it. A flat
+       value quietly inverts for anyone who raises the editor's UI font for accessibility: at a 18px
+       workbench they would read 14px prose inside 18px chrome — the divergence D2 argues for, pointing
+       the wrong way. At the default 13px this still resolves to 14px, so nothing moves for anyone who
+       has not changed it. */
+    --prose-size: calc(var(--vscode-font-size, 13px) + 1px);
     --prose-leading: 1.65; }
   /* Log is a flex column → children default to flex-shrink:1. Any child with overflow:hidden (e.g. the
      approval/edit cards) then gets an auto min-size of 0 and the flex algorithm crushes it to an invisible
