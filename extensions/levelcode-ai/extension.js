@@ -936,6 +936,16 @@ async function handleSessionAction(action, id) {
 			return;
 		}
 		if (action === 'export') { await exportSession(id); return; }
+		if (action === 'fork') {
+			// A fork IS a resume, into a copy — so it reuses resumeSession wholesale rather than
+			// duplicating the transcript replay, the budget planning, or the "resumed from a summary"
+			// note. m.fork() has already made the copy live.
+			const forkId = m.fork(id);
+			if (!forkId) { vscode.window.showErrorMessage('Could not fork that session — it may have been deleted.'); return; }
+			dbg('sessions.fork', { from: id, to: forkId });
+			await resumeSession(forkId);
+			return;
+		}
 		if (action === 'restore') { m.restore(id); refreshSessions(); return; }
 		if (action === 'pin') { const cur = (m.list().find((e) => e.id === id) || {}).pinned; m.setPinned(id, !cur); refreshSessions(); return; }
 		if (action === 'rename') {

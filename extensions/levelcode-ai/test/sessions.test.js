@@ -337,4 +337,93 @@ test('MEMORY: supersedeFact drops a stale fact from the digest but keeps it (res
 	assert.strictEqual(m.digest().facts.length, 1, 'Keep/Confirm restores it to the digest');
 });
 
+// ---- Fork (experience doc §6, "the what-if-I'd-told-it-to-do-X-instead branch") -----------------
+
+/** A sealed, archived, pinned session with two turns — every state a fork must NOT inherit. */
+function forkFixture() {
+	const root = freshRoot(), slug = 'proj';
+	const m = createSessions({ root, slug, projectPath: '/proj', memory: false });
+	m.ensure();
+	m.recordTurn(turn('add idempotency', 'refund.rb'), 'opus');
+	m.recordTurn(turn('now add retries', 'retry.rb'), 'opus');
+	const id = m.liveId();
+	m.rename(id, 'Idempotent refunds');
+	m.archive(id);
+	m.setPinned(id, true);
+	m.seal('done');
+	return { root, slug, m, id };
+}
+
+test('FORK: the copy carries the conversation and the original is left completely alone', () => {
+	const { m, id } = forkFixture();
+	const before = JSON.stringify(m.list().find((e) => e.id === id));
+
+	const forkId = m.fork(id);
+	assert.ok(forkId && forkId !== id, 'fork must produce a NEW session, not reuse the id');
+
+	const fork = m.list().find((e) => e.id === forkId);
+	assert.strictEqual(fork.turns, 2, 'the conversation did not come across');
+	assert.deepStrictEqual(fork.filesEdited, ['refund.rb', 'retry.rb'], 'the derived work came across too');
+
+	assert.strictEqual(JSON.stringify(m.list().find((e) => e.id === id)), before,
+		'forking mutated the original — the whole promise is that it does not');
+});
+
+test('FORK: state, lifecycle and pinning belong to the ORIGINAL and do not travel', () => {
+	// The event-selection rules, which are the entire design of fork(). A copied `end` would make a
+	// live fork render as `done` while you typed into it; a copied `label` would have a fork of an
+	// archived session born invisible in the default Active scope, or silently taking a second pin.
+	const { m, id } = forkFixture();
+	const forkId = m.fork(id);                       // hoisted: inside find() this runs once per row
+	const fork = m.list().find((e) => e.id === forkId);
+	assert.strictEqual(fork.state, 'active', "the original's terminal state was copied");
+	assert.strictEqual(fork.lifecycle, 'active', 'a fork of an archived session must arrive visible');
+	assert.strictEqual(fork.pinned, false, 'pinning is the original\'s, not the copy\'s');
+});
+
+test('FORK: the copy is recognisable in a list, and marked only once', () => {
+	const { m, id } = forkFixture();
+	const firstId = m.fork(id);
+	const first = m.list().find((e) => e.id === firstId);
+	assert.strictEqual(first.title, 'Idempotent refunds (fork)', 'two identical rows would be unreadable');
+
+	// Forking a fork must not stutter into "x (fork) (fork)".
+	const secondId = m.fork(first.id);
+	const second = m.list().find((e) => e.id === secondId);
+	assert.strictEqual(second.title, 'Idempotent refunds (fork)');
+});
+
+test('FORK: provenance is recorded, and only on a fork', () => {
+	const { root, slug, m, id } = forkFixture();
+	const forkId = m.fork(id);
+	const meta = (f) => store.readSession(store.sessionFile(root, slug, f)).meta;
+	assert.strictEqual(meta(forkId).forkedFrom, id, 'a fork must know where it came from (§4 provenance)');
+	assert.ok(!('forkedFrom' in meta(id)),
+		'an ordinary session gained the key — every existing file must stay byte-identical');
+});
+
+test('FORK: the copy becomes live, so the next turn appends to it and not the original', () => {
+	const { m, id } = forkFixture();
+	const forkId = m.fork(id);
+	assert.strictEqual(m.liveId(), forkId, 'a fork IS a resume, into a copy');
+
+	m.recordTurn(turn('try it differently', 'other.rb'), 'opus');
+	assert.strictEqual(m.list().find((e) => e.id === forkId).turns, 3, 'the new turn landed on the fork');
+	assert.strictEqual(m.list().find((e) => e.id === id).turns, 2, 'and NOT on the original');
+});
+
+test('FORK: a missing source fails soft, and an empty session forks without inventing turns', () => {
+	const { m } = forkFixture();
+	assert.strictEqual(m.fork('does-not-exist'), null, 'a gone session must not throw into the UI');
+	assert.strictEqual(m.fork(''), null);
+
+	const root2 = freshRoot();
+	const m2 = createSessions({ root: root2, slug: 'p', projectPath: '/p', memory: false });
+	m2.ensure();
+	const emptyId = m2.liveId();
+	const forkId = m2.fork(emptyId);
+	assert.ok(forkId, 'a session with no turns is still forkable');
+	assert.strictEqual(m2.list().find((e) => e.id === forkId).turns, 0);
+});
+
 console.log('sessions: ' + n + ' tests passed');
