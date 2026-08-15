@@ -2100,6 +2100,24 @@ async function browseProviderModels(cfg, providerId) {
 	sendConfigToWebview();
 }
 
+// A settings number on its way into a CSS custom property.
+//
+// `minimum`/`maximum` in the contribution schema only drive the settings *editor*: it draws a squiggle
+// and saves the value anyway, and a hand-edited settings.json, a synced profile or a bad merge never
+// passes through that UI at all. Whatever is in the file is what `getConfiguration()` returns, and here
+// it lands directly in CSS — where `chat.proseWidth: 1` is a one-pixel transcript and
+// `chat.fontSize: 0.5` is a blank panel. Neither leaves anything on screen to open settings with, so
+// the way out is to find the JSON file again; clamping at the boundary is cheaper than that.
+//
+// Out-of-range is pulled INTO the range rather than rejected — someone who asks for a 200px measure
+// wants it narrow, so give them the narrowest readable one instead of silently ignoring them. Only 0,
+// a negative, or a non-number means "leave the stylesheet's own value alone".
+function clampSetting(raw, lo, hi) {
+	const n = Number(raw);
+	if (!Number.isFinite(n) || n <= 0) { return 0; }
+	return Math.min(Math.max(n, lo), hi);
+}
+
 function sendConfigToWebview() {
 	const cfg = aiConfig();
 	// Gateway mode (signed in — the gateway only routes when authenticated): the footer reflects the
@@ -2107,10 +2125,20 @@ function sendConfigToWebview() {
 	// so the webview can show the free-tier Upgrade CTA.
 	// Calm transcript: whether the webview folds consecutive agent actions into one collapsible group.
 	const groupActivity = cfg.get('chat.groupActivity', true) !== false;
+	// T2/T5 (docs/CHAT-TYPOGRAPHY.md D2, D7). Prose gets its own size because `--vscode-font-size` is the
+	// size of menu labels and tree rows — right for chrome, wrong for reading three paragraphs. Both are
+	// escape hatches by design, so anyone who preferred the old density has a one-setting way back
+	// rather than an argument.
+	//
+	// 0 means "leave the stylesheet alone" for both — the size then tracks the workbench
+	// (`--vscode-font-size` + 1px) and the measure stays at its 680px default. It does NOT mean
+	// "unconstrained": the way to widen the measure is a large number, not 0.
+	const proseSize = clampSetting(cfg.get('chat.fontSize', 0), 8, 24);
+	const proseWidth = clampSetting(cfg.get('chat.proseWidth', 0), 320, 2000);
 	if (providerMode() === 'gateway' && cloudSignedIn) {
 		const model = gatewayModel();
 		post({
-			type: 'config', provider: 'gateway', model: gatewayModelLabel(model), modelId: model,
+			type: 'config', provider: 'gateway', proseSize, proseWidth, model: gatewayModelLabel(model), modelId: model,
 			providerLabel: 'LevelCode Cloud', contextLimit: contextLimitFor('openai', capsModel(model)),
 			gateway: true, plan: cloudPlanName() || 'Free', paid: isPaidCloudPlan(cloudPlanName()),
 			groupActivity: groupActivity
@@ -2120,7 +2148,7 @@ function sendConfigToWebview() {
 	const providerId = currentProviderId();
 	const p = providers.getProvider(providerId) || providers.getProvider('claude');
 	// Carry the model's context window so the footer meter updates the moment the model changes.
-	post({ type: 'config', provider: providerId, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity });
+	post({ type: 'config', provider: providerId, proseSize, proseWidth, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity });
 }
 
 class ChatViewProvider {

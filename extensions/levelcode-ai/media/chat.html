@@ -28,7 +28,18 @@
   #log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px;
     /* T1 (docs/CHAT-TYPOGRAPHY.md D1) — the reading measure. A custom property so T5 can hand it to a
        setting later without touching the rules below. */
-    --prose-max: 680px; }
+    --prose-max: 680px;
+    /* T2 (D2) — the READING type. `--vscode-font-size` is the size of menu labels and tree rows: right
+       for chrome, wrong for three paragraphs of explanation. Message bodies alone get their own size
+       and leading; every control around them keeps inheriting the workbench, so the panel still
+       belongs to the editor. Both are overridable at runtime by the settings (D7).
+       An OFFSET, not a flat 14px, so prose TRACKS the workbench instead of pinning against it. A flat
+       value quietly inverts for anyone who raises the editor's UI font for accessibility: at a 18px
+       workbench they would read 14px prose inside 18px chrome — the divergence D2 argues for, pointing
+       the wrong way. At the default 13px this still resolves to 14px, so nothing moves for anyone who
+       has not changed it. */
+    --prose-size: calc(var(--vscode-font-size, 13px) + 1px);
+    --prose-leading: 1.65; }
   /* Log is a flex column → children default to flex-shrink:1. Any child with overflow:hidden (e.g. the
      approval/edit cards) then gets an auto min-size of 0 and the flex algorithm crushes it to an invisible
      line once the log overflows. Pin every child to its natural height; the log itself scrolls instead. */
@@ -110,6 +121,10 @@
   #jumpLatest.show { display: inline-flex; }
   #jumpLatest:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.25)); }
   .msg { white-space: normal; word-wrap: break-word; line-height: 1.5; }
+  /* Scoped to .body, NOT .msg: the role label, the copy button and the checkpoint control are chrome
+     and stay at the workbench size. This is also what makes T1's em-based rhythm scale — those margins
+     resolve against THIS size, so raising the type opens the spacing with it. */
+  .msg .body { font-size: var(--prose-size); line-height: var(--prose-leading); }
   .msg .role { font-size: 11px; opacity: .55; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
   /* a quiet remind-me line: a soft accent rule, small label, the words in a calm serif italic */
   .rme { margin: 0 4px; padding: 10px 0 10px 14px; border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -125,7 +140,9 @@
   .msg .body li { margin: 2px 0; }
   .msg .body li > ul, .msg .body li > ol { margin: 2px 0; }
   .msg .body h1, .msg .body h2, .msg .body h3, .msg .body h4, .msg .body h5, .msg .body h6 { margin: 12px 0 6px; line-height: 1.3; font-weight: 600; }
-  .msg .body h1 { font-size: 1.3em; } .msg .body h2 { font-size: 1.18em; } .msg .body h3 { font-size: 1.07em; }
+  /* D4 — the old 1.3/1.18/1.07 put 0.11em between h2 and h3: at 13px that is 1.4px, so three levels of
+     hierarchy were indistinguishable without selecting the text. */
+  .msg .body h1 { font-size: 1.45em; } .msg .body h2 { font-size: 1.25em; } .msg .body h3 { font-size: 1.1em; }
 
   /* T1 (D3) — vertical rhythm, in `em` so it scales when T2 raises the prose size, and gated to the
      width where the chat is actually being READ. The sidebar keeps today's density on purpose: this
@@ -3506,6 +3523,13 @@
   window.addEventListener('message', ev => {
     const m = ev.data;
     if (m.type === 'config'){
+      // D7 — the escape hatch. 0 means "follow the default": clearing the property lets the stylesheet
+      // value win again, rather than pinning it to whatever the default happened to be at the time.
+      const rootLog = document.getElementById('log');
+      if (rootLog){
+        rootLog.style.setProperty('--prose-size', m.proseSize ? m.proseSize + 'px' : '');
+        rootLog.style.setProperty('--prose-max', m.proseWidth ? m.proseWidth + 'px' : '');
+      }
       const label = m.provider === 'claude' ? prettyModel(m.model) : m.model;
       const mEl = document.getElementById('model');
       mEl.innerHTML = esc(label) + ' <span class="caret">▾</span>';
