@@ -1,6 +1,6 @@
 # LevelCode Sessions — Experience Design
 
-**Status:** proposed · **Scope:** `extensions/levelcode-ai` webview + a thin store · **Builds on:** [`levelcode-chat-sessions-design.md`](./levelcode-chat-sessions-design.md) (the persistence spine) · **Owns:** everything a user sees, touches, and feels
+**Status:** **partially shipped** — E1/E3 done, E4 mostly done, **E2 (search + switcher) not started**; see §10 · **Scope:** `extensions/levelcode-ai` webview + a thin store · **Builds on:** [`levelcode-chat-sessions-design.md`](./levelcode-chat-sessions-design.md) (the persistence spine) · **Owns:** everything a user sees, touches, and feels
 
 > The spine doc answers *"how is a chat saved and resumed?"* — append-only JSONL, project-slug directories, three-tier resume. It is right, and this document does not relitigate it. This document answers the harder, unspecced half: **what is it like to live with your chat history?** That half is where Copilot and Cursor are beatable, and where an award is won or lost.
 
@@ -380,13 +380,13 @@ The webview never reads JSONL directly for the list — it reads this index (fas
 
 Layered on the spine's Phase 1–4. Each phase ships something usable; none blocks on the next.
 
-**E1 — the panel & the card** *(M)* — the Sessions overlay, time buckets, the rich card (title/meta/state), resume (verbatim tier), New Chat seal + fly-to-history. *Ships the moment History stops being a dropdown.* Exit: three sessions, browsable, resumable, recognizable at a glance; theme-correct in all three kinds.
+**E1 — the panel & the card** *(M)* — ✅ **shipped.** — the Sessions overlay, time buckets, the rich card (title/meta/state), resume (verbatim tier), New Chat seal + fly-to-history. *Ships the moment History stops being a dropdown.* Exit: three sessions, browsable, resumable, recognizable at a glance; theme-correct in all three kinds.
 
-**E2 — the switcher & search** *(M)* — `⌃⌘P` fuzzy jump; in-panel search over title+files+commands; filter chips; scope switch. *Ships the keyboard-first, search-what-it-did lead over Cursor.* Exit: type a filename, resume the session that edited it, in three keystrokes.
+**E2 — the switcher & search** *(M)* — ❌ **not started.** There is no in-panel search input, no filter chips, no scope switch, and no `⌃⌘P` jump — `AI: Sessions` is the only command and there are no keybindings. This is the largest remaining gap in the experience, and the one users will notice first once a project has more than a screenful of sessions: the panel can be scrolled but not *searched*. — `⌃⌘P` fuzzy jump; in-panel search over title+files+commands; filter chips; scope switch. *Ships the keyboard-first, search-what-it-did lead over Cursor.* Exit: type a filename, resume the session that edited it, in three keystrokes.
 
-**E3 — the honesty layer & rich recognition** *(M)* — activity sparkline, files-touched chips, state pills, the interrupted/reload/summarize strips, the compact-on-resume sheet. *Ships the trust story and the visual lead.* Exit: an interrupted session is unmistakable in the list and on resume; a too-big session resumes via the honest sheet.
+**E3 — the honesty layer & rich recognition** *(M)* — ✅ **shipped.** Sparkline, files-touched chips, state pills, and the compact-on-resume plan + its honest note. — activity sparkline, files-touched chips, state pills, the interrupted/reload/summarize strips, the compact-on-resume sheet. *Ships the trust story and the visual lead.* Exit: an interrupted session is unmistakable in the list and on resume; a too-big session resumes via the honest sheet.
 
-**E4 — signature polish** *(S)* — the resume morph, FLIP filter reflow, sparkline draw-in, pins/tags, seal-to-history fly, empty states, export-as-Markdown. *Ships the award.* Exit: the demo reel — open, search, fork, resume-with-morph — reads as one considered product.
+**E4 — signature polish** *(S)* — ⚠️ **partial.** Shipped: pins, empty states, export-as-Markdown, Undo behind Done/Delete. Not built: the resume morph and the seal-to-history fly (animation), and the FLIP filter reflow — which cannot ship before E2 gives it filters to reflow. — the resume morph, FLIP filter reflow, sparkline draw-in, pins/tags, seal-to-history fly, empty states, export-as-Markdown. *Ships the award.* Exit: the demo reel — open, search, fork, resume-with-morph — reads as one considered product.
 
 **Deliberately later:** fork-visualized-as-a-branch-graph; cross-session recall agent tool; LevelLinks share-a-run; the M9 encrypted sync of the same files.
 

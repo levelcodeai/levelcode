@@ -1,6 +1,6 @@
 # LevelCode Sessions — Project Memory & Continuity
 
-**Status:** proposed · **Scope:** `extensions/levelcode-ai` + the sessions store · **Third of the triad:** [`levelcode-chat-sessions-design.md`](./levelcode-chat-sessions-design.md) stores a chat · [`levelcode-sessions-experience.md`](./levelcode-sessions-experience.md) lets you browse it · **this doc lets the project *remember itself*.**
+**Status:** **shipped** — M1–M4 complete (§10) · **Scope:** `extensions/levelcode-ai` + the sessions store · **Third of the triad:** [`levelcode-chat-sessions-design.md`](./levelcode-chat-sessions-design.md) stores a chat · [`levelcode-sessions-experience.md`](./levelcode-sessions-experience.md) lets you browse it · **this doc lets the project *remember itself*.**
 
 > The wish, in the user's words: *"if in one session we tidy the CHANGELOG for v1.0.4, then a new session already knows something about what was achieved — the past experience keeps growing, and it feels like home."* That is the right ambition. It is also the feature most likely to become expensive, stale, creepy, or wrong. This document is mostly about **not** doing those four things while still delivering the magic.
 
