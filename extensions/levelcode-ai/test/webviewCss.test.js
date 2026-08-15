@@ -437,6 +437,48 @@ test('TRANSCRIPT: dropping the label does not collapse the gap between speakers'
 		'the bubble needs its border: --field-bg alone is near-invisible in some themes');
 });
 
+test('TRANSCRIPT: your turn sits right, the assistant stays left', () => {
+	// docs/CHAT-TYPOGRAPHY.md D8/T6. T4 removed the labels and left the bubble carrying the speaker
+	// distinction alone — but the bubble is `--field-bg`, near-invisible in some themes, so on a
+	// low-contrast theme the transcript could read as one undifferentiated voice. Side is unmissable in
+	// every theme, at every contrast, and costs no chrome.
+	assert.match(css, /\.msg\.user \{[^}]*display:\s*flex/, 'the user turn is no longer a flex container');
+	assert.match(css, /\.msg\.user \{[^}]*flex-direction:\s*column/,
+		'a row direction would put the checkpoint control beside the bubble instead of under it');
+	assert.match(css, /\.msg\.user \{[^}]*align-items:\s*flex-end/, 'the user turn is no longer pushed right');
+
+	// THE TRAP. `text-align: right` looks like the same change on a one-line message and is completely
+	// different on a three-line one: it right-aligns the PROSE, which is unreadable past one line.
+	// The bubble is the thing being placed; the words inside it stay left.
+	const userRules = [...css.matchAll(/\.msg\.user[^{}\n]*\{([^}]*)\}/g)].map((m) => m[1]).join(' ');
+	assert.ok(!/text-align\s*:\s*right/.test(userRules),
+		'right-align the BUBBLE (align-items), never the text — multi-line prose becomes unreadable');
+
+	// The asymmetry IS the cue. Give the assistant the same treatment and both sides move together,
+	// which restores exactly the undifferentiated column T4 was at risk of.
+	assert.ok(!/\.msg\.assistant[^{}\n]*\{[^}]*align-items:\s*flex-end/.test(css),
+		'the assistant must stay left — if both sides sit right there is no side cue at all');
+});
+
+test('TRANSCRIPT: the user bubble hugs its content, and is capped short of the column', () => {
+	const rule = /\.msg\.user \.body \{([^}]*width:\s*fit-content[^}]*)\}/.exec(css);
+	assert.ok(rule, 'the user bubble no longer hugs its content — "Yes" would be a full-width block');
+
+	// Capped BELOW the column: at 100% a long question fills the measure, reads as a full-width block
+	// again, and the side cue disappears exactly when the transcript is densest.
+	const cap = /max-width:\s*(\d+)%/.exec(rule[1]);
+	assert.ok(cap, 'the bubble needs a percentage cap, or a long turn spans the whole column');
+	const pct = Number(cap[1]);
+	assert.ok(pct >= 70 && pct <= 90,
+		'the cap is ' + pct + '%; below ~70% a normal question wraps far too early, above ~90% the '
+		+ 'asymmetry stops being visible');
+
+	// Measured in headless Chrome at a 680px column: "Yes" renders 46.9px wide and the long turn
+	// lands on 578px, exactly the cap. Both flush to the column's right edge; the assistant stays 680.
+	assert.match(css, /\.msg\.user \.body \{[^}]*background:\s*var\(--field-bg\)/,
+		'tint is the secondary cue and still earns its place — side alone would drop on a wrapped log');
+});
+
 test('TRANSCRIPT: the heading scale has steps you can actually see', () => {
 	// The old 1.3/1.18/1.07 put 0.11em between h2 and h3 — 1.4px at 13px, i.e. three levels of
 	// hierarchy that were indistinguishable without selecting the text.

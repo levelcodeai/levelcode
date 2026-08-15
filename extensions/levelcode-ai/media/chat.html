@@ -215,6 +215,24 @@
   .msg .body > div > :last-child, .msg .body > p:last-child, .msg .body > ul:last-child, .msg .body > ol:last-child { margin-bottom: 0; }
   .msg.user .body { background: var(--field-bg); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
   .msg.assistant .body { padding: 1px 2px; }
+  /* T6 (docs/CHAT-TYPOGRAPHY.md D8) — your turn sits RIGHT, the assistant's stays LEFT.
+     This is what T4 was missing. T4 dropped the labels and left the bubble carrying the speaker
+     distinction alone — but the bubble is `--field-bg`, which is near-invisible in some themes, so on
+     a low-contrast theme the transcript could read as one undifferentiated voice. Side is unmissable
+     in every theme, at every contrast, and costs no chrome at all.
+
+     The bubble HUGS its content rather than filling the column, so "Yes" is a short bubble and a
+     pasted stack trace is a wide one — the shape of a turn now carries information the label used to
+     spell out. Capped at 85%: at 100% a long question fills the column, reads as a full-width block
+     again, and the side cue disappears exactly when the transcript is densest.
+
+     `align-items`, NOT `text-align`: the bubble is the thing being placed, so the prose inside it
+     stays left-aligned — right-aligned body text is unreadable past one line. `.ckwrap` rides along
+     to the right edge, which is correct: the checkpoint control belongs to the turn it restores.
+     `width: fit-content` is what `align-items: flex-end` already implies; it is stated so that
+     changing the alignment later cannot silently stretch the bubble back to full width. */
+  .msg.user { display: flex; flex-direction: column; align-items: flex-end; }
+  .msg.user .body { width: fit-content; max-width: 85%; }
   .err { color: var(--vscode-errorForeground); }
   /* free-tier cap reached → a compelling upgrade CTA instead of raw 402 error text */
   .upgradecard { border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 12px; margin: 8px 2px; padding: 13px 15px 14px; background: color-mix(in srgb, var(--accent) 9%, var(--field-bg)); }
