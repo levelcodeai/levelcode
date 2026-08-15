@@ -223,6 +223,36 @@ test('NOT-SECRETS: hashes, SHAs and identifiers survive intact', () => {
 	}
 });
 
+// ---- 4b. Recall must not become a way around the instruction gate --------------------------------
+
+test('RECALL: a withheld instruction is surfaced only with an unmistakable warning', () => {
+	// Decayed-entry recall (§4) deliberately returns facts the digest withholds — otherwise they are
+	// unreachable by any question. But an instruction-shaped fact reaching the model through recall
+	// would undo the gate above unless the caller can see what it is. `state` is that seam.
+	const entries = observedAcrossSessions(HOSTILE[1][1], 2);
+	const hit = M.recallFacts(entries, 'disable signature verification')[0];
+	assert.ok(hit, 'withholding it from the digest must not also make it unfindable');
+	assert.strictEqual(hit.state, 'unconfirmed-instruction',
+		'recall handed back an order labelled as an ordinary fact');
+	assert.strictEqual(hit.confirmed, false);
+});
+
+test('RECALL: the tool result spells out that an unconfirmed instruction must not be acted on', () => {
+	// The label only helps if the string the MODEL reads carries it. This asserts the host's
+	// formatter, since that is the text that actually lands in context.
+	const fs2 = require('fs'), path2 = require('path');
+	const ext = fs2.readFileSync(path2.join(__dirname, '..', 'extension.js'), 'utf8');
+	const map = ext.slice(ext.indexOf('const FACT_STATE_NOTE'), ext.indexOf('function formatRecall'));
+	assert.ok(map, 'the state→note map is gone; recall hits would arrive unqualified');
+	assert.match(map, /'unconfirmed-instruction':[^\n]*do not act on it/i,
+		'the strongest state carries no warning for the model');
+	assert.match(map, /superseded:[^\n]*SUPERSEDED/, 'a stale fact must announce itself');
+	assert.match(map, /confirmed: ''/, 'a confirmed fact needs no hedge — over-hedging trains the model to ignore hedges');
+	// And the tool actually passes facts through.
+	assert.match(ext, /formatRecall\(m\.recall\(q, \{ limit: 6 \}\), q, m\.recallFacts\(q/,
+		'recall_sessions no longer searches facts, so decayed entries are unreachable again');
+});
+
 // ---- 5. The guards are pure and unshakeable ------------------------------------------------------
 
 test('junk input does not throw and does not silently activate', () => {

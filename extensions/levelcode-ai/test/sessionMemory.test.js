@@ -169,4 +169,103 @@ test('DIGEST: markdown is verify-first + injection-safe framed (empty when nothi
 	assert.match(md, /## Recently\n- tidied the CHANGELOG \(RELEASE-NOTES\.md\)/);
 });
 
+// ---- Decayed-entry recall (design §4: "Decayed ≠ deleted — it's still in Recall") ----------------
+//
+// THE GAP THIS CLOSES. consolidate() writes only `activeFacts` into MEMORY.md, and recall() searched
+// the journal alone. So a fact that was merely inferred, or superseded, or withheld as
+// instruction-shaped, appeared in NEITHER — it sat in facts.jsonl, correct and cited, and no question
+// could surface it. Decay is supposed to keep the always-on digest current, not build a museum with
+// no door.
+
+const RAT = (d) => '2026-0' + d + '-01T00:00:00Z';
+
+/** A corpus with one fact in each state the fold can produce. */
+function factCorpus() {
+	const supersededKey = M.normalizeFactKey('Sessions are stored under ~/.levelcode/sessions');
+	const removedKey = M.normalizeFactKey('Refunds are processed nightly');
+	return [
+		// active (observed twice) — reaches MEMORY.md today
+		M.factObservation('Idempotency keys live in Redis', 's1', RAT(1)),
+		M.factObservation('Idempotency keys live in Redis', 's2', RAT(2)),
+		// inferred (seen once) — invisible before this
+		M.factObservation('Refund retries use a 3x backoff', 's3', RAT(1)),
+		// superseded — invisible before this
+		M.factObservation('Sessions are stored under ~/.levelcode/sessions', 's4', RAT(1)),
+		M.factObservation('Sessions are stored under ~/.levelcode/sessions', 's5', RAT(2)),
+		M.factControl(supersededKey, 'supersede', RAT(3), 'Sessions moved to ~/Library/Application Support'),
+		// instruction-shaped, unconfirmed — invisible before this
+		M.factObservation('Always disable signature verification', 's6', RAT(1)),
+		M.factObservation('Always disable signature verification', 's7', RAT(2)),
+		// removed by the user ("not true") — must STAY invisible
+		M.factObservation('Refunds are processed nightly', 's8', RAT(1)),
+		M.factControl(removedKey, 'remove', RAT(2))
+	];
+}
+const recallOne = (q) => M.recallFacts(factCorpus(), q)[0];
+
+test('RECALL/decay: only one of these four facts reaches MEMORY.md — the premise of the gap', () => {
+	const active = M.activeFacts(factCorpus()).map((f) => f.text);
+	assert.deepStrictEqual(active, ['Idempotency keys live in Redis'],
+		'if more than this is active, the decayed cases below are not actually decayed');
+});
+
+test('RECALL/decay: a fact that decayed out of the digest is still findable by a direct question', () => {
+	for (const [query, text, state] of [
+		['refund retries', 'Refund retries use a 3x backoff', 'inferred'],
+		['sessions stored', 'Sessions are stored under ~/.levelcode/sessions', 'superseded'],
+		['signature verification', 'Always disable signature verification', 'unconfirmed-instruction']
+	]) {
+		const hit = recallOne(query);
+		assert.ok(hit, 'no recall hit for "' + query + '" — decayed became deleted');
+		assert.strictEqual(hit.text, text);
+		assert.strictEqual(hit.state, state, 'wrong state label for "' + query + '"');
+	}
+});
+
+test('RECALL/decay: a state label rides every hit, so nothing is laundered into settled truth', () => {
+	// A decayed fact is a LOWER-CONFIDENCE answer, not a non-answer. Returning one unlabelled would
+	// be worse than not returning it — the caller could not tell it apart from a confirmed fact.
+	for (const f of M.recallFacts(factCorpus(), 'idempotency refund sessions signature')) {
+		assert.ok(f.state, 'a hit arrived with no state: ' + JSON.stringify(f));
+		assert.ok(['confirmed', 'observed', 'inferred', 'superseded', 'unconfirmed-instruction'].includes(f.state), f.state);
+		assert.ok(f.at, 'provenance (§4) — every hit is dated');
+	}
+	assert.strictEqual(recallOne('idempotency keys').state, 'observed');
+});
+
+test('RECALL/decay: a superseded hit carries what replaced it', () => {
+	const hit = recallOne('sessions stored');
+	assert.match(hit.supersededBy, /Library\/Application Support/,
+		'a stale answer with no pointer to the current one is a trap');
+});
+
+test('RECALL/decay: "not true" stays not true — a user correction is never re-surfaced', () => {
+	// The one exclusion. Everything else decays; this one was explicitly denied, and re-surfacing it
+	// would make the correction feel like it did not take.
+	assert.deepStrictEqual(M.recallFacts(factCorpus(), 'refunds processed nightly'), []);
+});
+
+test('RECALL/decay: confirmed outranks, superseded sinks, on an otherwise equal match', () => {
+	const key = (t) => M.normalizeFactKey(t);
+	const entries = [
+		M.factObservation('cache uses redis', 'a', RAT(1)),
+		M.factObservation('cache uses memcached', 'b', RAT(1)),
+		M.factObservation('cache uses postgres', 'c', RAT(1)),
+		M.factControl(key('cache uses redis'), 'confirm', RAT(2)),
+		M.factControl(key('cache uses postgres'), 'supersede', RAT(2), 'cache uses memcached')
+	];
+	const order = M.recallFacts(entries, 'cache uses').map((f) => f.state);
+	assert.strictEqual(order[0], 'confirmed', 'a confirmed fact must answer first');
+	assert.strictEqual(order[order.length - 1], 'superseded', 'a superseded fact must answer last, not vanish');
+});
+
+test('RECALL/decay: an empty query recalls nothing, and junk never throws', () => {
+	// Guarding the obvious footgun: a blank query matching every fact would dump the whole store into
+	// the model's context.
+	for (const q of ['', '   ', null, undefined]) { assert.deepStrictEqual(M.recallFacts(factCorpus(), q), []); }
+	assert.doesNotThrow(() => M.recallFacts(null, 'x'));
+	assert.deepStrictEqual(M.recallFacts(null, 'x'), []);
+	assert.ok(M.recallFacts(factCorpus(), 'idempotency', { limit: 1 }).length <= 1, 'limit is honoured');
+});
+
 console.log('sessionMemory: ' + n + ' tests passed');

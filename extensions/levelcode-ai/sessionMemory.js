@@ -342,6 +342,57 @@ function recallRank(entries, query, opts) {
 	return scored.slice(0, limit).map((x) => x.e);
 }
 
+/**
+ * Rank FACTS against a query — the other half of recall (design §4: "Decayed ≠ deleted — it's still
+ * in Recall").
+ *
+ * Until this existed, recall searched the journal only. That left a whole class of memory reachable
+ * by nothing at all: `consolidate()` puts only `activeFacts` into MEMORY.md, so a fact that is
+ * merely INFERRED (seen once), SUPERSEDED by a newer one, or withheld as instruction-shaped was in
+ * neither the always-on digest nor the recall tool. It sat in facts.jsonl, correct and cited, and no
+ * question could surface it. That is precisely the museum §4 says decay must not create.
+ *
+ * So this deliberately ranks over the FULL fold, not `activeFacts`. A decayed entry is a lower-
+ * confidence answer, not a non-answer — but the caller must be able to say which it is, hence
+ * `state` on every hit rather than a silently flattened list.
+ *
+ * `removed` is the one exclusion: "not true" is a user's explicit correction, and re-surfacing it
+ * would make the correction feel like it did not take.
+ *
+ * @returns {Array<{key:string, text:string, state:string, confirmed:boolean, at:string|null,
+ *                  count:number, supersededBy:string, score:number}>}
+ */
+function recallFacts(factEntries, query, opts) {
+	const o = opts || {};
+	const limit = Number.isFinite(o.limit) && o.limit > 0 ? o.limit : 4;
+	const terms = queryTerms(query);
+	if (!terms.length) { return []; }
+
+	const scored = [];
+	for (const f of foldFacts(factEntries, o)) {          // foldFacts already drops `removed`
+		const hay = String(f.text || '').toLowerCase();
+		let score = 0;
+		for (const t of terms) { if (hay.indexOf(t) >= 0) { score++; } }
+		if (!score) { continue; }
+		// The state a caller must not flatten. Order matters: a superseded fact is stale FIRST,
+		// whatever else it is, because that is the thing most likely to mislead.
+		const state = f.superseded ? 'superseded'
+			: f.instruction && !f.confirmed ? 'unconfirmed-instruction'
+				: f.confirmed ? 'confirmed'
+					: f.active ? 'observed'
+						: 'inferred';
+		scored.push({
+			key: f.key, text: f.text, state, confirmed: !!f.confirmed, at: f.at || null,
+			count: f.count, supersededBy: f.supersededBy || '',
+			// Confirmed facts outrank equal term-matches; a superseded one sinks below everything
+			// else it ties with rather than being hidden.
+			score: score + (f.confirmed ? 1 : 0) - (f.superseded ? 1 : 0)
+		});
+	}
+	scored.sort((a, b) => b.score - a.score || String(b.at || '').localeCompare(String(a.at || '')));
+	return scored.slice(0, limit);
+}
+
 // ── the always-on digest (design §3/§8) ──────────────────────────────────────────────────────────
 
 /**
@@ -415,5 +466,5 @@ module.exports = {
 	outcomeEntry, appendJournal, readJournal, latestBySession, writeMemoryMd,
 	normalizeFactKey, factObservation, factControl, appendFacts, readFacts, foldFacts, activeFacts,
 	redactSecrets, looksLikeInstruction,
-	queryTerms, snippetFor, recallRank, buildDigest, digestSummary, digestMarkdown
+	queryTerms, snippetFor, recallRank, recallFacts, buildDigest, digestSummary, digestMarkdown
 };
