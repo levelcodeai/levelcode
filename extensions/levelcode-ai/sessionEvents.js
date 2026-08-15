@@ -166,7 +166,10 @@ function toMarkdown(meta, messages, opts) {
 
 	for (const t of turns) {
 		md += '\n---\n\n**' + (t.role === 'user' ? 'You' : 'LevelCode') + '**\n\n';
-		md += scrub(String(t.text)).trim() + '\n';
+		// Verbatim aside from redaction — NOT trimmed. Trimming changes Markdown semantics: it de-indents a
+		// leading 4-space (indented code block) and eats trailing "  " (a hard line break). The `**role**\n\n`
+		// above already supplies the blank line an indented block needs after it.
+		md += scrub(String(t.text)) + '\n';
 	}
 	// An empty session still exports — a file with a header and no turns is a truthful answer, and
 	// silently producing nothing would read as a broken button.

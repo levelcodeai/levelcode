@@ -939,10 +939,12 @@ async function exportSession(id) {
 		'Copied ' + turns + ' turn' + (turns === 1 ? '' : 's') + ' as Markdown.', 'Save as file…');
 	if (pick !== 'Save as file…') { return; }
 
-	// Derive a filename from the title so a folder of exports stays readable. The title has already
-	// been through redactSecrets above, but it is sanitised again here for the FILESYSTEM's sake —
-	// a slash or a colon in a title is a path, not a name.
-	const stem = String(entry.title || 'session').toLowerCase()
+	// Derive a filename from the title so a folder of exports stays readable. REDACT it first: the exported
+	// body was scrubbed, but `entry.title` here is the raw index title (toMarkdown redacts its own copy, not
+	// this variable), and the filesystem sanitiser below only strips slashes/colons — a credential's own
+	// characters survive it (`ghp_ABC…` → `ghp-abc…`), so a token in a title would leak into the save path.
+	const safeTitle = sessionMemory.redactSecrets(String(entry.title || 'session'));
+	const stem = safeTitle.toLowerCase()
 		.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'session';
 	const target = await vscode.window.showSaveDialog({
 		filters: { Markdown: ['md'] },

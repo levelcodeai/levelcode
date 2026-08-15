@@ -138,6 +138,15 @@ test('EXPORT: roles are BOLD, never headings — a turn owns the heading levels'
 	assert.match(md, /^## Step one$/m, "the turn's own headings are untouched");
 });
 
+test('EXPORT: turn text is VERBATIM — indented code + a trailing hard-break survive (not trimmed)', () => {
+	// Trimming the turn would de-indent a leading 4-space (killing an indented code block) and eat the two
+	// trailing spaces of a Markdown hard line break. Export must preserve the text as written, save redaction.
+	const turn = '    indented = code()\n\nfinal line ends with a hard break  ';
+	const md = E.toMarkdown(META, [{ role: 'assistant', content: turn }]);
+	assert.match(md, /\*\*LevelCode\*\*\n\n {4}indented = code\(\)/, 'the leading 4-space indent survives (indented code block)');
+	assert.match(md, /hard break {2}\n/, 'the trailing two-space hard line break survives');
+});
+
 test('EXPORT: scrubs, because export is the first surface that SHARES a session', () => {
 	// chat-sessions-design §10: "anything that later shares a session must scrub — that is that
 	// feature's burden." A token pasted into chat must not ride into a pull request.

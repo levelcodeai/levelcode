@@ -258,4 +258,9 @@ test('NO-JUMP: line 2 swaps file·time ⇄ actions in a fixed min-height row (no
 	}
 });
 
+test('EXPORT: the body is scrubbed on the way out, and the save-dialog filename is redacted too', () => {
+	assert.match(ext, /toMarkdown\(entry, m\.transcript\(id\), \{ redact: sessionMemory\.redactSecrets \}\)/, 'the exported body is scrubbed');
+	assert.match(ext, /redactSecrets\(String\(entry\.title[\s\S]{0,140}stem/, 'and the default filename is redacted BEFORE the save path (a title token cannot leak into the dialog)');
+});
+
 console.log('sessionsUi: ' + n + ' tests passed');
