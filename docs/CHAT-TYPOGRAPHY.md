@@ -163,6 +163,39 @@ the contribution schema only drive the settings *editor*; a hand-edited `setting
 transcript — a panel with nothing left on screen to open settings with, whose only exit is finding the
 JSON file again. `webviewCss.test.js` pins the clamp to the schema so the two cannot drift.
 
+### D8 — Your turn sits right. The assistant's stays left.
+
+Added after T4 shipped, from the reference: in the Claude Code console your messages are right-aligned
+bubbles and the replies are left-aligned prose.
+
+This is the half T4 was missing, and it closes a risk T4 opened rather than merely adding polish. T4
+removed the labels and left the **bubble** carrying the speaker distinction alone — but the bubble is
+`--field-bg` on a `--border` outline, which is near-invisible in some themes. On a low-contrast theme a
+transcript could read as one undifferentiated voice, which is precisely the failure D6 was trying to
+avoid. **Side is unmissable in every theme, at every contrast, and costs no chrome at all.**
+
+Three things this decides, each with a way to get it wrong:
+
+- **`align-items`, not `text-align`.** The *bubble* is what moves; the prose inside it stays
+  left-aligned. `text-align: right` looks identical on a one-line message and is unreadable on a
+  three-line one. The suite fails on it.
+- **The bubble hugs its content** (`width: fit-content`), so "Yes" is a 47px bubble and a pasted stack
+  trace is a wide one. The shape of a turn now carries information the label used to spell out.
+- **Capped at 85%, not 100%.** At 100% a long question fills the measure, reads as a full-width block
+  again, and the side cue disappears exactly when the transcript is densest.
+
+Measured in headless Chrome at a 680px column, against `develop`:
+
+| | before | after |
+| --- | --- | --- |
+| short bubble ("Yes") | 680px | **46.9px**, flush right |
+| long user turn | 680px | **578px** — exactly the 85% cap, flush right |
+| assistant | 680px, left | 680px, left (unchanged) |
+| `text-align` inside the bubble | `start` | `start` |
+
+Tint stays as the secondary cue rather than being removed: side alone would fail on any surface that
+reflows the log to a single column.
+
 ---
 
 ## 3. Slices
@@ -185,7 +218,13 @@ selection, and every non-prose control still matches workbench chrome.
 accessibility tree, and a turn start buys back part of the height it was occupying. **Exit:** the
 transcript reads as prose with the bubble as the only visual speaker cue, a continuation is still
 visibly tighter than a new turn, and `.msg.cont` still emits no label — verified by computed styles
-against `develop`, not by eye.
+against `develop`, not by eye. *(T6 then made side the primary cue, so "the bubble alone" describes
+T4 as it shipped, not the current state.)*
+
+**T6 — side** *(S)*. D8. **Shipped.** Your turn moves right and hugs its content; the assistant stays
+left and full-measure. **Exit:** a short turn renders as a short right-flush bubble, a long one caps
+below the column, the assistant is untouched, and the prose inside the bubble is still left-aligned —
+all four measured, not eyeballed.
 
 **T5 — the escape hatch** *(S)*. D7. **Folded into T2 and shipped with it.** Sequencing it last was a
 mistake: T2 is the one slice that changes what every existing user sees, and shipping a divisive
@@ -194,6 +233,11 @@ property reaches the webview from settings, the second is a line — so splittin
 
 Sequencing: T1 first and alone — it may turn out to be most of the perceived fix, and shipping it
 by itself is the cheapest way to find out before spending effort on T2–T4.
+
+That held up: T1–T2, T4 and T6 have shipped in that order, each visible on its own. **T3 is the only
+slice of this plan still outstanding.** D8/T6 was not in the original decomposition — it came from
+looking at the reference again after T4, which is the argument for shipping slices small enough to
+look at.
 
 ---
 
