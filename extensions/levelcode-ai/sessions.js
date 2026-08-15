@@ -120,6 +120,56 @@ function createSessions(opts) {
 			note: planner.describeResume(plan, turnsSummarized) };
 	}
 
+	/**
+	 * FORK a session (experience doc §6): a NEW session seeded with a copy of this one's conversation,
+	 * leaving the original completely untouched — "the what-if-I'd-told-it-to-do-X-instead branch".
+	 *
+	 * Fork-from-END, deliberately. §411 settles the scoping question: "fork-from-end first; per-turn
+	 * fork rides the transcript picker later." Forking from an arbitrary turn needs a UI for choosing
+	 * the turn, and that is a different piece of work from the copy itself.
+	 *
+	 * WHICH EVENTS TRAVEL is the whole design here, and the answer is not "all of them":
+	 *   • `user` / `agent` / `assistant`  — YES. This is the conversation; it is the thing being forked.
+	 *   • `title`                         — YES, then overridden below, so the fork is recognisable in a
+	 *                                       list where it would otherwise be a second row with the
+	 *                                       identical name.
+	 *   • `end`                           — NO. That is the original's terminal state. Copying it would
+	 *                                       make a live fork claim it had already finished, and
+	 *                                       deriveEntry would render it `done` while you typed into it.
+	 *   • `label`                         — NO. Lifecycle and pinning belong to the ORIGINAL. A fork of
+	 *                                       an archived session must arrive active, or it is born
+	 *                                       invisible in the default Active scope; a fork of a pinned
+	 *                                       one must not silently take up a second pin.
+	 *
+	 * Returns the new id, or null if the source is gone/unreadable. The caller resumes it — a fork IS a
+	 * resume, just into a copy — so nothing here duplicates the replay logic.
+	 */
+	function fork(id) {
+		let s;
+		try { s = store.readSession(store.sessionFile(root, slug, id)); }
+		catch (e) { return null; }
+
+		const src = store.deriveEntry(s.meta, s.events);
+		const newId = store.newSessionId(clock());
+		try {
+			// The meta records what it came from — provenance is the honesty guarantee everywhere else
+			// in this system (§4), and it is also what a later branch-graph would draw from.
+			store.createSession(root, slug, newId, projectPath, iso(), null, id);
+			const file = store.sessionFile(root, slug, newId);
+			for (const e of (Array.isArray(s.events) ? s.events : [])) {
+				if (!e || e.kind === 'end' || e.kind === 'label') { continue; }
+				store.appendEvent(file, e);
+			}
+			// Last, so it wins: deriveEntry takes the LATEST title event.
+			const base = src.title || 'Untitled';
+			store.appendEvent(file, events.titleEvent(/\(fork\)\s*$/.test(base) ? base : base + ' (fork)', iso()));
+			live = { id: newId, file };
+			if (state) { try { state.set('liveSessionId', newId); } catch (e2) { /* convenience */ } }
+			reindexId(newId);
+			return newId;
+		} catch (e) { return null; }
+	}
+
 	// Append-only lifecycle edits (§4.9): each writes one event, then refreshes that id's index row. All
 	// best-effort (return false rather than throw) — a History edit must never disrupt anything.
 	function appendTo(id, event) {
@@ -282,7 +332,7 @@ function createSessions(opts) {
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, list, liveId };
+	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, list, liveId };
 }
 
 module.exports = { createSessions };

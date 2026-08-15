@@ -1112,7 +1112,7 @@
      `title` + `aria-label` are on every button already, so nothing is lost to a pointer or a screen
      reader — only to the eye, and only when there is no room for it. */
   .sesscard { container-type: inline-size; }
-  @container (max-width: 360px) { .sesscard .sesslbl { display: none; } }
+  @container (max-width: 420px) { .sesscard .sesslbl { display: none; } }
   .sesscard .sessacts { display: none; align-items: center; gap: 6px; flex-wrap: nowrap; }
   .sesscard:hover .sesssub, .sesscard:focus-within .sesssub { display: none; }
   .sesscard:hover .sessacts, .sesscard:focus-within .sessacts { display: flex; }
@@ -3351,7 +3351,8 @@
     check: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.6572 3.13573C13.8583 2.9465 14.175 2.95614 14.3643 3.15722C14.5535 3.35831 14.5438 3.675 14.3428 3.86425L5.84277 11.8642C5.64597 12.0494 5.33756 12.0446 5.14648 11.8535L1.64648 8.35351C1.45121 8.15824 1.45121 7.84174 1.64648 7.64647C1.84174 7.45121 2.15825 7.45121 2.35351 7.64647L5.50976 10.8027L13.6572 3.13573Z"/></svg>',
     trash: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M10 3h3v1h-1v9l-1 1H4l-1-1V4H2V3h3V2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zM9 2H6v1h3V2zM4 13h7V4H4v9zm2-8H5v7h1V5zm1 0h1v7H7V5zm2 0h1v7H9V5z"/></svg>',
     star: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 L9.53 5.9 L14.18 5.99 L10.47 8.8 L11.82 13.26 L8 10.6 L4.18 13.26 L5.53 8.8 L1.82 5.99 L6.47 5.9 Z"/></svg>',
-    copy: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2h7l1 1v1h1l1 1v8l-1 1H6l-1-1v-1H4l-1-1V3l1-1zm1 1v8h1V5l1-1h4V3H5zm2 3v8h6V6H7z"/></svg>'
+    copy: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2h7l1 1v1h1l1 1v8l-1 1H6l-1-1v-1H4l-1-1V3l1-1zm1 1v8h1V5l1-1h4V3H5zm2 3v8h6V6H7z"/></svg>',
+    fork: '<svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.5 2a2 2 0 0 0-.5 3.93v1.32c0 1.1.9 2 2 2h1.5V11a2 2 0 1 0 1 0V9.25H10c1.1 0 2-.9 2-2V5.93A2 2 0 1 0 11 5.93v1.32a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5.93A2 2 0 0 0 4.5 2zm0 1a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm7 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2zM8 12a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>'
   };
   function sessActBtn(act, label, svg, cls){
     return '<button type="button" class="sessact' + (cls ? ' ' + cls : '') + '" data-act="' + act + '" title="' + label + '" aria-label="' + label + '">' + svg + '<span class="sesslbl">' + label + '</span></button>';
@@ -3377,6 +3378,7 @@
       + (e.model ? ' · ' + sessModelShort(e.model) : '') + (files.length ? ' · ' + files.join(', ') : '');
     const acts = '<span class="sessacts">'
       + sessActBtn('rename', 'Rename', SESS_IC.edit)
+      + sessActBtn('fork', 'Fork', SESS_IC.fork)
       + sessActBtn('export', 'Copy', SESS_IC.copy)
       + sessActBtn('done', 'Done', SESS_IC.check)
       + sessActBtn('delete', 'Delete', SESS_IC.trash)

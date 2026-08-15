@@ -74,9 +74,15 @@ function indexFile(root, slug) { return path.join(root, slug, INDEX_NAME); }
 // ── event encoding & parsing (pure) ──────────────────────────────────────────────────────────────
 
 /** The birth line — written once, so even a one-message crash leaves a listable session (design §4). */
-function metaLine(id, projectPath, createdAtIso, title) {
-	return { kind: 'meta', v: SCHEMA_V, id: String(id), project: String(projectPath == null ? '' : projectPath),
+function metaLine(id, projectPath, createdAtIso, title, forkedFrom) {
+	const m = { kind: 'meta', v: SCHEMA_V, id: String(id), project: String(projectPath == null ? '' : projectPath),
 		createdAt: String(createdAtIso), title: title == null ? null : String(title) };
+	// Provenance for a forked session, and ONLY for one — the key is absent on an ordinary session so
+	// every existing file and expectation stays byte-identical. Unknown meta keys are ignored by
+	// parseSession and deriveEntry, so this is additive in both directions: an older build reading a
+	// forked session simply does not know it was forked, rather than failing to read it.
+	if (forkedFrom != null && String(forkedFrom)) { m.forkedFrom = String(forkedFrom); }
+	return m;
 }
 
 function encodeEvent(event) { return JSON.stringify(event) + '\n'; }
@@ -151,9 +157,9 @@ function deriveEntry(meta, events) {
 // ── writing (append-only) ────────────────────────────────────────────────────────────────────────
 
 /** Create a session: its directory + the meta birth line. Idempotent-ish (a re-create just rewrites meta). */
-function createSession(root, slug, id, projectPath, createdAtIso, title) {
+function createSession(root, slug, id, projectPath, createdAtIso, title, forkedFrom) {
 	fs.mkdirSync(projectDir(root, slug), { recursive: true });
-	fs.writeFileSync(sessionFile(root, slug, id), encodeEvent(metaLine(id, projectPath, createdAtIso, title)));
+	fs.writeFileSync(sessionFile(root, slug, id), encodeEvent(metaLine(id, projectPath, createdAtIso, title, forkedFrom)));
 	return sessionFile(root, slug, id);
 }
 

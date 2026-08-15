@@ -310,7 +310,7 @@ Global rule: **nothing animates on scroll at all** — the sparkline lives in th
 
 Beyond the card and the search, the "wow" list — each grounded in the JSONL substrate so it's cheap to build:
 
-- **Fork a session** (`⇧⏎`) — resume a *copy* from any point, leaving the original intact. The "what if I'd told it to do X instead" branch. Cursor's checkpoints rewind *files*; forking rewinds the *conversation*. Both, together, is new.
+- **Fork a session** ✅ *(fork-from-end shipped)* — resume a *copy*, leaving the original intact. `sessions.fork()` seeds a new session with the original's conversation and **drops its `end` and `label` events**: a copied `end` would render a live fork as `done` while you typed into it, and a copied `label` would have a fork of an archived session born invisible in the default Active scope, or silently taking a second pin. The copy is titled `… (fork)`, records `forkedFrom` in its meta (§4 provenance, and what a later branch-graph would draw from), and becomes live — a fork *is* a resume, into a copy, so it reuses the resume path wholesale. Per-turn fork still awaits the transcript picker (§411). The "what if I'd told it to do X instead" branch. Cursor's checkpoints rewind *files*; forking rewinds the *conversation*. Both, together, is new.
 - **Files-touched search & chips** (§4.2/4.4) — find work by what it changed. The structural lead over Cursor.
 - **Activity sparkline** (§4.2) — session *shape* at a glance.
 - **The honesty layer as UI** — interrupted / reloaded / summarized states are pills and strips, not silence (§4.5, §4.7).
