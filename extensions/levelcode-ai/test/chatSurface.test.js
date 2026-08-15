@@ -170,4 +170,20 @@ test('COMMAND: it is registered and discoverable in the palette', () => {
 	assert.match(cmd.title, /Chat in Editor/);
 });
 
+test('COMMAND: it has a BUTTON on the chat header, not only the palette', () => {
+	// A feature whose whole point is "I did not know I could do that" is not served by a
+	// palette-only entry — nobody searches for a capability they do not know exists. This shipped
+	// icon-less and button-less on the first pass, which is exactly why it is pinned now.
+	const cmd = pkg.contributes.commands.find((c) => c.command === 'levelcode.ai.openChatInEditor');
+	assert.ok(cmd.icon, 'no icon — a view/title action with no icon renders as nothing');
+
+	const entry = (pkg.contributes.menus['view/title'] || [])
+		.find((m) => m.command === 'levelcode.ai.openChatInEditor');
+	assert.ok(entry, 'not contributed to view/title — reachable only from the Command Palette');
+	assert.strictEqual(entry.when, 'view == levelcodeAi.chat',
+		'the button must be scoped to the chat view, or it appears on every view title in the editor');
+	assert.match(entry.group, /^navigation@\d+$/,
+		'navigation keeps it inline and lets VS Code overflow it into … when the sidebar is narrow');
+});
+
 console.log('\nchatSurface: ' + n + ' tests passed.');

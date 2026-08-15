@@ -226,6 +226,11 @@
           "command": "levelcode.ai.setApiKey",
           "when": "view == levelcodeAi.chat",
           "group": "navigation@3"
+        },
+        {
+          "command": "levelcode.ai.openChatInEditor",
+          "when": "view == levelcodeAi.chat",
+          "group": "navigation@4"
         }
       ],
       "editor/title": [
