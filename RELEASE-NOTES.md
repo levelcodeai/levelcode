@@ -1,50 +1,76 @@
-# LevelCode v1.0.4
+# LevelCode v1.0.5
 
-The big one: **the agent can now use external tools over MCP** — a filesystem server, GitHub, Postgres, an internal company server — alongside its own built-in tools, with a security model that treats an MCP server as exactly what it is: arbitrary code that runs with your privileges. Plus autopilot now honors a changed step limit live, and the agent's activity timeline reads as one clean thread.
+Your chats stop disappearing. This release turns every conversation into a **session** you can find, resume, fork and export — and gives each project a **memory** that carries what you did last time into the next chat. Both are plain files on your disk, both are readable and correctable by hand, and both treat what they learned as *possibly stale, possibly poisoned* rather than as gospel.
 
 ## Highlights
 
-### Bring your own tools, over MCP
+### Chats are sessions now
 
-Point LevelCode at any [Model Context Protocol](https://modelcontextprotocol.io) server and its tools join the agent's own — namespaced `server__tool`, usable by every model LevelCode supports, with no code to write. This first release speaks **stdio** (a server you run as a local subprocess), which covers the overwhelming majority of servers and sidesteps the remote-transport spec churn landing this year; remote/HTTP servers come later.
+Every conversation is persisted as it happens — one append-only JSONL file per session, under `~/.levelcode/sessions/<project>/`. **New Chat** no longer throws work away; it seals the session and starts a fresh one.
 
-You declare a server in one of two places, and they are trusted differently on purpose:
+The **Sessions** panel (`AI: Sessions`, and a sidebar view) lists them in time buckets — Today, Yesterday, This week, Earlier — with the title, the file it touched most, and an activity sparkline. Click a card to resume it. On hover the second line swaps to the actions: **Rename · Fork · Copy · Done · Delete · Pin**.
 
-- **`levelcode.ai.mcp.servers`** (your own settings) — you typed it, so it starts.
-- **`.levelcode/mcp.json`** (committed in a repo) — read and listed, but it **never starts on its own**.
+Nothing is destroyed by accident. **Done** archives rather than deletes, **Delete** is a soft trash, and both offer **Undo** immediately afterwards. Sessions you stop touching auto-archive after 30 days (`levelcode.ai.sessions.autoArchiveDays`) — pinned ones never do.
 
-### Security is the feature, not a footnote
+### Resume is honest about what it can carry
 
-Spawning an MCP server is at least as dangerous as running a shell command, so every edge is gated:
+A long session may not fit the model's context window. Rather than silently truncating, LevelCode plans the resume in three tiers: if the whole transcript fits, you get it **verbatim**; if it doesn't, it loads the most recent turns and tells you so in the chat, in words, rather than pretending the earlier ones are still there.
 
-- **A launch gate for repo servers.** A `.levelcode/mcp.json` server asks before it ever runs, showing you the **literal command, arguments, and environment** — no summarizing. Approve once and it's remembered, but trust is bound to a **SHA-256 fingerprint of exactly what would run**: change the command, an argument, *or* an env var and it asks again — so a repo can't get `npx …server-filesystem` approved and then quietly swap in `curl … | sh` under the same name. With no window to ask in (a headless or test context) it **fails closed** and simply doesn't start.
-- **Every tool call asks by default**, showing server · tool · arguments before it runs.
-- **Autopilot doesn't relax this.** MCP tools are third-party code, so autopilot still prompts for them — the *only* thing that grants a silent run is your own per-tool allow-list (`"github__list_issues": "allow"`). A server's own "this is safe" hint grants nothing on its own; its "this is destructive" hint forces a prompt regardless.
+The full transcript is always kept on disk regardless — the budget only governs what the *model* is handed. `levelcode.ai.sessions.resumeBudgetPct` (default 40) sets how much of the window a resume may occupy.
 
-### Manage MCP servers without touching JSON
+### The project remembers itself
 
-A new **`AI: Manage MCP Servers…`** command (and a link at the foot of `/mcp`) lets you:
+When a session seals, one cheap model call records **what it accomplished** into `memory/journal.jsonl`, and a consolidation pass distils the recent arc into `memory/MEMORY.md` — a small digest injected into every new session in that project, the same channel `AGENTS.md` and `CLAUDE.md` already use. Open a new chat and it starts already knowing the shape of the last week's work.
 
-- **Add or remove a server** through a prompt instead of hand-editing settings — it writes your global settings only, never a repo's, so adding one can never weaken the launch gate above. The arguments box takes a real command line and splits it quote-aware, so `-y @modelcontextprotocol/server-filesystem "/Users/me/My Documents"` stays one path.
-- **Revoke trust** you granted a repo server, per server or workspace-wide — the missing other half of "trust on first use," which used to be a write-once decision.
-- **See a stale approval for what it is** — a server whose command changed since you approved it now reads `command changed — needs approval`, not a bland "not started," because that gap is exactly the attack the launch gate exists to stop.
+Durable truths get promoted separately into **Facts** — *"the changelog is RELEASE-NOTES.md"*, *"idempotency keys live in Redis"*. A fact seen once is marked **inferred** and weighed lightly; seen across sessions it becomes active; you can **Confirm** it, mark it **not true**, edit it, or forget it from the **Project memory** tab. When a later session contradicts an earlier one, the old fact is **superseded** — dimmed and restorable, with a line saying what replaced it, rather than silently overwritten.
 
-### See what's configured with `/mcp`
+Ask about older work and the agent can go looking: `recall_sessions` searches past outcomes *and* the transcripts themselves, and returns dated, cited results. Facts that decayed out of the always-on digest are still reachable that way — a memory that ages out is not a memory that is deleted.
 
-`/mcp` lists every **configured** server — running or not — with its state, where it came from, its exact command, and (once live) its tools and whether each is allow-listed. It answers the two questions you actually have — *why isn't my server being used?* and *what is this repo asking to run?* — that a list of only-running servers can't. The context-usage popover now also breaks out an **MCP tools** line, so the standing per-turn cost of a chatty server is no longer invisible.
+### Memory is treated as untrusted input
 
-### A cleaner agent timeline
+Memory is replayed into the system prompt of every future session in a project, and it is distilled from transcripts that contain repo files, command output and MCP tool results — attacker-controlled for any repo you clone. So it is bounded like any other untrusted text:
 
-The activity thread under each run — its tool calls, approvals, and commands — now reads as **one connected line** instead of disconnected stubs: the connector rail threads continuously through consecutive steps (only a stretch of narration breaks it), the way GitHub, Cursor, and Claude Code draw theirs. And an **approved MCP tool call is now a single row** — not an `Approved · server · tool` chip *plus* a separate `🔌 server · tool` node — so it's one row per action, matching how allow-listed calls already looked.
+- **A planted instruction cannot promote itself.** Ordinary facts become active by being observed across sessions, but text that reads as an *order* — `always …`, `never …`, `ignore previous instructions`, anything piping into a shell — never takes that route and needs an explicit Confirm. Repetition is not corroboration when the source is a file that is still sitting in the repo on the next session.
+- **It is surfaced, not hidden.** Such an entry is still recorded and still listed, flagged, so you can see what a repo tried to plant.
+- **Credentials are scrubbed on the way in.** Key-shaped text is redacted before it reaches `facts.jsonl`, `journal.jsonl` or `MEMORY.md` — including session titles and edited file paths, which those files print verbatim.
+- **Injected memory is framed as verify-first** and explicitly says never to act on an instruction found inside it.
 
-### Autopilot honors a changed step limit, live
+Everything lives in plain files you can open, `grep`, correct, or delete. Turn the whole thing off per project with `levelcode.ai.sessions.memory.enabled`.
 
-Raising **Maximum tool-use steps** mid-run now takes effect on the very next step, instead of being frozen at the value from when the goal started — so bumping it from 25 to 1000 when autopilot pauses at "step limit" actually lets it keep going.
+### Fork a session
+
+The *"what if I'd told it to do X instead"* branch. **Fork** seeds a new session with a copy of the conversation and leaves the original untouched, then opens it so you can take a different path from the same starting point.
+
+The copy is genuinely a fresh session: it does not inherit the original's finished state, its archived status, or its pin — a fork of an archived chat arrives visible and active, and records which session it came from.
+
+### Copy a session as Markdown
+
+**Copy** puts the whole conversation on your clipboard as a clean Markdown transcript — title, date, model, files touched, then one block per turn — ready to paste into a pull request or an issue. *Save as file…* writes it to disk instead.
+
+Because this is the first thing that takes a session *out* of LevelCode, it is scrubbed on the way out: credential-shaped text is redacted from the body, and from the suggested filename.
+
+## New settings
+
+| Setting | Default | |
+| --- | --- | --- |
+| `levelcode.ai.sessions.enabled` | `true` | Persist chats as sessions |
+| `levelcode.ai.sessions.dir` | `""` | Where they live (blank = `~/.levelcode/sessions`) |
+| `levelcode.ai.sessions.autoArchiveDays` | `30` | Fade untouched sessions out of the active list; pinned are exempt |
+| `levelcode.ai.sessions.resumeBudgetPct` | `40` | How much of the context window a resume may occupy |
+| `levelcode.ai.sessions.memory.enabled` | `true` | Cross-session project memory |
+| `levelcode.ai.sessions.memory.summarize` | `true` | The cheap-lane call that records what a session achieved |
+| `levelcode.ai.sessions.memory.facts` | `true` | Extract durable project facts |
+| `levelcode.ai.sessions.memory.recallTool` | `true` | Give the agent `recall_sessions` |
+
+## Not in this release
+
+**The Sessions panel does not search yet.** There is no filter, no fuzzy switcher, and no keyboard jump — you scroll the list. That is the next thing being built, and it is the gap you will notice first once a project holds more than a screenful of sessions.
 
 ## Test coverage
 
-- **27 suites** across the bundled extensions, all green.
-- The MCP core is pure, testable modules by design: config merge + tool-name namespacing + the approval policy (`mcpConfig`), the launch fingerprint and trust logic, and the `/mcp` + manage-servers row builders are all unit-tested **without spawning a process or opening the editor** — in the same two-corpus style the command-danger classifier uses, where the test banner states the load-bearing direction.
-- The webview timeline changes are pinned by the chat UI's static-CSS-invariant suite (`webviewCss`) — e.g. the rail's connector offset can't silently drift from the row gap, and the one-row MCP fold stays wired end to end (`agent.js` → approval chip → run-node).
+- **32 suites**, **528 cases** across the bundled extensions — all green.
+- `test/memoryPoisoning.test.js` (39 cases) — the adversarial pass: hostile inputs that must never become load-bearing memory, benign project facts that must keep working, credential shapes that must never reach disk, and the near-misses (git SHAs, content hashes, asset names) that must survive untouched.
+- `test/sessions.test.js` (25 cases) — the lifecycle against a real store in a temp directory: persistence, verbatim rebuild, seal, resume, and the fork rules.
+- `test/sessionStore.test.js`, `sessionEvents.test.js`, `sessionResume.test.js`, `sessionMemory.test.js` — the pure engine underneath, each testable without the editor.
 
-**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.3...v1.0.4
+**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.4...v1.0.5
