@@ -125,7 +125,21 @@
      and stay at the workbench size. This is also what makes T1's em-based rhythm scale — those margins
      resolve against THIS size, so raising the type opens the spacing with it. */
   .msg .body { font-size: var(--prose-size); line-height: var(--prose-leading); }
-  .msg .role { font-size: 11px; opacity: .55; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+  /* T4 (docs/CHAT-TYPOGRAPHY.md D6) — speakers are told apart by TREATMENT, not by a label over each
+     one. Your turn is a tinted, bordered bubble; the assistant's is unadorned prose. The shape of the
+     message already says who is speaking, so `YOU` / `LEVELCODE AI` above it was a line of chrome
+     restating it — on every message, in the surface you spend the most time reading.
+
+     HIDDEN, NOT DELETED. The bubble is a purely visual cue: delete the label and a screen reader loses
+     the only thing in the document that names the speaker, turning the transcript into an unattributed
+     wall of text. So the element stays in the accessibility tree and leaves the visual layer. This is
+     why the rule below must never be "simplified" to `display: none` or `visibility: hidden` — both
+     take it out of the a11y tree too, which is the whole thing we are preserving. webviewCss.test.js
+     fails on either. */
+  .msg .role {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
   /* a quiet remind-me line: a soft accent rule, small label, the words in a calm serif italic */
   .rme { margin: 0 4px; padding: 10px 0 10px 14px; border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); }
   .rme .rme-tag { display: flex; align-items: center; gap: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 5px; }
@@ -134,6 +148,16 @@
   /* continuation narration: no second speaker label, and pulled up against the 12px log gap so the
      prose reads as one voice continuing rather than a fresh announcement */
   .msg.cont { margin-top: -5px; }
+  /* T4 — the label was also doing spacing work, and dropping it is what makes that visible: ~19px sat
+     above every turn (11px label + its 4px margin). Take it away and a new turn is separated from a
+     continuation only by 12px versus 7px, which is not a difference you can see — the transcript
+     collapses into one undifferentiated column, which is the opposite of the point.
+     So a turn start buys part of that height back. In `em`, so it tracks T2's prose size rather than
+     drifting when someone sets chat.fontSize. `#empty` is REMOVED rather than hidden when the first
+     message lands (clearEmpty), so :first-child does match the first turn and the transcript does not
+     open with a stray gap. */
+  #log > .msg:not(.cont) { margin-top: .5em; }
+  #log > .msg:first-child { margin-top: 0; }
   /* rendered-markdown block elements inside a message body */
   .msg .body p { margin: 0 0 8px; }
   .msg .body ul, .msg .body ol { margin: 0 0 8px; padding-left: 22px; }
@@ -687,7 +711,7 @@
   /* font-size is sized off the CONTAINER width (cqi) — reliable in a webview where vw = the whole
      editor, not this panel — so the wordmark always fits and the last glyph is never clipped.
      line-height:1 makes the box-drawing rows connect into solid letters. */
-  #empty .lc-ascii { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: clamp(4px, 1.8cqi, 11px); line-height: 1; white-space: pre; color: var(--vscode-terminal-ansiGreen, #98c379); opacity: 1; width: max-content; max-width: 100%; margin: 2px auto 4px; overflow-x: auto; user-select: none; }
+  #empty .lc-ascii { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: clamp(5px, 3.6cqi, 13px); line-height: 1; white-space: pre; color: var(--vscode-terminal-ansiGreen, #98c379); opacity: 1; width: max-content; max-width: 100%; margin: 2px auto 6px; overflow-x: auto; user-select: none; }
   #empty .lc-ascii-sub { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; letter-spacing: .22em; color: var(--muted); opacity: .9; margin-bottom: 14px; }
   #empty .starters { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 14px; }
   #empty .starter { cursor: pointer; border: 1px solid var(--border); border-radius: 14px; padding: 4px 11px; font-size: 11.5px; background: var(--field-bg); color: var(--vscode-foreground); opacity: .95; }
@@ -1179,12 +1203,18 @@
 <body>
   <div id="log">
     <div id="empty">
-      <div class="lc-ascii-wrap"><pre class="lc-ascii" role="img" aria-label="LevelCode AI">██╗      ███████╗ ██╗   ██╗ ███████╗ ██╗         ██████╗  ██████╗  ██████╗  ███████╗
-██║      ██╔════╝ ██║   ██║ ██╔════╝ ██║        ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝
-██║      █████╗   ██║   ██║ █████╗   ██║        ██║      ██║   ██║ ██║  ██║ █████╗
-██║      ██╔══╝   ╚██╗ ██╔╝ ██╔══╝   ██║        ██║      ██║   ██║ ██║  ██║ ██╔══╝
-███████╗ ███████╗  ╚████╔╝  ███████╗ ███████╗   ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗
-╚══════╝ ╚══════╝   ╚═══╝   ╚══════╝ ╚══════╝    ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝</pre></div>
+      <div class="lc-ascii-wrap"><pre class="lc-ascii" role="img" aria-label="LevelCode AI">██╗     ███████╗██╗   ██╗███████╗██╗
+██║     ██╔════╝██║   ██║██╔════╝██║
+██║     █████╗  ██║   ██║█████╗  ██║
+██║     ██╔══╝  ╚██╗ ██╔╝██╔══╝  ██║
+███████╗███████╗ ╚████╔╝ ███████╗███████╗
+╚══════╝╚══════╝  ╚═══╝  ╚══════╝╚══════╝
+      ██████╗ ██████╗ ██████╗ ███████╗
+     ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+     ██║     ██║   ██║██║  ██║█████╗
+     ██║     ██║   ██║██║  ██║██╔══╝
+     ╚██████╗╚██████╔╝██████╔╝███████╗
+      ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝</pre></div>
       <div class="lc-ascii-sub">levelcode.ai</div>
       <div class="empty-copy">Ask about your code, or describe what to build. The open file is sent as context; add a selection with <b>+</b> or ⌥⌘A.</div>
       <div class="starters">

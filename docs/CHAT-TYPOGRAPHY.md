@@ -121,6 +121,29 @@ the assistant — rather than by labelling both. Keep the user bubble; make the 
 or drop it where the previous turn already establishes who is speaking (`.msg.cont` already exists
 for exactly this case).
 
+**Shipped (T4):** dropped for *both* speakers, not softened, and not deleted — the label is clipped
+out of the visual layer and kept in the accessibility tree. The bubble is a purely visual cue, so
+removing the element outright would leave a screen reader with an unattributed wall of text. That is
+why the rule must never be "simplified" to `display: none` or `visibility: hidden`; both take it out
+of the a11y tree, and the test suite fails on either.
+
+Two things measured rather than assumed (headless Chrome, computed styles, 900px, against `develop`):
+
+| | develop | T4 |
+| --- | --- | --- |
+| label box | 16.5 × 680px | **1 × 1px, clipped** (`display: block`, `visibility: visible`) |
+| user → assistant gap | 14.94px | **21.44px** |
+| assistant → continuation gap | 9.94px | 9.94px |
+| message height (user / assistant) | 63.59 / 45.59px | **43.09 / 25.09px** |
+
+The second row is the part that was not obvious. The label was doing **20.5px of spacing work** above
+every turn — the thing that made a new turn look new. Removing it and stopping there would have left a
+turn start and a continuation separated by 12px versus 7px, which is not a difference you can see: the
+transcript collapses into one undifferentiated column, the opposite of the intent, and it would read as
+"the spacing feels off" rather than as a missing rule. `#log > .msg:not(.cont)` buys part of that
+height back in `em`, so it tracks D2's prose size. Net: **20.5px reclaimed per message** while the
+turn-boundary-to-continuation ratio *improves* from 1.5× to 2.2×.
+
 ### D7 — It stays hackable: two settings, no hard-coded values.
 
 `levelcode.ai.chat.proseWidth` (px) and `levelcode.ai.chat.fontSize` (px). Both flow through the CSS
@@ -158,7 +181,11 @@ selection, and every non-prose control still matches workbench chrome.
 
 **T3 — code surfaces** *(S)*. D5. Ships: `pre` padding and rhythm.
 
-**T4 — speaker treatment** *(S)*. D6. Ships: the quieter label, verified against `.msg.cont`.
+**T4 — speaker treatment** *(S)*. D6. **Shipped.** The label leaves the screen and stays in the
+accessibility tree, and a turn start buys back part of the height it was occupying. **Exit:** the
+transcript reads as prose with the bubble as the only visual speaker cue, a continuation is still
+visibly tighter than a new turn, and `.msg.cont` still emits no label — verified by computed styles
+against `develop`, not by eye.
 
 **T5 — the escape hatch** *(S)*. D7. **Folded into T2 and shipped with it.** Sequencing it last was a
 mistake: T2 is the one slice that changes what every existing user sees, and shipping a divisive
