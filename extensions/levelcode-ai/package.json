@@ -364,6 +364,20 @@
           "default": false,
           "description": "Include a list of all project file paths with each chat message, so the AI knows the repo structure. Uses more tokens."
         },
+        "levelcode.ai.chat.fontSize": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 24,
+          "markdownDescription": "Font size for chat **prose** (message bodies), in pixels. `0` follows the editor's UI font size.\n\nThe workbench size is tuned for menu labels and tree rows; message bodies default to a slightly larger size so a long answer reads comfortably. Controls, cards and the composer always follow the workbench."
+        },
+        "levelcode.ai.chat.proseWidth": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 2000,
+          "markdownDescription": "Maximum width of the chat transcript, in pixels. `0` uses the default reading measure (680px).\n\nOnly has an effect when the panel is wider than the measure — in a narrow sidebar the container already bounds the line length. Set a large value to let the transcript fill the full width."
+        },
         "levelcode.ai.chat.groupActivity": {
           "type": "boolean",
           "default": true,

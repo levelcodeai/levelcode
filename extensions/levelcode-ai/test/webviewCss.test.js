@@ -297,6 +297,61 @@ test('TRANSCRIPT: the looser rhythm is gated to reading width, so the sidebar is
 		'headings need more space above than below, or they float between sections');
 });
 
+test('TRANSCRIPT: prose has its own type, and chrome does not follow it', () => {
+	// docs/CHAT-TYPOGRAPHY.md D2 — the deliberate divergence, and the whole risk of T2. The workbench
+	// size is tuned for menu labels; message bodies get their own. The scoping is the entire safety
+	// property: applied to `.msg` instead of `.msg .body` it would drag the role label, the copy
+	// button and the checkpoint control up with it, and the panel would stop matching the editor.
+	assert.match(css, /#log\s*\{[^}]*--prose-size:\s*\d+px/, 'the prose size is no longer a custom property');
+	assert.match(css, /#log\s*\{[^}]*--prose-leading:\s*[\d.]+/, 'the prose leading is no longer a custom property');
+	assert.match(css, /\.msg \.body \{[^}]*font-size:\s*var\(--prose-size\)[^}]*line-height:\s*var\(--prose-leading\)/,
+		'prose type must be set on .msg .body');
+
+	const scoped = /\.msg \.body \{[^}]*font-size:\s*var\(--prose-size\)/.test(css);
+	const leaked = /\.msg \{[^}]*font-size:\s*var\(--prose-size\)/.test(css);
+	assert.ok(scoped && !leaked, 'the prose size leaked onto .msg — chrome inside a turn would scale with it');
+	assert.match(css, /\.msg \.role \{[^}]*font-size:\s*11px/,
+		'the turn label must keep an absolute size, or it grows with the prose it is labelling');
+});
+
+test('TRANSCRIPT: the heading scale has steps you can actually see', () => {
+	// The old 1.3/1.18/1.07 put 0.11em between h2 and h3 — 1.4px at 13px, i.e. three levels of
+	// hierarchy that were indistinguishable without selecting the text.
+	const sizes = ['h1', 'h2', 'h3'].map((h) => {
+		const m = new RegExp('\\.msg \\.body ' + h + ' \\{ font-size: ([\\d.]+)em').exec(css);
+		assert.ok(m, 'no font-size for ' + h);
+		return Number(m[1]);
+	});
+	assert.ok(sizes[0] > sizes[1] && sizes[1] > sizes[2], 'the scale must descend: ' + sizes.join(' > '));
+	for (let i = 0; i < 2; i++) {
+		assert.ok(sizes[i] - sizes[i + 1] >= 0.13,
+			'h' + (i + 1) + '→h' + (i + 2) + ' differ by ' + (sizes[i] - sizes[i + 1]).toFixed(2)
+			+ 'em; below ~0.13em the levels are indistinguishable at this type size');
+	}
+});
+
+test('TRANSCRIPT: both type settings exist and reach the stylesheet (D7)', () => {
+	// Shipping a divisive change with no way back is worse than not shipping it. T5's escape hatch is
+	// folded into T2 for exactly that reason — see the PR.
+	const pkg2 = require('../package.json');
+	const props = pkg2.contributes.configuration.properties;
+	for (const key of ['levelcode.ai.chat.fontSize', 'levelcode.ai.chat.proseWidth']) {
+		assert.ok(props[key], key + ' is not declared — the change would be irreversible for a user');
+		assert.strictEqual(props[key].default, 0, key + ' must default to 0, meaning "follow the default"');
+	}
+	const ext2 = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+	assert.match(ext2, /cfg\.get\('chat\.fontSize', 0\)/, 'the host never reads chat.fontSize');
+	assert.match(ext2, /cfg\.get\('chat\.proseWidth', 0\)/, 'the host never reads chat.proseWidth');
+	assert.strictEqual((ext2.match(/proseSize, proseWidth,/g) || []).length, 2,
+		'both config payloads must carry them, or the setting works in one provider mode and not the other');
+
+	// 0 must CLEAR the property so the stylesheet wins again, rather than pinning today's default.
+	assert.match(html, /setProperty\('--prose-size', m\.proseSize \? m\.proseSize \+ 'px' : ''\)/,
+		'0 must clear --prose-size, not write a hard-coded fallback');
+	assert.match(html, /setProperty\('--prose-max', m\.proseWidth \? m\.proseWidth \+ 'px' : ''\)/,
+		'0 must clear --prose-max, not write a hard-coded fallback');
+});
+
 test('SESSION CARD: every action button keeps a label for pointers and screen readers', () => {
 	// The collapse above hides `.sesslbl` VISUALLY. If the buttons had no title/aria-label, an
 	// icon-only row in a narrow pane would be unusable rather than merely compact.

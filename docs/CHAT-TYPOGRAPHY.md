@@ -142,7 +142,10 @@ selection, and every non-prose control still matches workbench chrome.
 
 **T4 — speaker treatment** *(S)*. D6. Ships: the quieter label, verified against `.msg.cont`.
 
-**T5 — the escape hatch** *(S)*. D7. Ships: the two settings and their plumbing.
+**T5 — the escape hatch** *(S)*. D7. **Folded into T2 and shipped with it.** Sequencing it last was a
+mistake: T2 is the one slice that changes what every existing user sees, and shipping a divisive
+change with no way back is worse than not shipping it. The plumbing is also shared — once one custom
+property reaches the webview from settings, the second is a line — so splitting them bought nothing.
 
 Sequencing: T1 first and alone — it may turn out to be most of the perceived fix, and shipping it
 by itself is the cheapest way to find out before spending effort on T2–T4.

@@ -2090,10 +2090,16 @@ function sendConfigToWebview() {
 	// so the webview can show the free-tier Upgrade CTA.
 	// Calm transcript: whether the webview folds consecutive agent actions into one collapsible group.
 	const groupActivity = cfg.get('chat.groupActivity', true) !== false;
+	// T2/T5 (docs/CHAT-TYPOGRAPHY.md D2, D7). Prose gets its own size because `--vscode-font-size` is the
+	// size of menu labels and tree rows — right for chrome, wrong for reading three paragraphs. Both are
+	// escape hatches by design: 0 means "follow the workbench" / "do not constrain", so anyone who
+	// preferred the old density has a one-setting way back rather than an argument.
+	const proseSize = Number(cfg.get('chat.fontSize', 0)) || 0;
+	const proseWidth = Number(cfg.get('chat.proseWidth', 0)) || 0;
 	if (providerMode() === 'gateway' && cloudSignedIn) {
 		const model = gatewayModel();
 		post({
-			type: 'config', provider: 'gateway', model: gatewayModelLabel(model), modelId: model,
+			type: 'config', provider: 'gateway', proseSize, proseWidth, model: gatewayModelLabel(model), modelId: model,
 			providerLabel: 'LevelCode Cloud', contextLimit: contextLimitFor('openai', capsModel(model)),
 			gateway: true, plan: cloudPlanName() || 'Free', paid: isPaidCloudPlan(cloudPlanName()),
 			groupActivity: groupActivity
@@ -2103,7 +2109,7 @@ function sendConfigToWebview() {
 	const providerId = currentProviderId();
 	const p = providers.getProvider(providerId) || providers.getProvider('claude');
 	// Carry the model's context window so the footer meter updates the moment the model changes.
-	post({ type: 'config', provider: providerId, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity });
+	post({ type: 'config', provider: providerId, proseSize, proseWidth, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity });
 }
 
 class ChatViewProvider {
