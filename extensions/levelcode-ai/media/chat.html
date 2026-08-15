@@ -1107,12 +1107,16 @@
   .sesscard .sessline2 { margin-top: 4px; min-height: 26px; display: flex; align-items: center; }
   .sesscard .sesssub { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; color: var(--cc-text3); }
   /* The action row is nowrap by design (the card is two fixed-height lines — nothing may reflow), so
-     a fifth button cannot be allowed to overflow a narrow sidebar. Below the width where five
-     labelled buttons fit, the labels drop and the row becomes icon-only: ~184px instead of ~300px.
+     a button that does not fit OVERFLOWS the card rather than wrapping. Six labelled buttons
+     (Rename · Fork · Copy · Done · Delete · Pin) measure 434px at this styling; icon-only they are
+     ~200px. The threshold therefore has to sit ABOVE 434, not below it — at 420 there was a band of
+     widths where the labels were still painted and the row spilled out of the card. 460 leaves room
+     for a wider system font.
      `title` + `aria-label` are on every button already, so nothing is lost to a pointer or a screen
-     reader — only to the eye, and only when there is no room for it. */
+     reader — only to the eye, and only when there is no room for it.
+     ADDING A BUTTON? Re-measure and raise this; test/webviewCss.test.js pins the floor. */
   .sesscard { container-type: inline-size; }
-  @container (max-width: 420px) { .sesscard .sesslbl { display: none; } }
+  @container (max-width: 460px) { .sesscard .sesslbl { display: none; } }
   .sesscard .sessacts { display: none; align-items: center; gap: 6px; flex-wrap: nowrap; }
   .sesscard:hover .sesssub, .sesscard:focus-within .sesssub { display: none; }
   .sesscard:hover .sessacts, .sesscard:focus-within .sessacts { display: flex; }

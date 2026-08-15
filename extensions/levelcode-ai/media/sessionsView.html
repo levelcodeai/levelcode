@@ -87,11 +87,13 @@
      left intact. Sidebar buttons are label-only (icon hidden) to stay compact in a narrow panel. */
   .sesscard .sessline2 { margin: 2px 0 0 16px; min-height: 22px; display: flex; align-items: center; }
   .sesscard .sesssub { font-size: 12px; color: var(--cc-text3); }
-  /* Same reasoning as chat.html: the row is nowrap, so a fifth button must not overflow a narrow
-     pane. Below the width where five labelled buttons fit, drop to icons — title + aria-label are
-     already on every button, so only the eye loses anything, and only when there is no room. */
+  /* Same reasoning as chat.html, different numbers — this pane's buttons are smaller (22px tall,
+     8px padding, 11px text, no border), so six labelled ones measure 363px rather than 434px. The
+     threshold sits above that; below it the row drops to icons, keeping title + aria-label, so only
+     the eye loses anything and only when there is no room.
+     ADDING A BUTTON? Re-measure and raise this; test/webviewCss.test.js pins the floor. */
   .sesscard { container-type: inline-size; }
-  @container (max-width: 400px) { .sesscard .sesslbl { display: none; } }
+  @container (max-width: 390px) { .sesscard .sesslbl { display: none; } }
   .sesscard .sessacts { display: none; align-items: center; gap: 4px; flex-wrap: nowrap; }
   .sesscard:hover .sesssub, .sesscard:focus-within .sesssub { display: none; }
   .sesscard:hover .sessacts, .sesscard:focus-within .sessacts { display: flex; }

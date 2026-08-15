@@ -214,24 +214,35 @@ test('an approved MCP tool call folds its run-node into the approval chip (one r
 	assert.ok(/mcpMergePending = null;/.test(line), 'and closes a stale merge window on any other row');
 });
 
-test('SESSION CARD: six nowrap action buttons cannot overflow a narrow pane', () => {
-	// The card is two fixed-height lines and the action row is `flex-wrap: nowrap`, so buttons that
-	// do not fit do not wrap — they overflow. Five LABELLED buttons need roughly 300px; a sidebar is
-	// routinely narrower. The labels therefore have to disappear before that happens.
+test('SESSION CARD: the label-collapse threshold is above the width the labels actually need', () => {
+	// The card is two fixed-height lines and the action row is `flex-wrap: nowrap`, so buttons that do
+	// not fit do not wrap — they OVERFLOW the card.
 	//
-	// This is pinned because the failure is invisible in a wide window: whoever adds a sixth button
-	// will not see it break, and the person who does see it will be a user with a narrow sidebar.
-	const both = [
-		['chat.html', css],
-		['sessionsView.html', fs.readFileSync(path.join(__dirname, '..', 'media', 'sessionsView.html'), 'utf8')]
-	];
-	for (const [where, sheet] of both) {
+	// The numbers below were MEASURED in headless Chrome against the shipped button styling, with all
+	// six labels (Rename · Fork · Copy · Done · Delete · Pin) rendered:
+	//
+	//   chat.html          434px   padding 0 9px, 11.5px text, gap 6, 1px border
+	//   sessionsView.html  363px   padding 0 8px, 11px   text, gap 4, no border
+	//
+	// A threshold BELOW those leaves a band of widths where the labels are still painted and the row
+	// spills out of the card — which is exactly what shipped at 420/400 until this test existed. The
+	// assertion is therefore on the RELATIONSHIP, not on a magic number: raise a threshold freely,
+	// but never below what the labels need. Add a seventh button and this fails until you re-measure.
+	const NEEDS = { 'chat.html': 434, 'sessionsView.html': 363 };
+	const sheets = {
+		'chat.html': css,
+		'sessionsView.html': fs.readFileSync(path.join(__dirname, '..', 'media', 'sessionsView.html'), 'utf8')
+	};
+	for (const [where, sheet] of Object.entries(sheets)) {
 		assert.match(sheet, /\.sesscard\s*\{[^}]*container-type:\s*inline-size/,
-			where + ': the card must be a container for the query below to resolve against IT rather than the viewport');
-		assert.match(sheet, /@container\s*\(max-width:\s*[34][0-9]{2}px\)\s*\{\s*\.sesscard \.sesslbl\s*\{\s*display:\s*none/,
-			where + ': no width at which the labels collapse — a narrow pane will overflow');
+			where + ': the card must be a container, or the query resolves against the viewport instead');
+		const m = /@container\s*\(max-width:\s*(\d+)px\)\s*\{\s*\.sesscard \.sesslbl\s*\{\s*display:\s*none/.exec(sheet);
+		assert.ok(m, where + ': no width at which the labels collapse — a narrow pane will overflow');
+		assert.ok(Number(m[1]) >= NEEDS[where],
+			where + ': labels collapse at ' + m[1] + 'px but six labelled buttons need ' + NEEDS[where]
+			+ 'px — between those widths the labels paint and the nowrap row overflows the card');
 		assert.match(sheet, /\.sesscard \.sessacts \{[^}]*flex-wrap:\s*nowrap/,
-			where + ': the row stopped being nowrap, so this guard is now testing the wrong failure');
+			where + ': the row stopped being nowrap, so this guard now tests the wrong failure');
 	}
 });
 
