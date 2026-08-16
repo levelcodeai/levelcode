@@ -55,7 +55,12 @@ test('the tools that need a root are withheld, and only those', () => {
 	const gated = needsRoot();
 	// Everything that resolves a path or a cwd. Miss one and it is offered rootless, then fails on the
 	// model's first call — which is worse than not offering it, because the model retries.
-	for (const name of ['list_files', 'read_file', 'search', 'edit_file', 'write_file', 'delete_file', 'run_command']) {
+	// read_command_output is in this list because run_command is: it reads the output of a background
+	// command, so rootless it can only ever refer to a run that could not have started. Review caught it
+	// missing — the un-gating it guards against is a plausible edit, since the tool takes no path and
+	// reads as portable at a glance.
+	for (const name of ['list_files', 'read_file', 'search', 'edit_file', 'write_file', 'delete_file',
+		'run_command', 'read_command_output']) {
 		assert.ok(gated.includes(name), name + ' resolves a workspace path but is not in NEEDS_ROOT');
 	}
 	// …and nothing that works fine without one. Gating these would rebuild the old refusal a tool at a
@@ -80,6 +85,25 @@ test('the portable subset is what a rootless run actually offers', () => {
 		'the model is still handed the unfiltered TOOLS');
 	assert.match(agent, /const baseTools = ctx\.recallSessions \? builtins\.concat\(\[RECALL_TOOL\]\) : builtins;/,
 		'baseTools still counts the full TOOLS — the context popover would report tools that were not sent');
+});
+
+test('the context popover is billed for the list that was actually sent', () => {
+	// Review found this one line below the baseTools fix, which is the same bug: the token estimate fell
+	// back to a module constant built from the FULL tool list, so a rootless run with no MCP reported the
+	// cost of eight schemas it never sent — ~1000 tokens, about two thirds of the tool budget, charged
+	// against a window that never spent it. Worse than a missing feature: it is a meter reading high.
+	assert.match(agent, /const PORTABLE_TOOLS_TOKENS_EST = Math\.round\(JSON\.stringify\(PORTABLE_TOOLS\)\.length \/ 4\);/,
+		'no rootless token estimate — the popover reports the full tool cost for a list that was not sent');
+	assert.match(agent, /const builtinsTokensEst = root \? TOOLS_TOKENS_EST : PORTABLE_TOOLS_TOKENS_EST;/,
+		'the estimate no longer switches on the root');
+	assert.match(agent, /const toolsTokensEst = \(mcp\.tools\.length \|\| ctx\.recallSessions\)[\s\S]{0,120}: builtinsTokensEst;/,
+		'the plain path still falls back to the full-TOOLS constant');
+
+	// The two constants must actually differ, or the guard above passes on a list that gates nothing —
+	// the vacuous-pass this whole change would otherwise be measured by.
+	assert.ok(/PORTABLE_TOOLS = TOOLS\.filter/.test(agent), 'PORTABLE_TOOLS is no longer a strict subset');
+	const gated = needsRoot();
+	assert.ok(gated.length > 0, 'NEEDS_ROOT is empty — the two estimates would be identical and this test vacuous');
 });
 
 test('MCP is unaffected by a missing root — that is half the point', () => {

@@ -86,6 +86,11 @@ const NEEDS_ROOT = new Set([
 const PORTABLE_TOOLS = TOOLS.filter((t) => !NEEDS_ROOT.has(t.name));
 
 const TOOLS_TOKENS_EST = Math.round(JSON.stringify(TOOLS).length / 4);
+// The same estimate for the rootless list, and it has to exist separately rather than be derived at
+// call time: the plain path deliberately never re-stringifies (see toolsTokensEst below), so without a
+// second constant a rootless run reports the FULL schema cost for a list it never sent — about 1000
+// tokens, two thirds of the tool budget, charged against a window that never spent it.
+const PORTABLE_TOOLS_TOKENS_EST = Math.round(JSON.stringify(PORTABLE_TOOLS).length / 4);
 
 // Cross-session memory recall (docs/levelcode-sessions-memory.md). Added to a run's tools ONLY when the host
 // wires ctx.recallSessions (memory + the recall setting on), so it costs nothing otherwise. Read-only and
@@ -756,8 +761,11 @@ async function runAgent(ctx) {
 	if (ctx.recallSessions) { tools = tools.concat([RECALL_TOOL]); }  // cross-session recall (host-gated by memory settings)
 	const baseTools = ctx.recallSessions ? builtins.concat([RECALL_TOOL]) : builtins;   // built-ins + recall; MCP is the rest
 	// Recomputed only when MCP or recall actually contributed tools, so the plain path keeps the module
-	// constant and pays nothing for a feature it isn't using.
-	const toolsTokensEst = (mcp.tools.length || ctx.recallSessions) ? Math.round(JSON.stringify(tools).length / 4) : TOOLS_TOKENS_EST;
+	// constant and pays nothing for a feature it isn't using — but there are now TWO plain paths, and the
+	// constant has to match the list that was actually sent. Reporting the full cost for a rootless run
+	// was the same mistake as leaving baseTools on TOOLS, one line further down.
+	const builtinsTokensEst = root ? TOOLS_TOKENS_EST : PORTABLE_TOOLS_TOKENS_EST;
+	const toolsTokensEst = (mcp.tools.length || ctx.recallSessions) ? Math.round(JSON.stringify(tools).length / 4) : builtinsTokensEst;
 	// The MCP SHARE of that, reported separately so the context popover can show what these servers cost
 	// (docs/MCP.md S5). Every tool schema rides EVERY turn, so a chatty server is a standing tax on the
 	// window rather than a one-off — and until it has its own segment, that cost is invisible.
