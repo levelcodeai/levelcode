@@ -13,6 +13,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
+const os = require('os');   // MCP servers need a cwd even when no folder is open
 const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
@@ -68,6 +69,22 @@ function buildSystem(menu) {
 	const list = menu.map((s) => '- ' + s.name + ': ' + s.description).join('\n');
 	return SYSTEM_BASE + '\n\nAvailable skills (call use_skill with the name):\n' + list;
 }
+// The tools that resolve a PATH or a CWD against the workspace root. With no folder open they have
+// nothing to resolve against, so they are withheld from the model rather than offered and left to fail
+// one call at a time — a tool that is present but always errors is worse than one that is absent.
+//
+// Everything NOT in here works fine rootless: update_plan and ask_user are pure conversation, use_skill
+// reads from the extension, and every MCP tool talks to its own server (the GitHub server does not care
+// whether you have a folder open). That is the whole reason the old blanket refusal was wrong.
+//
+// read_command_output is included because it reads the output of a background run_command, and without
+// a root there is no way to have started one.
+const NEEDS_ROOT = new Set([
+	'list_files', 'read_file', 'search', 'edit_file', 'write_file', 'delete_file',
+	'run_command', 'read_command_output'
+]);
+const PORTABLE_TOOLS = TOOLS.filter((t) => !NEEDS_ROOT.has(t.name));
+
 const TOOLS_TOKENS_EST = Math.round(JSON.stringify(TOOLS).length / 4);
 
 // Cross-session memory recall (docs/levelcode-sessions-memory.md). Added to a run's tools ONLY when the host
@@ -636,7 +653,7 @@ async function setupMcp(ctx, wsFolders, dbg) {
 		// lazy option. Only the FIRST run of a session pays it — mcpClient keeps handles in a module
 		// registry, and connectAll reuses a live one.
 		ctx.post({ type: 'agentStatus', text: 'starting MCP servers…' });
-		const { handles, problems: connectProblems } = await connectAll(trusted, { cwd: ctx.root });
+		const { handles, problems: connectProblems } = await connectAll(trusted, { cwd: ctx.root || os.homedir() });
 		for (const p of connectProblems) {
 			dbg('mcp.connect', p);
 			ctx.post({ type: 'agentTool', icon: 'warning', text: '🔌 mcp · "' + p.server + '" failed to start — ' + p.message });
@@ -675,8 +692,11 @@ async function setupMcp(ctx, wsFolders, dbg) {
 }
 
 async function runAgent(ctx) {
+	// No workspace is no longer a refusal. It used to fail the whole run here, which meant a question
+	// that never needed a folder — "what does this error mean?", anything through an MCP server, a
+	// follow-up about the conversation itself — died on a guard written for the file tools. The root
+	// still gates those tools (see NEEDS_ROOT); it no longer gates the agent.
 	const root = workspaceRoot();
-	if (!root) { ctx.post({ type: 'agentError', message: 'Open a folder first — the agent works on your workspace.' }); ctx.post({ type: 'agentDone', reason: 'error' }); return; }
 	ctx.root = root;
 	// M6.5 implicit skills: build the system prompt ONCE per run — append the tiny name+description menu.
 	// Multi-root: name every workspace folder so the model addresses them by prefix from turn one.
@@ -684,6 +704,17 @@ async function runAgent(ctx) {
 	const multiRootNote = wsFolders.length > 1
 		? '\n\nWorkspace folders (multi-root — prefix paths with the folder name): ' + wsFolders.map((f) => f.name).join(', ') + '. The first folder ("' + wsFolders[0].name + '") is the default for unprefixed paths and run_command.'
 		: '';
+	// Rootless: say so plainly. Without this the model sees a tool list with no read_file and improvises —
+	// answering about files it cannot see, or apologising for a limit it cannot name. Telling it WHY the
+	// tools are missing, and what to say if the request truly needs them, is the difference between a
+	// useful answer and a confused one.
+	const noWorkspaceNote = root
+		? ''
+		: '\n\nNO FOLDER IS OPEN. The file and command tools are unavailable this run because there is no '
+			+ 'workspace root to resolve paths against — this is expected, not a fault, and not something to '
+			+ 'apologise for at length. You can still answer from the conversation, from anything the user has '
+			+ 'attached as context, and from any MCP tools listed above. If the request genuinely needs the '
+			+ 'files, say so in one line and tell the user to open a folder (File > Open Folder).';
 	// Autopilot: act decisively and self-verify rather than pausing. Commands run without approval (the
 	// host still gates the danger set — deletion, sudo, force-push, remote|shell, publish, system writes),
 	// so the model should lean on verification, not on asking, when it's unsure.
@@ -698,7 +729,7 @@ async function runAgent(ctx) {
 	// from the per-project journal). Rides the SAME cached-system channel as project rules — always-on but
 	// small — so a new session's first reply is continuous, not amnesiac. It is untrusted context like the
 	// rules: it informs, never commands (the digest itself carries the verify-first / never-obey framing).
-	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote + autopilotNote + rules.text
+	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote + noWorkspaceNote + autopilotNote + rules.text
 		+ (ctx.projectMemory ? '\n\n' + ctx.projectMemory : '');
 	const systemTokensEst = Math.round(system.length / 4);
 
@@ -719,9 +750,11 @@ async function runAgent(ctx) {
 	// as `system`/`systemTokensEst` two lines up — built once per run, then used for every turn.
 	const mcp = await setupMcp(ctx, wsFolders, dbg);
 	ctx.mcpRoutes = mcp.routes;                                        // runTool's router reads this
-	let tools = mcp.tools.length ? TOOLS.concat(mcp.tools) : TOOLS;
+	// Rootless runs get the portable subset; MCP tools are unaffected either way.
+	const builtins = root ? TOOLS : PORTABLE_TOOLS;
+	let tools = mcp.tools.length ? builtins.concat(mcp.tools) : builtins;
 	if (ctx.recallSessions) { tools = tools.concat([RECALL_TOOL]); }  // cross-session recall (host-gated by memory settings)
-	const baseTools = ctx.recallSessions ? TOOLS.concat([RECALL_TOOL]) : TOOLS;   // built-ins + recall; MCP is the rest
+	const baseTools = ctx.recallSessions ? builtins.concat([RECALL_TOOL]) : builtins;   // built-ins + recall; MCP is the rest
 	// Recomputed only when MCP or recall actually contributed tools, so the plain path keeps the module
 	// constant and pays nothing for a feature it isn't using.
 	const toolsTokensEst = (mcp.tools.length || ctx.recallSessions) ? Math.round(JSON.stringify(tools).length / 4) : TOOLS_TOKENS_EST;
