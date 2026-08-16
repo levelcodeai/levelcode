@@ -266,6 +266,28 @@ test('START: the startup open cannot be triggered by a menu click', () => {
 		'preserveFocus must be read strictly, so a stray truthy argument cannot enable it');
 });
 
+test('START: the fire-and-forget startup call cannot become an unhandled rejection', () => {
+	// Nothing awaits the startup timer, so a rejection from createWebviewPanel or from the focus
+	// command would land in the extension host attributed to nothing. Caught — but LOGGED, not
+	// swallowed: a chat that never appears with no trace of why is the exact failure this setting is
+	// supposed to make explicable.
+	const call = /revealChatAtStartup\(\)([\s\S]{0,160}?)\}, 600\)/.exec(ext);
+	assert.ok(call, 'the startup call site moved — this guard no longer covers it');
+	assert.match(call[1], /\.catch\(/, 'the fire-and-forget startup call has no .catch — unhandled rejection');
+	assert.match(call[1], /dbg\(/, 'the failure is swallowed silently; log the reason so it can be diagnosed');
+});
+
+test('MOVE BACK: a failed move reaches the user instead of vanishing', () => {
+	// Deliberately the OPPOSITE of the startup path. This is an explicit click, and registerCommand
+	// awaits what the handler returns — so returning the thenable turns a failure into a reported
+	// command error, where swallowing it would leave the user pressing a button that does nothing.
+	const body = fnBody(ext, 'moveChatToSidebar');
+	assert.match(body, /return vscode\.commands\.executeCommand\('levelcodeAi\.chat\.focus'\)/,
+		'the reveal must be RETURNED, or a failure is an unhandled rejection and the click looks inert');
+	assert.match(ext, /registerCommand\('levelcode\.ai\.moveChatToSidebar', \(\) => moveChatToSidebar\(\)\)/,
+		'the registration must return the handler result, or returning it inside buys nothing');
+});
+
 test('MOVE BACK: there is a button on the tab, and it reuses the dispose hand-over', () => {
 	// The chat now opens centred for everyone, so the way BACK has to be visible from the centre.
 	// Before this it existed only on the sidebar card — which you cannot see while the chat is a tab.

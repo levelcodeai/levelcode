@@ -2310,9 +2310,14 @@ async function openChatInEditor(opts) {
  * hand-over changed.
  */
 function moveChatToSidebar() {
-	if (chatEditorPanel) { chatEditorPanel.dispose(); return; }
+	if (chatEditorPanel) { chatEditorPanel.dispose(); return undefined; }
 	// Already there (or never moved) — just reveal it, so the command is never a silent no-op.
-	vscode.commands.executeCommand('levelcodeAi.chat.focus');
+	//
+	// RETURNED, not fired and forgotten. `registerCommand` awaits whatever the handler returns, so a
+	// failure here reaches the user as a failed command instead of an unhandled rejection. That is the
+	// opposite of the startup path on purpose: this is an explicit click, and silence would leave the
+	// user pressing a button that does nothing.
+	return vscode.commands.executeCommand('levelcodeAi.chat.focus');
 }
 
 /**
@@ -2788,7 +2793,15 @@ function activate(context) {
 	//     broken webview forcing the panel open forever; `chat.startLocation: none` is a better answer
 	//     to that, and a chat that silently stops appearing after five launches is worse to diagnose
 	//     than one that keeps showing you it is broken.
-	setTimeout(() => { revealChatAtStartup(); }, 600);
+	//
+	// `.catch` because this is fire-and-forget: nothing awaits the timer, so a rejection from
+	// `createWebviewPanel` or the focus command would surface as an unhandled rejection in the
+	// extension host — noisy, and attributed to nothing in particular. Logged rather than swallowed:
+	// a chat that never appears, with no trace of why, is the one failure mode this whole setting is
+	// supposed to make explicable. The window still starts, and both surfaces remain openable by hand.
+	setTimeout(() => {
+		revealChatAtStartup().catch((e) => dbg('chat.startLocation.failed', { msg: String((e && e.message) || e) }));
+	}, 600);
 
 	// First-launch onboarding: open the "Welcome to LevelCode" walkthrough once. Only mark it shown
 	// AFTER it actually opens (previously the flag was set up-front, so a first-launch race that failed
