@@ -144,7 +144,9 @@ test('RESTORE: a sidebar that was never resolved is revealed rather than assumed
 	// If the container has not been opened this session, sidebarChatView is undefined — restoring by
 	// writing to it would throw, and doing nothing would leave the chat with no surface at all.
 	const open = fnBody(ext, 'openChatInEditor');
-	assert.match(open, /if \(sidebarChatView\) \{[\s\S]*\} else \{[\s\S]*levelcodeAi\.chat\.focus/,
+	// The reveal now goes through focusChatView() so its rejection cannot go unhandled; what this test
+	// cares about is unchanged — the else-branch must still reveal the view rather than assume it.
+	assert.match(open, /if \(sidebarChatView\) \{[\s\S]*\} else \{[\s\S]*focusChatView\(/,
 		'the never-resolved sidebar case is unhandled');
 });
 
@@ -308,6 +310,48 @@ test('MOVE BACK: there is a button on the tab, and it reuses the dispose hand-ov
 	assert.ok(!/makeLive|replayLiveTranscript/.test(body),
 		'this is duplicating the hand-over instead of reusing onDidDispose — the two will drift');
 	assert.match(body, /levelcodeAi\.chat\.focus/, 'with no panel open the command must still reveal the chat, not do nothing');
+});
+
+test('FOCUS: no reveal of the chat view is left to reject unhandled', () => {
+	// One guard for the whole class, rather than six assertions that each name a function. `executeCommand`
+	// returns a Thenable, so a bare call in a void context makes any rejection an unhandled promise
+	// rejection in the extension host — attributed to nothing, which is what makes it useless.
+	//
+	// Scanning every call site means the NEXT one is covered too. That matters here: this pattern was
+	// copied into six places over time precisely because nothing was watching for it.
+	const CALL = "vscode.commands.executeCommand('levelcodeAi.chat.focus')";
+	const bare = [];
+	for (let i = ext.indexOf(CALL); i >= 0; i = ext.indexOf(CALL, i + 1)) {
+		const before = ext.slice(Math.max(0, i - 40), i);
+		const after = ext.slice(i + CALL.length, i + CALL.length + 40);
+		const handled = /\breturn\s+$/.test(before)         // returned — a command handler VS Code awaits
+			|| /\bawait\s+$/.test(before)                    // awaited by a caller that catches
+			|| /=>\s*$/.test(before)                         // concise arrow body: also a return
+			|| /Promise\.resolve\($/.test(before)            // wrapped by focusChatView
+			|| /^\s*\)?\s*\.(then|catch)\(/.test(after);     // handled inline
+		if (!handled) { bare.push('line ' + ext.slice(0, i).split('\n').length); }
+	}
+	assert.deepStrictEqual(bare, [],
+		'these reveals are fire-and-forget — a rejection becomes an unhandled promise rejection.\n'
+		+ 'Use focusChatView(why) for a background reveal, or `return` it when the command IS the reveal:\n  '
+		+ bare.join('\n  '));
+});
+
+test('FOCUS: the shared helper logs the failure and names who caused it', () => {
+	// The whole complaint was "attributed to nothing", so swallowing it silently would answer the letter
+	// of the review and none of it. A chat surface that never appears, with no trace, is the failure
+	// that costs an afternoon.
+	const body = fnBody(ext, 'focusChatView');
+	assert.match(body, /dbg\('chat\.focus\.failed'/, 'the failure is not logged — .catch(() => {}) is not a fix');
+	assert.match(body, /\bwhy\b/, 'the log must name the caller, or it is as unattributed as the rejection was');
+	assert.ok(!/\bthrow\b/.test(body), 'the helper must not rethrow — every caller uses it in a void context');
+	// Either `.then(undefined, …)` or `.catch(…)`. They are equivalent here and pinning one would fail a
+	// refactor that changes nothing; what must not disappear is the rejection handler itself.
+	assert.match(body, /\.then\(undefined,|\.catch\(/, 'no rejection handler — the helper can still reject');
+
+	// And it must be the thing the background callers actually use.
+	const callers = (ext.match(/focusChatView\('/g) || []).length;
+	assert.ok(callers >= 6, 'expected the background reveals to route through the helper, found ' + callers);
 });
 
 console.log('\nchatSurface: ' + n + ' tests passed.');
