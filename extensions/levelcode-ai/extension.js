@@ -416,11 +416,33 @@ function captureSelection() {
 	};
 }
 
+/**
+ * Reveal the chat view for its side effect only, and never reject.
+ *
+ * `executeCommand` returns a Thenable, so a bare call in a void context turns any rejection into an
+ * unhandled promise rejection in the extension host — noisy, and attributed to nothing in particular,
+ * which is the part that makes it useless.
+ *
+ * Every caller here is a BACKGROUND reveal: the work it accompanies (a selection added, a session
+ * resumed, a login launched) has already succeeded by the time this runs. Failing that work because
+ * the panel would not come forward would be worse than the panel not coming forward.
+ *
+ * Logged, never swallowed. `.catch(() => {})` would hide the one failure that is genuinely hard to
+ * diagnose — a chat surface that silently never appears — so `why` names the caller in the log.
+ *
+ * NOT for a command handler whose whole job IS the reveal: `levelcode.ai.focus` returns the thenable
+ * instead, so VS Code reports the failure to the user who asked for it. See moveChatToSidebar.
+ */
+function focusChatView(why) {
+	return Promise.resolve(vscode.commands.executeCommand('levelcodeAi.chat.focus'))
+		.then(undefined, (e) => dbg('chat.focus.failed', { why, msg: String((e && e.message) || e) }));
+}
+
 function addSelection() {
 	const sel = captureSelection();
 	if (!sel) { vscode.window.showInformationMessage('LevelCode AI: select some code first.'); return; }
 	pendingContext = sel.block;
-	vscode.commands.executeCommand('levelcodeAi.chat.focus');
+	focusChatView('addSelection');
 	post({ type: 'context', label: sel.label });
 }
 
@@ -465,7 +487,7 @@ async function addContext() {
 			}
 		}
 	}
-	vscode.commands.executeCommand('levelcodeAi.chat.focus');
+	focusChatView('addContext');
 	postContextFiles();
 }
 
@@ -1052,7 +1074,7 @@ async function resumeSession(id) {
 	post({ type: 'sessionResumed', id, title: (r.entry && r.entry.title) || 'Session', note: r.note || '', tier: r.plan && r.plan.tier, turns });
 	postContextFiles();
 	refreshSessions();                          // the resumed session bumps to the top — keep both surfaces current
-	vscode.commands.executeCommand('levelcodeAi.chat.focus');
+	focusChatView('resumeSession');
 	dbg('sessions.resumed', { id, tier: r.plan && r.plan.tier, restored: agentMessages.length, shown: turns.length });
 }
 
@@ -2295,7 +2317,7 @@ async function openChatInEditor(opts) {
 			// resolveWebviewView then makes it live, and without this the chat would have no surface at all.
 			activeWebview = undefined;
 			pendingTranscriptReplay = 'Back in the sidebar';
-			vscode.commands.executeCommand('levelcodeAi.chat.focus');
+			focusChatView('editorClosed');
 		}
 		dbg('chat.closedEditor', {});
 	});
@@ -2432,7 +2454,7 @@ class SessionsViewProvider {
 				// The real session index for this workspace (empty on a fresh install — the view shows its
 				// own empty state). Posted to THIS view's webview, not the chat's.
 				case 'listSessions': view.webview.postMessage({ type: 'sessions', entries: sessionList() }); break;
-				case 'newSession': newChat(); vscode.commands.executeCommand('levelcodeAi.chat.focus'); break;
+				case 'newSession': newChat(); focusChatView('sessions.newSession'); break;
 				case 'sessionAction': await handleSessionAction(msg.action, msg.id); break;
 				// Memory tab (§M3): list the recorded outcomes + facts; act on them; open the file.
 				case 'listMemory': { const mm = sessionsManager(); view.webview.postMessage({ type: 'memoryList', items: mm ? mm.memoryItems() : [], facts: mm ? mm.factsList() : [] }); break; }
@@ -2528,7 +2550,7 @@ async function postAccount(open) {
 // second login and no interceptable code ever travels through the custom scheme.
 async function handleLaunch() {
 	dbg('account.launch', {});
-	vscode.commands.executeCommand('levelcodeAi.chat.focus');
+	focusChatView('account.launch');
 	const token = ctx ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
 	if (!token) { await accountSignIn(); }
 }
