@@ -1106,19 +1106,39 @@ function sealLiveSession(why) {
 	}
 }
 
-function newChat() {
-	// Seal the outgoing session (its terminal state + a final index row) BEFORE the transcript is cleared,
-	// so it lands in History as a finished session and the next turn opens a fresh one.
-	sealLiveSession('newChat');
+/**
+ * Drop everything the finished conversation was holding, in memory and out of process.
+ *
+ * Extracted so the CLOSING TAB does the same teardown New Chat does. Sealing alone was not enough and
+ * left the two halves disagreeing: `sealLiveSession` ends the session, so `liveId()` goes null and the
+ * next chat opens visually empty — while `conversation` and `agentMessages` still hold every previous
+ * turn, so the next message silently ships the old history to the model. An empty-looking chat that
+ * secretly remembers is worse than either honest option.
+ *
+ * The out-of-process half matters just as much. Background commands and MCP servers are DETACHED
+ * children: without reaping them they outlive the surface that was reporting on them, and an
+ * in-flight agent run keeps editing files with nothing left to show for it.
+ *
+ * Deliberately does NOT post to the webview. New Chat re-renders afterwards because it has a surface
+ * to re-render; the close path is tearing one down.
+ */
+function resetConversationState() {
 	conversation = [];
 	agentMessages = [];
 	checkpoints.length = 0; currentCheckpoint = null;   // drop the per-turn restore stack
 	pendingContext = null;
 	contextFiles = [];
-	if (abort) { abort.abort(); }
+	if (abort) { abort.abort(); }          // stop an in-flight run — its surface is going away
 	reapCommands();                        // kill any background servers/watchers from the old session
 	reapMcp();                             // …and any MCP servers: they are detached children too
-	if (review) { review.finalizeAll(); } // drop review UI without reverting the user's files
+	if (review) { review.finalizeAll(); }  // drop review UI without reverting the user's files
+}
+
+function newChat() {
+	// Seal the outgoing session (its terminal state + a final index row) BEFORE the transcript is cleared,
+	// so it lands in History as a finished session and the next turn opens a fresh one.
+	sealLiveSession('newChat');
+	resetConversationState();
 	post({ type: 'reset' });
 	postContextFiles();
 	postMemoryDigest();                    // the fresh empty state shows the welcome-back strip
@@ -2341,6 +2361,7 @@ async function openChatInEditor(opts) {
 		chatEditorPanel = undefined;
 		activeWebview = undefined;      // nothing may post into a disposed webview
 		sealLiveSession('chatClosed');
+		resetConversationState();       // …and nothing may survive into the next one
 		dbg('chat.closedEditor', {});
 	});
 }
@@ -2358,7 +2379,12 @@ async function openChatInEditor(opts) {
  */
 function chatStartLocation() {
 	const raw = String(aiConfig().get('chat.startLocation', 'editor') || 'editor');
-	return ['editor', 'secondarySidebar', 'none'].includes(raw) ? raw : 'editor';
+	// `secondarySidebar` was a valid value until the chat became editor-only, so it is still sitting in
+	// real settings.json files. Mapped explicitly rather than left to fall through the unknown-value
+	// path: the result is the same, but this way the debug log names the location we actually opened
+	// instead of reporting a surface that no longer exists.
+	if (raw === 'secondarySidebar') { return 'editor'; }
+	return ['editor', 'none'].includes(raw) ? raw : 'editor';
 }
 
 /** Open the chat where `chat.startLocation` says, once, as the window finishes starting. */

@@ -218,7 +218,7 @@ test('START: the chat opens centred by default, and the setting is the only plac
 
 	// One reader, so a second caller cannot quietly disagree about what an unknown value means.
 	const body = fnBody(ext, 'chatStartLocation');
-	assert.match(body, /'editor', 'secondarySidebar', 'none'/, 'the reader no longer validates against the enum');
+	assert.match(body, /'editor', 'none'/, 'the reader must validate against exactly the enum the package ships');
 	assert.match(body, /: 'editor'/, 'an unknown value must fall back to the default, not leave the window with no chat');
 });
 
@@ -346,6 +346,59 @@ test('CLOSE: nothing resurrects the chat on the right', () => {
 		'the chat is registered as a contributed view again');
 	assert.match(ext, /registerWebviewViewProvider\('levelcodeAi\.sessions'/,
 		'Sessions must KEEP its view — it is the right-hand container\'s reason to exist');
+});
+
+test('CLOSE: the conversation is torn down, not just sealed', () => {
+	// Review caught the two halves disagreeing. sealLiveSession ends the SESSION — liveId() goes null,
+	// so the next chat opens visually empty — while `conversation` and `agentMessages` still held every
+	// previous turn, so the next message shipped the old history to the model anyway. An empty-looking
+	// chat that secretly remembers is worse than either honest option.
+	const dispose = ext.slice(ext.indexOf('panel.onDidDispose'), ext.indexOf('panel.onDidDispose') + 1400);
+	assert.match(dispose, /sealLiveSession\('chatClosed'\)/, 'closing no longer seals the session');
+	assert.match(dispose, /resetConversationState\(\)/,
+		'closing seals but leaves conversation/agentMessages loaded — the next send replays the old history');
+
+	// ONE teardown, shared with New Chat, or the close path drifts — and it is the path nobody watches.
+	assert.match(fnBody(ext, 'newChat'), /resetConversationState\(\)/,
+		'New Chat has its own copy of the teardown again');
+	const reset = fnBody(ext, 'resetConversationState');
+	for (const [frag, why] of [
+		['conversation = []', 'the model history survives the close'],
+		['agentMessages = []', 'the agent history survives the close'],
+		['checkpoints.length = 0', 'the restore stack still points at a finished turn'],
+		['contextFiles = []', 'stale attachments carry into the next chat'],
+		['abort.abort()', 'an in-flight run keeps going with no surface to report to'],
+		['reapCommands()', 'background commands outlive the chat — they are detached children'],
+		['reapMcp()', 'MCP servers outlive the chat — they are detached children too']
+	]) {
+		assert.ok(reset.includes(frag), why + ' (missing: ' + frag + ')');
+	}
+
+	// It must NOT post: the close path is tearing the surface down, and New Chat re-renders itself.
+	assert.ok(!/\bpost\(/.test(reset),
+		'resetConversationState posts to the webview — on the close path that webview is being disposed');
+});
+
+test('START: a legacy secondarySidebar setting maps to the editor, and says so', () => {
+	// The value was valid until the chat became editor-only, so it is still sitting in real
+	// settings.json files. Left to fall through the unknown-value path it produced the right BEHAVIOUR
+	// with a lying debug log — `where: secondarySidebar` while opening the editor tab.
+	const body = fnBody(ext, 'chatStartLocation');
+	assert.match(body, /raw === 'secondarySidebar'/, 'the legacy value is not mapped explicitly');
+	assert.ok(!/\['editor', 'secondarySidebar', 'none'\]/.test(body),
+		'secondarySidebar is still an accepted value — it names a surface that no longer exists');
+	assert.match(body, /\['editor', 'none'\]/, 'the accepted set should be exactly what the enum ships');
+
+	// Behaviour, evaluated from the SHIPPED source rather than a copy of it: fnBody hands back the
+	// braces, so wrapping it in a declaration gives the real function with aiConfig injected.
+	// aiConfig is CALLED and returns the config object, so the stub has to be a function that returns
+	// one — passing the object itself is the obvious thing and it is wrong.
+	const run = (v) => new Function('aiConfig',
+		'function chatStartLocation() ' + body + '\nreturn chatStartLocation();')(() => ({ get: () => v }));
+	assert.strictEqual(run('secondarySidebar'), 'editor', 'a legacy setting must resolve to the editor');
+	assert.strictEqual(run('none'), 'none', 'the opt-out must survive');
+	assert.strictEqual(run('editor'), 'editor');
+	assert.strictEqual(run('nonsense'), 'editor', 'an unknown value must fall back to the default');
 });
 
 console.log('\nchatSurface: ' + n + ' tests passed.');
