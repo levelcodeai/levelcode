@@ -70,8 +70,14 @@ test('SURFACE: only makeLive() ever moves the conversation, so two surfaces cann
 
 test('SURFACE: an already-open tab is revealed, never opened twice', () => {
 	// Two panels would mean two DOMs, two `ready` messages, and a race for activeWebview.
-	assert.match(fnBody(ext, 'openChatInEditor'), /^\s*\{\s*if \(chatEditorPanel\) \{ chatEditorPanel\.reveal\(\); return; \}/,
-		'the guard must be the first thing the command does');
+	// The guard must still be the first STATEMENT, but it now reveals with the caller's focus
+	// preference — a startup open that reveals an existing tab must not yank focus either.
+	const open = fnBody(ext, 'openChatInEditor');
+	assert.match(open, /if \(chatEditorPanel\) \{ chatEditorPanel\.reveal\(undefined, preserveFocus\); return; \}/,
+		'the already-open guard is gone or no longer honours preserveFocus');
+	const guardAt = open.indexOf('if (chatEditorPanel)');
+	assert.ok(guardAt >= 0 && guardAt < open.indexOf('createWebviewPanel'),
+		'the guard must run before anything can construct a second panel');
 	assert.strictEqual((ext.match(/createWebviewPanel\(\s*\n?\s*'levelcode\.ai\.chat'/g) || []).length, 1,
 		'more than one place constructs the chat panel');
 });
@@ -164,7 +170,8 @@ test('LABEL: a move is not rendered as "Resumed"', () => {
 });
 
 test('COMMAND: it is registered and discoverable in the palette', () => {
-	assert.match(ext, /registerCommand\('levelcode\.ai\.openChatInEditor', openChatInEditor\)/);
+	// Wrapped rather than bound by reference — see the START test on menu arguments below.
+	assert.match(ext, /registerCommand\('levelcode\.ai\.openChatInEditor', \(\) => openChatInEditor\(\)\)/);
 	const cmd = pkg.contributes.commands.find((c) => c.command === 'levelcode.ai.openChatInEditor');
 	assert.ok(cmd, 'not declared in package.json — it would not appear in the Command Palette');
 	assert.match(cmd.title, /Chat in Editor/);
@@ -216,6 +223,91 @@ test('COMMAND: it has a BUTTON on the chat header, not only the palette', () => 
 		'the button must be scoped to the chat view, or it appears on every view title in the editor');
 	assert.match(entry.group, /^navigation@\d+$/,
 		'navigation keeps it inline and lets VS Code overflow it into … when the sidebar is narrow');
+});
+
+test('START: the chat opens centred by default, and the setting is the only place that decides', () => {
+	const prop = pkg.contributes.configuration.properties['levelcode.ai.chat.startLocation'];
+	assert.ok(prop, 'chat.startLocation is not declared — the default would be unchangeable');
+	assert.strictEqual(prop.default, 'editor', 'the chat must open in the centre by default');
+	assert.deepStrictEqual(prop.enum, ['editor', 'secondarySidebar', 'none'],
+		'`none` is the opt-out that replaced the old launch cap — dropping it leaves no way to turn this off');
+	assert.strictEqual(prop.enumDescriptions.length, prop.enum.length,
+		'every value needs a description, or the settings UI shows bare identifiers');
+
+	// One reader, so a second caller cannot quietly disagree about what an unknown value means.
+	const body = fnBody(ext, 'chatStartLocation');
+	assert.match(body, /'editor', 'secondarySidebar', 'none'/, 'the reader no longer validates against the enum');
+	assert.match(body, /: 'editor'/, 'an unknown value must fall back to the default, not leave the window with no chat');
+});
+
+test('START: exactly one thing opens the chat at startup', () => {
+	// The bug this pins: the old onboarding block revealed the SIDEBAR on launch. Left in place next to
+	// the new centred default it would open both surfaces at once on a fresh install — and because the
+	// old one was capped at five launches, it would have "fixed itself" later, which is the worst kind.
+	assert.ok(!/AUTO_REVEAL_MAX_LAUNCHES/.test(ext),
+		'the old capped auto-reveal is still here — it opens the sidebar alongside the new editor tab');
+	const startupCalls = (ext.match(/revealChatAtStartup\(\)/g) || []).length;
+	assert.strictEqual(startupCalls, 2, 'expected one definition and one call site, found ' + startupCalls);
+
+	const body = fnBody(ext, 'revealChatAtStartup');
+	assert.match(body, /where === 'none'/, 'none must return before opening anything');
+	assert.match(body, /levelcodeAi\.chat\.focus/, 'secondarySidebar must still reveal the contributed view');
+	assert.match(body, /openChatInEditor\(\{ preserveFocus: true \}\)/,
+		'the startup open must preserve focus — otherwise it steals the caret from a restored file');
+});
+
+test('START: the startup open cannot be triggered by a menu click', () => {
+	// openChatInEditor now reads an options object from its first argument, and VS Code hands a command
+	// its menu context in exactly that position. Bound by reference, a title-bar click would pass
+	// whatever VS Code supplies — so the command is wrapped, and this is why.
+	assert.match(ext, /registerCommand\('levelcode\.ai\.openChatInEditor', \(\) => openChatInEditor\(\)\)/,
+		'bind the command through a wrapper, or a menu argument can reach the options parameter');
+	assert.match(fnBody(ext, 'openChatInEditor'), /opts && opts\.preserveFocus === true/,
+		'preserveFocus must be read strictly, so a stray truthy argument cannot enable it');
+});
+
+test('START: the fire-and-forget startup call cannot become an unhandled rejection', () => {
+	// Nothing awaits the startup timer, so a rejection from createWebviewPanel or from the focus
+	// command would land in the extension host attributed to nothing. Caught — but LOGGED, not
+	// swallowed: a chat that never appears with no trace of why is the exact failure this setting is
+	// supposed to make explicable.
+	const call = /revealChatAtStartup\(\)([\s\S]{0,160}?)\}, 600\)/.exec(ext);
+	assert.ok(call, 'the startup call site moved — this guard no longer covers it');
+	assert.match(call[1], /\.catch\(/, 'the fire-and-forget startup call has no .catch — unhandled rejection');
+	assert.match(call[1], /dbg\(/, 'the failure is swallowed silently; log the reason so it can be diagnosed');
+});
+
+test('MOVE BACK: a failed move reaches the user instead of vanishing', () => {
+	// Deliberately the OPPOSITE of the startup path. This is an explicit click, and registerCommand
+	// awaits what the handler returns — so returning the thenable turns a failure into a reported
+	// command error, where swallowing it would leave the user pressing a button that does nothing.
+	const body = fnBody(ext, 'moveChatToSidebar');
+	assert.match(body, /return vscode\.commands\.executeCommand\('levelcodeAi\.chat\.focus'\)/,
+		'the reveal must be RETURNED, or a failure is an unhandled rejection and the click looks inert');
+	assert.match(ext, /registerCommand\('levelcode\.ai\.moveChatToSidebar', \(\) => moveChatToSidebar\(\)\)/,
+		'the registration must return the handler result, or returning it inside buys nothing');
+});
+
+test('MOVE BACK: there is a button on the tab, and it reuses the dispose hand-over', () => {
+	// The chat now opens centred for everyone, so the way BACK has to be visible from the centre.
+	// Before this it existed only on the sidebar card — which you cannot see while the chat is a tab.
+	const cmd = pkg.contributes.commands.find((c) => c.command === 'levelcode.ai.moveChatToSidebar');
+	assert.ok(cmd, 'no move-back command — the only way right would be closing the tab');
+	assert.ok(cmd.icon, 'no icon — an editor/title action with no icon renders as nothing');
+
+	const entry = (pkg.contributes.menus['editor/title'] || [])
+		.find((m) => m.command === 'levelcode.ai.moveChatToSidebar');
+	assert.ok(entry, 'not contributed to editor/title — reachable only from the Command Palette');
+	assert.strictEqual(entry.when, "activeWebviewPanelId == 'levelcode.ai.chat'",
+		'scope it to the chat panel, or the button appears on every editor tab in the window');
+
+	// Disposing IS the move: onDidDispose already hands the slot back and replays the transcript, so
+	// this must not grow a second copy of that path.
+	const body = fnBody(ext, 'moveChatToSidebar');
+	assert.match(body, /chatEditorPanel\.dispose\(\)/, 'the move must go through dispose, not a parallel hand-over');
+	assert.ok(!/makeLive|replayLiveTranscript/.test(body),
+		'this is duplicating the hand-over instead of reusing onDidDispose — the two will drift');
+	assert.match(body, /levelcodeAi\.chat\.focus/, 'with no panel open the command must still reveal the chat, not do nothing');
 });
 
 console.log('\nchatSurface: ' + n + ' tests passed.');
