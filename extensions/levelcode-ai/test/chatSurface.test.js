@@ -61,9 +61,14 @@ function fnBody(src, name) {
 test('SURFACE: only makeLive() ever moves the conversation, so two surfaces cannot both be live', () => {
 	// `post()` writes to activeWebview. If anything else assigned it, a hand-over could leave the
 	// pointer on a webview the user is no longer looking at — messages vanish into a hidden DOM.
+	// Stated as an invariant rather than an exact list: the number of RESETS is allowed to grow (the
+	// dispose path now has one per close route), but the number of places that point it at a live
+	// surface is not. Pinning the whole list meant adding a reset looked like a regression.
 	const writes = [...ext.matchAll(/activeWebview\s*=\s*([^;]+);/g)].map((m) => m[1].trim());
-	assert.deepStrictEqual(writes.sort(), ['undefined', 'webview'],
-		'activeWebview is assigned somewhere other than makeLive()/the dispose reset: ' + writes.join(' | '));
+	const live = writes.filter((w) => w !== 'undefined');
+	assert.deepStrictEqual(live, ['webview'],
+		'activeWebview is pointed at a surface somewhere other than makeLive(): ' + writes.join(' | '));
+	assert.ok(writes.length > live.length, 'nothing ever releases activeWebview — a disposed webview stays addressable');
 	assert.match(fnBody(ext, 'openChatInEditor'), /chatProvider\.makeLive\(panel\.webview\)/,
 		'the panel never becomes the live surface');
 });
@@ -140,14 +145,18 @@ test('RESTORE: closing the tab and "Bring it back" are the SAME path', () => {
 	assert.match(open, /chatEditorPanel = undefined/, 'the panel ref outlives the panel');
 });
 
-test('RESTORE: a sidebar that was never resolved is revealed rather than assumed', () => {
+test('RESTORE: a MOVE to a sidebar that was never resolved reveals it rather than assuming it', () => {
 	// If the container has not been opened this session, sidebarChatView is undefined — restoring by
-	// writing to it would throw, and doing nothing would leave the chat with no surface at all.
+	// writing to it would throw, and for a MOVE, doing nothing would leave the chat with no surface at
+	// all after the user explicitly asked for it on the right.
+	//
+	// This used to assert the reveal happened on EVERY close, which was right while the sidebar was
+	// home and became a bug the moment the editor became the default: it turned closing the tab into
+	// reopening the panel. The reveal is now scoped to the move, and the plain-close half is pinned by
+	// the CLOSE tests below.
 	const open = fnBody(ext, 'openChatInEditor');
-	// The reveal now goes through focusChatView() so its rejection cannot go unhandled; what this test
-	// cares about is unchanged — the else-branch must still reveal the view rather than assume it.
-	assert.match(open, /if \(sidebarChatView\) \{[\s\S]*\} else \{[\s\S]*focusChatView\(/,
-		'the never-resolved sidebar case is unhandled');
+	assert.match(open, /if \(sidebarChatView\) \{[\s\S]*\} else if \(moving\) \{[\s\S]*focusChatView\(/,
+		'a move with no resolved sidebar view no longer reveals it — the chat would land nowhere');
 });
 
 test('RESTORE: while detached, the sidebar shows the hand-off card, not a second chat', () => {
@@ -352,6 +361,46 @@ test('FOCUS: the shared helper logs the failure and names who caused it', () => 
 	// And it must be the thing the background callers actually use.
 	const callers = (ext.match(/focusChatView\('/g) || []).length;
 	assert.ok(callers >= 6, 'expected the background reveals to route through the helper, found ' + callers);
+});
+
+test('CLOSE: closing the tab closes the chat — it does not reopen on the right', () => {
+	// The regression this pins, reported from a real build: with chat.startLocation defaulting to the
+	// editor, onDidDispose revealed the sidebar unconditionally. Closing the tab therefore POPPED THE
+	// PANEL OPEN on the right, and there was no way to put the chat away at all — close the tab, the
+	// panel appears; close the panel, it comes back with the next window.
+	//
+	// A move and a close both end in panel.dispose(), so they are told apart by an explicit flag rather
+	// than by anything dispose itself can see.
+	const dispose = ext.slice(ext.indexOf('panel.onDidDispose'), ext.indexOf('panel.onDidDispose') + 1800);
+	assert.match(dispose, /const moving = movingChatToSidebar;/, 'dispose cannot tell a move from a close');
+	assert.match(dispose, /movingChatToSidebar = false;/, 'the flag must be cleared, or the NEXT close reveals too');
+
+	// The two reveals are the whole bug. Both must now be conditional.
+	assert.match(dispose, /if \(moving\) \{ sidebarChatView\.show\?\.\(true\); \}/,
+		'a plain close still forces the resolved sidebar view open');
+	// The no-view path is the one that actually bit: with nothing resolved, dispose used to call
+	// focusChatView() unconditionally, which is what POPPED THE PANEL OPEN. It must now sit inside the
+	// `moving` branch — checked positionally, because that is the property, and a regex trying to
+	// describe the surrounding block shape is how the first version of this assertion broke.
+	const revealIdx = dispose.indexOf('focusChatView(');
+	const movingBranchIdx = dispose.indexOf('else if (moving)');
+	assert.ok(movingBranchIdx > 0, 'the no-view close path is no longer split on `moving`');
+	assert.ok(revealIdx > movingBranchIdx,
+		'focusChatView is reachable on a plain close — closing the tab reopens the chat on the right');
+
+	// …and a close must still release the surface, or messages post into a disposed webview.
+	assert.match(dispose, /activeWebview = undefined;/, 'the disposed webview is still referenced');
+});
+
+test('CLOSE: a deliberate move still hands the conversation over', () => {
+	// The other half — it would be easy to fix the close by making the move stop working.
+	assert.match(fnBody(ext, 'moveChatToSidebar'), /movingChatToSidebar = true;[\s\S]{0,120}chatEditorPanel\.dispose\(\)/,
+		'the move must announce itself BEFORE disposing, or dispose reads a stale flag');
+	const dispose = ext.slice(ext.indexOf('panel.onDidDispose'), ext.indexOf('panel.onDidDispose') + 1800);
+	assert.match(dispose, /chatProvider\.makeLive\(sidebarChatView\.webview\)/,
+		'a resolved sidebar view must still become live, or the chat is live nowhere');
+	assert.match(dispose, /pendingTranscriptReplay = 'Back in the sidebar'/,
+		'the transcript must still replay into whichever surface takes over');
 });
 
 console.log('\nchatSurface: ' + n + ' tests passed.');

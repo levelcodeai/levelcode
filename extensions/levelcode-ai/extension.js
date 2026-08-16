@@ -58,6 +58,9 @@ let sidebarChatView;    // the contributed view, so the panel can hand the slot 
 /** @type {vscode.WebviewPanel | undefined} */
 let chatEditorPanel;    // set only while the chat is open as an editor tab
 let chatProvider;       // the single provider instance; both surfaces wire through it
+// Closing the tab and MOVING the chat both end in panel.dispose(), and they must not mean the same
+// thing. Set only by moveChatToSidebar, read once by onDidDispose, cleared immediately.
+let movingChatToSidebar = false;
 // The visible transcript lives in the webview's DOM, so swapping surfaces would blank it. Set before
 // handing over; the freshly-loaded surface replays on its `ready`, which is the first moment it can
 // receive anything at all.
@@ -2311,19 +2314,37 @@ async function openChatInEditor(opts) {
 	dbg('chat.openInEditor', {});
 
 	panel.onDidDispose(() => {
+		// A MOVE and a CLOSE both land here. Until the chat opened centred by default they were the same
+		// thing — the sidebar was home, so surrendering the tab meant going home — and this handler
+		// revealed the sidebar unconditionally. With `chat.startLocation: editor` that turns ⌘W into
+		// "reopen on the right", and there is no way to put the chat away at all: close the tab, the
+		// panel appears; close the panel, it is still bound to come back next time.
+		//
+		// So the reveal now happens ONLY for a deliberate move. A plain close closes.
+		const moving = movingChatToSidebar;
+		movingChatToSidebar = false;
 		chatEditorPanel = undefined;
+
 		if (sidebarChatView) {
+			// The view exists, so hand the conversation back to it either way — otherwise the chat would
+			// be live nowhere while a resolved view sits there showing a stale hand-over card. Only the
+			// REVEAL is conditional: making a hidden view live costs nothing and is correct the moment
+			// the user opens it.
 			pendingTranscriptReplay = 'Back in the sidebar';
 			chatProvider.makeLive(sidebarChatView.webview);
-			sidebarChatView.show?.(true);
-		} else {
-			// The view was never resolved (the container has not been opened this session). Reveal it —
-			// resolveWebviewView then makes it live, and without this the chat would have no surface at all.
+			if (moving) { sidebarChatView.show?.(true); }
+		} else if (moving) {
+			// Moving with no resolved view: reveal it, and resolveWebviewView makes it live on arrival.
 			activeWebview = undefined;
 			pendingTranscriptReplay = 'Back in the sidebar';
-			focusChatView('editorClosed');
+			focusChatView('movedToSidebar');
+		} else {
+			// Plain close, nothing resolved: the chat has no surface, which is exactly what was asked
+			// for. Drop the reference so nothing posts into a disposed webview; reopening from the
+			// command, the sidebar, or the next window restores it.
+			activeWebview = undefined;
 		}
-		dbg('chat.closedEditor', {});
+		dbg('chat.closedEditor', { moving });
 	});
 }
 
@@ -2336,7 +2357,13 @@ async function openChatInEditor(opts) {
  * hand-over changed.
  */
 function moveChatToSidebar() {
-	if (chatEditorPanel) { chatEditorPanel.dispose(); return undefined; }
+	if (chatEditorPanel) {
+		// Tell onDidDispose this is a MOVE. Disposing is how the move is performed, so without this flag
+		// the hand-over cannot tell it apart from the user simply closing the tab.
+		movingChatToSidebar = true;
+		chatEditorPanel.dispose();
+		return undefined;
+	}
 	// Already there (or never moved) — just reveal it, so the command is never a silent no-op.
 	//
 	// RETURNED, not fired and forgotten. `registerCommand` awaits whatever the handler returns, so a
