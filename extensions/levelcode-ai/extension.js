@@ -435,7 +435,11 @@ function captureSelection() {
  */
 function focusChatView(why) {
 	return Promise.resolve(vscode.commands.executeCommand('levelcodeAi.chat.focus'))
-		.then(undefined, (e) => dbg('chat.focus.failed', { why, msg: String((e && e.message) || e) }));
+		.then(undefined, (e) => {
+			const msg = String((e && e.message) || e);
+			console.warn('[levelcode-ai] chat.focus.failed', { why, msg });
+			dbg('chat.focus.failed', { why, msg });
+		});
 }
 
 function addSelection() {
