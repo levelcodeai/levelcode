@@ -578,6 +578,36 @@ test('TRANSCRIPT: the user bubble hugs its content, and is capped short of the c
 		'tint is the secondary cue and still earns its place — side alone would drop on a wrapped log');
 });
 
+test('WORDMARK: the empty-state logo is full blocks only, and fits its container', () => {
+	// Drawn on a 10-row pixel grid with 2px strokes, then packed two pixel rows per text row. Because
+	// every stroke is an even number of pixels, each pair collapses to a FULL block — no ▀ or ▄ survives.
+	//
+	// That is the property worth pinning, and it was learned the hard way. `▀` sits at the top of its
+	// cell and `▄` at the bottom, so `▀` directly above `▄` leaves a full cell of empty space between
+	// them: a seam straight through the letterform. A 1px-stroke font produces that constantly and
+	// shatters. Full blocks tile seamlessly in any monospace font, so this art cannot develop seams no
+	// matter what the user's editor font is.
+	const m = /<pre class="lc-ascii"[^>]*>([\s\S]*?)<\/pre>/.exec(html);
+	assert.ok(m, 'the empty-state wordmark is gone');
+	const art = m[1].replace(/^\n/, '');
+	const glyphs = new Set(art.replace(/[\n ]/g, ''));
+	assert.deepStrictEqual([...glyphs], ['█'],
+		'the wordmark uses partial blocks: ▀ above ▄ leaves a seam through the stroke in most fonts. '
+		+ 'Found: ' + [...glyphs].join(''));
+
+	// It is sized by the container (clamp(5px, 3.6cqi, 13px)) inside #empty, which is capped at 560px.
+	// Past ~44 columns it stops fitting and the pre grows a horizontal scrollbar under the logo.
+	const lines = art.split('\n');
+	const cols = Math.max(...lines.map((l) => l.length));
+	assert.ok(cols <= 44, 'the wordmark is ' + cols + ' columns; wider than ~44 overflows #empty (max 560px)');
+	assert.ok(lines.length <= 14, 'the wordmark is ' + lines.length + ' lines; it has to leave room for the prompt beneath it');
+
+	// The accessible name is the whole reason a picture made of text is not a wall of noise to a
+	// screen reader.
+	assert.match(m[0], /role="img"/, 'the wordmark must be exposed as an image, not read out block by block');
+	assert.match(m[0], /aria-label="[^"]+"/, 'the wordmark has no accessible name');
+});
+
 test('CODE: prose blocks get room, and nothing else that uses <pre> moves', () => {
 	// docs/CHAT-TYPOGRAPHY.md D5/T3. `pre` is a GLOBAL selector in this file, and it draws four different
 	// things: the empty state's ASCII logo, the MCP approval card's command block, the terminal output
