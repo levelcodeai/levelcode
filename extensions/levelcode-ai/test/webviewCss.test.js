@@ -578,25 +578,21 @@ test('TRANSCRIPT: the user bubble hugs its content, and is capped short of the c
 		'tint is the secondary cue and still earns its place — side alone would drop on a wrapped log');
 });
 
-test('WORDMARK: the empty-state logo is full blocks only, and fits its container', () => {
-	// Drawn on a 10-row pixel grid with 2px strokes, then packed two pixel rows per text row. Because
-	// every stroke is an even number of pixels, each pair collapses to a FULL block — no ▀ or ▄ survives.
-	//
-	// That is the property worth pinning, and it was learned the hard way. `▀` sits at the top of its
-	// cell and `▄` at the bottom, so `▀` directly above `▄` leaves a full cell of empty space between
-	// them: a seam straight through the letterform. A 1px-stroke font produces that constantly and
-	// shatters. Full blocks tile seamlessly in any monospace font, so this art cannot develop seams no
-	// matter what the user's editor font is.
+test('WORDMARK: the empty-state logo fits its container and has an accessible name', () => {
+	// NOT asserted here: which characters it is drawn from. A previous version of this test required
+	// full blocks only, on the theory that `█` tiles seamlessly while `▀`/`▄` can seam. Half of that is
+	// right — `▀` above `▄` does leave a gap — but the other half is not: whether `█` FILLS its cell is
+	// a property of the FONT, not of the character. In Monaco it does not, and a wordmark built on that
+	// assumption shattered into disconnected bars in the editor while looking perfect in a harness
+	// running SF Mono. The lesson is that this file cannot check the thing that actually matters, so it
+	// should stop pretending to; ASCII art has to be looked at in the target font.
 	const m = /<pre class="lc-ascii"[^>]*>([\s\S]*?)<\/pre>/.exec(html);
 	assert.ok(m, 'the empty-state wordmark is gone');
 	const art = m[1].replace(/^\n/, '');
-	const glyphs = new Set(art.replace(/[\n ]/g, ''));
-	assert.deepStrictEqual([...glyphs], ['█'],
-		'the wordmark uses partial blocks: ▀ above ▄ leaves a seam through the stroke in most fonts. '
-		+ 'Found: ' + [...glyphs].join(''));
 
-	// It is sized by the container (clamp(5px, 3.6cqi, 13px)) inside #empty, which is capped at 560px.
-	// Past ~44 columns it stops fitting and the pre grows a horizontal scrollbar under the logo.
+	// This bound IS checkable and is not about glyphs: the logo is sized from the container
+	// (clamp(5px, 3.6cqi, 13px)) inside #empty, which is capped at 560px. Past ~44 columns it stops
+	// fitting and the pre grows a horizontal scrollbar under the logo.
 	const lines = art.split('\n');
 	const cols = Math.max(...lines.map((l) => l.length));
 	assert.ok(cols <= 44, 'the wordmark is ' + cols + ' columns; wider than ~44 overflows #empty (max 560px)');
