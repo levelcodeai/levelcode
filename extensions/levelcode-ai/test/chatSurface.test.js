@@ -1,16 +1,18 @@
 /*---------------------------------------------------------------------------------------------
  *  Chat surfaces — sidebar ⇄ editor tab — run: node test/chatSurface.test.js
  *
- *  WHY THIS EXISTS. The chat can be hosted by a contributed WebviewView (sidebar) or a WebviewPanel
- *  (an editor tab). A view can never live in the editor grid — `ViewContainerLocation` is
- *  Sidebar | Panel | AuxiliaryBar and nothing else — so the centre needs a genuinely different
- *  object, and now two objects can host one conversation.
+ *  WHY THIS EXISTS. The chat is a WebviewPanel — an editor tab — and nothing else. It used to ALSO be
+ *  hostable by a contributed WebviewView in the right-hand bar, and one conversation with two possible
+ *  hosts needed a hand-over card, a detached document, a move command, a close-versus-move
+ *  distinction, and a transcript replay on every transition. All of that is gone; Sessions keeps the
+ *  right-hand container, because an index of past conversations is a different thing from the
+ *  conversation and does not need to share a column with it.
  *
  *  Everything that can go wrong here is STATE, not layout, and none of it is visible in a diff:
- *    · two live surfaces, so a post() reaches one and the user is looking at the other
  *    · a listener registered twice, so every click is handled twice
- *    · a hand-over that blanks the transcript, because it lives in the DOM
- *    · a restore path that only runs for one of the two ways a tab can close
+ *    · a second panel, so a post() reaches one DOM and the user is looking at the other
+ *    · a close that silently discards the conversation instead of sealing it
+ *    · a reveal that resurrects the surface the user just closed
  *
  *  So these assertions are about the SHAPE of the wiring, read out of the shipped extension.js the
  *  way mcpManage/ctxSegments read theirs. extension.js requires `vscode`, which does not exist
@@ -61,9 +63,13 @@ function fnBody(src, name) {
 test('SURFACE: only makeLive() ever moves the conversation, so two surfaces cannot both be live', () => {
 	// `post()` writes to activeWebview. If anything else assigned it, a hand-over could leave the
 	// pointer on a webview the user is no longer looking at — messages vanish into a hidden DOM.
+	// Stated as an invariant rather than an exact list: RESETS may multiply, but the places that point
+	// it at a live surface may not.
 	const writes = [...ext.matchAll(/activeWebview\s*=\s*([^;]+);/g)].map((m) => m[1].trim());
-	assert.deepStrictEqual(writes.sort(), ['undefined', 'webview'],
-		'activeWebview is assigned somewhere other than makeLive()/the dispose reset: ' + writes.join(' | '));
+	const live = writes.filter((w) => w !== 'undefined');
+	assert.deepStrictEqual(live, ['webview'],
+		'activeWebview is pointed at a surface somewhere other than makeLive(): ' + writes.join(' | '));
+	assert.ok(writes.length > live.length, 'nothing releases activeWebview — a disposed webview stays addressable');
 	assert.match(fnBody(ext, 'openChatInEditor'), /chatProvider\.makeLive\(panel\.webview\)/,
 		'the panel never becomes the live surface');
 });
@@ -108,8 +114,8 @@ test('REPLAY: every hand-over arms a replay — the transcript is DOM state and 
 	// Three transitions exist: to the tab, back to a resolved sidebar, and back to one that was never
 	// resolved. Miss any and the user lands in an empty chat holding a conversation the model still
 	// remembers — the worst of both worlds.
-	assert.strictEqual((ext.match(/pendingTranscriptReplay = '[^']+'/g) || []).length, 3,
-		'a hand-over path does not arm the replay');
+	assert.strictEqual((ext.match(/pendingTranscriptReplay = '[^']+'/g) || []).length, 1,
+		'the tab-open replay is gone, or a second hand-over path crept back in');
 	assert.match(fnBody(ext, 'openChatInEditor'), /pendingTranscriptReplay = 'Moved to the editor'[\s\S]*makeLive\(panel\.webview\)/,
 		'the replay must be armed BEFORE the surface loads, or `ready` fires with nothing pending');
 });
@@ -130,33 +136,8 @@ test('REPLAY: nothing is invented when there is nothing to replay', () => {
 
 // ---- 4. The restore path ------------------------------------------------------------------------
 
-test('RESTORE: closing the tab and "Bring it back" are the SAME path', () => {
-	// Two restore paths is two chances to leave the chat with no surface. The card disposes the panel
-	// and lets onDidDispose do the work, rather than restoring the sidebar itself.
-	assert.match(ext, /case 'reattach': if \(chatEditorPanel\) \{ chatEditorPanel\.dispose\(\); \} break;/,
-		'reattach restores the sidebar directly instead of disposing the panel');
-	const open = fnBody(ext, 'openChatInEditor');
-	assert.match(open, /onDidDispose\(\(\) => \{/, 'no disposal handler — closing the tab would strand the chat');
-	assert.match(open, /chatEditorPanel = undefined/, 'the panel ref outlives the panel');
-});
 
-test('RESTORE: a sidebar that was never resolved is revealed rather than assumed', () => {
-	// If the container has not been opened this session, sidebarChatView is undefined — restoring by
-	// writing to it would throw, and doing nothing would leave the chat with no surface at all.
-	const open = fnBody(ext, 'openChatInEditor');
-	// The reveal now goes through focusChatView() so its rejection cannot go unhandled; what this test
-	// cares about is unchanged — the else-branch must still reveal the view rather than assume it.
-	assert.match(open, /if \(sidebarChatView\) \{[\s\S]*\} else \{[\s\S]*focusChatView\(/,
-		'the never-resolved sidebar case is unhandled');
-});
 
-test('RESTORE: while detached, the sidebar shows the hand-off card, not a second chat', () => {
-	assert.match(ext, /if \(chatEditorPanel\) \{ view\.webview\.html = detachedHtml\(\); return; \}/,
-		'a sidebar resolving while the tab is open would load a second live chat');
-	const card = fnBody(ext, 'detachedHtml');
-	assert.match(card, /postMessage\(\{type:"reattach"\}\)/, 'the card offers no way back');
-	assert.ok(!/getHtml\(\)/.test(card), 'the card must not be the full chat');
-});
 
 // ---- 5. It reads as a move, not a resume --------------------------------------------------------
 
@@ -181,17 +162,6 @@ test('COMMAND: it is registered and discoverable in the palette', () => {
 
 // ---- 6. Every webview document describes its own script surface --------------------------------
 
-test('CSP: the hand-off card carries a policy and a nonced script, like the other documents', () => {
-	// It shipped without one. Small is not exempt: the card enables scripts and carries an inline one,
-	// so without a CSP it was the single webview in the extension whose script surface was undescribed
-	// — and a later tightening elsewhere would have silently stopped its button from working.
-	const card = fnBody(ext, 'detachedHtml');
-	assert.match(card, /Content-Security-Policy/, 'no CSP meta — the card is unlike every other document here');
-	assert.match(card, /<script nonce="' \+ nonce \+ '"/,
-		'the inline script is not nonced, so the policy above would block it');
-	assert.match(card, /const \{ nonce, csp \} = webviewCsp\(\)/,
-		'it must use the shared helper, not hand-roll a third copy of the policy');
-});
 
 test('CSP: one helper describes the policy for every document the extension serves', () => {
 	// The construction was duplicated in getHtml and getSessionsHtml before this; a third copy would
@@ -206,33 +176,43 @@ test('CSP: one helper describes the policy for every document the extension serv
 	assert.strictEqual(handRolled, 1, 'the policy string appears ' + handRolled + ' times — it should exist only inside webviewCsp()');
 
 	// And every document generator goes through it.
-	for (const fn of ['getHtml', 'getSessionsHtml', 'detachedHtml']) {
+	// detachedHtml was the third; it was the sidebar's hand-off card and went with the sidebar.
+	for (const fn of ['getHtml', 'getSessionsHtml']) {
 		assert.match(fnBody(ext, fn), /webviewCsp\(\)/, fn + '() does not use the shared policy');
 	}
 });
 
-test('COMMAND: it has a BUTTON on the chat header, not only the palette', () => {
-	// A feature whose whole point is "I did not know I could do that" is not served by a
-	// palette-only entry — nobody searches for a capability they do not know exists. This shipped
-	// icon-less and button-less on the first pass, which is exactly why it is pinned now.
-	const cmd = pkg.contributes.commands.find((c) => c.command === 'levelcode.ai.openChatInEditor');
-	assert.ok(cmd.icon, 'no icon — a view/title action with no icon renders as nothing');
+test('COMMAND: the chat TAB carries the actions the view title used to', () => {
+	// New Chat, Add Files and Set API Key lived on the sidebar view's title bar. Deleting that view
+	// would have deleted the only place they were reachable outside the palette — a capability nobody
+	// searches for, because nobody knows it exists. They move to the tab, which is where the chat is.
+	const onTab = (pkg.contributes.menus['editor/title'] || [])
+		.filter((m) => m.when === "activeWebviewPanelId == 'levelcode.ai.chat'");
+	const ids = onTab.map((m) => m.command);
+	for (const id of ['levelcode.ai.newChat', 'levelcode.ai.addFileContext', 'levelcode.ai.setApiKey']) {
+		assert.ok(ids.includes(id), id + ' lost its button when the sidebar view was removed');
+		const cmd = pkg.contributes.commands.find((c) => c.command === id);
+		assert.ok(cmd && cmd.icon, id + ' has no icon — an editor/title action with no icon renders as nothing');
+	}
+	for (const m of onTab) {
+		assert.match(m.group, /^navigation@\d+$/,
+			m.command + ' must be in navigation, so VS Code can overflow it into … on a narrow tab');
+	}
 
-	const entry = (pkg.contributes.menus['view/title'] || [])
-		.find((m) => m.command === 'levelcode.ai.openChatInEditor');
-	assert.ok(entry, 'not contributed to view/title — reachable only from the Command Palette');
-	assert.strictEqual(entry.when, 'view == levelcodeAi.chat',
-		'the button must be scoped to the chat view, or it appears on every view title in the editor');
-	assert.match(entry.group, /^navigation@\d+$/,
-		'navigation keeps it inline and lets VS Code overflow it into … when the sidebar is narrow');
+	// And nothing may be scoped to the view that no longer exists — a stale `when` is a button that
+	// never appears anywhere.
+	const all = Object.values(pkg.contributes.menus).flat();
+	const stale = all.filter((m) => String(m.when || '').includes('levelcodeAi.chat'));
+	assert.deepStrictEqual(stale, [], 'menu entries still target the removed chat view');
 });
 
 test('START: the chat opens centred by default, and the setting is the only place that decides', () => {
 	const prop = pkg.contributes.configuration.properties['levelcode.ai.chat.startLocation'];
 	assert.ok(prop, 'chat.startLocation is not declared — the default would be unchangeable');
 	assert.strictEqual(prop.default, 'editor', 'the chat must open in the centre by default');
-	assert.deepStrictEqual(prop.enum, ['editor', 'secondarySidebar', 'none'],
-		'`none` is the opt-out that replaced the old launch cap — dropping it leaves no way to turn this off');
+	assert.deepStrictEqual(prop.enum, ['editor', 'none'],
+		'the chat has one surface now; `none` is the only other honest value, and the opt-out that '
+		+ 'replaced the old launch cap — dropping it leaves no way to turn this off');
 	assert.strictEqual(prop.enumDescriptions.length, prop.enum.length,
 		'every value needs a description, or the settings UI shows bare identifiers');
 
@@ -253,7 +233,6 @@ test('START: exactly one thing opens the chat at startup', () => {
 
 	const body = fnBody(ext, 'revealChatAtStartup');
 	assert.match(body, /where === 'none'/, 'none must return before opening anything');
-	assert.match(body, /levelcodeAi\.chat\.focus/, 'secondarySidebar must still reveal the contributed view');
 	assert.match(body, /openChatInEditor\(\{ preserveFocus: true \}\)/,
 		'the startup open must preserve focus — otherwise it steals the caret from a restored file');
 });
@@ -279,38 +258,7 @@ test('START: the fire-and-forget startup call cannot become an unhandled rejecti
 	assert.match(call[1], /dbg\(/, 'the failure is swallowed silently; log the reason so it can be diagnosed');
 });
 
-test('MOVE BACK: a failed move reaches the user instead of vanishing', () => {
-	// Deliberately the OPPOSITE of the startup path. This is an explicit click, and registerCommand
-	// awaits what the handler returns — so returning the thenable turns a failure into a reported
-	// command error, where swallowing it would leave the user pressing a button that does nothing.
-	const body = fnBody(ext, 'moveChatToSidebar');
-	assert.match(body, /return vscode\.commands\.executeCommand\('levelcodeAi\.chat\.focus'\)/,
-		'the reveal must be RETURNED, or a failure is an unhandled rejection and the click looks inert');
-	assert.match(ext, /registerCommand\('levelcode\.ai\.moveChatToSidebar', \(\) => moveChatToSidebar\(\)\)/,
-		'the registration must return the handler result, or returning it inside buys nothing');
-});
 
-test('MOVE BACK: there is a button on the tab, and it reuses the dispose hand-over', () => {
-	// The chat now opens centred for everyone, so the way BACK has to be visible from the centre.
-	// Before this it existed only on the sidebar card — which you cannot see while the chat is a tab.
-	const cmd = pkg.contributes.commands.find((c) => c.command === 'levelcode.ai.moveChatToSidebar');
-	assert.ok(cmd, 'no move-back command — the only way right would be closing the tab');
-	assert.ok(cmd.icon, 'no icon — an editor/title action with no icon renders as nothing');
-
-	const entry = (pkg.contributes.menus['editor/title'] || [])
-		.find((m) => m.command === 'levelcode.ai.moveChatToSidebar');
-	assert.ok(entry, 'not contributed to editor/title — reachable only from the Command Palette');
-	assert.strictEqual(entry.when, "activeWebviewPanelId == 'levelcode.ai.chat'",
-		'scope it to the chat panel, or the button appears on every editor tab in the window');
-
-	// Disposing IS the move: onDidDispose already hands the slot back and replays the transcript, so
-	// this must not grow a second copy of that path.
-	const body = fnBody(ext, 'moveChatToSidebar');
-	assert.match(body, /chatEditorPanel\.dispose\(\)/, 'the move must go through dispose, not a parallel hand-over');
-	assert.ok(!/makeLive|replayLiveTranscript/.test(body),
-		'this is duplicating the hand-over instead of reusing onDidDispose — the two will drift');
-	assert.match(body, /levelcodeAi\.chat\.focus/, 'with no panel open the command must still reveal the chat, not do nothing');
-});
 
 test('FOCUS: no reveal of the chat view is left to reject unhandled', () => {
 	// One guard for the whole class, rather than six assertions that each name a function. `executeCommand`
@@ -319,12 +267,17 @@ test('FOCUS: no reveal of the chat view is left to reject unhandled', () => {
 	//
 	// Scanning every call site means the NEXT one is covered too. That matters here: this pattern was
 	// copied into six places over time precisely because nothing was watching for it.
-	const CALL = "vscode.commands.executeCommand('levelcodeAi.chat.focus')";
+	// Repointed when the chat became editor-only: the old scan looked for
+	// executeCommand('levelcodeAi.chat.focus'), a string that no longer appears anywhere, so it would
+	// have kept passing while checking nothing at all. openChatInEditor() is what opens the chat now,
+	// and it is async, so the same rule applies to it.
+	const CALL = 'openChatInEditor(';
 	const bare = [];
 	for (let i = ext.indexOf(CALL); i >= 0; i = ext.indexOf(CALL, i + 1)) {
 		const before = ext.slice(Math.max(0, i - 40), i);
 		const after = ext.slice(i + CALL.length, i + CALL.length + 40);
-		const handled = /\breturn\s+$/.test(before)         // returned — a command handler VS Code awaits
+		const handled = /\bfunction\s+$/.test(before)       // the declaration itself, not a call
+			|| /\breturn\s+$/.test(before)                    // returned — a command handler VS Code awaits
 			|| /\bawait\s+$/.test(before)                    // awaited by a caller that catches
 			|| /=>\s*$/.test(before)                         // concise arrow body: also a return
 			|| /Promise\.resolve\($/.test(before)            // wrapped by focusChatView
@@ -351,7 +304,48 @@ test('FOCUS: the shared helper logs the failure and names who caused it', () => 
 
 	// And it must be the thing the background callers actually use.
 	const callers = (ext.match(/focusChatView\('/g) || []).length;
-	assert.ok(callers >= 6, 'expected the background reveals to route through the helper, found ' + callers);
+	assert.ok(callers >= 5, 'expected the background reveals to route through the helper, found ' + callers);
+});
+
+test('CLOSE: closing the tab seals the session and lets memory learn from it', () => {
+	// The promise this change makes. Closing the chat is an ENDING, not a discard: the conversation
+	// lands in History with its outcome recorded and its facts promoted, exactly as New Chat does.
+	// Without this, shutting the tab would silently drop whatever was said.
+	const dispose = ext.slice(ext.indexOf('panel.onDidDispose'), ext.indexOf('panel.onDidDispose') + 1400);
+	assert.match(dispose, /sealLiveSession\('chatClosed'\)/, 'closing the tab no longer seals the session');
+	assert.match(dispose, /activeWebview = undefined;/, 'the disposed webview stays addressable — post() would write into it');
+
+	// ONE implementation, shared with New Chat. Two copies would drift, and the half that drifted
+	// would be the close path, because that is the half nobody watches.
+	const seal = fnBody(ext, 'sealLiveSession');
+	assert.match(seal, /m\.seal\('done'\)/, 'the session is not sealed');
+	assert.match(seal, /enrichMemoryAsync\(sealedId\)/, 'memory never learns from the closed session');
+	assert.match(seal, /try \{/, 'sealing must not throw out of a dispose handler, where nothing can catch it');
+	assert.match(fnBody(ext, 'newChat'), /sealLiveSession\('newChat'\)/,
+		'New Chat has its own copy of the sealing logic again — the two will drift');
+});
+
+test('CLOSE: nothing resurrects the chat on the right', () => {
+	// The reported bug, and the reason the view is gone rather than merely deprioritised: closing the
+	// tab, and ⇧⌘I, both revealed a contributed view in the right-hand bar. Neither surface nor
+	// command may point there any more.
+	assert.ok(!/levelcodeAi\.chat\b/.test(ext),
+		'extension.js still references the removed chat view — something will reveal it');
+	assert.ok(!/sidebarChatView|detachedHtml|moveChatToSidebar/.test(ext),
+		'dead sidebar machinery survives: the hand-over card, the move command, or the view reference');
+
+	// ⇧⌘I must open the tab. This is the exact call that kept pulling out the right-hand panel.
+	assert.match(ext, /registerCommand\('levelcode\.ai\.focus', \(\) => openChatInEditor\(\)\)/,
+		'the ⇧⌘I command does not open the editor tab');
+	const kb = (pkg.contributes.keybindings || []).filter((k) => k.command === 'levelcode.ai.focus');
+	assert.ok(kb.length >= 1, 'the focus keybinding is gone');
+
+	// The chat provider is still constructed — it owns wire()/makeLive() — but not as a view provider.
+	assert.match(ext, /chatProvider = new ChatViewProvider\(\);/, 'nothing constructs the chat provider');
+	assert.ok(!/registerWebviewViewProvider\('levelcodeAi\.chat'/.test(ext),
+		'the chat is registered as a contributed view again');
+	assert.match(ext, /registerWebviewViewProvider\('levelcodeAi\.sessions'/,
+		'Sessions must KEEP its view — it is the right-hand container\'s reason to exist');
 });
 
 console.log('\nchatSurface: ' + n + ' tests passed.');

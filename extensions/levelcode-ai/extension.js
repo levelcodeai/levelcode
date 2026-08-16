@@ -53,8 +53,6 @@ let ctx;
  * @type {vscode.Webview | undefined}
  */
 let activeWebview;
-/** @type {vscode.WebviewView | undefined} */
-let sidebarChatView;    // the contributed view, so the panel can hand the slot back when it closes
 /** @type {vscode.WebviewPanel | undefined} */
 let chatEditorPanel;    // set only while the chat is open as an editor tab
 let chatProvider;       // the single provider instance; both surfaces wire through it
@@ -431,10 +429,13 @@ function captureSelection() {
  * diagnose — a chat surface that silently never appears — so `why` names the caller in the log.
  *
  * NOT for a command handler whose whole job IS the reveal: `levelcode.ai.focus` returns the thenable
- * instead, so VS Code reports the failure to the user who asked for it. See moveChatToSidebar.
+ * instead, so VS Code reports the failure to the user who asked for it.
+ *
+ * "The chat" is now the editor tab and nothing else — this used to reveal the contributed view in the
+ * right-hand bar, which is why every one of these callers kept pulling a panel out on the right.
  */
 function focusChatView(why) {
-	return Promise.resolve(vscode.commands.executeCommand('levelcodeAi.chat.focus'))
+	return Promise.resolve(openChatInEditor())
 		.then(undefined, (e) => {
 			const msg = String((e && e.message) || e);
 			console.warn('[levelcode-ai] chat.focus.failed', { why, msg });
@@ -1082,10 +1083,33 @@ async function resumeSession(id) {
 	dbg('sessions.resumed', { id, tier: r.plan && r.plan.tier, restored: agentMessages.length, shown: turns.length });
 }
 
+/**
+ * Seal the live session and let memory learn from it.
+ *
+ * Extracted because closing the chat tab has to do exactly what New Chat does. A conversation that
+ * ends because the user shut the tab is not a lost one: it is a finished one, and it should land in
+ * History with its outcome recorded and its facts promoted, the same as any other. Two copies of this
+ * would drift, and the half that drifted would be the one nobody watches — the close path.
+ *
+ * Never throws: it runs from a dispose handler, where an exception has nowhere to go.
+ */
+function sealLiveSession(why) {
+	try {
+		const m = sessionsManager();
+		if (!m) { return; }
+		const sealedId = m.liveId();
+		m.seal('done');
+		if (sealedId) { enrichMemoryAsync(sealedId); }   // outcome + fact promotion, off the critical path
+		dbg('sessions.sealed', { why, id: sealedId });
+	} catch (e) {
+		dbg('sessions.seal.error', { why, msg: String((e && e.message) || e) });
+	}
+}
+
 function newChat() {
 	// Seal the outgoing session (its terminal state + a final index row) BEFORE the transcript is cleared,
 	// so it lands in History as a finished session and the next turn opens a fresh one.
-	try { const m = sessionsManager(); if (m) { const sealedId = m.liveId(); m.seal('done'); if (sealedId) { enrichMemoryAsync(sealedId); } } } catch (e) { dbg('sessions.seal.error', { msg: String((e && e.message) || e) }); }
+	sealLiveSession('newChat');
 	conversation = [];
 	agentMessages = [];
 	checkpoints.length = 0; currentCheckpoint = null;   // drop the per-turn restore stack
@@ -2177,19 +2201,17 @@ function sendConfigToWebview() {
 	post({ type: 'config', provider: providerId, proseSize, proseWidth, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity });
 }
 
+/**
+ * Owns the chat webview: one message handler, one live surface.
+ *
+ * It used to also be a WebviewViewProvider, because the chat could be hosted by a contributed view in
+ * the right-hand bar OR by an editor tab. That is gone: the chat is an editor tab and nothing else.
+ * Two hosts for one conversation bought a hand-over card, a detached-state document, a move command,
+ * a close-versus-move distinction, and a replay on every transition — all of it machinery for a
+ * choice nobody wanted. Sessions still live in the right-hand bar; they are a different thing and do
+ * not need to share a column with the conversation they index.
+ */
 class ChatViewProvider {
-	/** @param {vscode.WebviewView} view */
-	resolveWebviewView(view) {
-		sidebarChatView = view;
-		view.webview.options = { enableScripts: true, localResourceRoots: [ctx.extensionUri] };
-		this.wire(view.webview);
-		// If the chat is currently an editor tab, this slot shows a hand-off card rather than a second
-		// live copy. The view can resolve at any time (first reveal, a reload), so the check belongs
-		// here and not only at the moment the panel opens.
-		if (chatEditorPanel) { view.webview.html = detachedHtml(); return; }
-		this.makeLive(view.webview);
-	}
-
 	/** Point the conversation at `webview` and load the chat into it. Assumes it is already wired. */
 	makeLive(webview) {
 		activeWebview = webview;
@@ -2197,9 +2219,9 @@ class ChatViewProvider {
 	}
 
 	/**
-	 * Register the ONE message handler on a webview. Separate from makeLive because the sidebar's html
-	 * is swapped between the chat and the hand-off card, and a listener survives an html swap — wiring
-	 * on every swap would stack duplicate handlers and double-send every message.
+	 * Register the ONE message handler on a webview. Kept separate from makeLive because a listener
+	 * lives on the WEBVIEW and survives an html swap: makeLive can reload the document (a new chat, a
+	 * resumed session) without stacking a second handler and double-sending every message.
 	 */
 	wire(webview) {
 		webview.onDidReceiveMessage(async (msg) => {
@@ -2207,9 +2229,6 @@ class ChatViewProvider {
 				// `ready` is the earliest a freshly-loaded webview can hear anything, so it is also where a
 				// surface that just took over replays the conversation it inherited (openChatInEditor).
 				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); autopilot = aiConfig().get('agent.autopilot', false); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); post({ type: 'autopilot', on: autopilot }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } postMemoryDigest(); if (pendingTranscriptReplay) { const t = pendingTranscriptReplay; pendingTranscriptReplay = ''; replayLiveTranscript(t); } break;
-				// The hand-off card's button. Disposing the panel runs its onDidDispose, which is the ONE
-				// place that restores the sidebar — so "bring it back" and closing the tab are one path.
-				case 'reattach': if (chatEditorPanel) { chatEditorPanel.dispose(); } break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'setAutopilot': autopilot = !!msg.on; aiConfig().update('agent.autopilot', autopilot, vscode.ConfigurationTarget.Global); dbg('autopilot.set', { on: autopilot }); post({ type: 'autopilot', on: autopilot }); break;
 				case 'send': await handleSend(msg.text); break;
@@ -2280,8 +2299,9 @@ class ChatViewProvider {
  * middle. Only EDITORS live in the middle, so the centre needs a WebviewPanel: a real tab that
  * splits, moves between groups, and can be dragged to another window like any other editor.
  *
- * It is a MOVE. The sidebar hands over its slot and shows a card; the conversation continues in the
- * tab with one live surface throughout.
+ * This is the ONLY surface. It used to be one of two — the chat could also be hosted by a contributed
+ * view in the right-hand bar, and opening here was a "move" that handed that slot over and left a card
+ * behind. Sessions still live over there; the conversation does not.
  */
 async function openChatInEditor(opts) {
 	// `preserveFocus` exists for the STARTUP path only. Opening the chat centred is what the user asked
@@ -2307,43 +2327,22 @@ async function openChatInEditor(opts) {
 
 	// Hand the sidebar slot over. Its listener survives an html swap, so the card's button still
 	// reaches the same handler — see ChatViewProvider.wire.
-	if (sidebarChatView) { sidebarChatView.webview.html = detachedHtml(); }
 	dbg('chat.openInEditor', {});
 
 	panel.onDidDispose(() => {
+		// Closing the chat CLOSES it. There is no second surface to hand back to any more, and the
+		// previous behaviour — reveal the sidebar — turned ⌘W into "reopen on the right", with no way to
+		// put the chat away at all.
+		//
+		// The conversation is not discarded, though. Shutting the tab is an ending, so it gets the same
+		// ending New Chat gives: the session is sealed into History and memory learns from it. Doing
+		// this here rather than only in newChat is the difference between "I closed the tab" and "I lost
+		// the conversation".
 		chatEditorPanel = undefined;
-		if (sidebarChatView) {
-			pendingTranscriptReplay = 'Back in the sidebar';
-			chatProvider.makeLive(sidebarChatView.webview);
-			sidebarChatView.show?.(true);
-		} else {
-			// The view was never resolved (the container has not been opened this session). Reveal it —
-			// resolveWebviewView then makes it live, and without this the chat would have no surface at all.
-			activeWebview = undefined;
-			pendingTranscriptReplay = 'Back in the sidebar';
-			focusChatView('editorClosed');
-		}
+		activeWebview = undefined;      // nothing may post into a disposed webview
+		sealLiveSession('chatClosed');
 		dbg('chat.closedEditor', {});
 	});
-}
-
-/**
- * The other direction of the move: put the chat back in the right-hand bar.
- *
- * Disposing the panel IS the move — `onDidDispose` above already hands the slot back to the sidebar
- * and replays the transcript. Going through it rather than duplicating that path is what makes this
- * button and ⌘W behave identically; a second implementation would drift from it the first time the
- * hand-over changed.
- */
-function moveChatToSidebar() {
-	if (chatEditorPanel) { chatEditorPanel.dispose(); return undefined; }
-	// Already there (or never moved) — just reveal it, so the command is never a silent no-op.
-	//
-	// RETURNED, not fired and forgotten. `registerCommand` awaits whatever the handler returns, so a
-	// failure here reaches the user as a failed command instead of an unhandled rejection. That is the
-	// opposite of the startup path on purpose: this is an explicit click, and silence would leave the
-	// user pressing a button that does nothing.
-	return vscode.commands.executeCommand('levelcodeAi.chat.focus');
 }
 
 /**
@@ -2367,7 +2366,6 @@ async function revealChatAtStartup() {
 	const where = chatStartLocation();
 	dbg('chat.startLocation', { where });
 	if (where === 'none') { return; }
-	if (where === 'secondarySidebar') { await vscode.commands.executeCommand('levelcodeAi.chat.focus'); return; }
 	await openChatInEditor({ preserveFocus: true });
 }
 
@@ -2389,34 +2387,6 @@ function replayLiveTranscript(tag) {
 	if (!turns.length) { return; }
 	const entry = m.list().find((e) => e.id === id) || {};
 	post({ type: 'sessionResumed', id, title: entry.title || 'Session', note: '', tag, icon: 'layout', turns });
-}
-
-/**
- * The sidebar slot while the chat is an editor tab. Deliberately tiny — it is a signpost, not a UI.
- *
- * Small does not mean exempt: it enables scripts and carries an inline one, so it gets the same
- * CSP + nonce as the chat and sessions documents. Anything less and this would be the one webview
- * whose script surface is undescribed.
- */
-function detachedHtml() {
-	const { nonce, csp } = webviewCsp();
-	const bg = 'var(--vscode-sideBar-background)', fg = 'var(--vscode-foreground)';
-	return '<!DOCTYPE html><html><head><meta charset="utf-8">'
-		+ '<meta http-equiv="Content-Security-Policy" content="' + csp + '">'
-		+ '<style>'
-		+ 'body{margin:0;padding:28px 22px;background:' + bg + ';color:' + fg + ';'
-		+ 'font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);text-align:center}'
-		+ '.t{font-size:14px;font-weight:600;margin-bottom:6px}'
-		+ '.s{opacity:.7;line-height:1.55;margin-bottom:18px}'
-		+ 'button{width:100%;padding:7px 10px;border:1px solid var(--vscode-button-border,transparent);'
-		+ 'border-radius:4px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);'
-		+ 'font:inherit;cursor:pointer}button:hover{background:var(--vscode-button-hoverBackground)}'
-		+ '</style></head><body>'
-		+ '<div class="t">Chat is open in the editor</div>'
-		+ '<div class="s">The conversation moved to a tab so it has room. Closing that tab brings it back here.</div>'
-		+ '<button id="b">Bring it back</button>'
-		+ '<script nonce="' + nonce + '">const v=acquireVsCodeApi();document.getElementById("b").onclick=()=>v.postMessage({type:"reattach"});</script>'
-		+ '</body></html>';
 }
 
 /**
@@ -2715,16 +2685,19 @@ async function openWorkspaceFile(rel) {
 
 function activate(context) {
 	ctx = context;
+	// Constructed directly rather than by registerWebviewViewProvider: the chat is no longer a
+	// contributed view, but the panel still needs the one object that owns wire()/makeLive().
+	chatProvider = new ChatViewProvider();
 	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider('levelcodeAi.chat', (chatProvider = new ChatViewProvider()), {
-			webviewOptions: { retainContextWhenHidden: true }
-		}),
 		vscode.window.registerWebviewViewProvider('levelcodeAi.sessions', new SessionsViewProvider(), {
 			webviewOptions: { retainContextWhenHidden: true }
 		}),
 		vscode.commands.registerCommand('levelcode.ai.sessions', () => vscode.commands.executeCommand('levelcodeAi.sessions.focus')),
 		vscode.window.onDidChangeActiveTextEditor(() => postActiveFile()),
-		vscode.commands.registerCommand('levelcode.ai.focus', () => vscode.commands.executeCommand('levelcodeAi.chat.focus')),
+		// ⇧⌘I. Opens the chat where the chat lives — the editor tab. This pointed at the contributed
+		// view, which is why the shortcut kept pulling a panel out on the right after the conversation
+		// had stopped living there.
+		vscode.commands.registerCommand('levelcode.ai.focus', () => openChatInEditor()),
 		vscode.commands.registerCommand('levelcode.customize', () => openCustomize(context)),
 		// Agent Sketch: the visual multi-agent flow canvas. Lazy require — only loads when opened.
 		vscode.commands.registerCommand('levelcode.ai.sketch', () => {
@@ -2742,7 +2715,6 @@ function activate(context) {
 		// argument, and openChatInEditor now reads an options object there. Bound directly, a title-bar
 		// click would pass whatever VS Code supplies and could set preserveFocus by accident.
 		vscode.commands.registerCommand('levelcode.ai.openChatInEditor', () => openChatInEditor()),
-		vscode.commands.registerCommand('levelcode.ai.moveChatToSidebar', () => moveChatToSidebar()),
 		vscode.commands.registerCommand('levelcode.ai.addSelection', addSelection),
 		vscode.commands.registerCommand('levelcode.ai.addFileContext', addContext),
 		vscode.commands.registerCommand('levelcode.ai.setApiKey', () => promptForKey()),

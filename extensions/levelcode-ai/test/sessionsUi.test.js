@@ -219,10 +219,15 @@ test('VIEW: the sidebar view and the modal share the EXACT same render block (no
 	assert.strictEqual(grab(view), grab(html), 'the two blocks must be byte-identical, or the two surfaces drift');
 });
 
-test('VIEW: contributed as a second webview view in the levelcodeAi container, with a palette command', () => {
+test('VIEW: Sessions is the only webview view in the levelcodeAi container, with a palette command', () => {
+	// Sessions used to share this container with a Chat view. The chat moved out to an editor tab for
+	// good — a conversation should not have to split a narrow column with the index of past
+	// conversations — so Sessions is now the container's whole reason to exist.
 	const views = (pkg.contributes.views || {}).levelcodeAi || [];
 	const ids = views.map((v) => v.id);
-	assert.ok(ids.includes('levelcodeAi.chat') && ids.includes('levelcodeAi.sessions'), 'both Chat and Sessions views present');
+	assert.ok(ids.includes('levelcodeAi.sessions'), 'the Sessions view is gone');
+	assert.ok(!ids.includes('levelcodeAi.chat'),
+		'the chat is a contributed view again — it lives in an editor tab, and two hosts is what this removed');
 	assert.strictEqual(views.find((v) => v.id === 'levelcodeAi.sessions').type, 'webview');
 	assert.ok((pkg.contributes.commands || []).some((c) => c.command === 'levelcode.ai.sessions'), 'a Command Palette entry exists');
 });

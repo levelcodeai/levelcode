@@ -86,11 +86,6 @@
     "views": {
       "levelcodeAi": [
         {
-          "id": "levelcodeAi.chat",
-          "name": "Chat",
-          "type": "webview"
-        },
-        {
           "id": "levelcodeAi.sessions",
           "name": "Sessions",
           "type": "webview"
@@ -134,12 +129,6 @@
         "title": "AI: Open Chat in Editor",
         "category": "LevelCode",
         "icon": "$(link-external)"
-      },
-      {
-        "command": "levelcode.ai.moveChatToSidebar",
-        "title": "AI: Move Chat to Sidebar",
-        "category": "LevelCode",
-        "icon": "$(layout-sidebar-right)"
       },
       {
         "command": "levelcode.ai.sessions",
@@ -217,33 +206,21 @@
       }
     ],
     "menus": {
-      "view/title": [
+      "editor/title": [
         {
           "command": "levelcode.ai.addFileContext",
-          "when": "view == levelcodeAi.chat",
-          "group": "navigation@1"
+          "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
+          "group": "navigation@0"
         },
         {
           "command": "levelcode.ai.newChat",
-          "when": "view == levelcodeAi.chat",
-          "group": "navigation@2"
+          "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
+          "group": "navigation@1"
         },
         {
           "command": "levelcode.ai.setApiKey",
-          "when": "view == levelcodeAi.chat",
-          "group": "navigation@3"
-        },
-        {
-          "command": "levelcode.ai.openChatInEditor",
-          "when": "view == levelcodeAi.chat",
-          "group": "navigation@4"
-        }
-      ],
-      "editor/title": [
-        {
-          "command": "levelcode.ai.moveChatToSidebar",
           "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
-          "group": "navigation@0"
+          "group": "navigation@2"
         },
         {
           "command": "levelcode.ai.review.keepActive",
@@ -390,12 +367,10 @@
           "type": "string",
           "enum": [
             "editor",
-            "secondarySidebar",
             "none"
           ],
           "enumDescriptions": [
-            "Open the chat as a centred editor tab, like any other file.",
-            "Reveal the chat in the right-hand sidebar.",
+            "Open the chat as a centred editor tab.",
             "Do not open the chat automatically."
           ],
           "default": "editor",
