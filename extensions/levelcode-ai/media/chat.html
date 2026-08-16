@@ -72,12 +72,15 @@
      in this file are all cards, dialogs and the empty state. In a 380px sidebar the container bounded
      it, so it never looked wrong — but the chat can now open as an editor tab (AI: Open Chat in
      Editor), and at 900px the same CSS produced ~154-character lines.
-     Measured in the shipped font at 13px: the average prose character is 5.86px, so 680px is ~116
-     characters — a real improvement while staying wide enough that a fenced code block does not wrap
-     constantly. NOT expressed in `ch`: `0` is 8.13px here, 39% wider than average text, so a `ch` cap
-     silently overshoots by about a third.
+     The cap itself is `--prose-max`, declared on `body`, and is deliberately NOT restated here. This
+     comment carried its own copy of the number and said 680 for exactly as long as it took the cap to
+     become 820 — which is what a second copy of a value is always for. docs/CHAT-TYPOGRAPHY.md D1 has
+     how it was chosen; webviewCss.test.js fails if this comment starts quoting a length again.
+     NOT expressed in `ch`: `0` measures 8.13px against an average prose character of 5.86px, so a
+     `ch` cap silently overshoots by about a third. Those two figures stay because they are facts about
+     the typeface, not a decision that can be revised.
      Applied to EVERY direct child, not just .msg, so messages, cards and the activity timeline share
-     one column instead of drifting apart at width. Below 680px this is inert — which is why the
+     one column instead of drifting apart at width. Below the cap this is inert — which is why the
      sidebar is untouched. */
   #log > * { width: 100%; max-width: var(--prose-max); margin-inline: auto; box-sizing: border-box; }
   /* ---- per-response copy button (hover-reveal under a completed assistant message) ---- */

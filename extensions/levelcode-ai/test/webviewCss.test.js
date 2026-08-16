@@ -21,6 +21,30 @@ const path = require('path');
 const html = fs.readFileSync(path.join(__dirname, '..', 'media', 'chat.html'), 'utf8');
 const css = html.slice(html.indexOf('<style'), html.indexOf('</style>'));
 
+// Comment-stripped CSS, for anything that reasons about BLOCK STRUCTURE rather than text. A `{` inside
+// a comment would throw off brace matching, and the comments in this stylesheet are prose-heavy enough
+// that one will eventually contain a brace.
+const cssBlocks = css.replace(/\/\*[\s\S]*?\*\//g, '');
+
+/**
+ * The body of the `{ … }` block that opens at or after `from`, matched by BALANCED braces.
+ *
+ * Written because the obvious shortcut is wrong: searching for a literal closing brace (`\n  }`) only
+ * terminates rules that happen to be formatted across multiple lines. A one-line block — like
+ * `@media (…) { body { --shell-x: 24px; } }` — has no such terminator, so the search runs on into the
+ * NEXT block and quietly returns a slice spanning both. A test built on that asserts against whatever
+ * the file's rule order happens to put in reach.
+ */
+function blockAt(src, from) {
+	const open = src.indexOf('{', from);
+	if (open < 0) { return ''; }
+	let depth = 0;
+	for (let i = open; i < src.length; i++) {
+		if (src[i] === '{') { depth++; } else if (src[i] === '}') { depth--; if (!depth) { return src.slice(open + 1, i); } }
+	}
+	return '';   // unbalanced — the caller's assertion fails on the empty body, which is the honest result
+}
+
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('  ok - ' + name); }
 
@@ -273,6 +297,26 @@ test('TRANSCRIPT: the prose column is bounded, and every child shares the one me
 		'the measure should be an absolute length, not `ch` — see CHAT-TYPOGRAPHY.md D1');
 });
 
+test('TRANSCRIPT: the stylesheet comment keeps no copy of the cap', () => {
+	// Review found the comment beside the rule still saying "680px" and "~116 characters" after the cap
+	// became 820 — the third place this number has drifted, and the only one no test was watching. The
+	// doc pin above covers CHAT-TYPOGRAPHY.md; nothing covered the stylesheet's own prose.
+	//
+	// The fix is not to sync it. A comment that restates a value will drift again the next time the
+	// value changes, so it must not carry the number at all — it points at `--prose-max` instead.
+	const block = /THE MEASURE[\s\S]*?\*\//.exec(css);
+	assert.ok(block, 'the THE MEASURE comment is gone — this guard covers nothing');
+	assert.match(block[0], /--prose-max/, 'the comment must point at the property rather than restate its value');
+
+	// 380px and 900px are VIEWPORT widths — facts about where the problem showed up, which cannot go
+	// stale. Any other length in here is a copy of a decision that can.
+	const VIEWPORTS = ['380px', '900px'];
+	const restated = (block[0].match(/\b\d{3,4}px\b/g) || []).filter((v) => !VIEWPORTS.includes(v));
+	assert.deepStrictEqual(restated, [],
+		'the measure comment quotes a length again — reference --prose-max instead, or it drifts the next '
+		+ 'time the cap moves: ' + restated.join(', '));
+});
+
 test('SHELL: the composer shares the transcript column instead of spanning the panel', () => {
 	// docs/CHAT-TYPOGRAPHY.md D9. T1 bounded the TRANSCRIPT and nothing else, so at editor width the
 	// input was a ~1580px box under an 820px conversation — the single thing that most made the panel
@@ -332,14 +376,20 @@ test('TRANSCRIPT: the looser rhythm is gated to reading width, so the sidebar is
 	// T1's exit criterion is that a narrow panel renders exactly as before — a user who upgrades and
 	// never opens the editor tab should see nothing move. Verified against develop's computed styles
 	// at 520px: padding, gap, paragraph and heading margins, line-height and font-size all identical.
-	// Located by CONTENT, not by position: there is now more than one `min-width: 760px` gate (D9 gates
-	// --shell-x on the same breakpoint), and an indexOf would silently grab whichever comes first in the
-	// file — passing or failing on rule ORDER rather than on the thing being asserted.
-	const gates = [...css.matchAll(/@media \(min-width: 760px\)/g)].map((m) => m.index);
+	// Located by CONTENT, not by position: there is more than one `min-width: 760px` gate (D9 gates
+	// --shell-x on the same breakpoint), so an indexOf would grab whichever comes first in the file and
+	// assert on rule ORDER rather than on the thing being checked.
+	//
+	// And located with BALANCED BRACES, not by searching for a literal `\n  }`. Review caught that: the
+	// --shell-x gate is written on one line, so it has no `\n  }` of its own and the search ran straight
+	// past it into the next multi-line block. It happened to resolve correctly here — the swallowed span
+	// did not contain `#log {` — but only because of where the rules currently sit. Move one rule and
+	// the slice silently spans two gates, which is the same order-dependence in a new disguise.
+	const gates = [...cssBlocks.matchAll(/@media \(min-width: 760px\)/g)].map((m) => m.index);
 	assert.ok(gates.length, 'the width gate is gone — the rhythm change would now hit the sidebar too');
-	const at = gates.find((i) => css.slice(i, css.indexOf('\n  }', i)).includes('#log {'));
+	const at = gates.find((i) => blockAt(cssBlocks, i).includes('#log {'));
 	assert.ok(at !== undefined, 'no min-width:760px gate contains the #log rhythm rules');
-	const block = css.slice(at, css.indexOf('\n  }', at));
+	const block = blockAt(cssBlocks, at);
 	assert.match(block, /#log \{[^}]*padding:/, 'the wider page margin belongs inside the gate');
 	assert.match(block, /margin-bottom:\s*1em/, 'prose spacing must be em-based so T2 scales it');
 	assert.match(block, /h1[\s\S]*margin:\s*1\.6em 0 \.55em/,
