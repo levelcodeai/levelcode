@@ -578,6 +578,58 @@ test('TRANSCRIPT: the user bubble hugs its content, and is capped short of the c
 		'tint is the secondary cue and still earns its place — side alone would drop on a wrapped log');
 });
 
+test('CODE: prose blocks get room, and nothing else that uses <pre> moves', () => {
+	// docs/CHAT-TYPOGRAPHY.md D5/T3. `pre` is a GLOBAL selector in this file, and it draws four different
+	// things: the empty state's ASCII logo, the MCP approval card's command block, the terminal output
+	// pane, and the prose code block D5 is actually about. Only the logo has no padding override of its
+	// own — so widening bare `pre` would quietly move it, which is the T2 mistake (`.msg` vs `.msg .body`)
+	// waiting in a new place.
+	const gates = [...cssBlocks.matchAll(/@media \(min-width: 760px\)/g)].map((m) => m.index);
+	const at = gates.find((i) => blockAt(cssBlocks, i).includes('#log {'));
+	assert.ok(at !== undefined, 'the rhythm gate is gone');
+	const block = blockAt(cssBlocks, at);
+
+	assert.match(block, /\.msg \.body pre \{[^}]*padding:/,
+		'the code-block padding must be scoped to .msg .body pre');
+	assert.ok(!/^\s*pre \{[^}]*padding:\s*12px/m.test(css),
+		'bare `pre` was widened — that moves the ASCII logo and the approval cards too');
+	assert.match(css, /^\s*pre \{[^}]*padding:\s*9px 11px/m,
+		'the base `pre` padding changed; the logo and cards inherit it and have no override');
+
+	// Gated to reading width for the same reason D3 is: a 380px sidebar is deliberately dense, and
+	// 6 more pixels a side is content width it does not have. Measured: at 420px the computed padding
+	// and margins are identical to develop; at 1200px they are 12px 14px and 14px.
+	// Membership in `block` above is what proves it is gated; this catches the narrower case of a SECOND
+	// ungated copy declared earlier in the file, which would apply at every width and win nothing visible
+	// in review.
+	assert.ok(!/\.msg \.body pre \{[^}]*padding:\s*12px/.test(css.slice(0, at)),
+		'a second, ungated copy of the code-block padding is declared before the width gate');
+
+	// The margin joins D3's rhythm rather than staying an absolute, so raising the prose size opens the
+	// spacing around a block with it.
+	assert.match(block, /\.msg \.body pre \{[^}]*margin:\s*[\d.]+em/,
+		'the block margin must be em-based, or it stops matching the paragraph spacing beside it');
+});
+
+test('CODE: inline code stays theme-driven — we still never set its colour', () => {
+	// D5, and §1 before it: no `color` has ever been set here. The red/orange in dark themes comes from
+	// the theme, so hard-coding one would fight every theme rather than fixing anything. It is the kind
+	// of line that gets added while "tidying up the code style" and is invisible until someone switches
+	// to a light theme.
+	const rule = /:not\(pre\) > code \{([^}]*)\}/.exec(css);
+	assert.ok(rule, 'the inline-code rule is gone');
+	assert.ok(!/(^|;)\s*color\s*:/.test(rule[1]),
+		'inline code now sets a colour — D5 keeps this theme-driven: ' + rule[1].trim());
+	assert.match(rule[1], /background:\s*var\(--vscode-textCodeBlock-background/,
+		'inline code must keep the theme background it has always had');
+
+	// Its padding stays tight ON PURPOSE. Vertical padding on an inline box does not grow the line box,
+	// so a roomier inline code span overlaps the line above it — "code surfaces get room" applies to
+	// blocks, not to spans.
+	assert.match(rule[1], /padding:\s*1px 5px/,
+		'inline padding grew; on an inline box that overlaps the neighbouring line rather than adding room');
+});
+
 test('TRANSCRIPT: the heading scale has steps you can actually see', () => {
 	// The old 1.3/1.18/1.07 put 0.11em between h2 and h3 — 1.4px at 13px, i.e. three levels of
 	// hierarchy that were indistinguishable without selecting the text.

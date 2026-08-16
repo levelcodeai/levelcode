@@ -122,9 +122,29 @@ a heading belong to the section it introduces rather than float between two.
 
 ### D5 — Code surfaces get room, and stay theme-driven.
 
-`pre` padding `9px 11px` → ~`12px 14px`, with the block's vertical margin tied to D3's rhythm.
+`pre` padding `9px 11px` → `12px 14px`, with the block's vertical margin tied to D3's rhythm.
 Inline code keeps its neutral background; we do **not** start setting `color` (see §1 — we never
 did, and hard-coding it would fight every theme).
+
+**Shipped (T3), with one thing the decision did not anticipate:** `pre` is a **global** selector in
+this stylesheet and draws four different things — the empty state's ASCII logo, the MCP approval
+card's command block, the terminal output pane, and the prose code block this decision is about. Only
+the logo has no padding override of its own, so widening bare `pre` would have quietly moved it. The
+rule is scoped to `.msg .body pre`, which is the same distinction T2 had to make between `.msg` and
+`.msg .body`.
+
+Gated to reading width, like D3: a 380px sidebar is deliberately dense, and six more pixels a side is
+content width it does not have. Measured, against `develop`:
+
+| | sidebar (420px) | editor (1200px) |
+| --- | --- | --- |
+| prose `pre` padding | `9px 11px` — **unchanged** | **`12px 14px`** |
+| prose `pre` margin | `8px` — **unchanged** | **`14px`** (1em at the shipped prose size) |
+| ASCII logo, terminal pane, inline code | unchanged | **unchanged** |
+
+Inline code's `padding: 1px 5px` is deliberately left alone. Vertical padding on an inline box does
+not grow the line box, so a roomier inline span overlaps the line above it — "code surfaces get room"
+is a statement about blocks, not spans.
 
 Deliberately **not** in scope: a header row on code blocks (language label, copy button). That is a
 component, not typography, and it belongs in its own slice.
@@ -262,7 +282,10 @@ comparing computed styles against `develop` at 520px, not by eye.
 the widened heading scale. **Exit:** h1/h2/h3 are distinguishable at a glance in a screenshot with no
 selection, and every non-prose control still matches workbench chrome.
 
-**T3 — code surfaces** *(S)*. D5. Ships: `pre` padding and rhythm.
+**T3 — code surfaces** *(S)*. D5. **Shipped.** `pre` padding and rhythm, scoped to `.msg .body pre`
+and gated to reading width. **Exit:** a fenced block has room at editor width, the sidebar renders
+identically to before, and the three other things that use `<pre>` are untouched — measured, not
+eyeballed.
 
 **T4 — speaker treatment** *(S)*. D6. **Shipped.** The label leaves the screen and stays in the
 accessibility tree, and a turn start buys back part of the height it was occupying. **Exit:** the
@@ -289,8 +312,8 @@ property reaches the webview from settings, the second is a line — so splittin
 Sequencing: T1 first and alone — it may turn out to be most of the perceived fix, and shipping it
 by itself is the cheapest way to find out before spending effort on T2–T4.
 
-That held up: T1–T2, T4, T6 and T7 have shipped in that order, each visible on its own. **T3 is the
-only slice of this plan still outstanding.** Neither D8/T6 nor D9/T7 was in the original decomposition
+That held up: T1–T2, T4, T6, T7 and T3 shipped in that order, each visible on its own. **Every slice
+of this plan has now shipped.** Neither D8/T6 nor D9/T7 was in the original decomposition
 — both came from looking at the reference again after shipping, which is the argument for slices small
 enough to look at. D9 in particular was invisible from inside the plan: T1's own wording said the
 composer "keeps its current behaviour", and it took a side-by-side screenshot to notice that was the

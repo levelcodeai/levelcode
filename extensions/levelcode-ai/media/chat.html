@@ -209,6 +209,17 @@
     .msg .body h1, .msg .body h2, .msg .body h3,
     .msg .body h4, .msg .body h5, .msg .body h6 { margin: 1.6em 0 .55em; }
     .msg .body > :first-child { margin-top: 0; }
+    /* T3 (docs/CHAT-TYPOGRAPHY.md D5) — prose code blocks get room, and their vertical margin joins the
+       same em rhythm as a paragraph so raising the prose size opens them with it.
+
+       SCOPED TO `.msg .body pre`, NOT bare `pre`. That selector also draws the empty state's ASCII
+       logo, the MCP approval card's command block and the terminal output pane — chrome with its own
+       density, and only the logo has no padding override of its own, so a global change would quietly
+       move it. This is the T2 mistake (`.msg` vs `.msg .body`) waiting in a new place.
+
+       Gated to reading width for the same reason D3 is: a 380px sidebar is deliberately dense, and
+       spending 6 more pixels a side on padding there costs content width the panel does not have. */
+    .msg .body pre { padding: 12px 14px; margin: 1em 0; }
   }
   .msg .body h4, .msg .body h5, .msg .body h6 { font-size: 1em; }
   .msg .body blockquote { margin: 0 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--muted); }
