@@ -21,6 +21,30 @@ const path = require('path');
 const html = fs.readFileSync(path.join(__dirname, '..', 'media', 'chat.html'), 'utf8');
 const css = html.slice(html.indexOf('<style'), html.indexOf('</style>'));
 
+// Comment-stripped CSS, for anything that reasons about BLOCK STRUCTURE rather than text. A `{` inside
+// a comment would throw off brace matching, and the comments in this stylesheet are prose-heavy enough
+// that one will eventually contain a brace.
+const cssBlocks = css.replace(/\/\*[\s\S]*?\*\//g, '');
+
+/**
+ * The body of the `{ … }` block that opens at or after `from`, matched by BALANCED braces.
+ *
+ * Written because the obvious shortcut is wrong: searching for a literal closing brace (`\n  }`) only
+ * terminates rules that happen to be formatted across multiple lines. A one-line block — like
+ * `@media (…) { body { --shell-x: 24px; } }` — has no such terminator, so the search runs on into the
+ * NEXT block and quietly returns a slice spanning both. A test built on that asserts against whatever
+ * the file's rule order happens to put in reach.
+ */
+function blockAt(src, from) {
+	const open = src.indexOf('{', from);
+	if (open < 0) { return ''; }
+	let depth = 0;
+	for (let i = open; i < src.length; i++) {
+		if (src[i] === '{') { depth++; } else if (src[i] === '}') { depth--; if (!depth) { return src.slice(open + 1, i); } }
+	}
+	return '';   // unbalanced — the caller's assertion fails on the empty body, which is the honest result
+}
+
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('  ok - ' + name); }
 
@@ -254,8 +278,13 @@ test('TRANSCRIPT: the prose column is bounded, and every child shares the one me
 	//
 	// This guard exists because the regression is INVISIBLE in a sidebar. Whoever refactors the log
 	// container will not see it break; a user with the chat open in an editor tab will.
-	assert.match(css, /#log\s*\{[^}]*--prose-max:\s*\d+px/,
-		'the measure is no longer a custom property — T5 hands this to a setting');
+	// T7/D9 moved the declaration from `#log` to `body`. That is load-bearing, not tidying: the composer
+	// and the status row are siblings of the log, so a measure declared ON the log is invisible to them —
+	// which is exactly how a full-panel composer ended up sitting under a 680px conversation.
+	assert.match(css, /body \{[^}]*--prose-max:\s*\d+px/,
+		'the measure must be declared on `body`, or the composer cannot resolve the same column as the log');
+	assert.ok(!/#log\s*\{[^}]*--prose-max:/.test(css),
+		'declaring it on #log too gives the shell two sources of truth for one column');
 	assert.match(css, /#log > \*\s*\{[^}]*max-width:\s*var\(--prose-max\)/,
 		'the cap must apply to EVERY direct child, or cards and the timeline drift wider than the prose');
 	assert.match(css, /#log > \*\s*\{[^}]*margin-inline:\s*auto/,
@@ -263,9 +292,68 @@ test('TRANSCRIPT: the prose column is bounded, and every child shares the one me
 
 	// `ch` is a trap here and the reason the first draft of the doc was wrong: `0` measures 8.13px in
 	// this font against a 5.86px average prose character, so a ch-based cap overshoots by ~39%.
-	const capRule = /#log\s*\{[^}]*--prose-max:\s*([^;]+);/.exec(css);
+	const capRule = /body \{[^}]*--prose-max:\s*([^;]+);/.exec(css);
 	assert.ok(capRule && /px$/.test(capRule[1].trim()),
 		'the measure should be an absolute length, not `ch` — see CHAT-TYPOGRAPHY.md D1');
+});
+
+test('TRANSCRIPT: the stylesheet comment keeps no copy of the cap', () => {
+	// Review found the comment beside the rule still saying "680px" and "~116 characters" after the cap
+	// became 820 — the third place this number has drifted, and the only one no test was watching. The
+	// doc pin above covers CHAT-TYPOGRAPHY.md; nothing covered the stylesheet's own prose.
+	//
+	// The fix is not to sync it. A comment that restates a value will drift again the next time the
+	// value changes, so it must not carry the number at all — it points at `--prose-max` instead.
+	const block = /THE MEASURE[\s\S]*?\*\//.exec(css);
+	assert.ok(block, 'the THE MEASURE comment is gone — this guard covers nothing');
+	assert.match(block[0], /--prose-max/, 'the comment must point at the property rather than restate its value');
+
+	// 380px and 900px are VIEWPORT widths — facts about where the problem showed up, which cannot go
+	// stale. Any other length in here is a copy of a decision that can.
+	const VIEWPORTS = ['380px', '900px'];
+	const restated = (block[0].match(/\b\d{3,4}px\b/g) || []).filter((v) => !VIEWPORTS.includes(v));
+	assert.deepStrictEqual(restated, [],
+		'the measure comment quotes a length again — reference --prose-max instead, or it drifts the next '
+		+ 'time the cap moves: ' + restated.join(', '));
+});
+
+test('SHELL: the composer shares the transcript column instead of spanning the panel', () => {
+	// docs/CHAT-TYPOGRAPHY.md D9. T1 bounded the TRANSCRIPT and nothing else, so at editor width the
+	// input was a ~1580px box under an 820px conversation — the single thing that most made the panel
+	// look unlike the reference, where the composer sits directly under the text it answers.
+	const shell = /(#bgTasksBar[^{]*#status)\s*\{([^}]*)\}/.exec(css);
+	assert.ok(shell, 'the shell-column rule is gone — the composer and status row span the panel again');
+	for (const id of ['#composer', '#status', '#workbar']) {
+		assert.ok(shell[1].includes(id), id + ' dropped out of the shell column');
+	}
+	assert.match(shell[2], /max-width:\s*var\(--prose-max\)/, 'the shell must use the SAME measure as the log');
+	assert.match(shell[2], /margin-inline:\s*auto/, 'an uncentred shell sits left while the transcript is centred');
+
+	// `calc(100% - 2 * --shell-x)`, not a bare `width: 100%`. Below the cap a bare 100% out-dents the
+	// composer by the log's own padding — 24px a side in an editor tab, and misaligned in every sidebar,
+	// which is the width most users are actually in.
+	assert.match(shell[2], /width:\s*calc\(100% - 2 \* var\(--shell-x\)\)/,
+		'the shell must inset by the same --shell-x the log pads with, or the edges only agree above the cap');
+	assert.match(css, /#log \{[^}]*padding:\s*12px var\(--shell-x\)/,
+		'the log must PAD by --shell-x — that shared value is the whole alignment mechanism');
+	assert.match(css, /@media \(min-width: 760px\) \{ body \{ --shell-x:\s*\d+px/,
+		'--shell-x must widen with the panel, or an editor tab keeps sidebar margins');
+
+	// Measured in headless Chrome at 1600 / 900 / 800 / 420px: composer and prose left AND right edges
+	// agree to 0.0px at every one. Before, the gap at 1600px was 452px a side.
+});
+
+test('SHELL: the runtime width setting reaches the composer, not just the transcript', () => {
+	// The half of the move that is easy to forget. If the override is written to #log while the property
+	// is declared on body, `chat.proseWidth` resizes the conversation and leaves the composer at the
+	// stylesheet default — re-opening the exact split D9 exists to close, but only for users who set it.
+	const handler = html.slice(html.indexOf("m.type === 'config'"), html.indexOf("m.type === 'config'") + 600);
+	assert.ok(/document\.body/.test(handler),
+		'the override must target document.body, where --prose-max is declared');
+	assert.ok(!/getElementById\('log'\)[\s\S]{0,200}setProperty\('--prose-max'/.test(handler),
+		'writing --prose-max onto #log leaves the composer on the stylesheet default');
+	assert.match(handler, /setProperty\('--prose-max', m\.proseWidth \? m\.proseWidth \+ 'px' : ''\)/,
+		'0 must still clear the property so the stylesheet wins again');
 });
 
 test('TRANSCRIPT: the design doc quotes the SAME measure the stylesheet ships', () => {
@@ -288,9 +376,20 @@ test('TRANSCRIPT: the looser rhythm is gated to reading width, so the sidebar is
 	// T1's exit criterion is that a narrow panel renders exactly as before — a user who upgrades and
 	// never opens the editor tab should see nothing move. Verified against develop's computed styles
 	// at 520px: padding, gap, paragraph and heading margins, line-height and font-size all identical.
-	const at = css.indexOf('@media (min-width: 760px)');
-	assert.ok(at > 0, 'the width gate is gone — the rhythm change would now hit the sidebar too');
-	const block = css.slice(at, css.indexOf('\n  }', at));
+	// Located by CONTENT, not by position: there is more than one `min-width: 760px` gate (D9 gates
+	// --shell-x on the same breakpoint), so an indexOf would grab whichever comes first in the file and
+	// assert on rule ORDER rather than on the thing being checked.
+	//
+	// And located with BALANCED BRACES, not by searching for a literal `\n  }`. Review caught that: the
+	// --shell-x gate is written on one line, so it has no `\n  }` of its own and the search ran straight
+	// past it into the next multi-line block. It happened to resolve correctly here — the swallowed span
+	// did not contain `#log {` — but only because of where the rules currently sit. Move one rule and
+	// the slice silently spans two gates, which is the same order-dependence in a new disguise.
+	const gates = [...cssBlocks.matchAll(/@media \(min-width: 760px\)/g)].map((m) => m.index);
+	assert.ok(gates.length, 'the width gate is gone — the rhythm change would now hit the sidebar too');
+	const at = gates.find((i) => blockAt(cssBlocks, i).includes('#log {'));
+	assert.ok(at !== undefined, 'no min-width:760px gate contains the #log rhythm rules');
+	const block = blockAt(cssBlocks, at);
 	assert.match(block, /#log \{[^}]*padding:/, 'the wider page margin belongs inside the gate');
 	assert.match(block, /margin-bottom:\s*1em/, 'prose spacing must be em-based so T2 scales it');
 	assert.match(block, /h1[\s\S]*margin:\s*1\.6em 0 \.55em/,
@@ -302,9 +401,9 @@ test('TRANSCRIPT: prose has its own type, and chrome does not follow it', () => 
 	// size is tuned for menu labels; message bodies get their own. The scoping is the entire safety
 	// property: applied to `.msg` instead of `.msg .body` it would drag the role label, the copy
 	// button and the checkpoint control up with it, and the panel would stop matching the editor.
-	assert.match(css, /#log\s*\{[^}]*--prose-size:\s*calc\(var\(--vscode-font-size[^)]*\)\s*\+\s*\d+px\)/,
+	assert.match(css, /body \{[^}]*--prose-size:\s*calc\(var\(--vscode-font-size[^)]*\)\s*\+\s*\d+px\)/,
 		'the prose size must be an OFFSET from the workbench, not a flat value — see below');
-	assert.match(css, /#log\s*\{[^}]*--prose-leading:\s*[\d.]+/, 'the prose leading is no longer a custom property');
+	assert.match(css, /body \{[^}]*--prose-leading:\s*[\d.]+/, 'the prose leading is no longer a custom property');
 	assert.match(css, /\.msg \.body \{[^}]*font-size:\s*var\(--prose-size\)[^}]*line-height:\s*var\(--prose-leading\)/,
 		'prose type must be set on .msg .body');
 
