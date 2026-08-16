@@ -63,6 +63,10 @@ let pendingTranscriptReplay = '';
 let sessionsWebview;   // the Sessions sidebar webview (for pushing list refreshes after a History action)
 /** @type {{role:string,content:string}[]} */
 let conversation = [];
+// Bumped by every teardown. A turn captures it when it starts and checks it before writing anything
+// back, so work still unwinding after the conversation was torn down cannot repopulate the state the
+// teardown just cleared — nor clobber the turn that replaced it.
+let conversationEpoch = 0;
 /** @type {string | null} */
 let pendingContext = null;
 /** Files pinned as chat context (whole codebase-wide context). @type {{id:string,uri:vscode.Uri,name:string,rel:string}[]} */
@@ -1123,6 +1127,12 @@ function sealLiveSession(why) {
  * to re-render; the close path is tearing one down.
  */
 function resetConversationState() {
+	// FIRST: anything already in flight is now stale, and must not write back. Without this the
+	// teardown loses a race it does not know it is in — see handleSend/agentFlow, both of which mutate
+	// this state from a catch/finally that runs long after abort() returns.
+	conversationEpoch++;
+	clearApprovals();
+	clearQuestions();
 	conversation = [];
 	agentMessages = [];
 	checkpoints.length = 0; currentCheckpoint = null;   // drop the per-turn restore stack
@@ -1594,6 +1604,7 @@ async function agentFlow(text) {
 	if (!req.ok) { post({ type: 'agentError', message: providerErrorMessage(req) }); post({ type: 'agentDone', reason: 'error' }); return; }
 
 	post({ type: 'agentStart' });
+	const epoch = conversationEpoch;   // this turn belongs to the conversation as it is RIGHT NOW
 	abort = new AbortController();
 	repairAgentMemory();
 	// Open a workspace checkpoint for this turn (before the goal is pushed) so the user can roll back here.
@@ -1689,6 +1700,12 @@ async function agentFlow(text) {
 			signal: abort.signal
 		});
 	} finally {
+		// Everything below writes to state a teardown may already have replaced. runAgent holds
+		// `agentMessages` BY REFERENCE, so a teardown that rebinds the global leaves this run pushing
+		// into an orphaned array — and then `agentMessages.slice(sessTurnStart)` would slice the NEW,
+		// empty one with an index into the old, recording an empty turn against the wrong session.
+		// `abort` and `currentCheckpoint` are worse: they would clobber whatever turn came next.
+		if (epoch !== conversationEpoch) { return; }
 		clearApprovals();
 		clearQuestions();
 		abort = null;
@@ -1736,6 +1753,7 @@ async function handleSend(text) {
 	post({ type: 'clearContext' });
 	post({ type: 'assistantStart' });
 
+	const epoch = conversationEpoch;   // this turn belongs to the conversation as it is RIGHT NOW
 	abort = new AbortController();
 	let assistant = '';
 	const onDelta = (d) => { assistant += d; post({ type: 'assistantDelta', text: d }); };
@@ -1764,6 +1782,11 @@ async function handleSend(text) {
 		conversation.push({ role: 'assistant', content: assistant });
 		post({ type: 'assistantDone' });
 	} catch (e) {
+		// Closing the tab mid-stream aborts the request, which lands HERE — after resetConversationState
+		// has already cleared `conversation`. Pushing the partial reply back in would leave a dangling
+		// assistant turn with no user turn in front of it, and the next send would ship it to the model:
+		// exactly the leak the teardown exists to prevent, reintroduced by the teardown's own abort.
+		if (epoch !== conversationEpoch) { return; }
 		if (abort && abort.signal.aborted) {
 			if (assistant) { conversation.push({ role: 'assistant', content: assistant }); }
 			post({ type: 'assistantDone' });
@@ -1772,7 +1795,9 @@ async function handleSend(text) {
 			post({ type: 'assistantError', message: String((e && e.message) || e), code: e && e.code });
 		}
 	} finally {
-		abort = null;
+		// Only if this turn still owns it. A new turn may already have installed its own controller, and
+		// nulling that one would leave it unstoppable.
+		if (epoch === conversationEpoch) { abort = null; }
 	}
 }
 
@@ -2369,10 +2394,12 @@ async function openChatInEditor(opts) {
 /**
  * Where the chat opens when the window does.
  *
- * The default is the EDITOR: the chat is the thing most sessions are actually about, and a centred
- * column is where the reference puts it. `secondarySidebar` is the old behaviour, kept because the
- * sidebar is the right answer when you want the chat beside code rather than instead of it, and
- * `none` is the honest opt-out for anyone who would rather open it themselves.
+ * Two supported values. `editor` (the default) opens the chat as a centred editor tab — the only
+ * surface it has; `none` is the honest opt-out for anyone who would rather open it themselves.
+ *
+ * `secondarySidebar` is LEGACY. It was valid until the chat became editor-only and is still sitting in
+ * real settings.json files, so it is mapped to `editor` rather than left to the unknown-value path —
+ * same result, but the debug log then names the surface we actually opened.
  *
  * Unknown values fall back to the default rather than throwing: this is read at startup, and a typo
  * in settings.json should not be able to leave a window with no chat and no explanation.

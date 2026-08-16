@@ -401,4 +401,57 @@ test('START: a legacy secondarySidebar setting maps to the editor, and says so',
 	assert.strictEqual(run('nonsense'), 'editor', 'an unknown value must fall back to the default');
 });
 
+test('CLOSE: work still unwinding cannot repopulate the state the teardown just cleared', () => {
+	// Review found the teardown losing a race it did not know it was in. Closing mid-stream aborts the
+	// request, and the abort lands in handleSend's catch AFTER resetConversationState has cleared
+	// `conversation` — where it pushed the partial reply straight back in. The result was a dangling
+	// assistant turn with no user turn in front of it, shipped to the model on the next send: the exact
+	// leak the teardown exists to prevent, reintroduced by the teardown's own abort().
+	//
+	// agentFlow's finally was worse. runAgent holds `agentMessages` BY REFERENCE, so a teardown that
+	// rebinds the global leaves the run pushing into an orphaned array — and then
+	// `agentMessages.slice(sessTurnStart)` slices the NEW empty one with an index into the old.
+	// `abort = null` and `currentCheckpoint = null` would clobber whatever turn came next.
+	const reset = fnBody(ext, 'resetConversationState');
+	assert.match(reset, /conversationEpoch\+\+/, 'the teardown does not invalidate in-flight work');
+
+	// FIRST, before anything is cleared: an abort landing mid-teardown must already read as stale.
+	assert.ok(reset.indexOf('conversationEpoch++') < reset.indexOf('conversation = []'),
+		'the epoch must be bumped before the state is cleared, or the race window survives the fix');
+
+	for (const fn of ['handleSend', 'agentFlow']) {
+		const body = fnBody(ext, fn);
+		const captured = body.indexOf('const epoch = conversationEpoch');
+		assert.ok(captured >= 0, fn + ' never captures the epoch — it cannot tell if its turn is still current');
+		assert.ok(captured < body.indexOf('abort = new AbortController()'),
+			fn + ' captures the epoch after installing its controller; capture it before the turn can be torn down');
+		assert.match(body, /epoch !== conversationEpoch/, fn + ' writes back without checking it is still current');
+	}
+
+	// The guard has to come before the first write in the block it protects, or it guards nothing.
+	const send = fnBody(ext, 'handleSend');
+	const tail = send.slice(send.lastIndexOf('} catch (e) {'));
+	assert.ok(tail.indexOf('epoch !== conversationEpoch') < tail.indexOf("conversation.push"),
+		'handleSend pushes the partial reply before checking the turn is still current');
+	assert.match(tail, /if \(epoch === conversationEpoch\) \{ abort = null; \}/,
+		'the finally nulls `abort` unconditionally — that clobbers the controller of the turn that replaced this one');
+
+	const agent = fnBody(ext, 'agentFlow');
+	const afin = agent.slice(agent.lastIndexOf('} finally {'));
+	assert.ok(afin.indexOf('epoch !== conversationEpoch') < afin.indexOf('abort = null'),
+		'agentFlow clobbers abort/currentCheckpoint/recordTurn before checking the turn is still current');
+});
+
+test('START: the docstring describes the values that actually exist', () => {
+	// It still called secondarySidebar a supported surface ("kept because the sidebar is the right
+	// answer when…") while the code below mapped it away as legacy. In-code documentation sitting
+	// directly on top of the change is the worst place to leave a contradiction.
+	const at = ext.indexOf('Where the chat opens when the window does');
+	assert.ok(at > 0, 'the chatStartLocation docstring is gone');
+	const doc = ext.slice(at, ext.indexOf('function chatStartLocation', at));
+	assert.match(doc, /LEGACY/, 'the docstring does not mark secondarySidebar as legacy');
+	assert.ok(!/kept because/.test(doc), 'the docstring still describes secondarySidebar as a supported surface');
+	assert.match(doc, /`editor`[\s\S]*`none`/, 'the docstring should name the two values that are actually supported');
+});
+
 console.log('\nchatSurface: ' + n + ' tests passed.');
