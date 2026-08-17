@@ -189,7 +189,11 @@ test('COMMAND: the chat TAB carries the actions the view title used to', () => {
 	const onTab = (pkg.contributes.menus['editor/title'] || [])
 		.filter((m) => m.when === "activeWebviewPanelId == 'levelcode.ai.chat'");
 	const ids = onTab.map((m) => m.command);
-	for (const id of ['levelcode.ai.newChat', 'levelcode.ai.addFileContext', 'levelcode.ai.setApiKey']) {
+	// Sessions joined them: with the chat out of the right-hand bar, its container is one VS Code
+	// hides by default, and `AI: Sessions` had no icon, no keybinding and no button anywhere — so the
+	// only route to your own past conversations was knowing the palette entry existed.
+	for (const id of ['levelcode.ai.newChat', 'levelcode.ai.addFileContext', 'levelcode.ai.setApiKey',
+		'levelcode.ai.sessions']) {
 		assert.ok(ids.includes(id), id + ' lost its button when the sidebar view was removed');
 		const cmd = pkg.contributes.commands.find((c) => c.command === id);
 		assert.ok(cmd && cmd.icon, id + ' has no icon — an editor/title action with no icon renders as nothing');
@@ -198,6 +202,11 @@ test('COMMAND: the chat TAB carries the actions the view title used to', () => {
 		assert.match(m.group, /^navigation@\d+$/,
 			m.command + ' must be in navigation, so VS Code can overflow it into … on a narrow tab');
 	}
+
+	// The one thing still living in the right-hand container must stay reachable FROM the chat, or it
+	// is reachable only by knowing it is there.
+	assert.ok(ids.includes('levelcode.ai.sessions'),
+		'no way from the conversation to the list of past conversations except the command palette');
 
 	// And nothing may be scoped to the view that no longer exists — a stale `when` is a button that
 	// never appears anywhere.

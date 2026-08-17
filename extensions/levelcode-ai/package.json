@@ -133,7 +133,8 @@
       {
         "command": "levelcode.ai.sessions",
         "title": "AI: Sessions",
-        "category": "LevelCode"
+        "category": "LevelCode",
+        "icon": "$(history)"
       },
       {
         "command": "levelcode.ai.sketch",
@@ -218,9 +219,14 @@
           "group": "navigation@1"
         },
         {
-          "command": "levelcode.ai.setApiKey",
+          "command": "levelcode.ai.sessions",
           "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
           "group": "navigation@2"
+        },
+        {
+          "command": "levelcode.ai.setApiKey",
+          "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
+          "group": "navigation@3"
         },
         {
           "command": "levelcode.ai.review.keepActive",
