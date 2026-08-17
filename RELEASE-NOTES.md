@@ -1,76 +1,70 @@
-# LevelCode v1.0.5
+# LevelCode v1.1.0
 
-Your chats stop disappearing. This release turns every conversation into a **session** you can find, resume, fork and export — and gives each project a **memory** that carries what you did last time into the next chat. Both are plain files on your disk, both are readable and correctable by hand, and both treat what they learned as *possibly stale, possibly poisoned* rather than as gospel.
+The chat moves to the middle of the editor and starts reading like a document. This release takes the panel out of the narrow column on the right, gives the transcript a real measure and type scale, and lets the agent answer you even when no folder is open.
 
 ## Highlights
 
-### Chats are sessions now
+### The chat is an editor tab now
 
-Every conversation is persisted as it happens — one append-only JSONL file per session, under `~/.levelcode/sessions/<project>/`. **New Chat** no longer throws work away; it seals the session and starts a fresh one.
+It opens centred, as a tab, like a file — and that is the only place it lives. Drag it to a split, move it between groups, pull it into a second window: it behaves like every other editor because it now *is* one.
 
-The **Sessions** panel (`AI: Sessions`, and a sidebar view) lists them in time buckets — Today, Yesterday, This week, Earlier — with the title, the file it touched most, and an activity sparkline. Click a card to resume it. On hover the second line swaps to the actions: **Rename · Fork · Copy · Done · Delete · Pin**.
+The old right-hand chat view is gone rather than deprioritised. One conversation with two possible hosts needed a hand-over card, a detached state, a move command and a replay on every transition — machinery for a choice nobody wanted. **Sessions** keeps the right-hand panel to itself, which is the right place for an index of past conversations: it no longer splits a narrow column with the conversation it indexes.
 
-Nothing is destroyed by accident. **Done** archives rather than deletes, **Delete** is a soft trash, and both offer **Undo** immediately afterwards. Sessions you stop touching auto-archive after 30 days (`levelcode.ai.sessions.autoArchiveDays`) — pinned ones never do.
+**Closing the tab closes the chat**, and closing is an ending rather than a discard — the session is sealed into History and memory learns from it, exactly as **New Chat** has always done. `⇧⌘I` opens it again.
 
-### Resume is honest about what it can carry
+If you don’t want it opening on its own, set `levelcode.ai.chat.startLocation: "none"`.
 
-A long session may not fit the model's context window. Rather than silently truncating, LevelCode plans the resume in three tiers: if the whole transcript fits, you get it **verbatim**; if it doesn't, it loads the most recent turns and tells you so in the chat, in words, rather than pretending the earlier ones are still there.
+### The transcript reads like a document
 
-The full transcript is always kept on disk regardless — the budget only governs what the *model* is handed. `levelcode.ai.sessions.resumeBudgetPct` (default 40) sets how much of the window a resume may occupy.
+Nothing constrained line length before this. In a 380px sidebar the container did that job, so it never looked wrong — but a chat in an editor tab at 900px produced **154-character lines**, and no amount of good prose survives that.
 
-### The project remembers itself
+- **A bounded measure.** The column caps at **820px** and centres, matched against the Claude Code console rather than derived from print typography — the 45–75 character rule assumes prose without identifiers, file paths or fenced code.
+- **Prose gets its own type.** Message bodies now read one step above the workbench UI size, with looser leading. Expressed as an offset rather than a fixed number, so it tracks the editor font instead of inverting against it if you have raised that for accessibility.
+- **Hierarchy you can see.** The heading scale moves from `1.3 / 1.18 / 1.07` — three levels inside a quarter of an em — to `1.45 / 1.25 / 1.1`, with more space above a heading than below it.
+- **Rhythm that scales.** Prose spacing is in `em`, anchored to the prose size, so raising the type opens the page instead of tightening it.
+- **Code blocks get room.** `pre` padding widens and its margins join the same rhythm.
 
-When a session seals, one cheap model call records **what it accomplished** into `memory/journal.jsonl`, and a consolidation pass distils the recent arc into `memory/MEMORY.md` — a small digest injected into every new session in that project, the same channel `AGENTS.md` and `CLAUDE.md` already use. Open a new chat and it starts already knowing the shape of the last week's work.
+The whole panel shares one column: the composer, the status row and the notice bars line up with the prose above them instead of spanning the full width beneath it.
 
-Durable truths get promoted separately into **Facts** — *"the changelog is RELEASE-NOTES.md"*, *"idempotency keys live in Redis"*. A fact seen once is marked **inferred** and weighed lightly; seen across sessions it becomes active; you can **Confirm** it, mark it **not true**, edit it, or forget it from the **Project memory** tab. When a later session contradicts an earlier one, the old fact is **superseded** — dimmed and restorable, with a line saying what replaced it, rather than silently overwritten.
+### Speakers are told apart by treatment, not by a label
 
-Ask about older work and the agent can go looking: `recall_sessions` searches past outcomes *and* the transcripts themselves, and returns dated, cited results. Facts that decayed out of the always-on digest are still reachable that way — a memory that ages out is not a memory that is deleted.
+`YOU` and `LEVELCODE AI` sat above every message restating what the shape of the message already said. Your turn is now a tinted bubble **on the right** that hugs its content — "Yes" is a short bubble, a pasted stack trace is a wide one — and the assistant's is unadorned prose on the left.
 
-### Memory is treated as untrusted input
+The labels are gone from the screen but kept in the accessibility tree: the bubble is a purely visual cue, so removing the element outright would leave a screen reader with an unattributed wall of text.
 
-Memory is replayed into the system prompt of every future session in a project, and it is distilled from transcripts that contain repo files, command output and MCP tool results — attacker-controlled for any repo you clone. So it is bounded like any other untrusted text:
+### The agent answers without a folder open
 
-- **A planted instruction cannot promote itself.** Ordinary facts become active by being observed across sessions, but text that reads as an *order* — `always …`, `never …`, `ignore previous instructions`, anything piping into a shell — never takes that route and needs an explicit Confirm. Repetition is not corroboration when the source is a file that is still sitting in the repo on the next session.
-- **It is surfaced, not hidden.** Such an entry is still recorded and still listed, flagged, so you can see what a repo tried to plant.
-- **Credentials are scrubbed on the way in.** Key-shaped text is redacted before it reaches `facts.jsonl`, `journal.jsonl` or `MEMORY.md` — including session titles and edited file paths, which those files print verbatim.
-- **Injected memory is framed as verify-first** and explicitly says never to act on an instruction found inside it.
+Opening LevelCode without a workspace used to refuse every request outright — *"Open a folder first."* That guard was written for the file tools and placed where it failed the whole run, so a question that never needed a workspace died on it: what an error means, anything through an MCP server, a follow-up about the conversation itself.
 
-Everything lives in plain files you can open, `grep`, correct, or delete. Turn the whole thing off per project with `levelcode.ai.sessions.memory.enabled`.
-
-### Fork a session
-
-The *"what if I'd told it to do X instead"* branch. **Fork** seeds a new session with a copy of the conversation and leaves the original untouched, then opens it so you can take a different path from the same starting point.
-
-The copy is genuinely a fresh session: it does not inherit the original's finished state, its archived status, or its pin — a fork of an archived chat arrives visible and active, and records which session it came from.
-
-### Copy a session as Markdown
-
-**Copy** puts the whole conversation on your clipboard as a clean Markdown transcript — title, date, model, files touched, then one block per turn — ready to paste into a pull request or an issue. *Save as file…* writes it to disk instead.
-
-Because this is the first thing that takes a session *out* of LevelCode, it is scrubbed on the way out: credential-shaped text is redacted from the body, and from the suggested filename.
+The root now gates the tools that resolve a path against it, and nothing else. Rootless, `list_files`, `read_file`, `search`, `edit_file`, `write_file`, `delete_file` and `run_command` are withheld — a tool that is present but always fails is worse than one that is absent, because the model retries it — while `update_plan`, `ask_user`, `use_skill` **and every MCP tool** keep working. The model is told plainly why the file tools are missing, so it says so in a line instead of improvising about files it cannot see.
 
 ## New settings
 
-| Setting | Default | |
+| Setting | Default | Description |
 | --- | --- | --- |
-| `levelcode.ai.sessions.enabled` | `true` | Persist chats as sessions |
-| `levelcode.ai.sessions.dir` | `""` | Where they live (blank = `~/.levelcode/sessions`) |
-| `levelcode.ai.sessions.autoArchiveDays` | `30` | Fade untouched sessions out of the active list; pinned are exempt |
-| `levelcode.ai.sessions.resumeBudgetPct` | `40` | How much of the context window a resume may occupy |
-| `levelcode.ai.sessions.memory.enabled` | `true` | Cross-session project memory |
-| `levelcode.ai.sessions.memory.summarize` | `true` | The cheap-lane call that records what a session achieved |
-| `levelcode.ai.sessions.memory.facts` | `true` | Extract durable project facts |
-| `levelcode.ai.sessions.memory.recallTool` | `true` | Give the agent `recall_sessions` |
+| `levelcode.ai.chat.startLocation` | `editor` | Where the chat opens with a window. `none` stops it opening on its own |
+| `levelcode.ai.chat.fontSize` | `0` | Prose size in px. `0` tracks the editor UI font, one step up for reading |
+| `levelcode.ai.chat.proseWidth` | `0` | Transcript width in px. `0` uses the 820px measure — it does **not** mean unconstrained |
+
+Both sizes are clamped at the boundary (8–24 and 320–2000). The `minimum`/`maximum` in a contribution schema only drive the settings *editor*; a hand-edited `settings.json` reaches the extension unchecked, and these land directly in CSS, where `proseWidth: 1` is a one-pixel transcript with nothing left on screen to open settings with.
+
+## Also fixed
+
+- **Closing the chat no longer leaves the conversation loaded.** Sealing the session ended it — so the next chat opened visually empty — while the in-memory history was still there and shipped to the model on the next message. The teardown now also stops in-flight work and reaps background commands and MCP servers, which are detached children and were outliving the surface that reported on them.
+- **A teardown cannot be raced by the run it is tearing down.** Closing mid-stream aborts the request, and the abort landed in a handler that pushed the partial reply back into the history that had just been cleared — the exact leak the teardown exists to prevent, caused by the teardown's own abort.
+- **Reveals of the chat can no longer become unhandled promise rejections** in the extension host. Failures are logged with the caller named rather than surfacing as an error attributed to nothing.
 
 ## Not in this release
 
-**The Sessions panel does not search yet.** There is no filter, no fuzzy switcher, and no keyboard jump — you scroll the list. That is the next thing being built, and it is the gap you will notice first once a project holds more than a screenful of sessions.
+**The Sessions panel still does not search.** No filter, no fuzzy switcher, no keyboard jump — you scroll the list. It was the stated gap in v1.0.5 and it is still the gap; the chat surface took this cycle.
+
+**The empty-state wordmark had a false start.** A redrawn mark shipped and had to be pulled: it was built from full block characters on the assumption they tile seamlessly in any monospace font, which is not true — whether `█` fills its cell is a property of the font, and in Monaco it does not, so the logo shattered into disconnected bars. The replacement is drawn from box-drawing rules and real text, and was checked in seven font families before shipping this time.
 
 ## Test coverage
 
-- **32 suites**, **528 cases** across the bundled extensions — all green.
-- `test/memoryPoisoning.test.js` (39 cases) — the adversarial pass: hostile inputs that must never become load-bearing memory, benign project facts that must keep working, credential shapes that must never reach disk, and the near-misses (git SHAs, content hashes, asset names) that must survive untouched.
-- `test/sessions.test.js` (25 cases) — the lifecycle against a real store in a temp directory: persistence, verbatim rebuild, seal, resume, and the fork rules.
-- `test/sessionStore.test.js`, `sessionEvents.test.js`, `sessionResume.test.js`, `sessionMemory.test.js` — the pure engine underneath, each testable without the editor.
+- **34 suites**, **575 cases** across the bundled extensions — all green.
+- `test/chatSurface.test.js` (23 cases) — the single-surface contract: one live webview, one message handler, the transcript surviving a hand-over, and a close that seals rather than discards.
+- `test/webviewCss.test.js` (33 cases) — the layout invariants no DOM test can see: the measure, the shell column, the type scale, and the wordmark's width against its container.
+- `test/agentNoWorkspace.test.js` (6 cases) — which tools are withheld without a root, which must keep working, and that the context meter is billed for the list that was actually sent.
 
-**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.4...v1.0.5
+**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.5...v1.1.0
