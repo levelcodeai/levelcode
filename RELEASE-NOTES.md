@@ -40,7 +40,7 @@ The root now gates the tools that resolve a path against it, and nothing else. R
 
 ## New settings
 
-| Setting | Default | |
+| Setting | Default | Description |
 | --- | --- | --- |
 | `levelcode.ai.chat.startLocation` | `editor` | Where the chat opens with a window. `none` stops it opening on its own |
 | `levelcode.ai.chat.fontSize` | `0` | Prose size in px. `0` tracks the editor UI font, one step up for reading |
