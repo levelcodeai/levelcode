@@ -578,25 +578,52 @@ test('TRANSCRIPT: the user bubble hugs its content, and is capped short of the c
 		'tint is the secondary cue and still earns its place — side alone would drop on a wrapped log');
 });
 
-test('WORDMARK: the empty-state logo fits its container and has an accessible name', () => {
-	// NOT asserted here: which characters it is drawn from. A previous version of this test required
-	// full blocks only, on the theory that `█` tiles seamlessly while `▀`/`▄` can seam. Half of that is
-	// right — `▀` above `▄` does leave a gap — but the other half is not: whether `█` FILLS its cell is
-	// a property of the FONT, not of the character. In Monaco it does not, and a wordmark built on that
+test('WORDMARK: the mark and its cqi scale factor stay in agreement', () => {
+	// NOT asserted here: which characters it is drawn from. A previous version required full blocks
+	// only, on the theory that `█` tiles seamlessly while `▀`/`▄` can seam. Half of that is right —
+	// `▀` above `▄` does leave a gap — but the other half is not: whether `█` FILLS its cell is a
+	// property of the FONT, not of the character. In Monaco it does not, and a wordmark built on that
 	// assumption shattered into disconnected bars in the editor while looking perfect in a harness
-	// running SF Mono. The lesson is that this file cannot check the thing that actually matters, so it
-	// should stop pretending to; ASCII art has to be looked at in the target font.
+	// running SF Mono.
+	//
+	// The current mark sidesteps that entirely: box-drawing rules are CONNECTOR glyphs that join in
+	// every monospace family, and the letters are real text rather than pixel art. Verified by
+	// rendering it in Monaco, SF Mono, Menlo, Courier New, Andale Mono, Consolas and the generic
+	// fallback — legible in all seven. That check cannot live in this file; ASCII art has to be looked
+	// at in the target font.
 	const m = /<pre class="lc-ascii"[^>]*>([\s\S]*?)<\/pre>/.exec(html);
 	assert.ok(m, 'the empty-state wordmark is gone');
 	const art = m[1].replace(/^\n/, '');
-
-	// This bound IS checkable and is not about glyphs: the logo is sized from the container
-	// (clamp(5px, 3.6cqi, 13px)) inside #empty, which is capped at 560px. Past ~44 columns it stops
-	// fitting and the pre grows a horizontal scrollbar under the logo.
 	const lines = art.split('\n');
 	const cols = Math.max(...lines.map((l) => l.length));
-	assert.ok(cols <= 44, 'the wordmark is ' + cols + ' columns; wider than ~44 overflows #empty (max 560px)');
-	assert.ok(lines.length <= 14, 'the wordmark is ' + lines.length + ' lines; it has to leave room for the prompt beneath it');
+
+	// What IS checkable, and the thing most likely to be got wrong: the mark is sized from the
+	// container, so its WIDTH IN COLUMNS and the cqi factor are two halves of one number. Widen the art
+	// without lowering the factor and it overflows; narrow it without raising the factor and it shrinks
+	// to a stamp floating in white space. The 41-column mark used 3.6cqi; this 32-column one uses 4.6
+	// precisely to land in the same place.
+	// The selector is anchored with a negative lookahead because `.lc-ascii-wrap` is declared BEFORE
+	// `.lc-ascii` and `.lc-ascii-sub` right after it. A looser `\.lc-ascii[^{]*\{` reads the right rule
+	// today only because -wrap happens to declare no font-size — luck of content, not construction, and
+	// it would silently start measuring the wrong rule the day one of them gains a cqi clamp.
+	const rule = /\.lc-ascii(?![-\w])[^{]*\{([^}]*)\}/.exec(css);
+	assert.ok(rule, 'the .lc-ascii rule is gone');
+	const cqi = /font-size:\s*clamp\(\s*\d+px\s*,\s*([\d.]+)cqi/.exec(rule[1]);
+	assert.ok(cqi, 'the wordmark is no longer sized from its container');
+
+	// Asserted on cols x cqi directly, which IS the contract: the art width in columns and the font
+	// size as a percentage of the container are two halves of one number, and their product is what
+	// stays constant. The previous version multiplied in a hard-coded 0.6em cell width to report a
+	// tidy "fill %", but that factor is a property of whatever font the editor resolves — it differs
+	// between Monaco and SF Mono — so it dressed the real invariant in a precision it does not have.
+	const product = cols * Number(cqi[1]);
+	assert.ok(product > 132 && product < 162,
+		'cols x cqi is ' + product.toFixed(1) + ' (' + cols + ' columns at ' + cqi[1] + 'cqi). '
+		+ 'It must stay near 147 — the value both shipped marks share (41x3.6, 32x4.6). Lower and the '
+		+ 'mark shrinks to a stamp in white space; higher and it touches the edges and can overflow.');
+
+	assert.ok(lines.length <= 14,
+		'the wordmark is ' + lines.length + ' lines; it has to leave room for the prompt and starters beneath it');
 
 	// The accessible name is the whole reason a picture made of text is not a wall of noise to a
 	// screen reader.
