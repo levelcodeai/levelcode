@@ -602,13 +602,25 @@ test('WORDMARK: the mark and its cqi scale factor stay in agreement', () => {
 	// without lowering the factor and it overflows; narrow it without raising the factor and it shrinks
 	// to a stamp floating in white space. The 41-column mark used 3.6cqi; this 32-column one uses 4.6
 	// precisely to land in the same place.
-	const cqi = /\.lc-ascii[^{]*\{[^}]*font-size:\s*clamp\(\s*\d+px\s*,\s*([\d.]+)cqi/.exec(css);
+	// The selector is anchored with a negative lookahead because `.lc-ascii-wrap` is declared BEFORE
+	// `.lc-ascii` and `.lc-ascii-sub` right after it. A looser `\.lc-ascii[^{]*\{` reads the right rule
+	// today only because -wrap happens to declare no font-size — luck of content, not construction, and
+	// it would silently start measuring the wrong rule the day one of them gains a cqi clamp.
+	const rule = /\.lc-ascii(?![-\w])[^{]*\{([^}]*)\}/.exec(css);
+	assert.ok(rule, 'the .lc-ascii rule is gone');
+	const cqi = /font-size:\s*clamp\(\s*\d+px\s*,\s*([\d.]+)cqi/.exec(rule[1]);
 	assert.ok(cqi, 'the wordmark is no longer sized from its container');
-	// A monospace cell is ~0.6em wide, so the mark occupies cols * 0.6 * (cqi/100) of the container.
-	const fill = cols * 0.6 * Number(cqi[1]) / 100;
-	assert.ok(fill > 0.8 && fill < 0.95,
-		'the mark would fill ' + Math.round(fill * 100) + '% of its container — ' + cols + ' columns at '
-		+ cqi[1] + 'cqi. Below ~80% it reads as a stamp; above ~95% it touches the edges and can overflow.');
+
+	// Asserted on cols x cqi directly, which IS the contract: the art width in columns and the font
+	// size as a percentage of the container are two halves of one number, and their product is what
+	// stays constant. The previous version multiplied in a hard-coded 0.6em cell width to report a
+	// tidy "fill %", but that factor is a property of whatever font the editor resolves — it differs
+	// between Monaco and SF Mono — so it dressed the real invariant in a precision it does not have.
+	const product = cols * Number(cqi[1]);
+	assert.ok(product > 132 && product < 162,
+		'cols x cqi is ' + product.toFixed(1) + ' (' + cols + ' columns at ' + cqi[1] + 'cqi). '
+		+ 'It must stay near 147 — the value both shipped marks share (41x3.6, 32x4.6). Lower and the '
+		+ 'mark shrinks to a stamp in white space; higher and it touches the edges and can overflow.');
 
 	assert.ok(lines.length <= 14,
 		'the wordmark is ' + lines.length + ' lines; it has to leave room for the prompt and starters beneath it');
