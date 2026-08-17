@@ -767,7 +767,7 @@
   /* font-size is sized off the CONTAINER width (cqi) — reliable in a webview where vw = the whole
      editor, not this panel — so the wordmark always fits and the last glyph is never clipped.
      line-height:1 makes the box-drawing rows connect into solid letters. */
-  #empty .lc-ascii { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: clamp(5px, 3.6cqi, 13px); line-height: 1; white-space: pre; color: var(--vscode-terminal-ansiGreen, #98c379); opacity: 1; width: max-content; max-width: 100%; margin: 2px auto 6px; overflow-x: auto; user-select: none; }
+  #empty .lc-ascii { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: clamp(5px, 4.6cqi, 13px); line-height: 1; white-space: pre; color: var(--vscode-terminal-ansiGreen, #98c379); opacity: 1; width: max-content; max-width: 100%; margin: 2px auto 6px; overflow-x: auto; user-select: none; }
   #empty .lc-ascii-sub { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; letter-spacing: .22em; color: var(--muted); opacity: .9; margin-bottom: 14px; }
   #empty .starters { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 14px; }
   #empty .starter { cursor: pointer; border: 1px solid var(--border); border-radius: 14px; padding: 4px 11px; font-size: 11.5px; background: var(--field-bg); color: var(--vscode-foreground); opacity: .95; }
@@ -1259,18 +1259,11 @@
 <body>
   <div id="log">
     <div id="empty">
-      <div class="lc-ascii-wrap"><pre class="lc-ascii" role="img" aria-label="LevelCode AI">██╗     ███████╗██╗   ██╗███████╗██╗
-██║     ██╔════╝██║   ██║██╔════╝██║
-██║     █████╗  ██║   ██║█████╗  ██║
-██║     ██╔══╝  ╚██╗ ██╔╝██╔══╝  ██║
-███████╗███████╗ ╚████╔╝ ███████╗███████╗
-╚══════╝╚══════╝  ╚═══╝  ╚══════╝╚══════╝
-      ██████╗ ██████╗ ██████╗ ███████╗
-     ██╔════╝██╔═══██╗██╔══██╗██╔════╝
-     ██║     ██║   ██║██║  ██║█████╗
-     ██║     ██║   ██║██║  ██║██╔══╝
-     ╚██████╗╚██████╔╝██████╔╝███████╗
-      ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝</pre></div>
+      <div class="lc-ascii-wrap"><pre class="lc-ascii" role="img" aria-label="LevelCode AI">╭──────────────────────────────╮
+│                              │
+│  ▁▃▅█  L E V E L C O D E     │
+│                              │
+╰──────────────────────────────╯</pre></div>
       <div class="lc-ascii-sub">levelcode.ai</div>
       <div class="empty-copy">Ask about your code, or describe what to build. The open file is sent as context; add a selection with <b>+</b> or ⌥⌘A.</div>
       <div class="starters">
