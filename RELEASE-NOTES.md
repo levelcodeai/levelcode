@@ -12,7 +12,7 @@ The old right-hand chat view is gone rather than deprioritised. One conversation
 
 **Closing the tab closes the chat**, and closing is an ending rather than a discard — the session is sealed into History and memory learns from it, exactly as **New Chat** has always done. `⇧⌘I` opens it again.
 
-If you preferred it on the right, `levelcode.ai.chat.startLocation: "none"` stops it opening on its own; the sidebar is no longer one of the options.
+If you don’t want it opening on its own, set `levelcode.ai.chat.startLocation: "none"`.
 
 ### The transcript reads like a document
 
