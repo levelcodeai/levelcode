@@ -71,14 +71,14 @@ From the vision documentation, checked rather than recalled — the figure I had
 | High-resolution | Claude 4.7 and later | 2576 px | 4784 |
 | Standard | everything else | 1568 px | 1568 |
 
-Images above either limit are **downscaled server-side, preserving aspect ratio**. I reimplemented the rule and reproduced the documented figures exactly (1092² → 1521 tokens, 1000² → 1296, 1920×1080 → 2691), so the arithmetic below is trustworthy:
+Images above either limit are **downscaled server-side, preserving aspect ratio**. I reimplemented the rule and checked it against every worked example in the documentation: the **token count matches on all twelve** (1092² → 1521, 1000² → 1296, 1920×1080 → 2691, 3840×2160 → 2576×1449 at 4784), and the sent dimensions match on eleven — one standard-tier row lands a single pixel off (1270 vs 1269 wide, same 1564 tokens), a rounding convention I could not derive from six data points. Cost is exact; geometry is exact to a pixel:
 
 | Source | Sent as (high-res tier) | Tokens | If we cap the long edge at 1568 | Tokens |
 |---|---|---|---|---|
 | 4K screenshot 3840×2160 | 2576×1449 | **4784** | 1568×882 | **1792** |
-| macOS retina window 3024×1964 | 2377×1544 | 4760 | 1568×1018 | 2072 |
+| macOS retina window 3024×1964 | 2380×1546 | 4760 | 1568×1018 | 2072 |
 | 1080p screenshot 1920×1080 | unchanged | 2691 | 1568×882 | 1792 |
-| 12 MP phone photo 4032×3024 | 2193×1645 | 4661 | 1568×1176 | 2352 |
+| 12 MP phone photo 4032×3024 | 2212×1659 | 4740 | 1568×1176 | 2352 |
 
 **The consequence that shapes everything: token cost is already capped by the server.** Sending a 12 MB PNG does not buy more than 4784 tokens of fidelity — it buys latency and bandwidth. So client-side downscaling is **not** a defence against a token blowup. It is a deliberate fidelity-for-cost trade, and a defence against the *wire*.
 
