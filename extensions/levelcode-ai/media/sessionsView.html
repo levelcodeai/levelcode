@@ -282,7 +282,7 @@
     vscode.postMessage({ type: 'sessionAction', action: 'restore', id: b.getAttribute('data-id') });
     document.getElementById('svUndo').hidden = true; clearTimeout(sessUndoTimer);
   });
-  window.addEventListener('message', (ev) => { const m = ev.data; if (m && m.type === 'sessions'){ sessData = Array.isArray(m.entries) ? m.entries : []; renderSessions(); } else if (m && m.type === 'memoryList'){ renderMemory(m); } else if (m && m.type === 'sessionUndo'){ showUndo(m); } });
+  window.addEventListener('message', (ev) => { const m = ev.data; if (m && m.type === 'showTab'){ showTab(m.tab === 'memory' ? 'memory' : 'history'); } else if (m && m.type === 'sessions'){ sessData = Array.isArray(m.entries) ? m.entries : []; renderSessions(); } else if (m && m.type === 'memoryList'){ renderMemory(m); } else if (m && m.type === 'sessionUndo'){ showUndo(m); } });
   renderSessions();
   vscode.postMessage({ type: 'listSessions' });
 </script>

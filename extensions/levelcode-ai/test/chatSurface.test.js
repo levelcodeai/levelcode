@@ -27,6 +27,7 @@ const path = require('path');
 
 const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
 const chatHtml = fs.readFileSync(path.join(__dirname, '..', 'media', 'chat.html'), 'utf8');
+const chatSessionsHtml = fs.readFileSync(path.join(__dirname, '..', 'media', 'sessionsView.html'), 'utf8');
 const pkg = require('../package.json');
 
 let n = 0;
@@ -193,7 +194,7 @@ test('COMMAND: the chat TAB carries the actions the view title used to', () => {
 	// hides by default, and `AI: Sessions` had no icon, no keybinding and no button anywhere — so the
 	// only route to your own past conversations was knowing the palette entry existed.
 	for (const id of ['levelcode.ai.newChat', 'levelcode.ai.addFileContext', 'levelcode.ai.setApiKey',
-		'levelcode.ai.sessions']) {
+		'levelcode.ai.sessions', 'levelcode.ai.memory']) {
 		assert.ok(ids.includes(id), id + ' lost its button when the sidebar view was removed');
 		const cmd = pkg.contributes.commands.find((c) => c.command === id);
 		assert.ok(cmd && cmd.icon, id + ' has no icon — an editor/title action with no icon renders as nothing');
@@ -207,6 +208,8 @@ test('COMMAND: the chat TAB carries the actions the view title used to', () => {
 	// is reachable only by knowing it is there.
 	assert.ok(ids.includes('levelcode.ai.sessions'),
 		'no way from the conversation to the list of past conversations except the command palette');
+	assert.ok(ids.includes('levelcode.ai.memory'),
+		'no way from the conversation to what the project remembers except the command palette');
 
 	// And nothing may be scoped to the view that no longer exists — a stale `when` is a button that
 	// never appears anywhere.
@@ -461,6 +464,43 @@ test('START: the docstring describes the values that actually exist', () => {
 	assert.match(doc, /LEGACY/, 'the docstring does not mark secondarySidebar as legacy');
 	assert.ok(!/kept because/.test(doc), 'the docstring still describes secondarySidebar as a supported surface');
 	assert.match(doc, /`editor`[\s\S]*`none`/, 'the docstring should name the two values that are actually supported');
+});
+
+test('SESSIONS: each button lands on its own tab, and survives the view not existing yet', () => {
+	// The panel's container is hidden by default, so the FIRST click of a session usually has to CREATE
+	// the view — there is no webview to post `showTab` to at the moment the command runs. Posting once
+	// and hoping is the bug this shape avoids: the tab is recorded first, posted immediately for a view
+	// that is already up, and posted again from the view's own `listSessions` for one still loading.
+	const body = fnBody(ext, 'revealSessions');
+	// Presence FIRST. An ordering assertion on indexOf alone passes when the thing is missing, because
+	// -1 is less than every real index — so deleting the line entirely would have satisfied it.
+	const recorded = body.indexOf('pendingSessionsTab = tab');
+	const revealed = body.indexOf('levelcodeAi.sessions.focus');
+	assert.ok(recorded >= 0, 'the requested tab is never recorded — the cold path has nothing to flush');
+	assert.ok(revealed >= 0, 'nothing reveals the Sessions container');
+	assert.ok(recorded < revealed,
+		'the tab must be recorded BEFORE the reveal — the view can resolve before the next statement runs');
+	assert.match(body, /if \(sessionsWebview\)/, 'an already-open panel never gets told which tab to show');
+	assert.match(body, /postMessage\(\{ type: 'showTab', tab \}\)/, 'the warm path does not post the tab');
+
+	// The cold path: the view announces itself with `listSessions`, which is where a tab requested
+	// before it existed has to be flushed — and cleared, so a later plain reveal is not hijacked.
+	// Anchored on the PROVIDER, not on the first `case 'listSessions'` in the file: the chat's own
+	// /sessions modal handles a message by the same name, and an indexOf would read that one instead —
+	// passing or failing on which handler happens to come first.
+	const flush = fnBody(ext, 'resolveWebviewView');
+	assert.match(flush, /pendingSessionsTab/, 'a tab requested before the view loaded is never applied');
+	assert.match(flush, /pendingSessionsTab = ''/, 'the pending tab is not cleared — the next reveal inherits it');
+
+	// The webview end of the contract, and the two commands that use it.
+	assert.match(chatSessionsHtml, /m\.type === 'showTab'/, 'the sessions view ignores showTab');
+	assert.match(ext, /registerCommand\('levelcode\.ai\.sessions', \(\) => revealSessions\('history'\)\)/,
+		'Sessions must name its tab, or the two buttons land in the same place');
+	assert.match(ext, /registerCommand\('levelcode\.ai\.memory', \(\) => revealSessions\('memory'\)\)/,
+		'Memory must name its tab');
+
+	// Fire-and-forget reveal: a rejection here must not become an unhandled rejection in the host.
+	assert.match(body, /\.then\(undefined,|\.catch\(/, 'the reveal can reject unhandled');
 });
 
 console.log('\nchatSurface: ' + n + ' tests passed.');

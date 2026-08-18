@@ -137,6 +137,12 @@
         "icon": "$(history)"
       },
       {
+        "command": "levelcode.ai.memory",
+        "title": "AI: Project Memory",
+        "category": "LevelCode",
+        "icon": "$(book)"
+      },
+      {
         "command": "levelcode.ai.sketch",
         "title": "AI: Agent Sketch…",
         "category": "LevelCode",
@@ -224,9 +230,14 @@
           "group": "navigation@2"
         },
         {
-          "command": "levelcode.ai.setApiKey",
+          "command": "levelcode.ai.memory",
           "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
           "group": "navigation@3"
+        },
+        {
+          "command": "levelcode.ai.setApiKey",
+          "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
+          "group": "navigation@4"
         },
         {
           "command": "levelcode.ai.review.keepActive",
