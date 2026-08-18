@@ -729,4 +729,48 @@ test('SESSION CARD: every action button keeps a label for pointers and screen re
 	assert.match(pure, /aria-label="' \+ label \+ '"/, 'no accessible name on an icon-only button');
 });
 
+test('SHELL COLUMN: no member re-declares an inline margin, which would un-centre it', () => {
+	// The shell rule centres seven bars with `margin-inline: auto`, and every selector in it is a
+	// BARE ID. So a later bare-id rule ties on specificity and wins — and a `margin:` SHORTHAND in
+	// one of those rules silently resets margin-inline to its left/right slot. That is exactly how
+	// #ctxBar, #reviewBar and #bgTasksBar shipped flush against the window edge while the composer
+	// centred: `margin: 0 8px 6px` beat `margin-inline: auto` by sitting 600 lines further down.
+	//
+	// This walks the rule's OWN selector list rather than three hard-coded ids, so a bar added to
+	// the shell column later is covered the day it is added.
+	const shell = /\n\s*(#[\w#, -]*?#composer[\w#, -]*?)\s*\{([^}]*)\}/.exec(cssBlocks);
+	assert.ok(shell, 'the shell-column rule is gone');
+	assert.match(shell[2], /margin-inline:\s*auto/, 'the shell column no longer centres anything');
+
+	const ids = shell[1].split(',').map((x) => x.trim()).filter((x) => /^#[\w-]+$/.test(x));
+	assert.ok(ids.length >= 6, 'expected the whole bar list, got: ' + ids.join(' '));
+
+	for (const id of ids) {
+		const re = new RegExp('\\n\\s*' + id + '\\s*\\{([^}]*)\\}', 'g');
+		let hit;
+		while ((hit = re.exec(cssBlocks))) {
+			const body = hit[1];
+			// A shorthand is only a problem when its INLINE slot is not auto. `margin: 8px auto`
+			// re-states the centring and is fine; `margin: 0 8px 6px` destroys it. Slots are
+			// [all] / [block inline] / [top inline bottom] / [top right bottom left].
+			//
+			// EVERY declaration, not the first: a single .exec() would read `margin: 6px auto`
+			// and stop, never reaching a `margin: 0 8px 6px` later in the same body — and CSS
+			// applies the LAST one, so the guard would pass while the bar sat against the edge.
+			for (const sh of body.matchAll(/(?:^|;)\s*margin\s*:\s*([^;}]+)/g)) {
+				const p = sh[1].trim().split(/\s+/);
+				const inline = p.length === 1 ? [p[0]] : p.length === 4 ? [p[1], p[3]] : [p[1]];
+				assert.ok(inline.every((v) => v === 'auto'),
+					id + ' has `margin: ' + sh[1].trim() + '` — its inline slot is not auto, so it '
+					+ 'resets margin-inline and pins the bar to one edge. Use margin-block; the width '
+					+ 'calc already insets by --shell-x.');
+			}
+			for (const d of body.matchAll(/margin-(?:left|right|inline(?:-start|-end)?)\s*:\s*([^;}]+)/g)) {
+				assert.strictEqual(d[1].trim(), 'auto',
+					id + ' sets an inline margin directly, which beats the shell column\'s auto');
+			}
+		}
+	}
+});
+
 console.log('webviewCss: ' + n + ' tests passed');

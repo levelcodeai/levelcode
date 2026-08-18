@@ -58,6 +58,12 @@
     max-width: var(--prose-max);
     margin-inline: auto;
   }
+  /* Every element above is a bare id, so a LATER bare-id rule ties on specificity and wins. A
+     `margin:` shorthand in one of those rules silently resets margin-inline to whatever its
+     left/right slot says — which is how #ctxBar, #reviewBar and #bgTasksBar ended up flush against
+     the window edge while the composer centred. Their own inset is redundant anyway: the width
+     calc above already insets by --shell-x. Set margin-block in these rules, never margin.
+     test/webviewCss.test.js pins this for the whole list. */
 
   /* ---- conversation log ---- */
   /* The measure, the type and the inset are all declared on `body` (see above) so the composer and the
@@ -628,7 +634,7 @@
   /* Sits between the message log and the composer — sticky review summary for applied edits. */
   #reviewBar {
     display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
-    margin: 0 8px 8px; padding: 7px 11px; font-size: 12px;
+    margin-block: 0 8px; padding: 7px 11px; font-size: 12px;
     background: var(--vscode-editorWidget-background, #21252b);
     border: 1px solid var(--border); border-radius: 8px;
   }
@@ -665,7 +671,7 @@
 
   /* ---- agent plan checklist ---- */
   /* context-window usage meter (appears >50%, warns >80%, critical >92%) */
-  #ctxBar { flex: 0 0 auto; margin: 0 8px 6px; padding: 7px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--vscode-editorWidget-background, rgba(127,127,127,.08)); font-size: 11px; }
+  #ctxBar { flex: 0 0 auto; margin-block: 0 6px; padding: 7px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--vscode-editorWidget-background, rgba(127,127,127,.08)); font-size: 11px; }
   #ctxBar .ctxrow { display: flex; justify-content: space-between; align-items: center; color: var(--muted); margin-bottom: 5px; }
   #ctxBar .ctxnum { font-variant-numeric: tabular-nums; }
   #ctxBar .ctxtrack { height: 5px; border-radius: 3px; background: rgba(127,127,127,.22); overflow: hidden; }
@@ -679,7 +685,7 @@
   #ctxBar .ctxnew:hover { background: var(--vscode-button-hoverBackground); }
   /* sticky active-plan bar (sits just above the review bar) — opaque so the log can't show behind it */
   /* Background tasks tray — collapsed by default; lists commands started with background:true */
-  #bgTasksBar { flex: 0 0 auto; margin: 0 8px 6px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  #bgTasksBar { flex: 0 0 auto; margin-block: 0 6px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
     background: var(--vscode-editorWidget-background, rgba(127,127,127,.08)); font-size: 12px; }
   .bgt-head { display: flex; align-items: center; gap: 7px; padding: 8px 11px; cursor: pointer; user-select: none; color: var(--vscode-foreground); }
   .bgt-head:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.12)); }
