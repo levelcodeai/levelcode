@@ -80,11 +80,11 @@ test('CARD (actions): six row icon buttons (rename/fork/export/done/delete/pin);
 	const h = P.sessCardHtml(e, NOW, esc, escAttr);
 	for (const a of ['rename', 'fork', 'export', 'done', 'delete', 'pin']) { assert.match(h, new RegExp('data-act="' + a + '"'), a + ' action present'); }
 	assert.ok(!/data-act="resume"/.test(h), 'no Resume button — clicking the card body resumes (default action)');
-	assert.match(h, /class="sessline2">.*class="sesssub">/, 'file·time and the actions share line 2 (swap on hover)');
+	assert.match(h, /class="sessline2">.*class="sesssub">/, 'file·time and the actions share line 2');
 	assert.ok(!/sessrich|sessbtn|sesschip|sessmeta/.test(h), 'not the old drawer/chip/meta markup');
 	assert.match(h, /<span class="sesslbl">Rename<\/span>/, 'buttons carry a visible text label…');
 	assert.match(h, /<span class="sesslbl">Done<\/span>.*<span class="sesslbl">Delete<\/span>/, '…Done and Delete too');
-	assert.match(h, /<svg class="ci"/, 'with an icon alongside (hidden by CSS on the narrow sidebar)');
+	assert.match(h, /<svg class="ci"/, 'with an icon alongside — the fallback CSS shows once the label collapses');
 	assert.match(h, /aria-label="Rename"/, 'and an a11y label');
 	assert.match(h, /title="t — 41 turns · claude-opus-5 · refund\.rb, lock\.rb"/, 'model · turns · files fold into the tooltip');
 });
@@ -254,12 +254,38 @@ test('VIEW: theme-true across the three kinds and reduced-motion-safe', () => {
 	assert.match(view, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,120}\.sesscard[\s\S]{0,80}transition:\s*none/);
 });
 
-test('NO-JUMP: line 2 swaps file·time ⇄ actions in a fixed min-height row (no drawer, no float, title intact)', () => {
+test('NO-JUMP: line 2 carries file·time AND the actions in a fixed min-height row', () => {
+	// This used to assert a SWAP — file·time on rest, actions on hover, same row. The row is still
+	// fixed-height and still never grows, but the actions no longer wait for a pointer: a control that
+	// exists only while hovered is one most people never find, and one a touch device cannot reach at
+	// all. They share the row now, and the metadata is the half that truncates.
 	for (const [name, src] of [['modal', html], ['sidebar', view]]) {
 		assert.ok(!/\.sesscard \.sessrich/.test(src), name + ': the old hover drawer is gone (nothing floats over neighbours)');
 		assert.match(src, /\.sesscard \.sessline2 \{[^}]*min-height/, name + ': line 2 reserves a fixed height, so the card never grows');
-		assert.match(src, /\.sesscard:hover \.sesssub[^{]*\{[^}]*display: none/, name + ': file·time hides on hover…');
-		assert.match(src, /\.sesscard:hover \.sessacts[^{]*\{[^}]*display: flex/, name + ': …and the actions take that same row');
+		assert.match(src, /\.sesscard \.sessacts \{[^}]*display: flex/, name + ': the actions are not present until hovered');
+		assert.ok(!/\.sesscard:hover \.sesssub[^{]*\{[^}]*display: none/.test(src),
+			name + ': hovering still hides the file·time — the row is shared now, not swapped');
+		assert.match(src, /\.sesscard \.sesssub \{[^}]*text-overflow: ellipsis/,
+			name + ': the metadata must truncate, or it pushes the actions out of the card');
+		assert.match(src, /\.sesscard:hover \.sessacts[^{]*\{[^}]*opacity: 1/,
+			name + ': the actions should still come forward on hover rather than shouting all the time');
+	}
+});
+
+test('ACTIONS: below the label threshold the buttons fall back to an ICON, not to nothing', () => {
+	// The bug this pins, reported from the panel: `.sessact .ci` was `display: none` UNCONDITIONALLY,
+	// while the container query hid `.sesslbl` below the threshold. So in a narrow panel every action
+	// button had no visible content at all — six empty boxes with working tooltips.
+	for (const [name, src] of [['modal', html], ['sidebar', view]]) {
+		const q = /@container \(max-width: (\d+)px\) \{([\s\S]*?)\n  \}/.exec(src)
+			|| /@container \(max-width: (\d+)px\) \{([^}]*\{[^}]*\}[\s\S]*?)\}/.exec(src);
+		assert.ok(q, name + ': the label-collapse container query is gone');
+		assert.match(q[2], /\.sesslbl \{ display: none/, name + ': the label no longer collapses');
+		assert.match(q[2], /\.sessact \.ci \{ display: inline-flex/,
+			name + ': the label collapses with no icon to fall back to — the button renders empty');
+		// An inline <svg> carrying only a viewBox has no intrinsic size, so showing it is not enough.
+		assert.match(src, /\.sesscard \.sessact \.ci \{[^}]*width:\s*\d+px[^}]*height:\s*\d+px/,
+			name + ': the fallback icon has no size — an svg with only a viewBox does not have one');
 	}
 });
 
