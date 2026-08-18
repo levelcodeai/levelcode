@@ -753,8 +753,11 @@ test('SHELL COLUMN: no member re-declares an inline margin, which would un-centr
 			// A shorthand is only a problem when its INLINE slot is not auto. `margin: 8px auto`
 			// re-states the centring and is fine; `margin: 0 8px 6px` destroys it. Slots are
 			// [all] / [block inline] / [top inline bottom] / [top right bottom left].
-			const sh = /(?:^|;)\s*margin\s*:\s*([^;}]+)/.exec(body);
-			if (sh) {
+			//
+			// EVERY declaration, not the first: a single .exec() would read `margin: 6px auto`
+			// and stop, never reaching a `margin: 0 8px 6px` later in the same body — and CSS
+			// applies the LAST one, so the guard would pass while the bar sat against the edge.
+			for (const sh of body.matchAll(/(?:^|;)\s*margin\s*:\s*([^;}]+)/g)) {
 				const p = sh[1].trim().split(/\s+/);
 				const inline = p.length === 1 ? [p[0]] : p.length === 4 ? [p[1], p[3]] : [p[1]];
 				assert.ok(inline.every((v) => v === 'auto'),
@@ -762,9 +765,10 @@ test('SHELL COLUMN: no member re-declares an inline margin, which would un-centr
 					+ 'resets margin-inline and pins the bar to one edge. Use margin-block; the width '
 					+ 'calc already insets by --shell-x.');
 			}
-			const direct = /margin-(?:left|right|inline(?:-start|-end)?)\s*:\s*([^;}]+)/.exec(body);
-			assert.ok(!direct || direct[1].trim() === 'auto',
-				id + ' sets an inline margin directly, which beats the shell column\'s auto');
+			for (const d of body.matchAll(/margin-(?:left|right|inline(?:-start|-end)?)\s*:\s*([^;}]+)/g)) {
+				assert.strictEqual(d[1].trim(), 'auto',
+					id + ' sets an inline margin directly, which beats the shell column\'s auto');
+			}
 		}
 	}
 });
