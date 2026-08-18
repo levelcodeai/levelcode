@@ -61,6 +61,10 @@ let chatProvider;       // the single provider instance; both surfaces wire thro
 // receive anything at all.
 let pendingTranscriptReplay = '';
 let sessionsWebview;   // the Sessions sidebar webview (for pushing list refreshes after a History action)
+// Which tab a pending reveal wants. The container is hidden by default, so the FIRST reveal usually
+// resolves the view from scratch and there is no webview to post to yet — the request has to wait for
+// the view to announce itself. Flushed on `listSessions`, the earliest thing a loaded view sends.
+let pendingSessionsTab = '';
 /** @type {{role:string,content:string}[]} */
 let conversation = [];
 // Bumped by every teardown. A turn captures it when it starts and checks it before writing anything
@@ -2414,6 +2418,26 @@ function chatStartLocation() {
 	return ['editor', 'none'].includes(raw) ? raw : 'editor';
 }
 
+/**
+ * Reveal the Sessions panel on a specific tab.
+ *
+ * Two steps that cannot be collapsed into one. Revealing is a command; switching tabs is a message to
+ * a webview that may not exist yet — the container is hidden by default, so the first click of the
+ * session usually has to CREATE the view. So the tab is recorded first and posted twice over: once
+ * immediately for a view that is already up, and once from the view's own `listSessions` for one that
+ * is still loading. showTab is idempotent, so the overlap costs nothing and the cold path is covered.
+ */
+function revealSessions(tab) {
+	pendingSessionsTab = tab;
+	const done = Promise.resolve(vscode.commands.executeCommand('levelcodeAi.sessions.focus'))
+		.then(undefined, (e) => dbg('sessions.reveal.failed', { tab, msg: String((e && e.message) || e) }));
+	if (sessionsWebview) {
+		pendingSessionsTab = '';
+		try { sessionsWebview.postMessage({ type: 'showTab', tab }); } catch (e) { /* view closed mid-flight */ }
+	}
+	return done;
+}
+
 /** Open the chat where `chat.startLocation` says, once, as the window finishes starting. */
 async function revealChatAtStartup() {
 	const where = chatStartLocation();
@@ -2480,7 +2504,12 @@ class SessionsViewProvider {
 			switch (msg.type) {
 				// The real session index for this workspace (empty on a fresh install — the view shows its
 				// own empty state). Posted to THIS view's webview, not the chat's.
-				case 'listSessions': view.webview.postMessage({ type: 'sessions', entries: sessionList() }); break;
+				case 'listSessions': {
+					view.webview.postMessage({ type: 'sessions', entries: sessionList() });
+					// The view is alive now, so a tab requested before it existed can finally be applied.
+					if (pendingSessionsTab) { const t = pendingSessionsTab; pendingSessionsTab = ''; view.webview.postMessage({ type: 'showTab', tab: t }); }
+					break;
+				}
 				case 'newSession': newChat(); focusChatView('sessions.newSession'); break;
 				case 'sessionAction': await handleSessionAction(msg.action, msg.id); break;
 				// Memory tab (§M3): list the recorded outcomes + facts; act on them; open the file.
@@ -2745,7 +2774,9 @@ function activate(context) {
 		vscode.window.registerWebviewViewProvider('levelcodeAi.sessions', new SessionsViewProvider(), {
 			webviewOptions: { retainContextWhenHidden: true }
 		}),
-		vscode.commands.registerCommand('levelcode.ai.sessions', () => vscode.commands.executeCommand('levelcodeAi.sessions.focus')),
+		// Both land on the same panel, each on its own tab, so a button says exactly where it goes.
+		vscode.commands.registerCommand('levelcode.ai.sessions', () => revealSessions('history')),
+		vscode.commands.registerCommand('levelcode.ai.memory', () => revealSessions('memory')),
 		vscode.window.onDidChangeActiveTextEditor(() => postActiveFile()),
 		// ⇧⌘I. Opens the chat where the chat lives — the editor tab. This pointed at the contributed
 		// view, which is why the shortcut kept pulling a panel out on the right after the conversation
