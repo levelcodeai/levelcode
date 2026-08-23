@@ -116,6 +116,23 @@ function supportsToolsForModel(providerId, modelId) {
 	return modelCaps(modelId).tools !== false;
 }
 
+/**
+ * Whether an image may be attached for this provider+model.
+ *
+ * Deliberately STRICTER than supportsToolsForModel. That one defaults unknown models to tools:true,
+ * because most modern chat models have tools and refusing the agent is the bigger loss. Vision
+ * inverts that trade: an unknown model is assumed NOT to see. Attaching to a blind model costs the
+ * user a composed message and returns a provider error (or, worse, a confident answer about text
+ * alone); a disabled attach button that names a model which can see costs them one click. The
+ * catalog already marks every vision model we know, and heuristicCaps covers the big families, so
+ * the strict default bites only on genuinely unrecognised ids.
+ */
+function supportsVisionForModel(providerId, modelId) {
+	const p = getProvider(providerId);
+	if (!p) { return false; }
+	return modelCaps(modelId).vision === true;
+}
+
 /** The model's context window (tokens), or `fallback` (then 200000) when unknown. */
 function contextWindowFor(providerId, modelId, fallback) {
 	return modelCaps(modelId).context || fallback || 200000;
@@ -238,7 +255,7 @@ async function getModelChoices(providerId, opts) {
 
 module.exports = {
 	CAPS, modelCaps, baseName, heuristicCaps,
-	supportsToolsForModel, contextWindowFor, fastCompletionModel,
+	supportsToolsForModel, supportsVisionForModel, contextWindowFor, fastCompletionModel,
 	describeCaps, describeModel,
 	mapOpenRouterModels, mapModelIds, fetchModels, getModelChoices
 };
