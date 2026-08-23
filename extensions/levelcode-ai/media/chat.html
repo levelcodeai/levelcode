@@ -65,6 +65,9 @@
      calc above already insets by --shell-x. Set margin-block in these rules, never margin.
      test/webviewCss.test.js pins this for the whole list. */
 
+  #attachImg .ci { width: 14px; height: 14px; display: block; }
+  #attachImg { display: inline-flex; align-items: center; justify-content: center; }
+
   /* ---- attached images ---- */
   /* The chip carries its own thumbnail: an attachment you cannot see is one you cannot check before
      sending, and a screenshot is the one attachment where the wrong one looks exactly like the right
@@ -1333,6 +1336,9 @@
     <div id="toolbar">
       <div class="left">
         <button class="tbtn" id="attach" title="Add selected code as context (⌥⌘A)">+</button>
+        <button class="tbtn" id="attachImg" title="Attach an image — or paste a screenshot with ⌘V" aria-label="Attach an image">
+          <svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.5 3h11l.5.5v9l-.5.5h-11l-.5-.5v-9l.5-.5zm.5 1v6.3l2.6-2.3 2.5 2.2 2.9-3.1L13 9.4V4H3zm0 8h10v-1.2l-2.5-2.6-2.9 3.1-2.5-2.2L3 11.4V12zM6 5.5a1.2 1.2 0 1 1-2.4 0 1.2 1.2 0 0 1 2.4 0z"/></svg>
+        </button>
         <span class="sep"></span>
         <span class="modewrap">
           <span class="pill agent" id="mode" title="Choose Agent or Chat mode" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
@@ -3178,6 +3184,14 @@
     return { w: tw, h: th, media_type: 'image/webp', base64: await blobToBase64(blob), bytes: blob.size };
   }
 
+  /** Host-read bytes -> a File, so a picked/dropped path goes through the same normalizer as a paste. */
+  function b64ToFile(b64, type, name){
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) { u8[i] = bin.charCodeAt(i); }
+    return new File([u8], name || 'image', { type: type });
+  }
+
   async function attachImageFiles(files){
     const list = Array.from(files || []).filter(function(f){ return f && /^image\//.test(f.type); });
     if (!list.length) { return false; }
@@ -3225,15 +3239,31 @@
   document.addEventListener('dragleave', function(ev){ if (!ev.relatedTarget) { document.body.classList.remove('dropping'); } });
   document.addEventListener('drop', function(ev){
     document.body.classList.remove('dropping');
-    if (!ev.dataTransfer || !ev.dataTransfer.files || !ev.dataTransfer.files.length) { return; }
-    const imgs = Array.from(ev.dataTransfer.files).filter(function(f){ return /^image\//.test(f.type); });
-    if (!imgs.length) { return; }
+    const dt = ev.dataTransfer; if (!dt) { return; }
+    const imgs = Array.from(dt.files || []).filter(function(f){ return /^image\//.test(f.type); });
+    if (imgs.length) { ev.preventDefault(); attachImageFiles(imgs); return; }
+    // VS Code's workbench intercepts OS file drops before a webview iframe sees them, so
+    // dataTransfer.files is usually EMPTY for a drag out of Finder — while the path is still
+    // there as a uri-list. Hand the paths to the host, which can read them off disk.
+    let uris = '';
+    try { uris = dt.getData('text/uri-list') || dt.getData('text/plain') || ''; } catch (e) {}
+    const paths = uris.split(/[\r\n]+/)
+      .map(function(u){ return u.trim(); })
+      .filter(function(u){ return u && !/^#/.test(u); })
+      .map(function(u){ try { return /^file:/i.test(u) ? decodeURIComponent(u.replace(/^file:\/\//i, '')) : u; } catch (e) { return u; } })
+      .filter(function(u){ return /\.(png|jpe?g|gif|webp)$/i.test(u); });
+    if (!paths.length) { return; }
     ev.preventDefault();
-    attachImageFiles(imgs);
+    if (!canSeeImages) { note((canSeeImagesModel || 'This model') + ' cannot read images.'); return; }
+    vscode.postMessage({ type: 'attachImagePaths', paths: paths });
   });
 
   sendBtn.onclick = doSend;
   document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'addContext' });
+  document.getElementById('attachImg').onclick = function(){
+    if (!canSeeImages) { note((canSeeImagesModel || 'This model') + ' cannot read images. Switch to a vision model and try again.'); return; }
+    vscode.postMessage({ type: 'pickImages' });
+  };
   document.getElementById('model').onclick = () => vscode.postMessage({ type: 'pickModel' });
   // Approvals dropdown (mirrors the Agent/Chat menu). The host owns the flag (persists it + gates the
   // danger set); selecting an option posts setAutopilot and we reflect whatever it echoes back via the
@@ -3796,6 +3826,9 @@
       // returns to fully flat immediately instead of leaving one stray group behind.
       if (typeof m.groupActivity === 'boolean'){ if (!m.groupActivity){ closeGroup(); } groupsOn = m.groupActivity; }
       renderRouting();
+    }
+    else if (m.type === 'attachImages'){
+      attachImageFiles((m.files || []).map(function(f){ return b64ToFile(f.base64, f.media_type, f.name); }));
     }
     else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
     else if (m.type === 'assistantDelta'){ pending += m.text; ensurePump(); }

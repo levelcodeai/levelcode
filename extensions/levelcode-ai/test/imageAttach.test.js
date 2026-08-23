@@ -122,7 +122,7 @@ test('HOST: images become refs in the conversation, and bytes only at request ti
 
 test('CONVERSATION: blocks only when there is an image', () => {
 	const body = fnBody(ext, 'handleSend');
-	assert.match(body, /imageBlocks\.length\s*\n?\s*\?\s*\{ role: 'user', content: \[\.\.\.imageBlocks/,
+	assert.match(body, /\[\.\.\.imageBlocks, \{ type: 'text', text: userContent \}\]/,
 		'images lead the block array');
 	assert.match(body, /:\s*\{ role: 'user', content: userContent \}/,
 		'a text-only turn must stay a plain string, or every cached prefix churns');
@@ -137,7 +137,7 @@ test('AGENT MODE: the default path carries images too', () => {
 	assert.match(ext, /async function agentFlow\(text, imageBlocks\)/, 'agentFlow must accept them');
 	const body = fnBody(ext, 'agentFlow');
 	assert.match(body, /imageBlocks && imageBlocks\.length/, 'and use them when present');
-	assert.match(body, /content: \[\.\.\.imageBlocks, \{ type: 'text', text \}\]/, 'images lead the goal');
+	assert.match(body, /\[\.\.\.imageBlocks, \{ type: 'text', text \}\]/, 'images lead the goal');
 	assert.match(body, /:\s*\{ role: 'user', content: text \}/,
 		'a text-only goal must stay a plain string, or every cached agent prefix churns');
 });
@@ -149,6 +149,41 @@ test('NO WORKSPACE: an image still has somewhere to live', () => {
 	assert.match(body, /sessionsManager\(\)/, 'prefer the project session dir when there is one');
 	assert.match(body, /_no-workspace/, 'and fall back when there is not');
 	assert.ok(!/Images need a session/.test(ext), 'the old session-required refusal must be gone');
+});
+
+test('400: an image with no words must not emit an empty text block', () => {
+	// Anthropic rejects it outright — "text content blocks must be non-empty" — and an image sent
+	// with no words produced exactly that. Both paths must omit the block rather than send "".
+	const send = fnBody(ext, 'handleSend');
+	assert.match(send, /userContent \? \[\.\.\.imageBlocks/, 'handleSend must gate the text block on there being text');
+	assert.match(send, /:\s*imageBlocks\b/, 'handleSend must fall back to the images alone');
+
+	const agent = fnBody(ext, 'agentFlow');
+	assert.match(agent, /text \? \[\.\.\.imageBlocks/, 'agentFlow must gate the text block on there being text');
+	assert.match(agent, /:\s*imageBlocks\b/, 'agentFlow must fall back to the images alone');
+});
+
+test('CSP: the webview is allowed to render a data: image, and nothing else', () => {
+	// default-src 'none' blocks every image, which is why the first thumbnail rendered broken.
+	const csp = fnBody(ext, 'webviewCsp');
+	assert.match(csp, /"img-src data:"/, 'attached images cannot render without this');
+	assert.ok(!/img-src[^"]*https:/.test(csp), 'the panel must not be able to fetch a remote image');
+});
+
+test('PICKER + DROP: a Finder file reaches the same normalizer as a paste', () => {
+	// VS Code's workbench intercepts OS file drops before a webview iframe sees them, so
+	// dataTransfer.files is usually empty for a Finder drag while the PATH is still there.
+	assert.match(html, /getData\('text\/uri-list'\)/, 'no uri-list fallback for the VS Code drop case');
+	assert.match(html, /type: 'attachImagePaths'/, 'paths must be handed to the host to read');
+	assert.match(ext, /case 'attachImagePaths'/, 'the host must accept them');
+	assert.match(ext, /case 'pickImages'/, 'and offer a picker that works regardless');
+	assert.match(ext, /showOpenDialog\(/, 'the picker must be a real file dialog');
+
+	const reader = fnBody(ext, 'attachImagePaths');
+	assert.match(reader, /25 \* 1024 \* 1024/, 'guard the size BEFORE base64 crosses the message bus');
+	assert.match(reader, /is not an image LevelCode can read/, 'a non-image must say so, not fail silently');
+	assert.match(html, /function b64ToFile/, 'host bytes must become a File so both routes share normalizeImage');
+	assert.match(html, /id="attachImg"/, 'there must be a visible way in besides paste');
 });
 
 console.log('\nimageAttach: ' + n + ' tests passed.');

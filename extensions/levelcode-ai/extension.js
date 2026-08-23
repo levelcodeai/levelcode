@@ -1617,7 +1617,7 @@ async function agentFlow(text, imageBlocks) {
 	// Agent mode is the DEFAULT, so this is the path most pasted screenshots take. Blocks only when
 	// there IS an image — a text-only goal stays a plain string so cached prefixes keep their bytes.
 	const goalMsg = (imageBlocks && imageBlocks.length)
-		? { role: 'user', content: [...imageBlocks, { type: 'text', text }] }
+		? { role: 'user', content: text ? [...imageBlocks, { type: 'text', text }] : imageBlocks }
 		: { role: 'user', content: text };
 	currentCheckpoint = { turnId: ++checkpointSeq, label: (text || '').slice(0, 60), ts: Date.now(), goalMsg: goalMsg, files: new Map() };
 	checkpoints.push(currentCheckpoint);
@@ -1746,6 +1746,48 @@ function imageRoot() {
 }
 
 /**
+ * Read image files from disk and hand their bytes to the webview to normalize.
+ *
+ * Two callers, one path. The picker (reliable everywhere) and a Finder drop that arrives as a
+ * uri-list rather than as File objects — VS Code's workbench intercepts OS file drops before a
+ * webview iframe sees them, so `dataTransfer.files` is often empty while the PATH is still there.
+ * Reading host-side covers both, and normalization still happens in the webview because that is
+ * the only place with a canvas.
+ */
+async function attachImagePaths(paths) {
+	const files = [];
+	for (const fsPath of (Array.isArray(paths) ? paths : []).slice(0, 8)) {
+		try {
+			const ext = String(path.extname(fsPath) || '').toLowerCase();
+			const mt = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+				'.gif': 'image/gif', '.webp': 'image/webp' }[ext];
+			if (!mt) { vscode.window.showWarningMessage(path.basename(fsPath) + ' is not an image LevelCode can read.'); continue; }
+			const buf = await fs.promises.readFile(fsPath);
+			// Guard before the bytes cross into the webview: a 200MB file would otherwise be
+			// base64-ed onto the message bus before anything got a chance to refuse it.
+			if (buf.length > 25 * 1024 * 1024) {
+				vscode.window.showWarningMessage(path.basename(fsPath) + ' is too large to attach.');
+				continue;
+			}
+			files.push({ base64: buf.toString('base64'), media_type: mt, name: path.basename(fsPath) });
+		} catch (e) {
+			dbg('image.read.failed', { msg: String((e && e.message) || e) });
+			vscode.window.showWarningMessage('Could not read ' + path.basename(fsPath));
+		}
+	}
+	if (files.length) { post({ type: 'attachImages', files }); }
+}
+
+/** Pick images from disk — the path that works regardless of what the webview can receive. */
+async function pickImages() {
+	const picked = await vscode.window.showOpenDialog({
+		canSelectMany: true, openLabel: 'Attach',
+		filters: { Images: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }
+	});
+	if (picked && picked.length) { await attachImagePaths(picked.map((u) => u.fsPath)); }
+}
+
+/**
  * Store what the webview normalized, and return the blocks that will ride the conversation.
  *
  * Bytes land in the session's own media/ directory and the message keeps only a ref. Refused
@@ -1821,8 +1863,10 @@ async function handleSend(text, images) {
 	// Blocks only when there is an image; a text-only turn stays a plain string so every cached
 	// prefix keeps the bytes it already had. Images lead — the model reads them best before the
 	// text that asks about them.
+	// An empty text block is a 400 from Anthropic ("text content blocks must be non-empty"), and an
+	// image sent with no words produces exactly that. Include the text block only when there is text.
 	conversation.push(imageBlocks.length
-		? { role: 'user', content: [...imageBlocks, { type: 'text', text: userContent }] }
+		? { role: 'user', content: userContent ? [...imageBlocks, { type: 'text', text: userContent }] : imageBlocks }
 		: { role: 'user', content: userContent });
 	post({ type: 'userMessage', text });
 	if (auto.names.length) { post({ type: 'autoContext', names: auto.names }); }
@@ -2359,6 +2403,8 @@ class ChatViewProvider {
 				// One surface for "that could not be attached" — VS Code's own, not a second one
 				// invented inside the transcript.
 				case 'notice': if (msg.text) { vscode.window.showWarningMessage(String(msg.text)); } break;
+				case 'pickImages': await pickImages(); break;
+				case 'attachImagePaths': await attachImagePaths(msg.paths); break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
 				case 'approvalResponse': {
@@ -2557,6 +2603,9 @@ function webviewCsp() {
 	const nonce = String(Math.random()).slice(2) + String(Date.now());
 	return { nonce, csp: [
 		"default-src 'none'",
+		// data: only — attached screenshots are rendered from their own bytes. Deliberately NOT
+		// https:, so the panel still cannot reach out to the network for an image.
+		"img-src data:",
 		"style-src 'unsafe-inline'",
 		"script-src 'nonce-" + nonce + "'"
 	].join('; ') };
