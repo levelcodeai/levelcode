@@ -98,11 +98,14 @@ function clientTarget(w, h, cap) {
  * What one image block costs the context meter.
  *
  * This exists because estimateMsgTokens measures JSON.stringify().length / 4, which is sound for
- * text and catastrophic for an image: base64 books about a third of its byte count as tokens, so
- * a 1MB screenshot reads as ~333,000 — larger than most context windows — and the compaction cut
- * fires on the first paste and evicts real conversation history. With bytes on disk and only a
- * ref in the message the same estimator swings the other way and under-counts a ~1800-token image
- * as ~18. Both are wrong; this is the number.
+ * text and catastrophic for an image: base64 books about a third of its byte count as tokens, so a
+ * 1MB screenshot reads as ~333,000 — larger than most context windows — for something that really
+ * costs ~4,800. With bytes on disk and only a ref in the message the same estimator swings the
+ * other way and under-counts a ~1800-token image as ~18. Both are wrong; this is the number.
+ *
+ * Scope, checked rather than assumed (a reviewer caught an earlier overstatement): today this only
+ * misreports the UI meter — findCompactionCut cuts on message count and goal boundaries and never
+ * reads a token number. It becomes a correctness bug the day anything automatic keys off it.
  */
 function imageBlockTokens(block, modelId) {
 	if (!block || block.type !== 'image') { return 0; }

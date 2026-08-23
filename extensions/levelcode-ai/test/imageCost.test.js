@@ -89,7 +89,8 @@ test('TIER: 4.7-and-later is high-res; anything unrecognised is standard, never 
 test('METER: an image block costs its real visual tokens, not its JSON length', () => {
 	// The bug this replaces: estimateMsgTokens is JSON.stringify(m).length / 4, which charges a
 	// base64 image about a third of its BYTE count — a 1MB screenshot books ~333,000 phantom
-	// tokens, more than most context windows, and the compaction cut evicts real history.
+	// tokens, more than most context windows, for something that really costs ~4,800. That
+	// misreports the UI meter today; it would be a correctness bug under any auto-compaction.
 	const block = { type: 'image', ref: 'a'.repeat(64), w: 3840, h: 2160, media_type: 'image/png' };
 	assert.strictEqual(C.imageBlockTokens(block, 'claude-opus-5'), 4784);
 	assert.strictEqual(C.imageBlockTokens(block, 'gpt-4o'), 1560, 'standard tier costs less');
