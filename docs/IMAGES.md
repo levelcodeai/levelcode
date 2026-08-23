@@ -31,14 +31,14 @@ else if (b.type === 'text') { trailingText += (b.text || ''); }
 
 This is the most dangerous thing in the list. On any OpenAI-compatible provider — which is most of them through the gateway — an attached image would **vanish between the composer and the wire**, and the model would answer confidently about text it never saw. No error, no warning, no log line. A user would reasonably conclude the model is hallucinating.
 
-**The vision capability is already modelled, and nothing reads it.** `providers/catalog.js` carries `vision: true` per model and has done since the multi-provider work:
+**The vision capability is already modelled, and nothing gates on it.** `providers/catalog.js` carries `vision: true` per model and has done since the multi-provider work. It *is* read — `describeCaps` renders "vision" in the model picker's detail line — but no behaviour turns on it:
 
 ```js
 'claude-opus-4-8':           { context: 200000, tools: true, vision: true, caching: true },
 'gpt-4o':                    { context: 128000, tools: true, vision: true },
 ```
 
-There is a `supportsToolsForModel(providerId, modelId)`. There is no `supportsVisionForModel`. Half the gate exists.
+There is a `supportsToolsForModel(providerId, modelId)`. There is no `supportsVisionForModel`. The data exists and the decision does not.
 
 **The context meter measures bytes, not tokens.** `agentMemory.js`:
 
@@ -48,7 +48,11 @@ function estimateMsgTokens(msgs) {
 }
 ```
 
-Sound for text. For a base64 image it charges roughly **one third of the byte count as tokens** — a 1 MB screenshot books ~333,000 phantom tokens, which is larger than most context windows. `findCompactionCut` would fire on the first screenshot and evict real conversation history to make room for an image that actually costs ~4,800. This is not a rounding error; it is the meter reading the wrong quantity entirely.
+Sound for text. For a base64 image it charges roughly **one third of the byte count as tokens** — a 1 MB screenshot books ~333,000 phantom tokens, which is larger than most context windows, for an image that actually costs ~4,800.
+
+**What that does and does not break, checked rather than assumed.** An earlier draft of this document claimed the bad estimate would make `findCompactionCut` evict real history on the first paste. That is wrong, and a reviewer caught it. `findCompactionCut` cuts on message count and goal boundaries and never looks at a token number; `compactAgentMemory` uses `estimateMsgTokens` only for its before/after report. The function's own comment says as much — *used only for the UI meter*.
+
+So the live consequence is narrower: the context meter reads wildly high the moment an image is attached, telling someone their context is full and they should start a new chat when it is nowhere near. That is still worth fixing — it is the meter reading the wrong quantity entirely — and it becomes a correctness bug rather than a display one the day any auto-compaction policy is keyed to that number.
 
 **Nothing in the composer accepts an image.** No `paste`, `drop`, or `DataTransfer` handling in `media/chat.html`. Sessions persist message objects verbatim into append-only JSONL, which is re-read on resume.
 
@@ -71,7 +75,7 @@ From the vision documentation, checked rather than recalled — the figure I had
 | High-resolution | Claude 4.7 and later | 2576 px | 4784 |
 | Standard | everything else | 1568 px | 1568 |
 
-Images above either limit are **downscaled server-side, preserving aspect ratio**. I reimplemented the rule and checked it against every worked example in the documentation: the **token count matches on all twelve** (1092² → 1521, 1000² → 1296, 1920×1080 → 2691, 3840×2160 → 2576×1449 at 4784), and the sent dimensions match on eleven — one standard-tier row lands a single pixel off (1270 vs 1269 wide, same 1564 tokens), a rounding convention I could not derive from six data points. Cost is exact; geometry is exact to a pixel:
+Images above either limit are **downscaled server-side, preserving aspect ratio**. I reimplemented the rule and checked it against every worked example in the documentation: the **token count matches on all twelve** (1092² → 1521, 1000² → 1296, 1920×1080 → 2691, 3840×2160 → 2576×1449 at 4784), and the sent dimensions match on eleven — one standard-tier row lands a single pixel off (1270 vs 1269 wide, same 1564 tokens), a rounding convention I could not derive from six data points. Cost is exact; geometry is correct to within a pixel:
 
 | Source | Sent as (high-res tier) | Tokens | If we cap the long edge at 1568 | Tokens |
 |---|---|---|---|---|
@@ -139,7 +143,7 @@ Three reasons. The session JSONL is append-only and fully re-read on resume — 
 
 It needs an explicit branch: for an image block, add `⌈w/28⌉ × ⌈h/28⌉`, clamped to the tier cap for the active model. The dimensions are recorded at normalize time, so this is arithmetic, not I/O.
 
-Getting this wrong is not cosmetic — the same estimate drives `findCompactionCut`, so a wrong number silently evicts conversation history.
+Getting this wrong is not cosmetic today (the meter lies to the user about how much room they have) and becomes load-bearing the moment anything automatic keys off it.
 
 ### D6 — The provider boundary fails loudly
 
