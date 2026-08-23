@@ -1594,7 +1594,7 @@ async function compactAgentMemory() {
 }
 
 let lastAgentGoal = null;   // remembered so the response bar's Retry can re-run it
-async function agentFlow(text) {
+async function agentFlow(text, imageBlocks) {
 	if (text && text.trim()) { lastAgentGoal = text; }
 	const cfg = aiConfig();
 	const providerId = currentProviderId();
@@ -1614,7 +1614,11 @@ async function agentFlow(text) {
 	abort = new AbortController();
 	repairAgentMemory();
 	// Open a workspace checkpoint for this turn (before the goal is pushed) so the user can roll back here.
-	const goalMsg = { role: 'user', content: text };
+	// Agent mode is the DEFAULT, so this is the path most pasted screenshots take. Blocks only when
+	// there IS an image — a text-only goal stays a plain string so cached prefixes keep their bytes.
+	const goalMsg = (imageBlocks && imageBlocks.length)
+		? { role: 'user', content: [...imageBlocks, { type: 'text', text }] }
+		: { role: 'user', content: text };
 	currentCheckpoint = { turnId: ++checkpointSeq, label: (text || '').slice(0, 60), ts: Date.now(), goalMsg: goalMsg, files: new Map() };
 	checkpoints.push(currentCheckpoint);
 	post({ type: 'checkpointOpened', turnId: currentCheckpoint.turnId });
@@ -1727,6 +1731,21 @@ async function agentFlow(text) {
 }
 
 /**
+ * Where attached images live.
+ *
+ * Beside the project's sessions when there is a workspace, so they are cleaned up with it. Without
+ * one they fall back to a shared bucket — images need a place on DISK, not a session, and v1.1.0
+ * deliberately made the agent answer with no folder open. Refusing to accept a screenshot in that
+ * state would re-introduce exactly the limitation that release removed.
+ */
+function imageRoot() {
+	const m = sessionsManager();
+	if (m && m.mediaRoot) { return m.mediaRoot(); }
+	try { return { root: sessionsRoot(), slug: '_no-workspace' }; }
+	catch (e) { dbg('image.root.failed', { msg: String((e && e.message) || e) }); return null; }
+}
+
+/**
  * Store what the webview normalized, and return the blocks that will ride the conversation.
  *
  * Bytes land in the session's own media/ directory and the message keeps only a ref. Refused
@@ -1736,9 +1755,8 @@ async function agentFlow(text) {
 function storeImages(images) {
 	const out = [];
 	if (!Array.isArray(images) || !images.length) { return out; }
-	const m = sessionsManager();
-	const paths = m && m.mediaRoot ? m.mediaRoot() : null;
-	if (!paths) { vscode.window.showWarningMessage('Images need a session to attach to.'); return out; }
+	const paths = imageRoot();
+	if (!paths) { vscode.window.showWarningMessage('Nowhere to store the image — LevelCode has no storage directory.'); return out; }
 	for (const im of images) {
 		try {
 			const { ref, bytes } = imageStore.put(paths.root, paths.slug, im.base64, im.media_type);
@@ -1760,8 +1778,7 @@ function storeImages(images) {
  */
 function withImages(msgs) {
 	if (!Array.isArray(msgs)) { return msgs; }
-	const m = sessionsManager();
-	const paths = m && m.mediaRoot ? m.mediaRoot() : null;
+	const paths = imageRoot();
 	if (!paths) { return msgs; }
 	let touched = false;
 	const out = msgs.map((msg) => {
@@ -1778,7 +1795,7 @@ async function handleSend(text, images) {
 	if ((!text || !text.trim()) && !imageBlocks.length) { return; }
 	text = text || '';
 	if (ctx) { ctx.globalState.update('levelcode.ai.hasSentMessage', true); }   // user engaged → stop auto-revealing the panel on launch
-	if (agentMode) { await agentFlow(text); return; }
+	if (agentMode) { await agentFlow(text, imageBlocks); return; }
 	const cfg = aiConfig();
 	const providerId = currentProviderId();
 	dbg('chat.send', { provider: providerId, model: activeModel(cfg, providerId), chars: text.length, history: conversation.length });

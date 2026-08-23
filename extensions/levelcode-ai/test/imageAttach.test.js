@@ -128,4 +128,27 @@ test('CONVERSATION: blocks only when there is an image', () => {
 		'a text-only turn must stay a plain string, or every cached prefix churns');
 });
 
+test('AGENT MODE: the default path carries images too', () => {
+	// I shipped this broken. handleSend stored the bytes and then early-returned into agentFlow(text),
+	// which never saw them — so in the DEFAULT mode a pasted screenshot was written to disk and
+	// dropped. The exact silent-drop failure this whole feature exists to prevent.
+	assert.match(ext, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks\); return; \}/,
+		'agent mode must forward the image blocks');
+	assert.match(ext, /async function agentFlow\(text, imageBlocks\)/, 'agentFlow must accept them');
+	const body = fnBody(ext, 'agentFlow');
+	assert.match(body, /imageBlocks && imageBlocks\.length/, 'and use them when present');
+	assert.match(body, /content: \[\.\.\.imageBlocks, \{ type: 'text', text \}\]/, 'images lead the goal');
+	assert.match(body, /:\s*\{ role: 'user', content: text \}/,
+		'a text-only goal must stay a plain string, or every cached agent prefix churns');
+});
+
+test('NO WORKSPACE: an image still has somewhere to live', () => {
+	// v1.1.0 deliberately made the agent answer with no folder open. Refusing a screenshot in that
+	// state would re-introduce the limitation that release removed.
+	const body = fnBody(ext, 'imageRoot');
+	assert.match(body, /sessionsManager\(\)/, 'prefer the project session dir when there is one');
+	assert.match(body, /_no-workspace/, 'and fall back when there is not');
+	assert.ok(!/Images need a session/.test(ext), 'the old session-required refusal must be gone');
+});
+
 console.log('\nimageAttach: ' + n + ' tests passed.');
