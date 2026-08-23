@@ -326,13 +326,15 @@ function createSessions(opts) {
 	}
 	/** Where this project's memory lives (for opening it — the transparency promise). */
 	function memoryPaths() { return { dir: memory.memoryDir(root, slug), journal: memory.journalFile(root, slug), memoryMd: memory.memoryMdFile(root, slug) }; }
+	/** Where attached images live: beside this project's sessions, so they are deleted with them. */
+	function mediaRoot() { return { root, slug }; }
 
 	/** The session index for this project (what the panel/view list). Empty (never throws) if unreadable. */
 	function list() { try { return store.loadIndex(root, slug).entries; } catch (e) { return []; } }
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, list, liveId };
+	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, mediaRoot, list, liveId };
 }
 
 module.exports = { createSessions };

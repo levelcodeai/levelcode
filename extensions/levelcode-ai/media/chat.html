@@ -65,6 +65,27 @@
      calc above already insets by --shell-x. Set margin-block in these rules, never margin.
      test/webviewCss.test.js pins this for the whole list. */
 
+  /* ---- attached images ---- */
+  /* The chip carries its own thumbnail: an attachment you cannot see is one you cannot check before
+     sending, and a screenshot is the one attachment where the wrong one looks exactly like the right
+     one in a filename. */
+  .chip.imgchip { padding: 2px 6px 2px 2px; gap: 6px; align-items: center; }
+  .chip.imgchip .imgthumb {
+    width: 28px; height: 28px; object-fit: cover; border-radius: 3px;
+    display: block; background: rgba(127,127,127,.18);
+  }
+  .chip.imgchip .imgmeta { font-variant-numeric: tabular-nums; opacity: .75; }
+  .msgimg {
+    display: block; max-width: min(320px, 100%); max-height: 240px; width: auto; height: auto;
+    border-radius: 6px; border: 1px solid var(--border); margin: 0 0 8px;
+  }
+  /* Whole-panel drop target: the transcript is a far bigger target than the composer, and someone
+     dragging a screenshot aims at the conversation. */
+  body.dropping::after {
+    content: ''; position: fixed; inset: 6px; border: 2px dashed var(--accent);
+    border-radius: 10px; pointer-events: none; z-index: 40;
+  }
+
   /* ---- conversation log ---- */
   /* The measure, the type and the inset are all declared on `body` (see above) so the composer and the
      status row resolve the same values the transcript does. `--shell-x` is the log's horizontal padding
@@ -1544,12 +1565,25 @@
       '<span class="name">' + esc(f.name) + '</span>' +
       '<span class="x" data-id="' + esc(f.id) + '" title="Remove">✕</span></span>';
   }
+  /** An attached image: its own thumbnail, its real size, and a way to take it back off. */
+  function imgChip(im){
+    return '<span class="chip imgchip" title="' + escAttr(im.w + '×' + im.h + ' · ' + fmtKB(im.bytes)) + '">'
+      + '<img class="imgthumb" src="' + escAttr(im.url) + '" alt="">'
+      + '<span class="imgmeta">' + im.w + '×' + im.h + '</span>'
+      + '<span class="x imgx" data-img="' + escAttr(im.id) + '" role="button" tabindex="0" aria-label="Remove image">×</span>'
+      + '</span>';
+  }
+
   function renderChips(){
     let h = '<button class="addchip" id="addctx" title="Add files or selection as context"><span class="plus">+</span> Add context</button>';
     if (activeFileLabel) { h += fileChip(activeFileLabel); }
     for (const f of ctxFiles) { h += pinnedChip(f); }
     if (selLabel) { h += selChip(selLabel); }
+    for (const im of pendingImages) { h += imgChip(im); }
     chipsEl.innerHTML = h;
+    chipsEl.querySelectorAll('.imgx').forEach(function(x){
+      x.onclick = function(e){ e.stopPropagation(); removeImage(x.getAttribute('data-img')); };
+    });
     document.getElementById('addctx').onclick = () => vscode.postMessage({ type: 'addContext' });
     chipsEl.querySelectorAll('.x').forEach(x => {
       x.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: 'removeContext', id: x.getAttribute('data-id') }); };
@@ -3057,17 +3091,146 @@
   function histSet(text){ input.value = text; auto(); const n = text.length; try { input.setSelectionRange(n, n); } catch (e) {} }
   function doSend(){
     if (streaming) { flushAll = true; ensurePump(); vscode.postMessage({ type: 'stop' }); return; }
-    const t = input.value.trim(); if (!t) return;
-    cmdHistory.push(t); if (cmdHistory.length > 200) { cmdHistory.shift(); }   // record for ↑/↓ recall
+    const t = input.value.trim();
+    // An image with no words is a real message — "look at this" is implied by attaching it.
+    if (!t && !pendingImages.length) return;
+    if (t) { cmdHistory.push(t); if (cmdHistory.length > 200) { cmdHistory.shift(); } }   // record for ↑/↓ recall
     histIdx = -1; histDraft = '';
     // Slash commands — handled locally (deterministic, no LLM call).
     if (/^\/skills\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); vscode.postMessage({ type: 'listSkills' }); return; }
     if (/^\/mcp\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); vscode.postMessage({ type: 'listMcp' }); return; }
     if (/^\/sessions\b/i.test(t)){ input.value = ''; auto(); openSessions(); return; }
     if (/^\/rme\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); addReminder(); return; }
-    add('user', render(t)); forceStick(); input.value = ''; auto();
-    vscode.postMessage({ type: 'send', text: t });
+    const imgs = pendingImages.map(function(i){
+      return { media_type: i.media_type, base64: i.base64, w: i.w, h: i.h, bytes: i.bytes };
+    });
+    add('user', (imgs.length ? imgs.map(function(i, k){
+      return '<img class="msgimg" src="' + escAttr(pendingImages[k].url) + '" alt="attached image">';
+    }).join('') : '') + render(t));
+    forceStick(); input.value = ''; auto(); clearImages(); renderChips();
+    vscode.postMessage({ type: 'send', text: t, images: imgs });
   }
+
+  // ── attached images ───────────────────────────────────────────────────────────────────────────
+  // Paste a screenshot, ask about it. Normalization happens HERE, before the bytes cross to the
+  // host, because this is the only place that has the decoded pixels.
+  //
+  // THE CAP IS 2000px ON THE LONG EDGE, and it is not a guess. Claude Code ships exactly this —
+  // every image it re-encodes is 2000 on the long edge — and it is the threshold the vision docs
+  // name for staying clear of the stricter per-image dimension limit that applies once a request
+  // carries more than 20 images. It is also well above either model tier's own cap, so the server
+  // does the final downscale and we never throw away fidelity it would have kept.
+  //
+  // UNDER THE CAP, THE ORIGINAL BYTES GO THROUGH UNTOUCHED — same rule, same reason: re-encoding
+  // an image that did not need resizing only stacks compression artifacts, and that is worst on
+  // screenshots of code, which is most of what gets pasted.
+  // Whether the SELECTED model can read images. Pushed with the model so an attachment is refused
+  // before anything is typed and lost, rather than after a send the provider would reject.
+  let canSeeImages = false;
+  let canSeeImagesModel = '';
+  const IMG_CAP = 2000;
+  const IMG_MAX_PER_TURN = 8;
+  const IMG_OK = { 'image/png': 1, 'image/jpeg': 1, 'image/gif': 1, 'image/webp': 1 };
+  let pendingImages = [];   // { id, url, w, h, media_type, base64, bytes }
+  let imgSeq = 0;
+
+  /** A user-facing "that did not work" line. Routed to the host so it uses VS Code's own notice
+   *  surface rather than inventing a second one inside the transcript. */
+  function note(t){ vscode.postMessage({ type: 'notice', text: String(t || '') }); }
+
+  function fmtKB(n){ return n >= 1024 * 1024 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+
+  /** Blob -> base64 payload, no data: prefix. */
+  function blobToBase64(blob){
+    return new Promise(function(res, rej){
+      const r = new FileReader();
+      r.onload = function(){ const s2 = String(r.result || ''); res(s2.slice(s2.indexOf(',') + 1)); };
+      r.onerror = function(){ rej(new Error('could not read the image')); };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  /** Decode, downscale only if over the cap, re-encode only if we resized. Never scales up. */
+  async function normalizeImage(file){
+    if (!IMG_OK[file.type]) { throw new Error('that image format is not supported — use PNG, JPEG, GIF or WebP'); }
+    let bmp;
+    try { bmp = await createImageBitmap(file); }
+    catch (e) { throw new Error('that file could not be read as an image'); }
+    const w = bmp.width, h = bmp.height;
+    const scale = Math.min(1, IMG_CAP / Math.max(w, h));
+    if (scale === 1) {
+      // Pass-through: the bytes we already have, in the format they arrived in.
+      bmp.close && bmp.close();
+      return { w: w, h: h, media_type: file.type, base64: await blobToBase64(file), bytes: file.size };
+    }
+    const tw = Math.round(w * scale), th = Math.round(h * scale);
+    // OffscreenCanvas keeps the decode and the draw off the layout path; a 4K decode on the main
+    // thread is a visible stall in a chat window.
+    const cv = (typeof OffscreenCanvas !== 'undefined') ? new OffscreenCanvas(tw, th)
+      : Object.assign(document.createElement('canvas'), { width: tw, height: th });
+    const g = cv.getContext('2d');
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(bmp, 0, 0, tw, th);
+    bmp.close && bmp.close();
+    const blob = cv.convertToBlob ? await cv.convertToBlob({ type: 'image/webp', quality: 0.92 })
+      : await new Promise(function(r){ cv.toBlob(r, 'image/webp', 0.92); });
+    if (!blob) { throw new Error('the image could not be resized'); }
+    return { w: tw, h: th, media_type: 'image/webp', base64: await blobToBase64(blob), bytes: blob.size };
+  }
+
+  async function attachImageFiles(files){
+    const list = Array.from(files || []).filter(function(f){ return f && /^image\//.test(f.type); });
+    if (!list.length) { return false; }
+    if (!canSeeImages) {
+      note((canSeeImagesModel || 'This model') + ' cannot read images. Switch to a vision model — '
+        + 'Claude, GPT-4o and Gemini all read them — and paste again.');
+      return true;
+    }
+    for (const f of list) {
+      if (pendingImages.length >= IMG_MAX_PER_TURN) {
+        note('Up to ' + IMG_MAX_PER_TURN + ' images per message — the rest were not attached.');
+        break;
+      }
+      try {
+        const im = await normalizeImage(f);
+        im.id = 'img' + (++imgSeq);
+        im.url = 'data:' + im.media_type + ';base64,' + im.base64;
+        pendingImages.push(im);
+        renderChips();
+      } catch (e) { note(String((e && e.message) || e)); }
+    }
+    return true;
+  }
+
+  function removeImage(id){ pendingImages = pendingImages.filter(function(i){ return i.id !== id; }); renderChips(); }
+  function clearImages(){ pendingImages = []; }
+
+  // Paste is the primary way in — the whole interaction is screenshot, then Cmd+V.
+  input.addEventListener('paste', function(ev){
+    const d = ev.clipboardData; if (!d) { return; }
+    const files = d.files && d.files.length ? d.files
+      : Array.from(d.items || []).filter(function(i){ return i.kind === 'file'; }).map(function(i){ return i.getAsFile(); });
+    const imgs = Array.from(files || []).filter(function(f){ return f && /^image\//.test(f.type); });
+    if (!imgs.length) { return; }            // a normal text paste is untouched
+    ev.preventDefault();
+    attachImageFiles(imgs);
+  });
+
+  // Drop anywhere in the panel, not just on the composer — the transcript is the bigger target.
+  document.addEventListener('dragover', function(ev){
+    if (ev.dataTransfer && Array.from(ev.dataTransfer.types || []).indexOf('Files') >= 0) {
+      ev.preventDefault(); document.body.classList.add('dropping');
+    }
+  });
+  document.addEventListener('dragleave', function(ev){ if (!ev.relatedTarget) { document.body.classList.remove('dropping'); } });
+  document.addEventListener('drop', function(ev){
+    document.body.classList.remove('dropping');
+    if (!ev.dataTransfer || !ev.dataTransfer.files || !ev.dataTransfer.files.length) { return; }
+    const imgs = Array.from(ev.dataTransfer.files).filter(function(f){ return /^image\//.test(f.type); });
+    if (!imgs.length) { return; }
+    ev.preventDefault();
+    attachImageFiles(imgs);
+  });
 
   sendBtn.onclick = doSend;
   document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'addContext' });
@@ -3626,6 +3789,7 @@
       mEl.title = (m.providerLabel || (m.provider === 'claude' ? 'Claude' : m.provider)) + ' · ' + m.model + ' — click to change';
       // Update the footer context-window meter to the newly-selected model's real window.
       if (typeof m.contextLimit === 'number'){ renderContext({ limit: m.contextLimit }); }
+      if (typeof m.canSeeImages === 'boolean'){ canSeeImages = m.canSeeImages; canSeeImagesModel = label; }
       lastProvider = m.provider || '';
       lastModelId = m.modelId || m.model || '';   // gateway sends modelId (the real id); BYOK model IS the id
       // calm-transcript toggle. Turning it OFF mid-run closes any open group first, so the timeline

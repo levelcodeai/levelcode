@@ -22,6 +22,8 @@ const { registerLmProvider } = require('./lmProvider');
 const { registerInlineComplete } = require('./inlineComplete');
 const { runAgent } = require('./agent');
 const { findCompactionCut, estimateMsgTokens } = require('./agentMemory');
+const imageStore = require('./imageStore');
+const { supportsVisionForModel } = require('./providers/catalog');
 const sessionStore = require('./sessionStore');
 const sessionEvents = require('./sessionEvents');
 const sessionMemory = require('./sessionMemory');
@@ -1642,7 +1644,7 @@ async function agentFlow(text) {
 	dbg('verify.config', { enabled: verifyCfg.enabled, hasCommand: !!verifyCfg.command, maxRounds: verifyCfg.maxRounds, includeWarnings: verifyCfg.includeWarnings });
 	try {
 		await runAgent({
-			messages: agentMessages, // persists across runs → the agent remembers the session
+			messages: withImages(agentMessages), // persists across runs → the agent remembers the session
 			providerId: req.providerId,         // Anthropic native, or an OpenAI-shaped provider via translation (P2)
 			baseURL: req.baseURL,               // for the custom / Ollama endpoints
 			label: req.label,                   // route name for error attribution — "LevelCode Cloud" on the gateway,
@@ -1724,8 +1726,57 @@ async function agentFlow(text) {
 	}
 }
 
-async function handleSend(text) {
-	if (!text || !text.trim()) { return; }
+/**
+ * Store what the webview normalized, and return the blocks that will ride the conversation.
+ *
+ * Bytes land in the session's own media/ directory and the message keeps only a ref. Refused
+ * images are reported and skipped rather than failing the whole send — someone who pasted three
+ * screenshots and one unreadable file should still get their question answered.
+ */
+function storeImages(images) {
+	const out = [];
+	if (!Array.isArray(images) || !images.length) { return out; }
+	const m = sessionsManager();
+	const paths = m && m.mediaRoot ? m.mediaRoot() : null;
+	if (!paths) { vscode.window.showWarningMessage('Images need a session to attach to.'); return out; }
+	for (const im of images) {
+		try {
+			const { ref, bytes } = imageStore.put(paths.root, paths.slug, im.base64, im.media_type);
+			out.push({ type: 'image', ref, w: Number(im.w) || 0, h: Number(im.h) || 0, bytes });
+		} catch (e) {
+			const msg = String((e && e.message) || e).replace(/^imageStore: /, '');
+			vscode.window.showWarningMessage('Could not attach an image: ' + msg);
+			dbg('image.store.failed', { msg });
+		}
+	}
+	return out;
+}
+
+/**
+ * A copy of `msgs` with every stored image turned into a real wire block.
+ *
+ * A COPY, deliberately. `agentMessages` persists across runs and is what recordTurn writes to the
+ * session log — materializing in place would put megabytes of base64 into both.
+ */
+function withImages(msgs) {
+	if (!Array.isArray(msgs)) { return msgs; }
+	const m = sessionsManager();
+	const paths = m && m.mediaRoot ? m.mediaRoot() : null;
+	if (!paths) { return msgs; }
+	let touched = false;
+	const out = msgs.map((msg) => {
+		if (!msg || !Array.isArray(msg.content)) { return msg; }
+		if (!msg.content.some((b) => b && b.type === 'image' && b.ref)) { return msg; }
+		touched = true;
+		return { ...msg, content: msg.content.map((b) => imageStore.materialize(paths.root, paths.slug, b)) };
+	});
+	return touched ? out : msgs;
+}
+
+async function handleSend(text, images) {
+	const imageBlocks = storeImages(images);
+	if ((!text || !text.trim()) && !imageBlocks.length) { return; }
+	text = text || '';
 	if (ctx) { ctx.globalState.update('levelcode.ai.hasSentMessage', true); }   // user engaged → stop auto-revealing the panel on launch
 	if (agentMode) { await agentFlow(text); return; }
 	const cfg = aiConfig();
@@ -1750,7 +1801,12 @@ async function handleSend(text) {
 
 	if (pendingContext) { blocks.push(pendingContext); }
 	const userContent = blocks.length ? (blocks.join('\n\n') + '\n\n' + text) : text;
-	conversation.push({ role: 'user', content: userContent });
+	// Blocks only when there is an image; a text-only turn stays a plain string so every cached
+	// prefix keeps the bytes it already had. Images lead — the model reads them best before the
+	// text that asks about them.
+	conversation.push(imageBlocks.length
+		? { role: 'user', content: [...imageBlocks, { type: 'text', text: userContent }] }
+		: { role: 'user', content: userContent });
 	post({ type: 'userMessage', text });
 	if (auto.names.length) { post({ type: 'autoContext', names: auto.names }); }
 	pendingContext = null;
@@ -1772,7 +1828,7 @@ async function handleSend(text) {
 		const doStream = (r) => providers.streamChat({
 			providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL, label: r.label,
 			model: r.model, maxTokens: r.maxTokens, system: SYSTEM_PROMPT,
-			messages: conversation, signal: abort.signal, onDelta
+			messages: withImages(conversation), signal: abort.signal, onDelta
 		});
 		try {
 			await doStream(req);
@@ -2240,14 +2296,16 @@ function sendConfigToWebview() {
 			type: 'config', provider: 'gateway', proseSize, proseWidth, model: gatewayModelLabel(model), modelId: model,
 			providerLabel: 'LevelCode Cloud', contextLimit: contextLimitFor('openai', capsModel(model)),
 			gateway: true, plan: cloudPlanName() || 'Free', paid: isPaidCloudPlan(cloudPlanName()),
-			groupActivity: groupActivity
+			groupActivity: groupActivity, canSeeImages: supportsVisionForModel('openai', capsModel(model))
 		});
 		return;
 	}
 	const providerId = currentProviderId();
 	const p = providers.getProvider(providerId) || providers.getProvider('claude');
 	// Carry the model's context window so the footer meter updates the moment the model changes.
-	post({ type: 'config', provider: providerId, proseSize, proseWidth, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity });
+	// canSeeImages travels with the model so the composer can refuse an attachment BEFORE anything is
+	// typed and lost, rather than after a send that the provider would reject.
+	post({ type: 'config', provider: providerId, proseSize, proseWidth, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity, canSeeImages: supportsVisionForModel(providerId, activeModel(cfg, providerId)) });
 }
 
 /**
@@ -2280,7 +2338,10 @@ class ChatViewProvider {
 				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); autopilot = aiConfig().get('agent.autopilot', false); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); post({ type: 'autopilot', on: autopilot }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } postMemoryDigest(); if (pendingTranscriptReplay) { const t = pendingTranscriptReplay; pendingTranscriptReplay = ''; replayLiveTranscript(t); } break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'setAutopilot': autopilot = !!msg.on; aiConfig().update('agent.autopilot', autopilot, vscode.ConfigurationTarget.Global); dbg('autopilot.set', { on: autopilot }); post({ type: 'autopilot', on: autopilot }); break;
-				case 'send': await handleSend(msg.text); break;
+				case 'send': await handleSend(msg.text, msg.images); break;
+				// One surface for "that could not be attached" — VS Code's own, not a second one
+				// invented inside the transcript.
+				case 'notice': if (msg.text) { vscode.window.showWarningMessage(String(msg.text)); } break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
 				case 'approvalResponse': {
