@@ -66,6 +66,7 @@
      test/webviewCss.test.js pins this for the whole list. */
 
   #attachImg .ci { width: 14px; height: 14px; display: block; }
+  #attachImg.atcap { opacity: .45; }
   #attachImg { display: inline-flex; align-items: center; justify-content: center; }
 
   /* ---- attached images ---- */
@@ -1587,11 +1588,16 @@
     if (selLabel) { h += selChip(selLabel); }
     for (const im of pendingImages) { h += imgChip(im); }
     chipsEl.innerHTML = h;
+    syncAttachImgBtn();
     chipsEl.querySelectorAll('.imgx').forEach(function(x){
       x.onclick = function(e){ e.stopPropagation(); removeImage(x.getAttribute('data-img')); };
     });
     document.getElementById('addctx').onclick = () => vscode.postMessage({ type: 'addContext' });
-    chipsEl.querySelectorAll('.x').forEach(x => {
+    // :not(.imgx) — an image chip's × carries BOTH classes, and both handlers assign .onclick
+    // rather than adding a listener, so whichever runs last silently wins. It did: clicking × on an
+    // image posted removeContext with a null id and the image stayed. Excluding here rather than
+    // reordering, so it cannot come back the next time these two blocks move relative to each other.
+    chipsEl.querySelectorAll('.x:not(.imgx)').forEach(x => {
       x.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: 'removeContext', id: x.getAttribute('data-id') }); };
     });
   }
@@ -3135,7 +3141,9 @@
   let canSeeImages = false;
   let canSeeImagesModel = '';
   const IMG_CAP = 2000;
-  const IMG_MAX_PER_TURN = 8;
+  // How many images may ride one message. Configurable because the cost is real: each image is
+  // ~1,800-3,000 input tokens, so a maxed-out message is a five-figure prompt before a word is typed.
+  let IMG_MAX_PER_TURN = 5;
   const IMG_OK = { 'image/png': 1, 'image/jpeg': 1, 'image/gif': 1, 'image/webp': 1 };
   let pendingImages = [];   // { id, url, w, h, media_type, base64, bytes }
   let imgSeq = 0;
@@ -3202,7 +3210,9 @@
     }
     for (const f of list) {
       if (pendingImages.length >= IMG_MAX_PER_TURN) {
-        note('Up to ' + IMG_MAX_PER_TURN + ' images per message — the rest were not attached.');
+        const dropped = list.length - pendingImages.length;
+        note('Up to ' + IMG_MAX_PER_TURN + ' images per message. '
+          + (dropped > 0 ? dropped + ' were not attached — ' : '') + 'remove one to add another.');
         break;
       }
       try {
@@ -3217,6 +3227,17 @@
   }
 
   function removeImage(id){ pendingImages = pendingImages.filter(function(i){ return i.id !== id; }); renderChips(); }
+
+  /** Reflect how full the image tray is on the attach button, so the cap is visible before it bites. */
+  function syncAttachImgBtn(){
+    const b = document.getElementById('attachImg'); if (!b) { return; }
+    const n = pendingImages.length, full = n >= IMG_MAX_PER_TURN;
+    b.classList.toggle('atcap', full);
+    b.title = full
+      ? ('Image limit reached (' + n + '/' + IMG_MAX_PER_TURN + ') — remove one to attach another')
+      : (n ? ('Attach an image (' + n + '/' + IMG_MAX_PER_TURN + ') — or paste with ⌘V')
+           : 'Attach an image — or paste a screenshot with ⌘V');
+  }
   function clearImages(){ pendingImages = []; }
 
   // Paste is the primary way in — the whole interaction is screenshot, then Cmd+V.
@@ -3820,6 +3841,7 @@
       // Update the footer context-window meter to the newly-selected model's real window.
       if (typeof m.contextLimit === 'number'){ renderContext({ limit: m.contextLimit }); }
       if (typeof m.canSeeImages === 'boolean'){ canSeeImages = m.canSeeImages; canSeeImagesModel = label; }
+      if (typeof m.maxImages === 'number' && m.maxImages > 0){ IMG_MAX_PER_TURN = m.maxImages; renderChips(); }
       lastProvider = m.provider || '';
       lastModelId = m.modelId || m.model || '';   // gateway sends modelId (the real id); BYOK model IS the id
       // calm-transcript toggle. Turning it OFF mid-run closes any open group first, so the timeline

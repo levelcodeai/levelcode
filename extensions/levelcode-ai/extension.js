@@ -1756,7 +1756,7 @@ function imageRoot() {
  */
 async function attachImagePaths(paths) {
 	const files = [];
-	for (const fsPath of (Array.isArray(paths) ? paths : []).slice(0, 8)) {
+	for (const fsPath of (Array.isArray(paths) ? paths : []).slice(0, maxImagesPerMessage())) {
 		try {
 			const ext = String(path.extname(fsPath) || '').toLowerCase();
 			const mt = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -1779,6 +1779,14 @@ async function attachImagePaths(paths) {
 }
 
 const IMAGE_EXTS = /\.(png|jpe?g|gif|webp)$/i;
+
+/** Images allowed on one message. Clamped at the boundary: the settings-editor minimum/maximum only
+ *  guides the UI, and a hand-edited settings.json arrives unchecked. */
+function maxImagesPerMessage() {
+	const n = Number(aiConfig().get('chat.maxImagesPerMessage', 5));
+	if (!Number.isFinite(n) || n < 1) { return 1; }
+	return Math.min(Math.floor(n), 20);
+}
 
 /** Every image currently open as a tab, newest group first. Deduped by path. */
 function openImageTabs() {
@@ -2404,7 +2412,7 @@ function sendConfigToWebview() {
 			type: 'config', provider: 'gateway', proseSize, proseWidth, model: gatewayModelLabel(model), modelId: model,
 			providerLabel: 'LevelCode Cloud', contextLimit: contextLimitFor('openai', capsModel(model)),
 			gateway: true, plan: cloudPlanName() || 'Free', paid: isPaidCloudPlan(cloudPlanName()),
-			groupActivity: groupActivity, canSeeImages: supportsVisionForModel('openai', capsModel(model))
+			groupActivity: groupActivity, canSeeImages: supportsVisionForModel('openai', capsModel(model)), maxImages: maxImagesPerMessage()
 		});
 		return;
 	}
@@ -2413,7 +2421,7 @@ function sendConfigToWebview() {
 	// Carry the model's context window so the footer meter updates the moment the model changes.
 	// canSeeImages travels with the model so the composer can refuse an attachment BEFORE anything is
 	// typed and lost, rather than after a send that the provider would reject.
-	post({ type: 'config', provider: providerId, proseSize, proseWidth, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity, canSeeImages: supportsVisionForModel(providerId, activeModel(cfg, providerId)) });
+	post({ type: 'config', provider: providerId, proseSize, proseWidth, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity, canSeeImages: supportsVisionForModel(providerId, activeModel(cfg, providerId)), maxImages: maxImagesPerMessage() });
 }
 
 /**

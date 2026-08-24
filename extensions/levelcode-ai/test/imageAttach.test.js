@@ -92,7 +92,8 @@ test('BUDGET: a per-turn image count, enforced where images are added', () => {
 	const body = fnBody(html, 'attachImageFiles');
 	assert.match(body, /IMG_MAX_PER_TURN/, 'no per-turn cap');
 	assert.match(body, /break;/, 'the cap must stop the loop, not just warn');
-	assert.match(body, /the rest were not attached/, 'silently dropping attachments is the bug pattern');
+	assert.match(body, /were not attached/, 'silently dropping attachments is the bug pattern');
+	assert.match(body, /remove one to add another/, 'and it must say how to make room');
 });
 
 test('SEND: an image with no words is a valid message', () => {
@@ -210,6 +211,46 @@ test('FINDER DROP: the workbench wins, so the recovery is one click from where i
 	assert.match(menu.group, /^navigation/, 'in navigation, or it hides under the overflow menu');
 	assert.ok(pkg.contributes.commands.some((c) => c.command === 'levelcode.ai.attachImage' && c.icon),
 		'the command needs an icon to render as a button');
+});
+
+test('REMOVE: the image × is not stolen by the generic chip handler', () => {
+	// The image × carries BOTH `x` and `imgx`, and both handlers assign .onclick rather than adding a
+	// listener — so whichever registers last silently wins. It did: clicking × posted removeContext
+	// with a null id and the image stayed attached. Excluded by selector, not by ordering, so it
+	// cannot come back the next time these two blocks move relative to each other.
+	const body = fnBody(html, 'renderChips');
+	assert.match(body, /querySelectorAll\('\.x:not\(\.imgx\)'\)/,
+		'the generic chip handler must exclude image chips, or it overwrites the remove handler');
+	assert.match(body, /querySelectorAll\('\.imgx'\)/, 'image chips need their own handler');
+	assert.match(body, /removeImage\(/, '…which must actually remove the image');
+
+	const rm = fnBody(html, 'removeImage');
+	assert.match(rm, /pendingImages\.filter/, 'remove must drop it from the pending list');
+	assert.match(rm, /renderChips\(\)/, 'and re-render, or the chip stays on screen');
+});
+
+test('CAP: one setting, honoured on every route in, and visible before it bites', () => {
+	// Each image is ~1,800-3,000 input tokens, so a maxed message is a five-figure prompt before a
+	// word is typed. The number must be the SAME everywhere or one route quietly allows more.
+	const pkg = require('../package.json');
+	const setting = pkg.contributes.configuration.properties['levelcode.ai.chat.maxImagesPerMessage'];
+	assert.ok(setting, 'no setting for the image cap');
+	assert.strictEqual(setting.default, 5);
+
+	// Clamped in code, not just in the settings editor — a hand-edited settings.json is unchecked.
+	const clamp = fnBody(ext, 'maxImagesPerMessage');
+	assert.match(clamp, /n < 1/, 'a zero or negative cap must not disable attaching entirely');
+	assert.match(clamp, /Math\.min\(Math\.floor\(n\), 20\)/, 'and it must be bounded above');
+
+	// Every route in uses it: the host path (drop + picker) and the webview path (paste + drop).
+	assert.match(ext, /\.slice\(0, maxImagesPerMessage\(\)\)/, 'the host path must use the setting');
+	assert.ok(!/slice\(0, 8\)/.test(ext), 'a hardcoded cap must not survive beside the setting');
+	assert.strictEqual((ext.match(/maxImages: maxImagesPerMessage\(\)/g) || []).length, 2,
+		'both config paths must publish it, or one silently keeps the old default');
+	assert.match(html, /pendingImages\.length >= IMG_MAX_PER_TURN/,
+		'the webview cap must be CUMULATIVE, not per-batch');
+	assert.match(fnBody(html, 'syncAttachImgBtn'), /Image limit reached/,
+		'the cap should be visible on the button before it refuses anything');
 });
 
 console.log('\nimageAttach: ' + n + ' tests passed.');
