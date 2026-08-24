@@ -79,6 +79,17 @@
     display: block; background: rgba(127,127,127,.18);
   }
   .chip.imgchip .imgmeta { font-variant-numeric: tabular-nums; opacity: .75; }
+  /* A bigger, more findable remove target than the text chips carry. Two reasons it can be:
+     the image chip is twice the height of a text chip, so 22px fits without changing the row; and
+     removing the WRONG attachment is cheap to undo on a file pin and annoying on a screenshot you
+     have to go and take again. Resting opacity is higher too — an affordance you have to hunt for
+     reads as one that is not there. */
+  .chip.imgchip .imgx {
+    width: 22px; height: 22px; font-size: 15px; line-height: 1;
+    opacity: .75; margin-left: 3px;
+  }
+  .chip.imgchip .imgx:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.45)); }
+  .chip.imgchip .imgx:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; opacity: 1; }
   .msgimg {
     display: block; max-width: min(320px, 100%); max-height: 240px; width: auto; height: auto;
     border-radius: 6px; border: 1px solid var(--border); margin: 0 0 8px;
@@ -1590,7 +1601,11 @@
     chipsEl.innerHTML = h;
     syncAttachImgBtn();
     chipsEl.querySelectorAll('.imgx').forEach(function(x){
-      x.onclick = function(e){ e.stopPropagation(); removeImage(x.getAttribute('data-img')); };
+      const go = function(e){ e.stopPropagation(); e.preventDefault(); removeImage(x.getAttribute('data-img')); };
+      x.onclick = go;
+      // It is role="button" tabindex="0", so it can be focused — without this it could be reached
+      // by keyboard and then not activated, which is worse than not being reachable at all.
+      x.onkeydown = function(e){ if (e.key === 'Enter' || e.key === ' ') { go(e); } };
     });
     document.getElementById('addctx').onclick = () => vscode.postMessage({ type: 'addContext' });
     // :not(.imgx) — an image chip's × carries BOTH classes, and both handlers assign .onclick

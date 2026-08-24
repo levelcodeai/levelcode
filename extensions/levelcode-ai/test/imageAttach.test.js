@@ -224,6 +224,11 @@ test('REMOVE: the image × is not stolen by the generic chip handler', () => {
 	assert.match(body, /querySelectorAll\('\.imgx'\)/, 'image chips need their own handler');
 	assert.match(body, /removeImage\(/, '…which must actually remove the image');
 
+	// Focusable by keyboard, so it must be activatable by keyboard — reachable-but-dead is worse
+	// than not reachable.
+	assert.match(body, /onkeydown/, 'the × is role=button tabindex=0 and needs a key handler');
+	assert.match(body, /'Enter' \|\| e\.key === ' '/, 'Enter and Space both activate a button');
+
 	const rm = fnBody(html, 'removeImage');
 	assert.match(rm, /pendingImages\.filter/, 'remove must drop it from the pending list');
 	assert.match(rm, /renderChips\(\)/, 'and re-render, or the chip stays on screen');
