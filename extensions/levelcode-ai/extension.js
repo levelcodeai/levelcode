@@ -1778,8 +1778,55 @@ async function attachImagePaths(paths) {
 	if (files.length) { post({ type: 'attachImages', files }); }
 }
 
-/** Pick images from disk — the path that works regardless of what the webview can receive. */
+const IMAGE_EXTS = /\.(png|jpe?g|gif|webp)$/i;
+
+/** Every image currently open as a tab, newest group first. Deduped by path. */
+function openImageTabs() {
+	const seen = new Set();
+	const out = [];
+	try {
+		for (const group of vscode.window.tabGroups.all) {
+			for (const tab of group.tabs) {
+				const uri = tab && tab.input && tab.input.uri;
+				if (!uri || uri.scheme !== 'file' || !IMAGE_EXTS.test(uri.fsPath)) { continue; }
+				if (seen.has(uri.fsPath)) { continue; }
+				seen.add(uri.fsPath);
+				out.push({ fsPath: uri.fsPath, active: !!(tab && tab.isActive) });
+			}
+		}
+	} catch (e) { dbg('image.tabs.failed', { msg: String((e && e.message) || e) }); }
+	return out;
+}
+
+/**
+ * Attach images — from an open tab, or from disk.
+ *
+ * The open-tab list exists because of what VS Code does with a Finder drag: the workbench takes
+ * the drop and OPENS the file before a webview iframe sees any event at all, so a drop handler
+ * inside the panel can never fire. The image the user meant to attach is therefore sitting right
+ * there in a tab, and offering it is the shortest path from what actually happened to what they
+ * wanted. Active tab first, since that is the one they just dropped.
+ */
 async function pickImages() {
+	const tabs = openImageTabs();
+	if (tabs.length) {
+		const BROWSE = 'Browse…';
+		const items = tabs
+			.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0))
+			.map((t) => ({
+				label: path.basename(t.fsPath),
+				description: t.active ? 'open · active tab' : 'open in a tab',
+				detail: t.fsPath,
+				fsPath: t.fsPath
+			}));
+		items.push({ label: BROWSE, description: 'choose a file from disk' });
+		const pick = await vscode.window.showQuickPick(items, {
+			title: 'Attach an image',
+			placeHolder: 'Dropping a file onto the editor opens it in a tab — attach it from here'
+		});
+		if (!pick) { return; }
+		if (pick.fsPath) { await attachImagePaths([pick.fsPath]); return; }
+	}
 	const picked = await vscode.window.showOpenDialog({
 		canSelectMany: true, openLabel: 'Attach',
 		filters: { Images: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }
@@ -2904,6 +2951,15 @@ function activate(context) {
 		// Both land on the same panel, each on its own tab, so a button says exactly where it goes.
 		vscode.commands.registerCommand('levelcode.ai.sessions', () => revealSessions('history')),
 		vscode.commands.registerCommand('levelcode.ai.memory', () => revealSessions('memory')),
+		// Reachable from an image tab's title bar: dropping a file onto the workbench opens it there,
+		// so that is where someone already is when they realise the drop did not attach it.
+		vscode.commands.registerCommand('levelcode.ai.attachImage', async (uri) => {
+			const fsPath = (uri && uri.fsPath)
+				|| (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.fsPath);
+			await focusChatView('attachImage');
+			if (fsPath && IMAGE_EXTS.test(fsPath)) { await attachImagePaths([fsPath]); return; }
+			await pickImages();
+		}),
 		vscode.window.onDidChangeActiveTextEditor(() => postActiveFile()),
 		// ⇧⌘I. Opens the chat where the chat lives — the editor tab. This pointed at the contributed
 		// view, which is why the shortcut kept pulling a panel out on the right after the conversation

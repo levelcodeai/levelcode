@@ -186,4 +186,30 @@ test('PICKER + DROP: a Finder file reaches the same normalizer as a paste', () =
 	assert.match(html, /id="attachImg"/, 'there must be a visible way in besides paste');
 });
 
+test('FINDER DROP: the workbench wins, so the recovery is one click from where it lands', () => {
+	// VS Code's workbench takes an OS file drop and OPENS the file before a webview iframe sees any
+	// event — the drop handler inside the panel never fires, and the uri-list fallback with it. The
+	// image the user meant to attach is therefore sitting in a tab. Offer it there.
+	const pick = fnBody(ext, 'pickImages');
+	assert.match(pick, /openImageTabs\(\)/, 'the picker must offer images already open in tabs');
+	assert.match(pick, /\(b\.active \? 1 : 0\) - \(a\.active \? 1 : 0\)/,
+		'the active tab is the one they just dropped — it must come first');
+	assert.match(pick, /showOpenDialog\(/, 'and still fall through to a real file dialog');
+
+	const tabs = fnBody(ext, 'openImageTabs');
+	assert.match(tabs, /uri\.scheme !== 'file'/, 'only real files on disk can be read');
+	assert.match(tabs, /IMAGE_EXTS\.test/, 'and only images');
+	assert.match(tabs, /seen\.has\(uri\.fsPath\)/, 'the same file open in two groups must appear once');
+
+	// A button on the image tab's own title bar: that is where the drop lands.
+	const pkg = require('../package.json');
+	const menu = pkg.contributes.menus['editor/title']
+		.find((m) => m.command === 'levelcode.ai.attachImage');
+	assert.ok(menu, 'no attach button on the image editor title bar');
+	assert.match(menu.when, /png|jpe\?g/, 'it must only appear for images');
+	assert.match(menu.group, /^navigation/, 'in navigation, or it hides under the overflow menu');
+	assert.ok(pkg.contributes.commands.some((c) => c.command === 'levelcode.ai.attachImage' && c.icon),
+		'the command needs an icon to render as a button');
+});
+
 console.log('\nimageAttach: ' + n + ' tests passed.');

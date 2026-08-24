@@ -143,6 +143,12 @@
         "icon": "$(book)"
       },
       {
+        "command": "levelcode.ai.attachImage",
+        "title": "AI: Attach Image to Chat",
+        "category": "LevelCode",
+        "icon": "$(device-camera)"
+      },
+      {
         "command": "levelcode.ai.sketch",
         "title": "AI: Agent Sketch…",
         "category": "LevelCode",
@@ -233,6 +239,11 @@
           "command": "levelcode.ai.memory",
           "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
           "group": "navigation@3"
+        },
+        {
+          "command": "levelcode.ai.attachImage",
+          "when": "resourceExtname =~ /\\.(png|jpe?g|gif|webp)$/",
+          "group": "navigation@0"
         },
         {
           "command": "levelcode.ai.setApiKey",
