@@ -2953,6 +2953,13 @@ function activate(context) {
 		vscode.commands.registerCommand('levelcode.ai.memory', () => revealSessions('memory')),
 		// Reachable from an image tab's title bar: dropping a file onto the workbench opens it there,
 		// so that is where someone already is when they realise the drop did not attach it.
+		// Called by the CORE patch in editorDropTarget.ts when an image is dropped onto the chat
+		// editor. Not in package.json's `commands` on purpose — it takes an argument and is not
+		// something to run from the palette.
+		vscode.commands.registerCommand('levelcode.ai.attachImagePaths', async (paths) => {
+			await focusChatView('drop');
+			await attachImagePaths(Array.isArray(paths) ? paths : []);
+		}),
 		vscode.commands.registerCommand('levelcode.ai.attachImage', async (uri) => {
 			const fsPath = (uri && uri.fsPath)
 				|| (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.fsPath);
