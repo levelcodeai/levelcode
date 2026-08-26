@@ -148,6 +148,19 @@ function contextLimitFor(providerId, model) {
 }
 
 /** The active model's context window (tokens) — drives the chat context-usage meter. */
+/**
+ * The model the meter should cost against — the same resolution currentContextLimit uses.
+ *
+ * estimateMsgTokens needs it to pick an image's resolution tier: the high-res tier is 4,784 visual
+ * tokens against the standard tier's 1,568, so calling it without a model silently costs every
+ * screenshot at a THIRD of what a Claude 4.7+ model is actually charged.
+ */
+function meterModel() {
+	const cfg = aiConfig();
+	if (providerMode() === 'gateway' && cloudSignedIn) { return capsModel(gatewayModel()); }
+	return activeModel(cfg, currentProviderId());
+}
+
 function currentContextLimit() {
 	const cfg = aiConfig();
 	if (providerMode() === 'gateway' && cloudSignedIn) {
@@ -1109,7 +1122,17 @@ function sealLiveSession(why) {
 		if (!m) { return; }
 		const sealedId = m.liveId();
 		m.seal('done');
-		if (sealedId) { enrichMemoryAsync(sealedId); }   // outcome + fact promotion, off the critical path
+		if (sealedId) { enrichMemoryAsync(sealedId); }
+		// Sealing is the natural moment to take out the rubbish: rare, already off the hot path, and
+		// the point at which a conversation's refs have just been written. Nothing else deletes media
+		// — sessions are append-only and trash() only marks a lifecycle — so without this the folder
+		// grows for the life of the project.
+		setTimeout(() => {
+			try {
+				const swept = m.sweepMedia();
+				if (swept.removed) { dbg('media.swept', { removed: swept.removed, kb: Math.round(swept.bytes / 1024) }); }
+			} catch (e) { dbg('media.sweep.error', { msg: String((e && e.message) || e) }); }
+		}, 0);   // outcome + fact promotion, off the critical path
 		dbg('sessions.sealed', { why, id: sealedId });
 	} catch (e) {
 		dbg('sessions.seal.error', { why, msg: String((e && e.message) || e) });
@@ -1544,7 +1567,7 @@ async function compactAgentMemory() {
 	if (abort) { return { ok: false, reason: 'running' }; }
 	const msgs = agentMessages;
 	const KEEP_RECENT = 8;
-	const beforeMsgTokens = estimateMsgTokens(msgs);
+	const beforeMsgTokens = estimateMsgTokens(msgs, meterModel());
 	if (msgs.length <= KEEP_RECENT + 2) { return { ok: false, reason: 'small' }; }
 	const cut = findCompactionCut(msgs, KEEP_RECENT);
 	if (cut < 0) { return { ok: false, reason: 'noboundary' }; }
@@ -1591,7 +1614,7 @@ async function compactAgentMemory() {
 	// transcript for them (it guards on indexOf), so keeping them would offer a half-working rollback.
 	for (let i = checkpoints.length - 1; i >= 0; i--) { if (msgs.indexOf(checkpoints[i].goalMsg) < 0) { checkpoints.splice(i, 1); } }
 
-	const afterMsgTokens = estimateMsgTokens(msgs);
+	const afterMsgTokens = estimateMsgTokens(msgs, meterModel());
 	dbg('compact.done', { cut, beforeMsgTokens, afterMsgTokens, msgs: msgs.length });
 	return { ok: true, beforeMsgTokens, afterMsgTokens };
 }
@@ -1620,7 +1643,7 @@ async function agentFlow(text, imageBlocks) {
 	// Agent mode is the DEFAULT, so this is the path most pasted screenshots take. Blocks only when
 	// there IS an image — a text-only goal stays a plain string so cached prefixes keep their bytes.
 	const goalMsg = (imageBlocks && imageBlocks.length)
-		? { role: 'user', content: text ? [...imageBlocks, { type: 'text', text }] : imageBlocks }
+		? { role: 'user', content: text ? [...labelImages(imageBlocks), { type: 'text', text }] : labelImages(imageBlocks) }
 		: { role: 'user', content: text };
 	currentCheckpoint = { turnId: ++checkpointSeq, label: (text || '').slice(0, 60), ts: Date.now(), goalMsg: goalMsg, files: new Map() };
 	checkpoints.push(currentCheckpoint);
@@ -1871,6 +1894,26 @@ function storeImages(images) {
 }
 
 /**
+ * Introduce each image with a short label when there is more than one.
+ *
+ * Straight from the vision guidance: with several images, precede each with "Image 1:", "Image 2:"
+ * so the conversation can refer to them by name — in the question being asked, and in every
+ * follow-up turn afterwards. Without it, "the second screenshot" has nothing to bind to.
+ *
+ * Only when there are several. A single image needs no name, and labelling it would put a pointless
+ * text block ahead of every screenshot anyone pastes.
+ */
+function labelImages(blocks) {
+	if (!Array.isArray(blocks) || blocks.length < 2) { return blocks; }
+	const out = [];
+	blocks.forEach((b, i) => {
+		out.push({ type: 'text', text: 'Image ' + (i + 1) + ':' });
+		out.push(b);
+	});
+	return out;
+}
+
+/**
  * A copy of `msgs` with every stored image turned into a real wire block.
  *
  * A COPY, deliberately. `agentMessages` persists across runs and is what recordTurn writes to the
@@ -1924,7 +1967,7 @@ async function handleSend(text, images) {
 	// An empty text block is a 400 from Anthropic ("text content blocks must be non-empty"), and an
 	// image sent with no words produces exactly that. Include the text block only when there is text.
 	conversation.push(imageBlocks.length
-		? { role: 'user', content: userContent ? [...imageBlocks, { type: 'text', text: userContent }] : imageBlocks }
+		? { role: 'user', content: userContent ? [...labelImages(imageBlocks), { type: 'text', text: userContent }] : labelImages(imageBlocks) }
 		: { role: 'user', content: userContent });
 	post({ type: 'userMessage', text });
 	if (auto.names.length) { post({ type: 'autoContext', names: auto.names }); }

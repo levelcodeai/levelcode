@@ -123,7 +123,7 @@ test('HOST: images become refs in the conversation, and bytes only at request ti
 
 test('CONVERSATION: blocks only when there is an image', () => {
 	const body = fnBody(ext, 'handleSend');
-	assert.match(body, /\[\.\.\.imageBlocks, \{ type: 'text', text: userContent \}\]/,
+	assert.match(body, /\[\.\.\.labelImages\(imageBlocks\), \{ type: 'text', text: userContent \}\]/,
 		'images lead the block array');
 	assert.match(body, /:\s*\{ role: 'user', content: userContent \}/,
 		'a text-only turn must stay a plain string, or every cached prefix churns');
@@ -138,7 +138,7 @@ test('AGENT MODE: the default path carries images too', () => {
 	assert.match(ext, /async function agentFlow\(text, imageBlocks\)/, 'agentFlow must accept them');
 	const body = fnBody(ext, 'agentFlow');
 	assert.match(body, /imageBlocks && imageBlocks\.length/, 'and use them when present');
-	assert.match(body, /\[\.\.\.imageBlocks, \{ type: 'text', text \}\]/, 'images lead the goal');
+	assert.match(body, /\[\.\.\.labelImages\(imageBlocks\), \{ type: 'text', text \}\]/, 'images lead the goal');
 	assert.match(body, /:\s*\{ role: 'user', content: text \}/,
 		'a text-only goal must stay a plain string, or every cached agent prefix churns');
 });
@@ -156,12 +156,12 @@ test('400: an image with no words must not emit an empty text block', () => {
 	// Anthropic rejects it outright — "text content blocks must be non-empty" — and an image sent
 	// with no words produced exactly that. Both paths must omit the block rather than send "".
 	const send = fnBody(ext, 'handleSend');
-	assert.match(send, /userContent \? \[\.\.\.imageBlocks/, 'handleSend must gate the text block on there being text');
-	assert.match(send, /:\s*imageBlocks\b/, 'handleSend must fall back to the images alone');
+	assert.match(send, /userContent \? \[\.\.\.labelImages\(imageBlocks\)/, 'handleSend must gate the text block on there being text');
+	assert.match(send, /:\s*labelImages\(imageBlocks\)/, 'handleSend must fall back to the images alone');
 
 	const agent = fnBody(ext, 'agentFlow');
-	assert.match(agent, /text \? \[\.\.\.imageBlocks/, 'agentFlow must gate the text block on there being text');
-	assert.match(agent, /:\s*imageBlocks\b/, 'agentFlow must fall back to the images alone');
+	assert.match(agent, /text \? \[\.\.\.labelImages\(imageBlocks\)/, 'agentFlow must gate the text block on there being text');
+	assert.match(agent, /:\s*labelImages\(imageBlocks\)/, 'agentFlow must fall back to the images alone');
 });
 
 test('CSP: the webview is allowed to render a data: image, and nothing else', () => {
@@ -303,6 +303,120 @@ test('UX: a thumbnail can be opened full size, and closed again', () => {
 	assert.match(z, /src = ''/, 'closing must drop the src, or the bytes stay live in the DOM');
 	assert.match(html, /e\.key === 'Escape'/, 'Escape must close it');
 	assert.match(html, /classList\.contains\('msgimg'\)/, 'transcript images must open too, not just the tray');
+});
+
+// ── review of #90 ───────────────────────────────────────────────────────────────────────────────
+
+test('METER: compaction costs images at the ACTIVE model tier, not the default', () => {
+	// estimateMsgTokens takes a modelId to pick the resolution tier — 4,784 visual tokens on high-res
+	// against 1,568 on standard. Both compaction call sites omitted it, so every screenshot was
+	// costed at a third of what a Claude 4.7+ model is actually charged, contradicting the module's
+	// own "never under-count" rule.
+	assert.strictEqual((ext.match(/estimateMsgTokens\(msgs, meterModel\(\)\)/g) || []).length, 2,
+		'both before/after call sites must pass the active model');
+	assert.ok(!/estimateMsgTokens\(msgs\)\s*;/.test(ext), 'no bare call may survive');
+	const m = fnBody(ext, 'meterModel');
+	assert.match(m, /gateway/, 'the gateway model must resolve like currentContextLimit does');
+	assert.match(m, /activeModel\(cfg, currentProviderId\(\)\)/, '…and BYOK the same way');
+});
+
+test('CAP: the not-attached count is taken from the batch, and can never go negative', () => {
+	// It subtracted the whole tray from the batch size: four attached, cap five, drop two, and the
+	// message claimed "-3 not attached".
+	const body = fnBody(html, 'attachImageFiles');
+	assert.match(body, /const dropped = list\.length - fi/, 'count from the position in THIS batch');
+	assert.ok(!/list\.length - pendingImages\.length/.test(body),
+		'subtracting the tray from the batch is what goes negative');
+});
+
+test('SEND: never sends while an image is still decoding', () => {
+	// A placeholder chip carries no bytes. Sending mid-decode posts undefined media_type/base64,
+	// the host refuses it, and the image vanishes from a message the user watched it attach to.
+	assert.match(html, /const inflightImages = new Set\(\)/, 'in-flight work must be tracked');
+	const body = fnBody(html, 'doSend');
+	// The NAME appearing is not enough — it appears in the wait loop too, so `if (false)` around the
+	// gate left this passing. Assert the gate itself, and that it runs before anything is posted.
+	assert.match(body, /if \(inflightImages\.size\) \{/, 'the in-flight check must be a real gate');
+	assert.match(body, /await new Promise/, 'and it must actually wait');
+	const gateAt = body.indexOf('if (inflightImages.size) {');
+	const sendAt = body.indexOf("vscode.postMessage({ type: 'send'");
+	assert.ok(gateAt >= 0 && sendAt > gateAt, 'the wait must come BEFORE the send');
+	assert.match(body, /i\.loading/, 'and a surviving placeholder is refused outright');
+	assert.match(html, /async function doSend/, 'waiting requires it to be async');
+	assert.match(fnBody(html, 'attachImageFiles'), /finally \{\s*inflightImages\.delete/,
+		'a failed decode must not leave the tray permanently "busy"');
+});
+
+test('SEND: the model is re-checked, because it can change after attaching', () => {
+	// The attach-time gate is not enough — a model can be switched between attaching and sending.
+	const body = fnBody(html, 'doSend');
+	assert.match(body, /pendingImages\.length && !canSeeImages/, 'no re-check before sending');
+	assert.ok(body.indexOf('!canSeeImages') < body.indexOf('vscode.postMessage({ type: \'send\''),
+		'the check must come BEFORE the send');
+	assert.ok(!/clearImages\(\)/.test(body.slice(body.indexOf('!canSeeImages'), body.indexOf('return;', body.indexOf('!canSeeImages')))),
+		'refusing must not discard what was typed or attached');
+});
+
+test('NEW CHAT does not inherit the previous conversation attachments', () => {
+	// Comments stripped first: a commented-out call still satisfies a bare /resetImages\(\)/, which is
+	// exactly how disabling it left this test green.
+	const live = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+	const at = live.indexOf("m.type === 'reset'");
+	assert.ok(at > 0, 'the reset handler is gone');
+	const reset = live.slice(at, at + 400);
+	assert.match(reset, /resetImages\(\)/, 'reset must clear the image tray');
+	const r = fnBody(html, 'resetImages');
+	assert.match(r, /clearImages\(\)/, 'and the pending list with it');
+	assert.match(r, /renderChips\(\)/, 'and re-render, or the chips stay on screen');
+	assert.match(fnBody(html, 'clearImages'), /inflightImages\.clear\(\)/,
+		'in-flight work from the old conversation must not land in the new one');
+});
+
+test('VISION GATE: the provider and the model must BOTH allow it', () => {
+	// The registry enumerates vision providers; `custom` is an arbitrary user endpoint and declares
+	// none. Reading only the model id would hand images to it whenever the model NAME looked right.
+	const cat = require('../providers/catalog');
+	assert.strictEqual(cat.supportsVisionForModel('custom', 'gpt-4o'), false, 'custom must not opt in by model name');
+	assert.strictEqual(cat.supportsVisionForModel('ollama', 'llava'), false);
+	assert.strictEqual(cat.supportsVisionForModel('anthropic', 'claude-opus-4-8'), true);
+	assert.strictEqual(cat.supportsVisionForModel('openai', 'gpt-4o'), true);
+	assert.strictEqual(cat.supportsVisionForModel('anthropic', 'not-a-real-model'), false);
+});
+
+test('TRANSLATE: the assistant loop fails loudly too', () => {
+	// I1 fixed the user loop and left the assistant one dropping unknown blocks silently — the same
+	// bug, one branch over.
+	const T = require('../providers/translate');
+	assert.throws(() => T.toOpenAIMessages('', [{ role: 'assistant', content: [{ type: 'video' }] }]),
+		/unsupported content block in an assistant message/);
+	// Thinking is a DELIBERATE drop, not a loss: an OpenAI-shaped request has nowhere to put it.
+	assert.doesNotThrow(() => T.toOpenAIMessages('', [{ role: 'assistant', content: [
+		{ type: 'thinking', thinking: 'x' }, { type: 'text', text: 'hi' }] }]));
+});
+
+test('MEDIA: there is a real sweep, and the comment no longer claims one it does not have', () => {
+	// Sessions are append-only and trash() only writes a lifecycle event, so "deleted with them" was
+	// simply untrue, and refsIn had no production caller at all.
+	const store = fs.readFileSync(path.join(__dirname, '..', 'imageStore.js'), 'utf8');
+	const sessions = fs.readFileSync(path.join(__dirname, '..', 'sessions.js'), 'utf8');
+	assert.match(store, /function sweep\(root, slug, keep, maxAgeMs\)/, 'no sweep');
+	assert.match(store, /if \(!isRef\(name\)\) \{ continue; \}/, 'a sweep must never touch a file we did not write');
+	assert.match(store, /st\.mtimeMs > cutoff/,
+		'an age floor is required — a normal chat writes media whose refs are never persisted');
+	assert.match(sessions, /function sweepMedia/, 'the sessions manager must expose it');
+	assert.match(sessions, /imageStore\.refsIn/, 'refsIn must finally have a caller');
+	assert.ok(!/deleted with them/.test(sessions), 'the false retention claim must be gone');
+	assert.match(ext, /sweepMedia\(\)/, 'and something must actually call it');
+});
+
+test('MULTI-IMAGE: several images are introduced by name', () => {
+	// From the vision guidance: with several images, precede each with "Image 1:" so the question —
+	// and every follow-up turn — can refer to them.
+	const body = fnBody(ext, 'labelImages');
+	assert.match(body, /blocks\.length < 2/, 'a single image needs no label');
+	assert.match(body, /'Image ' \+ \(i \+ 1\) \+ ':'/, 'the labels must be the documented shape');
+	assert.strictEqual((ext.match(/labelImages\(imageBlocks\)/g) || []).length, 4,
+		'both paths, both with and without text, must label');
 });
 
 console.log('\nimageAttach: ' + n + ' tests passed.');

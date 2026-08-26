@@ -113,4 +113,39 @@ function refsIn(msgs) {
 	return out;
 }
 
-module.exports = { MEDIA_EXT, MAX_BYTES, mediaDir, refPath, isRef, put, read, mediaTypeOf, materialize, refsIn };
+/**
+ * Delete media nothing refers to any more.
+ *
+ * Needed because nothing else deletes it. Sessions are append-only and `trash()` only writes a
+ * lifecycle event — the transcript stays on disk — so "the images go away with the session" was
+ * never true. And a normal (non-agent) chat writes media without ever calling recordTurn, so its
+ * refs are not in any session file at all.
+ *
+ * That second case is why there is an AGE FLOOR rather than a plain unreferenced-means-delete rule:
+ * a file written moments ago may belong to a live conversation whose refs have not been persisted
+ * and may never be. Deleting those would break the open chat. A week is long past the point where a
+ * conversation is still live, and it bounds the growth, which is the actual complaint.
+ *
+ * @param keep a Set of refs still referenced (from refsIn over the project's sessions)
+ */
+function sweep(root, slug, keep, maxAgeMs) {
+	const dir = mediaDir(root, slug);
+	const cutoff = Date.now() - (maxAgeMs > 0 ? maxAgeMs : 7 * 24 * 60 * 60 * 1000);
+	let removed = 0, bytes = 0;
+	let names;
+	try { names = fs.readdirSync(dir); } catch { return { removed: 0, bytes: 0 }; }
+	for (const name of names) {
+		if (!isRef(name)) { continue; }              // never touch anything we did not write
+		if (keep && keep.has(name)) { continue; }
+		const full = path.join(dir, name);
+		try {
+			const st = fs.statSync(full);
+			if (st.mtimeMs > cutoff) { continue; }    // young enough to belong to a live conversation
+			fs.unlinkSync(full);
+			removed++; bytes += st.size;
+		} catch { /* raced with another window, or already gone — either way, nothing to do */ }
+	}
+	return { removed, bytes };
+}
+
+module.exports = { MEDIA_EXT, MAX_BYTES, mediaDir, refPath, isRef, put, read, mediaTypeOf, materialize, refsIn, sweep };

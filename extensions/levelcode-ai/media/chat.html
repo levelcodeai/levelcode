@@ -3279,11 +3279,34 @@
   function caretAtFirstLine(el){ return el.value.lastIndexOf('\n', el.selectionStart - 1) === -1; }
   function caretAtLastLine(el){ return el.value.indexOf('\n', el.selectionEnd) === -1; }
   function histSet(text){ input.value = text; auto(); const n = text.length; try { input.setSelectionRange(n, n); } catch (e) {} }
-  function doSend(){
+  async function doSend(){
     if (streaming) { flushAll = true; ensurePump(); vscode.postMessage({ type: 'stop' }); return; }
     const t = input.value.trim();
     // An image with no words is a real message — "look at this" is implied by attaching it.
     if (!t && !pendingImages.length) return;
+
+    // Wait for anything still decoding. A placeholder chip carries no bytes, so sending now would
+    // post an attachment with undefined media_type and base64 — refused host-side, and the image
+    // would vanish from a message the user watched themselves attach.
+    if (inflightImages.size) {
+      note('Still preparing ' + inflightImages.size + ' image' + (inflightImages.size === 1 ? '' : 's') + '…');
+      for (let i = 0; i < 200 && inflightImages.size; i++) { await new Promise(function(r){ setTimeout(r, 50); }); }
+      const el = document.getElementById('imgnote'); if (el) { el.hidden = true; }
+      if (inflightImages.size) { note('An image is taking too long to prepare — remove it or try again.'); return; }
+    }
+    // Nothing may be sent while a placeholder survives: a decode that failed silently would
+    // otherwise ride along as an empty attachment.
+    if (pendingImages.some(function(i){ return i.loading; })) {
+      note('An image did not finish preparing — remove it and try again.'); return;
+    }
+
+    // RE-CHECK the model. The attach-time gate is not enough: a model can be switched between
+    // attaching and sending, and this path would otherwise hand images to a model that cannot read
+    // them. Refuse without discarding anything the user typed or attached.
+    if (pendingImages.length && !canSeeImages) {
+      note((canSeeImagesModel || 'The selected model') + ' cannot read images. Switch back to a vision model, or remove the attachments.');
+      return;
+    }
     if (t) { cmdHistory.push(t); if (cmdHistory.length > 200) { cmdHistory.shift(); } }   // record for ↑/↓ recall
     histIdx = -1; histDraft = '';
     // Slash commands — handled locally (deterministic, no LLM call).
@@ -3325,6 +3348,11 @@
   const IMG_OK = { 'image/png': 1, 'image/jpeg': 1, 'image/gif': 1, 'image/webp': 1 };
   let pendingImages = [];   // { id, url, w, h, media_type, base64, bytes }
   let imgSeq = 0;
+  // Normalization is async, and a placeholder chip carries no bytes. Sending mid-decode would post
+  // an attachment with undefined media_type/base64 — the host would refuse it and the image would
+  // be silently lost from a message the user watched themselves attach. Track the work so doSend
+  // can wait for it.
+  const inflightImages = new Set();
 
   /**
    * A user-facing "that did not work" line, shown WHERE IT HAPPENED — directly under the composer,
@@ -3402,11 +3430,15 @@
         + 'Claude, GPT-4o and Gemini all read them — and paste again.');
       return true;
     }
-    for (const f of list) {
+    for (let fi = 0; fi < list.length; fi++) {
+      const f = list[fi];
       if (pendingImages.length >= IMG_MAX_PER_TURN) {
-        const dropped = list.length - pendingImages.length;
+        // From the position in THIS batch, not from the tray total. Subtracting the tray from the
+        // batch goes negative the moment the tray already holds more than the batch does — four
+        // attached, cap five, drop two, and the message claimed "-3 were not attached".
+        const dropped = list.length - fi;
         note('Up to ' + IMG_MAX_PER_TURN + ' images per message. '
-          + (dropped > 0 ? dropped + ' were not attached — ' : '') + 'remove one to add another.');
+          + (dropped > 0 ? dropped + ' not attached — ' : '') + 'remove one to add another.');
         break;
       }
       // A placeholder goes in FIRST. Decoding and re-encoding a 4K screenshot takes long enough to
@@ -3415,6 +3447,7 @@
       const id = 'img' + (++imgSeq);
       pendingImages.push({ id: id, loading: true, name: f.name || 'image' });
       renderChips();
+      inflightImages.add(id);
       try {
         const im = await normalizeImage(f);
         im.id = id;
@@ -3427,6 +3460,8 @@
         pendingImages = pendingImages.filter(function(x){ return x.id !== id; });
         renderChips();
         note(String((e && e.message) || e));
+      } finally {
+        inflightImages.delete(id);
       }
     }
     return true;
@@ -3463,7 +3498,10 @@
       : (n ? ('Attach an image (' + n + '/' + IMG_MAX_PER_TURN + ') — or paste with ⌘V')
            : 'Attach an image — or paste a screenshot with ⌘V');
   }
-  function clearImages(){ pendingImages = []; }
+  function clearImages(){ pendingImages = []; inflightImages.clear(); }
+
+  /** Everything a fresh conversation must forget about attachments. */
+  function resetImages(){ clearImages(); renderChips(); const el = document.getElementById('imgnote'); if (el) { el.hidden = true; } }
 
   // Paste is the primary way in — the whole interaction is screenshot, then Cmd+V.
   input.addEventListener('paste', function(ev){
@@ -4136,6 +4174,7 @@
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
+      resetImages();   // a new conversation must not inherit the previous one's attachments
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
       // Wiping the log detaches any open group; drop the dangling refs so the next run starts clean —
       // otherwise groupAppend() appends into a disconnected .groupbody (nothing shows), and a stale

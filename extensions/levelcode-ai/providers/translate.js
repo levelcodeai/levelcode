@@ -106,6 +106,17 @@ function toOpenAIMessages(system, messages, opts) {
 						function: { name: b.name, arguments: JSON.stringify(b.input == null ? {} : b.input) }
 					});
 				}
+				// Reasoning an assistant produced is not something an OpenAI-shaped request carries,
+				// and re-sending it is not required to continue a conversation — dropping it is a
+				// deliberate translation, not a loss, so it is named rather than left to the
+				// fall-through below.
+				else if (b.type === 'thinking' || b.type === 'redacted_thinking') { continue; }
+				else {
+					// Same rule as the user loop. A block type we do not understand is a bug in us,
+					// and a request that silently loses part of an assistant turn desynchronises the
+					// conversation the model is asked to continue.
+					throw new Error('translate: unsupported content block in an assistant message: ' + String(b.type));
+				}
 			}
 			const msg = { role: 'assistant', content: text ? text : null };
 			if (toolCalls.length) { msg.tool_calls = toolCalls; }
