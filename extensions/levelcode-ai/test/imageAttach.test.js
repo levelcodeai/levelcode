@@ -258,4 +258,51 @@ test('CAP: one setting, honoured on every route in, and visible before it bites'
 		'the cap should be visible on the button before it refuses anything');
 });
 
+test('UX: an attachment problem is reported where it happened, not in a corner toast', () => {
+	// This used to post to the host and surface as a VS Code notification in the far corner of the
+	// window — seconds later, a long way from the paste, and outliving the moment it described.
+	const body = fnBody(html, 'note');
+	assert.match(body, /getElementById\('imgnote'\)/, 'the notice must render in the composer');
+	assert.ok(!/postMessage/.test(body), 'it must no longer be thrown to a global notification');
+	assert.match(body, /setTimeout/, 'and it must clear itself rather than linger over the next try');
+	assert.match(html, /id="imgnote"/, 'the notice element is missing from the composer');
+	assert.match(html, /aria-live="polite"/, 'a screen reader must hear it too');
+});
+
+test('UX: a chip appears the instant you paste, before the decode finishes', () => {
+	// Decoding and re-encoding a 4K screenshot takes long enough to read as "nothing happened".
+	const body = fnBody(html, 'attachImageFiles');
+	assert.match(body, /loading: true/, 'no placeholder chip while the image is being prepared');
+	assert.ok(body.indexOf('loading: true') < body.indexOf('await normalizeImage'),
+		'the placeholder must go in BEFORE the work, or it is not feedback');
+	assert.match(body, /at < 0.*continue|if \(at < 0\)/s,
+		'an image removed mid-decode must stay removed, not reappear when its bytes arrive');
+	assert.match(body, /pendingImages\.filter/, 'a failed image must not leave its placeholder behind');
+	assert.match(fnBody(html, 'imgChip'), /im\.loading/, 'the chip must render the loading state');
+});
+
+test('UX: the chip says what the image will cost, compactly', () => {
+	// This product meters credits per turn and an image is not a rounding error. Someone deciding
+	// whether to attach three should see that before they send, not after they are billed.
+	const chip = fnBody(html, 'imgChip');
+	assert.match(chip, /imgTokens\(im\.w, im\.h\)/, 'the chip must compute a real token cost');
+	assert.match(chip, /toFixed\(1\) \+ 'k'/, 'compact on the chip — full width wraps the tray');
+	assert.match(chip, /input tokens/, 'the exact figure belongs in the tooltip');
+
+	const t = fnBody(html, 'imgTokens');
+	assert.match(t, /Math\.ceil\(w \/ 28\) \* Math\.ceil\(h \/ 28\)/, 'must be the real 28px patch formula');
+	assert.match(t, /4784/, 'and clamped to the tier ceiling the server enforces anyway');
+});
+
+test('UX: a thumbnail can be opened full size, and closed again', () => {
+	// A 28px thumb cannot tell you WHICH screenshot you attached — the one thing worth checking
+	// before sending.
+	assert.match(html, /id="imgzoom"/, 'no full-size view');
+	assert.match(html, /aria-modal="true"/, 'the overlay should announce itself as a dialog');
+	const z = fnBody(html, 'closeZoom');
+	assert.match(z, /src = ''/, 'closing must drop the src, or the bytes stay live in the DOM');
+	assert.match(html, /e\.key === 'Escape'/, 'Escape must close it');
+	assert.match(html, /classList\.contains\('msgimg'\)/, 'transcript images must open too, not just the tray');
+});
+
 console.log('\nimageAttach: ' + n + ' tests passed.');

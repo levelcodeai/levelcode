@@ -67,6 +67,43 @@
 
   #attachImg .ci { width: 14px; height: 14px; display: block; }
   #attachImg.atcap { opacity: .45; }
+
+  /* An attachment problem, said where it happened. Sits under the chips so it reads as belonging to
+     the thing that failed, and takes no space when there is nothing to say. */
+  #imgnote {
+    font-size: 11.5px; line-height: 1.45; padding: 5px 8px; margin: 2px 0 0;
+    border-radius: 5px; color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+    background: var(--vscode-inputValidation-warningBackground, rgba(224,160,48,.14));
+    border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(224,160,48,.45));
+  }
+  #imgnote[hidden] { display: none; }
+
+  /* The placeholder that stands in while a big screenshot is being decoded and resized. */
+  .chip.imgchip.loading { opacity: .8; }
+  .imgskel {
+    width: 28px; height: 28px; border-radius: 3px;
+    background: linear-gradient(90deg, rgba(127,127,127,.14) 25%, rgba(127,127,127,.30) 37%, rgba(127,127,127,.14) 63%);
+    background-size: 300% 100%; animation: imgskel 1.1s ease-in-out infinite;
+  }
+  @keyframes imgskel { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+  @media (prefers-reduced-motion: reduce) { .imgskel { animation: none; } }
+
+  /* What it will cost. Quiet, but present — this product bills credits per turn and an image is
+     not a rounding error. */
+  .chip.imgchip .imgcost {
+    opacity: .55; margin-left: 5px; padding: 1px 4px; border-radius: 3px;
+    background: rgba(127,127,127,.16); font-size: 10px;
+  }
+  .chip.imgchip .imgthumb { cursor: zoom-in; }
+
+  /* Click a thumbnail (in the tray or the transcript) to see it full size. A 28px thumb cannot tell
+     you WHICH screenshot you attached, and that is the one thing you want to check before sending. */
+  #imgzoom {
+    position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.72); cursor: zoom-out; padding: 32px;
+  }
+  #imgzoom[hidden] { display: none; }
+  #imgzoom img { max-width: 100%; max-height: 100%; border-radius: 6px; box-shadow: 0 8px 40px rgba(0,0,0,.5); }
   #attachImg { display: inline-flex; align-items: center; justify-content: center; }
 
   /* ---- attached images ---- */
@@ -91,7 +128,7 @@
   .chip.imgchip .imgx:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.45)); }
   .chip.imgchip .imgx:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; opacity: 1; }
   .msgimg {
-    display: block; max-width: min(320px, 100%); max-height: 240px; width: auto; height: auto;
+    display: block; max-width: min(320px, 100%); max-height: 240px; width: auto; height: auto; cursor: zoom-in;
     border-radius: 6px; border: 1px solid var(--border); margin: 0 0 8px;
   }
   /* Whole-panel drop target: the transcript is a far bigger target than the composer, and someone
@@ -1342,8 +1379,11 @@
        never a gap between actions where nothing shows. Its label tracks the current activity. -->
   <div id="workbar" hidden role="status" aria-live="polite"><span class="wspin" aria-hidden="true"></span><span class="wtext shimmer">Working…</span></div>
 
+  <div id="imgzoom" hidden role="dialog" aria-modal="true" aria-label="Attached image"><img alt=""></div>
+
   <div id="composer">
     <div id="chips"></div>
+    <div id="imgnote" role="status" aria-live="polite" hidden></div>
     <textarea id="input" rows="2" placeholder="Give the agent a goal…"></textarea>
     <div id="toolbar">
       <div class="left">
@@ -1583,11 +1623,38 @@
       '<span class="name">' + esc(f.name) + '</span>' +
       '<span class="x" data-id="' + esc(f.id) + '" title="Remove">✕</span></span>';
   }
-  /** An attached image: its own thumbnail, its real size, and a way to take it back off. */
+  /** What this image will actually cost the request, in visual tokens (28px patches, tier-capped). */
+  function imgTokens(w, h){
+    if (!(w > 0) || !(h > 0)) { return 0; }
+    const cap = 4784;   // high-res tier ceiling; the server caps here whatever we send
+    let s2 = 1, t = Math.ceil(w / 28) * Math.ceil(h / 28);
+    while (t > cap && s2 > 0.05) { s2 *= 0.98; t = Math.ceil(w * s2 / 28) * Math.ceil(h * s2 / 28); }
+    return t;
+  }
+
+  /**
+   * An attached image: its thumbnail, its size, what it will cost, and a way to take it back off.
+   *
+   * The cost is shown because this product meters credits per turn and an image is not a rounding
+   * error — a full-size screenshot is a few thousand input tokens. Someone deciding whether to
+   * attach three of them should be able to see that before they send, not after they are billed.
+   */
   function imgChip(im){
-    return '<span class="chip imgchip" title="' + escAttr(im.w + '×' + im.h + ' · ' + fmtKB(im.bytes)) + '">'
-      + '<img class="imgthumb" src="' + escAttr(im.url) + '" alt="">'
-      + '<span class="imgmeta">' + im.w + '×' + im.h + '</span>'
+    if (im.loading) {
+      return '<span class="chip imgchip loading" title="Preparing ' + escAttr(im.name || 'image') + '…">'
+        + '<span class="imgthumb imgskel" aria-hidden="true"></span>'
+        + '<span class="imgmeta">preparing…</span>'
+        + '</span>';
+    }
+    const tok = imgTokens(im.w, im.h);
+    // Compact on the chip, exact in the tooltip. A tray of attachments is scanned, not read — and
+    // three chips at full width wrap onto a second row, which makes the composer jump as you paste.
+    const short = tok >= 1000 ? (tok / 1000).toFixed(1) + 'k' : String(tok);
+    const title = im.w + '×' + im.h + ' · ' + fmtKB(im.bytes) + ' · ~'
+      + tok.toLocaleString(CREDIT_LOCALE) + ' input tokens · click to view full size';
+    return '<span class="chip imgchip" title="' + escAttr(title) + '">'
+      + '<img class="imgthumb" src="' + escAttr(im.url) + '" alt="" data-img="' + escAttr(im.id) + '">'
+      + '<span class="imgmeta">' + im.w + '×' + im.h + '<span class="imgcost">' + short + '</span></span>'
       + '<span class="x imgx" data-img="' + escAttr(im.id) + '" role="button" tabindex="0" aria-label="Remove image">×</span>'
       + '</span>';
   }
@@ -3163,9 +3230,25 @@
   let pendingImages = [];   // { id, url, w, h, media_type, base64, bytes }
   let imgSeq = 0;
 
-  /** A user-facing "that did not work" line. Routed to the host so it uses VS Code's own notice
-   *  surface rather than inventing a second one inside the transcript. */
-  function note(t){ vscode.postMessage({ type: 'notice', text: String(t || '') }); }
+  /**
+   * A user-facing "that did not work" line, shown WHERE IT HAPPENED — directly under the composer,
+   * beside the attachment that failed.
+   *
+   * This used to post to the host and surface as a VS Code notification in the far corner of the
+   * window. That is the wrong place for it: the notification appears seconds after the paste, a
+   * long way from the thing the person is looking at, and it outlives the moment it describes.
+   * Attachment problems are small, immediate and local, so the message should be too.
+   */
+  let noteTimer = null;
+  function note(t){
+    const text = String(t || ''); if (!text) { return; }
+    const el = document.getElementById('imgnote'); if (!el) { return; }
+    el.textContent = text;
+    el.hidden = false;
+    clearTimeout(noteTimer);
+    // Long enough to read a sentence; short enough that it does not linger over the next attempt.
+    noteTimer = setTimeout(function(){ el.hidden = true; }, 6000);
+  }
 
   function fmtKB(n){ return n >= 1024 * 1024 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
 
@@ -3230,18 +3313,49 @@
           + (dropped > 0 ? dropped + ' were not attached — ' : '') + 'remove one to add another.');
         break;
       }
+      // A placeholder goes in FIRST. Decoding and re-encoding a 4K screenshot takes long enough to
+      // read as "nothing happened", and the honest fix is to show the attachment immediately rather
+      // than to make the work faster. The chip is replaced in place when the bytes are ready.
+      const id = 'img' + (++imgSeq);
+      pendingImages.push({ id: id, loading: true, name: f.name || 'image' });
+      renderChips();
       try {
         const im = await normalizeImage(f);
-        im.id = 'img' + (++imgSeq);
+        im.id = id;
         im.url = 'data:' + im.media_type + ';base64,' + im.base64;
-        pendingImages.push(im);
+        const at = pendingImages.findIndex(function(x){ return x.id === id; });
+        if (at < 0) { continue; }          // removed while it was decoding — respect that
+        pendingImages[at] = im;
         renderChips();
-      } catch (e) { note(String((e && e.message) || e)); }
+      } catch (e) {
+        pendingImages = pendingImages.filter(function(x){ return x.id !== id; });
+        renderChips();
+        note(String((e && e.message) || e));
+      }
     }
     return true;
   }
 
   function removeImage(id){ pendingImages = pendingImages.filter(function(i){ return i.id !== id; }); renderChips(); }
+
+  /** Full-size view of an attachment. Escape or a click anywhere closes it. */
+  function zoomImage(src){
+    const z = document.getElementById('imgzoom'); if (!z || !src) { return; }
+    z.querySelector('img').src = src;
+    z.hidden = false;
+  }
+  function closeZoom(){ const z = document.getElementById('imgzoom'); if (z) { z.hidden = true; z.querySelector('img').src = ''; } }
+  document.getElementById('imgzoom').addEventListener('click', closeZoom);
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && !document.getElementById('imgzoom').hidden) { e.stopPropagation(); closeZoom(); }
+  }, true);
+  // Delegated so it covers both the composer tray and every image already in the transcript.
+  document.addEventListener('click', function(e){
+    const t = e.target;
+    if (!t || !(t.classList && (t.classList.contains('imgthumb') || t.classList.contains('msgimg')))) { return; }
+    const im = pendingImages.find(function(x){ return x.id === t.getAttribute('data-img'); });
+    zoomImage(im ? im.url : t.getAttribute('src'));
+  });
 
   /** Reflect how full the image tray is on the attach button, so the cap is visible before it bites. */
   function syncAttachImgBtn(){

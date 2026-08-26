@@ -392,7 +392,7 @@ index 85e34cca..3f9b67ba 100644
  			this.releaseDateNode.textContent = localize('updateTooltip.releasedLabel', "Released {0}", formatDate(releaseDate));
  			this.releaseDateNode.style.display = '';
 diff --git a/src/vs/workbench/browser/parts/editor/editorDropTarget.ts b/src/vs/workbench/browser/parts/editor/editorDropTarget.ts
-index f9c80ed1..0bdcd0d0 100644
+index f9c80ed1..7ba1a81c 100644
 --- a/src/vs/workbench/browser/parts/editor/editorDropTarget.ts
 +++ b/src/vs/workbench/browser/parts/editor/editorDropTarget.ts
 @@ -18,7 +18,8 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
@@ -415,7 +415,7 @@ index f9c80ed1..0bdcd0d0 100644
  	) {
  		super(themeService);
  
-@@ -365,11 +367,74 @@ class DropOverlay extends Themable {
+@@ -365,11 +367,80 @@ class DropOverlay extends Themable {
  
  		// Check for URI transfer
  		else {
@@ -454,8 +454,14 @@ index f9c80ed1..0bdcd0d0 100644
 +			return false; // a split was asked for — that is a layout gesture, not an attachment
 +		}
 +
++		// An extension-created webview panel does NOT keep the viewType the extension asked for: the
++		// API layer prefixes it (WebviewViewTypeTransformer('mainThreadWebview-') in
++		// mainThreadWebviewPanels.ts), so the input here reads 'mainThreadWebview-levelcode.ai.chat'.
++		// Matching only the bare id made this whole check silently false and the patch inert — a plain
++		// drag still opened the file, and only a Shift-drag appeared to work, because Shift skips this
++		// overlay entirely and lets the webview see the drop itself.
 +		const activeEditor = this.groupView.activeEditor as { viewType?: string } | null | undefined;
-+		if (!activeEditor || activeEditor.viewType !== 'levelcode.ai.chat') {
++		if (!activeEditor || !LEVELCODE_CHAT_VIEW_TYPES.includes(activeEditor.viewType ?? '')) {
 +			return false;
 +		}
 +
@@ -490,3 +496,14 @@ index f9c80ed1..0bdcd0d0 100644
  	private isCopyOperation(e: DragEvent, draggedEditor?: IEditorIdentifier): boolean {
  		if (draggedEditor?.editor.hasCapability(EditorInputCapabilities.Singleton)) {
  			return false; // Singleton editors cannot be split
+@@ -561,6 +632,10 @@ class DropOverlay extends Themable {
+ 	}
+ }
+ 
++// [LevelCode] The chat panel's viewType, in both the form the extension registers and the form the
++// webview API layer rewrites it to once it becomes an editor input.
++const LEVELCODE_CHAT_VIEW_TYPES = ['levelcode.ai.chat', 'mainThreadWebview-levelcode.ai.chat'];
++
+ export class EditorDropTarget extends Themable {
+ 
+ 	private _overlay?: DropOverlay;
