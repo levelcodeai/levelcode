@@ -374,4 +374,26 @@ test('FALLBACK: an unrecognised step is named, not counted', () => {
 		'name the first and count the rest, sentence-cased like every other path: ' + out);
 });
 
+
+test('CHEVRON: the disclosure control TRAILS what it discloses', () => {
+	// "Ran 2 commands ⌄", not "⌄ Ran 2 commands" — matching the reference. Pinned on DOM order, not
+	// on CSS `order`, so the tab order and the visual order stay the same thing.
+	const html = fs.readFileSync(path.join(__dirname, '..', 'media', 'chat.html'), 'utf8');
+
+	const head = html.slice(html.indexOf("'<div class=\"grouphead cmdhead\""), html.indexOf("'<div class=\"groupbody\""));
+	assert.ok(head.indexOf('grouplabel') < head.indexOf('cmdchev'),
+		'the group chevron must come AFTER the label');
+	assert.ok(head.indexOf('groupmark') < head.indexOf('grouplabel'),
+		'the outcome glyph still leads the line');
+	assert.ok(head.indexOf('cmdchev') < head.indexOf('groupcounts'),
+		'the chevron hugs the label; counts stay trailing chrome');
+
+	const cmd = html.slice(html.indexOf("'<div class=\"cmdhead\" title=\"Collapse / expand\""), html.indexOf("'<div class=\"cmdbox\""));
+	assert.ok(cmd.indexOf('cmdverb') < cmd.indexOf('cmdchev'),
+		'a command card must flip too, or the two disclosure controls disagree');
+
+	assert.ok(!/\.cmdchev[^{]*\{[^}]*order:/.test(html),
+		'do not reorder with CSS `order` — it desynchronises tab order from what is on screen');
+});
+
 console.log('groupReducer: ' + n + ' tests passed');

@@ -528,7 +528,11 @@
   .tl-group.gok .tl-node .ci, .tl-group.gfailed .tl-node .ci { width: 18px; height: 18px; }
   @keyframes nodepulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
   .tl-cmd .cmdhead { display: flex; align-items: center; gap: 7px; min-width: 0; cursor: pointer; user-select: none; padding: 2px 0; }
-  .tl-cmd .cmdchev { flex: 0 0 auto; display: inline-flex; color: var(--muted); }
+  /* The chevron TRAILS what it discloses, matching the reference: "Ran 2 commands ⌄", not
+     "⌄ Ran 2 commands". It hugs the label rather than right-aligning to the card edge — a
+     disclosure control belongs next to the thing it opens, and a chevron alone at the far right of
+     a wide row reads as unrelated chrome. */
+  .tl-cmd .cmdchev { flex: 0 0 auto; display: inline-flex; color: var(--muted); margin-left: 1px; }
   .tl-cmd .cmdchev .ci { width: 11px; height: 11px; transition: transform .15s ease; }
   .tl-cmd.collapsed .cmdchev .ci { transform: rotate(-90deg); }
   .tl-cmd .cmdverb { flex: 0 0 auto; font-size: 12.5px; color: var(--vscode-foreground); }
@@ -2167,9 +2171,9 @@
       '<div class="tl-rail"><span class="tl-node">' + codicon('sync') + '</span></div>'
       + '<div class="tl-body">'
         + '<div class="grouphead cmdhead" title="Expand / collapse">'
-          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
           + '<span class="groupmark"></span>'
           + '<span class="grouplabel"></span>'
+          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
           + '<span class="groupcounts"></span>'
           + '<button class="groupstop" hidden title="Stop the running command">' + codicon('stop-circle') + '</button>'
           + '<span class="cmdstate groupstate running">' + LC_DOTS + '</span>'
@@ -2574,8 +2578,8 @@
       '<div class="tl-rail"><span class="tl-node">' + codicon('terminal') + '</span></div>'
       + '<div class="tl-body">'
         + '<div class="cmdhead" title="Collapse / expand">'
-          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
           + '<span class="cmdverb">' + (m.background ? 'Running in background' : 'Running') + '</span>'
+          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
           + '<span class="cmdchips">' + chips + '</span>'
           + '<span class="cmdstate running">' + LC_DOTS + '</span>'
         + '</div>'
