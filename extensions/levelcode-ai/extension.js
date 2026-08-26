@@ -20,7 +20,7 @@ const { resolveGateway } = require('./providers/gateway');
 const { registerAiEdit } = require('./aiEdit');
 const { registerLmProvider } = require('./lmProvider');
 const { registerInlineComplete } = require('./inlineComplete');
-const { runAgent } = require('./agent');
+const { runAgent, resetContextAnnounce } = require('./agent');
 const { findCompactionCut, estimateMsgTokens } = require('./agentMemory');
 const imageStore = require('./imageStore');
 const { supportsVisionForModel } = require('./providers/catalog');
@@ -1137,6 +1137,9 @@ function resetConversationState() {
 	// teardown loses a race it does not know it is in — see handleSend/agentFlow, both of which mutate
 	// this state from a catch/finally that runs long after abort() returns.
 	conversationEpoch++;
+	// A new conversation starts clean, so the run's context (rules / memory / MCP) is news again.
+	// The per-turn suppression is about repetition WITHIN a conversation, not across them.
+	try { resetContextAnnounce(); } catch (e) { /* older agent module */ }
 	clearApprovals();
 	clearQuestions();
 	conversation = [];

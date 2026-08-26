@@ -558,9 +558,29 @@
   .tl-group .groupstop[hidden] { display: none; }
   .tl-group .groupstop:hover { color: var(--vscode-errorForeground, #f14c4c); }
   .tl-group .groupstop .ci { width: 12px; height: 12px; }
-  /* The expanded steps read as ONE unit, not as loose rows under a heading. A hairline container
-     does that with less weight than the rail it replaces — the group already has a rail and a
-     chevron, and a third vertical cue was the thing that made the expanded state look busy. */
+  /* ── A group is a LINE OF TEXT, not a card on a rail ──────────────────────────────────────────
+     The rail threads consecutive tool nodes into one connected line, which is right for loose
+     nodes. A group is already one unit, so once its body became a bordered container the rail was
+     a second grouping cue doing the same job — a circled glyph, a vertical line AND a box around
+     three rows of grey text. That is what stopped reading as consistent with the prose around it.
+     So for groups: no rail, no circled node, and the summary sits on the same left edge as the
+     paragraph above it. The outcome moves into the line itself, quietly. */
+  .tl-group > .tl-rail { display: none; }
+  .tl-group { margin-left: 0; }
+  .tl-group .grouphead { gap: 7px; padding: 2px 0; }
+  /* Muted, like every other piece of secondary chrome — a finished group is history, not news. */
+  .tl-group.gok .grouplabel { color: var(--muted); font-weight: 400; }
+  .tl-group.gok .cmdchev { color: var(--muted); opacity: .8; }
+  /* A failure still speaks up. */
+  .tl-group.gfailed .grouplabel { color: var(--vscode-errorForeground, #f14c4c); }
+  .tl-group .groupmark { flex: 0 0 auto; display: inline-flex; align-items: center; opacity: .75; }
+  .tl-group .groupmark .ci, .tl-group .groupmark svg { width: 12px; height: 12px; }
+  .tl-group.gok .groupmark { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
+  .tl-group.gfailed .groupmark { color: var(--vscode-errorForeground, #f14c4c); }
+  .tl-group.running .groupmark { display: none; }
+
+  /* The expanded steps read as ONE unit. With the rail gone this is the only grouping cue, which
+     is the point — one device, not three. */
   .tl-group .groupbody {
     padding: 3px 2px; margin: 4px 0 2px;
     border: 1px solid var(--border); border-radius: 7px;
@@ -2148,6 +2168,7 @@
       + '<div class="tl-body">'
         + '<div class="grouphead cmdhead" title="Expand / collapse">'
           + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
+          + '<span class="groupmark"></span>'
           + '<span class="grouplabel"></span>'
           + '<span class="groupcounts"></span>'
           + '<button class="groupstop" hidden title="Stop the running command">' + codicon('stop-circle') + '</button>'
@@ -2231,7 +2252,11 @@
     // ONE outcome glyph, in the rail. While running the rail carried a spinner and the head carried
     // dots; a finished group must not go on wearing either. The rail states the outcome, so the
     // trailing state clears on success and speaks up only when something failed.
+    // The outcome lives IN the line now, not on a rail: a small glyph ahead of the summary, the
+    // same weight as the text it sits beside. The rail node is still set for the ungrouped path.
     if (g.node){ g.node.innerHTML = codicon(g.failed ? 'circle-slash' : 'check-circle'); }
+    const mark = g.el.querySelector('.groupmark');
+    if (mark){ mark.innerHTML = codicon(g.failed ? 'circle-slash' : 'check'); }
     g.state.innerHTML = g.failed ? codicon('circle-slash') : '';
     g.state.className = 'cmdstate groupstate ' + (g.failed ? 'bad' : 'ok');
     g.stopBtn.hidden = true;

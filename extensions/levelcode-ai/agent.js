@@ -633,6 +633,20 @@ async function approveMcpLaunch(ctx, server, dbg) {
 	return true;
 }
 
+/**
+ * What we last TOLD the user about a run's context (rules / memory / MCP).
+ *
+ * The context itself is rebuilt every run — that is deliberate, a run's servers are whatever is
+ * configured and reachable right now. Re-ANNOUNCING it every turn is different, and it was noise:
+ * three identical rows at the top of every single answer, saying the same thing they said last time.
+ *
+ * A signature, not a boolean, because the announcement has to come back the moment anything moves —
+ * a server dropping out, a rules file appearing, memory arriving for the first time. Silence is only
+ * correct while the picture is unchanged.
+ */
+let lastContextSig = '';
+function resetContextAnnounce() { lastContextSig = ''; }
+
 async function setupMcp(ctx, wsFolders, dbg) {
 	const empty = { tools: [], routes: null };
 	const cfg = ctx.mcp || {};
@@ -687,7 +701,9 @@ async function setupMcp(ctx, wsFolders, dbg) {
 		const perServer = toolCountsByServer(built.routes);
 		const summary = handles.map((h) => h.name + ' (' + (perServer.get(h.name) || 0) + ')').join(', ');
 		dbg('mcp.ready', { servers: handles.map((h) => h.name), tools: built.tools.length, allowed });
-		ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🔌 mcp · ' + summary + ' · ' + allowed + '/' + built.tools.length + ' allow-listed' });
+		// Handed back rather than posted: runAgent decides whether the user needs to hear it again.
+		// Failures below still post immediately — a server that broke is news every time.
+		built.announce = { type: 'agentTool', icon: 'sparkle', text: '🔌 mcp · ' + summary + ' · ' + allowed + '/' + built.tools.length + ' allow-listed' };
 		return built;
 	} catch (e) {
 		dbg('mcp.failed', { error: (e && e.message) || String(e) });
@@ -739,21 +755,36 @@ async function runAgent(ctx) {
 	const systemTokensEst = Math.round(system.length / 4);
 
 	const dbg = ctx.dbg || (() => {});
+	// The run's context, COLLECTED rather than posted. Whether the user needs to see it again is a
+	// question about the whole picture, and the MCP part of that picture is not known until setupMcp
+	// has run — so nothing is announced until all three are in hand.
+	const contextChips = [];
 	if (rules.sources.length) {
 		dbg('projectRules.loaded', { sources: rules.sources });
-		// Quiet timeline chip at the top of the run so the user can see their repo rules are in effect
-		// (mirrors the skill chip). Reuses the agentTool → addAgentLine rendering — no webview change.
-		ctx.post({ type: 'agentTool', icon: 'file', text: '📋 project rules · ' + rules.sources.join(', ') });
+		contextChips.push({ type: 'agentTool', icon: 'file', text: '📋 project rules · ' + rules.sources.join(', ') });
 	}
 	if (ctx.projectMemory) {
 		dbg('projectMemory.loaded', { chars: ctx.projectMemory.length });
-		ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 project memory' });
+		contextChips.push({ type: 'agentTool', icon: 'history', text: '🧠 project memory' });
 	}
 
 	// MCP (docs/MCP.md S3): the tool list becomes PER-RUN. It was a module constant only because it was
 	// the same every time; a run's servers are whatever is configured and reachable right now. Same shape
 	// as `system`/`systemTokensEst` two lines up — built once per run, then used for every turn.
 	const mcp = await setupMcp(ctx, wsFolders, dbg);
+	if (mcp.announce) { contextChips.push(mcp.announce); }
+
+	// Say it only when it CHANGED. The context is rebuilt every run by design; repeating it at the top
+	// of every answer is not the same thing, and three identical rows before each reply is noise the
+	// reference transcript does not have. A signature rather than a flag, so the announcement returns
+	// the moment a server drops, a rules file appears, or memory shows up for the first time.
+	const sig = contextChips.map((c) => c.text).join('|');
+	if (sig && sig !== lastContextSig) {
+		lastContextSig = sig;
+		for (const chip of contextChips) { ctx.post(chip); }
+	} else if (!sig) {
+		lastContextSig = '';   // nothing to say now; say it again when there is
+	}
 	ctx.mcpRoutes = mcp.routes;                                        // runTool's router reads this
 	// Rootless runs get the portable subset; MCP tools are unaffected either way.
 	const builtins = root ? TOOLS : PORTABLE_TOOLS;
@@ -1030,4 +1061,4 @@ async function runAgent(ctx) {
 	}
 }
 
-module.exports = { runAgent, makeDiff, resolveWorkspacePath };
+module.exports = { resetContextAnnounce, runAgent, makeDiff, resolveWorkspacePath };
