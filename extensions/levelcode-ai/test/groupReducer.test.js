@@ -101,7 +101,7 @@ function newHarness(groupsOn) {
 			'collapseMember', 'groupAppend', 'refreshGroupHead', 'finalizeGroup', 'closeGroup',
 			'groupStepDone', 'groupStepCounts', 'addAgentLine', 'add'
 		].map(extract).join('\n')
-		+ '\nthis.api = { openGroup, groupAppend, closeGroup, groupStepDone, groupStepCounts, addAgentLine, add, get curGroup(){ return curGroup; } };';
+		+ '\nthis.api = { openGroup, groupAppend, closeGroup, groupStepDone, groupStepCounts, addAgentLine, add, groupAggregate, chipStep, get curGroup(){ return curGroup; } };';
 	new Function('document', 'log', src).call(sandbox, { createElement: (t) => new El(t) }, log);
 	return { log, api: /** @type {any} */ (sandbox).api };
 }
@@ -315,6 +315,63 @@ test('a new user message re-arms the label', () => {
 	h.api.add('user', 'second ask');
 	h.api.add('assistant', 'on it');
 	assert.strictEqual(roleOf(h.log.children[4]), 'LevelCode AI', 'the next turn is labelled again');
+});
+
+
+// ── the collapsed header must SAY something (the "3 steps" problem) ─────────────────────────────
+
+test('SETUP STEPS: a run that only loaded context says so, instead of counting', () => {
+	// This was the reported UX gap: rules + memory + MCP summarised as "3 steps", which tells nobody
+	// anything. They fell through chipStep into `note`, which contributes no phrase.
+	const S = newHarness().api;
+	const chip = (icon, text) => S.chipStep(icon, text, '', undefined, undefined);
+	const steps = [
+		chip('file', '📋 project rules · CLAUDE.md'),
+		chip('history', '🧠 project memory'),
+		chip('sparkle', '🔌 mcp · github (26) · 2/26 allow-listed')
+	];
+	const out = S.groupAggregate(steps);
+	assert.ok(!/^\d+ steps$/.test(out), 'must not fall back to a bare count: ' + out);
+	assert.match(out, /project rules/, 'should name the rules it loaded');
+	assert.match(out, /memory/, 'and the memory');
+	assert.match(out, /MCP/, 'and the MCP connection');
+});
+
+test('SETUP STEPS: each kind is recognised, not lumped into note', () => {
+	const S = newHarness().api;
+	const chip = (icon, text) => S.chipStep(icon, text, '', undefined, undefined);
+	const kindOf = (icon, text) => chip(icon, text).kind;
+	assert.strictEqual(kindOf('file', '📋 project rules · CLAUDE.md'), 'rules');
+	assert.strictEqual(kindOf('history', '🧠 project memory'), 'memory');
+	assert.strictEqual(kindOf('history', '🧠 recalling: how auth works'), 'recall');
+	assert.strictEqual(kindOf('sparkle', '🧩 using skill: pdf'), 'skill');
+	assert.strictEqual(kindOf('globe', '🌐 preview · http://localhost:3000'), 'preview');
+	// A tool CALL through a server is different work from setup chatter about servers.
+	assert.strictEqual(kindOf('sparkle', '🔌 github · search_code'), 'mcpcall');
+	assert.strictEqual(kindOf('sparkle', '🔌 mcp · github (26) · 2/26 allow-listed'), 'mcp');
+});
+
+test('SETUP STEPS: real work still leads the sentence', () => {
+	// Setup is named, but never at the expense of what actually changed.
+	const S = newHarness().api;
+	const chip = (icon, text) => S.chipStep(icon, text, '', undefined, undefined);
+	const out = S.groupAggregate([
+		chip('file', '📋 project rules · CLAUDE.md'),
+		{ kind: 'cmd' },
+		{ kind: 'edit', path: 'src/a.ts' }
+	]);
+	assert.ok(out.indexOf('a.ts') < out.indexOf('project rules'),
+		'what changed must come before what was loaded: ' + out);
+});
+
+test('FALLBACK: an unrecognised step is named, not counted', () => {
+	const S = newHarness().api;
+	const out = S.groupAggregate([
+		S.chipStep('info', 'something unusual happened', '', undefined, undefined),
+		S.chipStep('info', 'and another', '', undefined, undefined)
+	]);
+	assert.match(out, /^Something unusual happened and 1 more$/,
+		'name the first and count the rest, sentence-cased like every other path: ' + out);
 });
 
 console.log('groupReducer: ' + n + ' tests passed');

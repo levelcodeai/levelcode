@@ -558,7 +558,17 @@
   .tl-group .groupstop[hidden] { display: none; }
   .tl-group .groupstop:hover { color: var(--vscode-errorForeground, #f14c4c); }
   .tl-group .groupstop .ci { width: 12px; height: 12px; }
-  .tl-group .groupbody { padding: 2px 0 0 4px; }
+  /* The expanded steps read as ONE unit, not as loose rows under a heading. A hairline container
+     does that with less weight than the rail it replaces — the group already has a rail and a
+     chevron, and a third vertical cue was the thing that made the expanded state look busy. */
+  .tl-group .groupbody {
+    padding: 3px 2px; margin: 4px 0 2px;
+    border: 1px solid var(--border); border-radius: 7px;
+    background: var(--vscode-editorWidget-background, rgba(127,127,127,.045));
+  }
+  .tl-group .groupbody:empty { display: none; }
+  /* Rows sit flush inside the container and separate by hairline rather than by gap. */
+  .tl-group .groupbody > .tl + .tl { border-top: 1px solid var(--line-soft, rgba(127,127,127,.16)); }
   .tl-group.collapsed .groupbody { display: none; }
   .tl-group .groupbody > .tl > .tl-rail { display: none; }
   .tl-group .groupbody > .tl { margin: 0; }
@@ -2054,7 +2064,37 @@
     if (lists){ parts.push('listed files'); }
     if (cmds){ parts.push('ran ' + (cmds === 1 ? 'a command' : cmds + ' commands')); }
     if (steps.some((s) => s.kind === 'verify')){ parts.push('verified the edits'); }
-    if (!parts.length){ return steps.length === 1 ? '1 step' : steps.length + ' steps'; }
+
+    // Setup. Named LAST so real work still leads the sentence, but named — a run whose only steps
+    // were setup should say what it set up, not how many things it did.
+    const kinds = new Set(steps.map((s) => s.kind));
+    const ctxBits = [];
+    if (kinds.has('rules')) { ctxBits.push('project rules'); }
+    if (kinds.has('memory') || kinds.has('recall')) { ctxBits.push('memory'); }
+    if (ctxBits.length) { parts.push('loaded ' + ctxBits.join(' and ')); }
+    if (kinds.has('skill')) {
+      const names = uniq(steps.filter((s) => s.kind === 'skill').map((s) => s.path).filter(Boolean));
+      parts.push(names.length ? ('used the ' + files(names) + ' skill' + (names.length > 1 ? 's' : '')) : 'used a skill');
+    }
+    const calls = steps.filter((s) => s.kind === 'mcpcall');
+    if (calls.length) {
+      const servers = uniq(calls.map((s) => s.path).filter(Boolean));
+      parts.push('called ' + (servers.length ? files(servers) : (calls.length + ' MCP tools')));
+    } else if (kinds.has('mcp')) {
+      parts.push('connected MCP tools');
+    }
+    if (kinds.has('preview')) { parts.push('opened a preview'); }
+
+    if (!parts.length){
+      // Last resort: name the FIRST thing rather than count. "3 steps" tells no one anything.
+      const first = steps.find((s) => s.base && s.base.trim());
+      if (first){
+        const rest = steps.length - 1;
+        const one = first.base.trim() + (rest > 0 ? (' and ' + rest + ' more') : '');
+        return one.charAt(0).toUpperCase() + one.slice(1);   // same sentence-casing as the built path
+      }
+      return steps.length === 1 ? '1 step' : steps.length + ' steps';
+    }
     const sentence = parts.join(', ');
     return sentence.charAt(0).toUpperCase() + sentence.slice(1);
   }
@@ -2072,6 +2112,20 @@
     }
     if (kind === 'search' || icon === 'search'){ return { kind: 'search', base: titled || 'Search the workspace' }; }
     if (icon === 'list-tree'){ return { kind: 'list', base: titled || 'List files' }; }
+    // The run's SETUP steps. These arrive as pre-baked emoji chips and used to fall through to
+    // `note`, which contributes no phrase — so a run that loaded rules, memory and an MCP server
+    // summarised as the useless "3 steps". They describe real work and should say so.
+    if (/^📋 project rules/.test(t)){ return { kind: 'rules', base: titled || t, path: t.replace(/^📋 project rules · /, '') }; }
+    if (/^🧠 project memory/.test(t)){ return { kind: 'memory', base: titled || t }; }
+    if (/^🧠 recalling:/.test(t)){ return { kind: 'recall', base: titled || t }; }
+    if (/^🧩 using skill:/.test(t)){ return { kind: 'skill', base: titled || t, path: t.replace(/^🧩 using skill: /, '') }; }
+    if (/^🔌 /.test(t)){
+      // A tool CALL through a server (🔌 name · tool) is different work from setup chatter.
+      const call = /^🔌 (?!mcp · )([^·]+) · (.+)$/.exec(t);
+      return call ? { kind: 'mcpcall', base: titled || t, path: call[1].trim() }
+                  : { kind: 'mcp', base: titled || t };
+    }
+    if (/^🌐 preview/.test(t)){ return { kind: 'preview', base: titled || t }; }
     return { kind: 'note', base: titled || t };
   }
   // The label for a command step: the model's explanation (imperative, per the system prompt), or
