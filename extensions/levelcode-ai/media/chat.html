@@ -586,16 +586,29 @@
   /* The expanded steps read as ONE unit. With the rail gone this is the only grouping cue, which
      is the point — one device, not three. */
   .tl-group .groupbody {
-    padding: 3px 2px; margin: 4px 0 2px;
-    border: 1px solid var(--border); border-radius: 7px;
-    background: var(--vscode-editorWidget-background, rgba(127,127,127,.045));
+    padding: 0; margin: 6px 0 2px;
+    border: 1px solid var(--border); border-radius: 8px;
+    /* NO fill. A tinted block plus a border is two containers drawn on top of each other, and it is
+       what made these rows read as a solid slab rather than as a list. The hairline does the work;
+       the rows keep the page's own ground. */
+    background: transparent;
+    overflow: hidden;   /* so the first and last rows clip to the radius instead of squaring it off */
   }
   .tl-group .groupbody:empty { display: none; }
-  /* Rows sit flush inside the container and separate by hairline rather than by gap. */
+  /* Rows separate by hairline rather than by gap, and each one is INSET from the border. Text that
+     starts a couple of pixels off the edge reads as overflowing its container even when it is not —
+     the padding is what makes a bordered list look placed rather than crammed. */
+  .tl-group .groupbody > .tl { padding: 3px 14px; }
   .tl-group .groupbody > .tl + .tl { border-top: 1px solid var(--line-soft, rgba(127,127,127,.16)); }
   .tl-group.collapsed .groupbody { display: none; }
   .tl-group .groupbody > .tl > .tl-rail { display: none; }
   .tl-group .groupbody > .tl { margin: 0; }
+  /* A row inside the container is a single line, so it does not need the timeline's asymmetric
+     bottom padding — that gap is there to separate free-standing nodes from the next one. */
+  .tl-group .groupbody > .tl > .tl-body { padding: 4px 0; }
+  /* The summary lines up with the rows below it rather than with the container edge, so the
+     expanded state reads as one block instead of two things that happen to be stacked. */
+  .tl-group .grouphead { padding-left: 0; }
   /* Copilot-style falling-dots progress — a 2×3 dot grid cascading downward while a command runs */
   .lcdots { display: inline-grid; grid-template-columns: repeat(2, 3px); gap: 2px; color: var(--accent); align-self: center; }
   .lcdots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: lcdotfall 1.1s ease-in-out infinite; }

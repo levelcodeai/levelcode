@@ -773,4 +773,24 @@ test('SHELL COLUMN: no member re-declares an inline margin, which would un-centr
 	}
 });
 
+test('GROUP CONTAINER: rows are inset from the border, and the border is the only container', () => {
+	// Reported against the reference: text starting a couple of pixels off the border reads as
+	// overflowing its container even when it is not, and a tinted fill UNDER a border is two
+	// containers drawn on top of each other — which is what made these rows look like a slab.
+	const body = /\.tl-group \.groupbody \{([^}]*)\}/.exec(cssBlocks);
+	assert.ok(body, 'the group container rule is gone');
+	assert.match(body[1], /background:\s*transparent/,
+		'no fill — the hairline is the container, and a tint fights whatever ground the theme paints');
+	assert.match(body[1], /border:\s*1px solid/, 'the hairline must still be there');
+	assert.match(body[1], /overflow:\s*hidden/,
+		'without this the first and last rows square off the corners the radius just rounded');
+
+	const row = /\.tl-group \.groupbody > \.tl \{([^}]*)\}/.exec(cssBlocks);
+	assert.ok(row, 'the row inset rule is gone');
+	const pad = /padding:\s*(\d+)px\s+(\d+)px/.exec(row[1]);
+	assert.ok(pad, 'rows need explicit padding: ' + row[1]);
+	assert.ok(Number(pad[2]) >= 10,
+		'rows need real horizontal inset from the border — got ' + pad[2] + 'px');
+});
+
 console.log('webviewCss: ' + n + ' tests passed');
