@@ -1,6 +1,8 @@
 # Image input — paste a screenshot, get an answer about it
 
-**Status:** design, not built. Seven slices, I1–I7.
+**Status:** shipped. All seven slices (I1–I7) landed in [#90](https://github.com/levelcodeai/levelcode/pull/90), plus a core patch D8 did not
+anticipate. This document has been reconciled against the build — where the implementation
+overturned the plan, the decision says so in place, and §8 lists every divergence.
 
 The target is the interaction Cursor and the Claude Code console already have: take a screenshot, `⌘V` into the composer, ask "why does this look wrong". No dialog, no upload step, no file management.
 
@@ -192,15 +194,15 @@ Two traps worth recording, both found only by testing the real thing:
 
 **Because normalization is async, a send can outrun it.** A placeholder chip carries no bytes, so sending mid-decode posts an attachment with no `media_type` and no data — refused at the host, and the image disappears from a message the user watched it attach to. The send path waits on tracked in-flight work and refuses a surviving placeholder outright.
 
+### D9 — Multi-turn repetition is a known, deferred cost
+
+Base64 rides on every subsequent request. Refs keep *our* history small but do not shrink the wire. The Files API (`{type:'image', source:{type:'file', file_id}}`, beta `files-api-2025-04-14`) fixes it properly by uploading once and referencing thereafter — but it is Anthropic-direct only, so it cannot be the primary path in a multi-provider client. Flagged as a follow-up, sized in §6.
+
 ### D10 — Several images are introduced by name
 
 From the vision guidance: with more than one image, precede each with `Image 1:`, `Image 2:` so the question — and every follow-up turn — can refer to them. Without it, "the second screenshot" has nothing to bind to.
 
 Only when there is more than one. A single image needs no name, and labelling it would put a pointless text block ahead of every screenshot anyone pastes.
-
-### D9 — Multi-turn repetition is a known, deferred cost
-
-Base64 rides on every subsequent request. Refs keep *our* history small but do not shrink the wire. The Files API (`{type:'image', source:{type:'file', file_id}}`, beta `files-api-2025-04-14`) fixes it properly by uploading once and referencing thereafter — but it is Anthropic-direct only, so it cannot be the primary path in a multi-provider client. Flagged as a follow-up, sized in §6.
 
 ---
 
