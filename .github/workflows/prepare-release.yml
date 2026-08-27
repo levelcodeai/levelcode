@@ -1,0 +1,134 @@
+name: Prepare release
+
+# Step 1 of 3 in the release pipeline (docs/RELEASING.md §7):
+#
+#   prepare-release.yml  →  you edit the PR  →  tag-on-merge.yml  →  release.yml
+#   (this file)             (the only prose      (pushes vX.Y.Z)     (builds, signs,
+#                            step that is                             notarizes, waits
+#                            still yours)                             for your approval)
+#
+# What this does: drafts RELEASE-NOTES.md for the next version and opens a PR with it.
+#
+# Why a PR rather than a straight commit + tag. scripts/draft-release-notes.mjs fills in every
+# FACT (commit range, PRs, previous tag, suite and case counts, the compare URL) and deliberately
+# leaves `<!-- TODO -->` markers where judgement is required — which two of fourteen commits
+# actually matter, what to lead with, how to frame a change so it is not misread. Its own header
+# argues the case: "a changelog auto-generated from commit subjects is the reason most release
+# notes go unread." So the tedious, misrememberable 90% is automated and the prose stays human,
+# with a PR as the place to write it. tag-on-merge.yml then refuses to tag while any TODO remains,
+# so the automation cannot ship scaffolding.
+#
+# There is NO version file to bump. The release version is derived from the tag at build time
+# (`git describe --tags` in scripts/build-macos.sh), so the tag IS the version and this workflow
+# only has to produce notes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, without the leading v (e.g. 1.0.5)"
+        required: true
+
+permissions:
+  contents: write # push the release/vX.Y.Z branch
+  pull-requests: write # open the PR
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # draft-release-notes.mjs walks `prevTag..HEAD` and reads `git tag --list`, so a shallow
+          # clone would silently produce an empty or wrong range — the class of quiet mistake this
+          # whole pipeline exists to remove.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Validate the version and refuse to reuse a tag
+        env:
+          # Through the environment, never interpolated into the script body: `${{ inputs.version }}`
+          # inline would splice user text straight into the shell.
+          VERSION: ${{ inputs.version }}
+          REF: ${{ github.ref_name }}
+        run: |
+          # The Run-workflow dropdown lets you pick ANY branch or tag, and the PR this opens targets
+          # whatever you picked. But tag-on-merge.yml only listens for PRs into develop, so a release
+          # PR opened anywhere else merges cleanly and then simply never tags — a dead end with no
+          # error, discovered whenever someone next wonders where the release went. Fail here, where
+          # the cause is still on screen. (Coupled to the `branches:` filter in tag-on-merge.yml —
+          # change both together.)
+          if [ "$REF" != "develop" ]; then
+            echo "::error::Run this from develop, not \"$REF\" — tag-on-merge.yml only tags PRs merged into develop, so a release PR opened here would never ship."
+            exit 1
+          fi
+          if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::\"$VERSION\" is not X.Y.Z. Pass the version without a leading v."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists. Releases are immutable — pick the next version."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Draft RELEASE-NOTES.md
+        run: node scripts/draft-release-notes.mjs "$VERSION" --write
+
+      - name: Open the release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="release/v$VERSION"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add RELEASE-NOTES.md
+
+          # A release whose range contains nothing is a mistake worth catching here rather than
+          # three workflows later, at the point where it would have published an empty release.
+          if git diff --cached --quiet; then
+            echo "::error::draft-release-notes.mjs produced no change — is there anything to release since the last tag?"
+            exit 1
+          fi
+
+          git commit -m "release: draft notes for v$VERSION"
+          git push --set-upstream origin "$BRANCH"
+
+          # QUOTED heredoc + placeholder, deliberately. The body is full of backticks, so an
+          # unquoted heredoc would run them as command substitution; a quoted one leaves them
+          # alone but also leaves $VERSION literal, hence the sed. Written to a file rather than
+          # inlined so `gh` gets it verbatim, with no second round of shell parsing.
+          cat > /tmp/pr-body.md <<'BODY'
+          Drafted by `.github/workflows/prepare-release.yml`. **The facts are filled in; the prose is yours.**
+
+          ### Before merging
+
+          1. Replace every `<!-- TODO … -->` in `RELEASE-NOTES.md` with real prose.
+          2. Read the **excluded as internal** list at the bottom — anything user-visible in there belongs in the notes.
+          3. Delete the whole scaffolding block (everything under `EVERYTHING BELOW IS SCAFFOLDING`).
+
+          `tag-on-merge.yml` refuses to tag while any TODO or scaffolding marker survives, so a half-finished
+          draft cannot reach users.
+
+          ### What merging does
+
+          Merging this PR pushes the `v__VERSION__` tag, which starts `release.yml`: both arches build on native
+          runners, get signed with the Developer ID cert and notarized by Apple, and land on a **draft** release
+          with these notes as the body.
+
+          It then **waits for your approval** in the Actions tab before publishing — because publishing is
+          deploying. Auto-update installs a published release on every existing install at its next check, and
+          that cannot be reversed for anyone who already took it (`docs/RELEASING.md` §5). Download the dmg from
+          the draft and launch it on a real Mac before you approve.
+          BODY
+          sed -i "s/__VERSION__/$VERSION/g" /tmp/pr-body.md
+
+          gh pr create \
+            --base "${{ github.ref_name }}" \
+            --head "$BRANCH" \
+            --title "release: v$VERSION" \
+            --body-file /tmp/pr-body.md

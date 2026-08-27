@@ -1,0 +1,93 @@
+name: Tag on release merge
+
+# Step 2 of 3 (docs/RELEASING.md §7). Merging a `release/vX.Y.Z` PR pushes the tag, which starts
+# release.yml.
+#
+# This exists as its own workflow, and not as a line in prepare-release.yml, because the tag must
+# be created from the MERGED state — the notes you actually wrote — rather than from the draft that
+# was opened days earlier. The tag is what `git describe --tags` stamps into the built app
+# (scripts/build-macos.sh), so it has to point at the commit that carries the finished notes.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [develop]
+
+permissions:
+  contents: write # push the tag
+
+jobs:
+  tag:
+    # `closed` fires on abandon as well as merge, and only a merge is a release.
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The MERGE COMMIT itself, by SHA — not the PR head, and not the base branch by name.
+          #
+          # Not the head: the notes are only final once merged.
+          # Not `base.ref`: that resolves to whatever develop points at when this job starts, and
+          # anything merged in the seconds or minutes after the release PR would be swept into the
+          # tag. The build stamps its version from `git describe --tags`, so that ships code the
+          # release notes do not describe — silently, and only discoverable after the fact.
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Take the version from the branch name
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          VERSION="${HEAD_REF#release/v}"
+          # Re-validate rather than trust the branch name. Anyone who can open a PR chooses this
+          # string, and it is about to become a git ref and a build-stamped version.
+          if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Branch \"$HEAD_REF\" does not carry an X.Y.Z version — refusing to tag."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Refuse to tag unfinished notes
+        # The gate that makes "automate the notes" safe. draft-release-notes.mjs writes TODO markers
+        # and a scaffolding block precisely so a human fills them in; without this check the pipeline
+        # would happily publish `<!-- TODO what does it guard? -->` to every user. Publishing is
+        # deploying here (docs/RELEASING.md §5) — there is no second chance to notice.
+        run: |
+          FAILED=0
+          # Match the generator's exact marker, `<!-- TODO`, not the bare word. Release prose can
+          # legitimately contain "TODO" — describing a known gap, quoting a code comment — and
+          # blocking a finished release over that would be a false alarm the author cannot fix
+          # except by rewording. What this gate is actually asking is narrower: did you fill in the
+          # placeholders draft-release-notes.mjs left behind?
+          if grep -qF '<!-- TODO' RELEASE-NOTES.md; then
+            echo "::error file=RELEASE-NOTES.md::Unfilled TODO markers remain:"
+            grep -nF '<!-- TODO' RELEASE-NOTES.md | sed 's/^/  /'
+            FAILED=1
+          fi
+          if grep -qF 'EVERYTHING BELOW IS SCAFFOLDING' RELEASE-NOTES.md; then
+            echo "::error file=RELEASE-NOTES.md::The scaffolding block was not deleted."
+            FAILED=1
+          fi
+          # The notes must describe THIS release. A stale file from the previous version would
+          # otherwise sail through both checks above.
+          if ! head -1 RELEASE-NOTES.md | grep -qF "v$VERSION"; then
+            echo "::error file=RELEASE-NOTES.md::First line does not name v$VERSION — the notes look stale:"
+            head -1 RELEASE-NOTES.md | sed 's/^/  /'
+            FAILED=1
+          fi
+          [ "$FAILED" -eq 0 ] || exit 1
+          echo "RELEASE-NOTES.md is complete and names v$VERSION."
+
+      - name: Create and push the tag
+        run: |
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists — refusing to move a released tag."
+            exit 1
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Annotated: `git describe --tags` prefers annotated tags, and the message is what shows
+          # up in `git show v1.0.5`.
+          git tag -a "v$VERSION" -m "LevelCode v$VERSION"
+          git push origin "v$VERSION"
+          echo "::notice::Pushed v$VERSION — release.yml is now building, signing and notarizing."
