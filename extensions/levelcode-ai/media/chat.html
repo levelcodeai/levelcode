@@ -65,6 +65,79 @@
      calc above already insets by --shell-x. Set margin-block in these rules, never margin.
      test/webviewCss.test.js pins this for the whole list. */
 
+  #attachImg .ci { width: 14px; height: 14px; display: block; }
+  #attachImg.atcap { opacity: .45; }
+
+  /* An attachment problem, said where it happened. Sits under the chips so it reads as belonging to
+     the thing that failed, and takes no space when there is nothing to say. */
+  #imgnote {
+    font-size: 11.5px; line-height: 1.45; padding: 5px 8px; margin: 2px 0 0;
+    border-radius: 5px; color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+    background: var(--vscode-inputValidation-warningBackground, rgba(224,160,48,.14));
+    border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(224,160,48,.45));
+  }
+  #imgnote[hidden] { display: none; }
+
+  /* The placeholder that stands in while a big screenshot is being decoded and resized. */
+  .chip.imgchip.loading { opacity: .8; }
+  .imgskel {
+    width: 28px; height: 28px; border-radius: 3px;
+    background: linear-gradient(90deg, rgba(127,127,127,.14) 25%, rgba(127,127,127,.30) 37%, rgba(127,127,127,.14) 63%);
+    background-size: 300% 100%; animation: imgskel 1.1s ease-in-out infinite;
+  }
+  @keyframes imgskel { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+  @media (prefers-reduced-motion: reduce) { .imgskel { animation: none; } }
+
+  /* What it will cost. Quiet, but present — this product bills credits per turn and an image is
+     not a rounding error. */
+  .chip.imgchip .imgcost {
+    opacity: .55; margin-left: 5px; padding: 1px 4px; border-radius: 3px;
+    background: rgba(127,127,127,.16); font-size: 10px;
+  }
+  .chip.imgchip .imgthumb { cursor: zoom-in; }
+
+  /* Click a thumbnail (in the tray or the transcript) to see it full size. A 28px thumb cannot tell
+     you WHICH screenshot you attached, and that is the one thing you want to check before sending. */
+  #imgzoom {
+    position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.72); cursor: zoom-out; padding: 32px;
+  }
+  #imgzoom[hidden] { display: none; }
+  #imgzoom img { max-width: 100%; max-height: 100%; border-radius: 6px; box-shadow: 0 8px 40px rgba(0,0,0,.5); }
+  #attachImg { display: inline-flex; align-items: center; justify-content: center; }
+
+  /* ---- attached images ---- */
+  /* The chip carries its own thumbnail: an attachment you cannot see is one you cannot check before
+     sending, and a screenshot is the one attachment where the wrong one looks exactly like the right
+     one in a filename. */
+  .chip.imgchip { padding: 2px 6px 2px 2px; gap: 6px; align-items: center; }
+  .chip.imgchip .imgthumb {
+    width: 28px; height: 28px; object-fit: cover; border-radius: 3px;
+    display: block; background: rgba(127,127,127,.18);
+  }
+  .chip.imgchip .imgmeta { font-variant-numeric: tabular-nums; opacity: .75; }
+  /* A bigger, more findable remove target than the text chips carry. Two reasons it can be:
+     the image chip is twice the height of a text chip, so 22px fits without changing the row; and
+     removing the WRONG attachment is cheap to undo on a file pin and annoying on a screenshot you
+     have to go and take again. Resting opacity is higher too — an affordance you have to hunt for
+     reads as one that is not there. */
+  .chip.imgchip .imgx {
+    width: 22px; height: 22px; font-size: 15px; line-height: 1;
+    opacity: .75; margin-left: 3px;
+  }
+  .chip.imgchip .imgx:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.45)); }
+  .chip.imgchip .imgx:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; opacity: 1; }
+  .msgimg {
+    display: block; max-width: min(320px, 100%); max-height: 240px; width: auto; height: auto; cursor: zoom-in;
+    border-radius: 6px; border: 1px solid var(--border); margin: 0 0 8px;
+  }
+  /* Whole-panel drop target: the transcript is a far bigger target than the composer, and someone
+     dragging a screenshot aims at the conversation. */
+  body.dropping::after {
+    content: ''; position: fixed; inset: 6px; border: 2px dashed var(--accent);
+    border-radius: 10px; pointer-events: none; z-index: 40;
+  }
+
   /* ---- conversation log ---- */
   /* The measure, the type and the inset are all declared on `body` (see above) so the composer and the
      status row resolve the same values the transcript does. `--shell-x` is the log's horizontal padding
@@ -455,7 +528,11 @@
   .tl-group.gok .tl-node .ci, .tl-group.gfailed .tl-node .ci { width: 18px; height: 18px; }
   @keyframes nodepulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
   .tl-cmd .cmdhead { display: flex; align-items: center; gap: 7px; min-width: 0; cursor: pointer; user-select: none; padding: 2px 0; }
-  .tl-cmd .cmdchev { flex: 0 0 auto; display: inline-flex; color: var(--muted); }
+  /* The chevron TRAILS what it discloses, matching the reference: "Ran 2 commands ⌄", not
+     "⌄ Ran 2 commands". It hugs the label rather than right-aligning to the card edge — a
+     disclosure control belongs next to the thing it opens, and a chevron alone at the far right of
+     a wide row reads as unrelated chrome. */
+  .tl-cmd .cmdchev { flex: 0 0 auto; display: inline-flex; color: var(--muted); margin-left: 1px; }
   .tl-cmd .cmdchev .ci { width: 11px; height: 11px; transition: transform .15s ease; }
   .tl-cmd.collapsed .cmdchev .ci { transform: rotate(-90deg); }
   .tl-cmd .cmdverb { flex: 0 0 auto; font-size: 12.5px; color: var(--vscode-foreground); }
@@ -485,10 +562,53 @@
   .tl-group .groupstop[hidden] { display: none; }
   .tl-group .groupstop:hover { color: var(--vscode-errorForeground, #f14c4c); }
   .tl-group .groupstop .ci { width: 12px; height: 12px; }
-  .tl-group .groupbody { padding: 2px 0 0 4px; }
+  /* ── A group is a LINE OF TEXT, not a card on a rail ──────────────────────────────────────────
+     The rail threads consecutive tool nodes into one connected line, which is right for loose
+     nodes. A group is already one unit, so once its body became a bordered container the rail was
+     a second grouping cue doing the same job — a circled glyph, a vertical line AND a box around
+     three rows of grey text. That is what stopped reading as consistent with the prose around it.
+     So for groups: no rail, no circled node, and the summary sits on the same left edge as the
+     paragraph above it. The outcome moves into the line itself, quietly. */
+  .tl-group > .tl-rail { display: none; }
+  .tl-group { margin-left: 0; }
+  .tl-group .grouphead { gap: 7px; padding: 2px 0; }
+  /* Muted, like every other piece of secondary chrome — a finished group is history, not news. */
+  .tl-group.gok .grouplabel { color: var(--muted); font-weight: 400; }
+  .tl-group.gok .cmdchev { color: var(--muted); opacity: .8; }
+  /* A failure still speaks up. */
+  .tl-group.gfailed .grouplabel { color: var(--vscode-errorForeground, #f14c4c); }
+  .tl-group .groupmark { flex: 0 0 auto; display: inline-flex; align-items: center; opacity: .75; }
+  .tl-group .groupmark .ci, .tl-group .groupmark svg { width: 12px; height: 12px; }
+  .tl-group.gok .groupmark { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
+  .tl-group.gfailed .groupmark { color: var(--vscode-errorForeground, #f14c4c); }
+  .tl-group.running .groupmark { display: none; }
+
+  /* The expanded steps read as ONE unit. With the rail gone this is the only grouping cue, which
+     is the point — one device, not three. */
+  .tl-group .groupbody {
+    padding: 0; margin: 6px 0 2px;
+    border: 1px solid var(--border); border-radius: 8px;
+    /* NO fill. A tinted block plus a border is two containers drawn on top of each other, and it is
+       what made these rows read as a solid slab rather than as a list. The hairline does the work;
+       the rows keep the page's own ground. */
+    background: transparent;
+    overflow: hidden;   /* so the first and last rows clip to the radius instead of squaring it off */
+  }
+  .tl-group .groupbody:empty { display: none; }
+  /* Rows separate by hairline rather than by gap, and each one is INSET from the border. Text that
+     starts a couple of pixels off the edge reads as overflowing its container even when it is not —
+     the padding is what makes a bordered list look placed rather than crammed. */
+  .tl-group .groupbody > .tl { padding: 3px 14px; }
+  .tl-group .groupbody > .tl + .tl { border-top: 1px solid var(--line-soft, rgba(127,127,127,.16)); }
   .tl-group.collapsed .groupbody { display: none; }
   .tl-group .groupbody > .tl > .tl-rail { display: none; }
   .tl-group .groupbody > .tl { margin: 0; }
+  /* A row inside the container is a single line, so it does not need the timeline's asymmetric
+     bottom padding — that gap is there to separate free-standing nodes from the next one. */
+  .tl-group .groupbody > .tl > .tl-body { padding: 4px 0; }
+  /* The summary lines up with the rows below it rather than with the container edge, so the
+     expanded state reads as one block instead of two things that happen to be stacked. */
+  .tl-group .grouphead { padding-left: 0; }
   /* Copilot-style falling-dots progress — a 2×3 dot grid cascading downward while a command runs */
   .lcdots { display: inline-grid; grid-template-columns: repeat(2, 3px); gap: 2px; color: var(--accent); align-self: center; }
   .lcdots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: lcdotfall 1.1s ease-in-out infinite; }
@@ -1306,12 +1426,18 @@
        never a gap between actions where nothing shows. Its label tracks the current activity. -->
   <div id="workbar" hidden role="status" aria-live="polite"><span class="wspin" aria-hidden="true"></span><span class="wtext shimmer">Working…</span></div>
 
+  <div id="imgzoom" hidden role="dialog" aria-modal="true" aria-label="Attached image"><img alt=""></div>
+
   <div id="composer">
     <div id="chips"></div>
+    <div id="imgnote" role="status" aria-live="polite" hidden></div>
     <textarea id="input" rows="2" placeholder="Give the agent a goal…"></textarea>
     <div id="toolbar">
       <div class="left">
         <button class="tbtn" id="attach" title="Add selected code as context (⌥⌘A)">+</button>
+        <button class="tbtn" id="attachImg" title="Attach an image — or paste a screenshot with ⌘V" aria-label="Attach an image">
+          <svg class="ci" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.5 3h11l.5.5v9l-.5.5h-11l-.5-.5v-9l.5-.5zm.5 1v6.3l2.6-2.3 2.5 2.2 2.9-3.1L13 9.4V4H3zm0 8h10v-1.2l-2.5-2.6-2.9 3.1-2.5-2.2L3 11.4V12zM6 5.5a1.2 1.2 0 1 1-2.4 0 1.2 1.2 0 0 1 2.4 0z"/></svg>
+        </button>
         <span class="sep"></span>
         <span class="modewrap">
           <span class="pill agent" id="mode" title="Choose Agent or Chat mode" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
@@ -1544,14 +1670,63 @@
       '<span class="name">' + esc(f.name) + '</span>' +
       '<span class="x" data-id="' + esc(f.id) + '" title="Remove">✕</span></span>';
   }
+  /** What this image will actually cost the request, in visual tokens (28px patches, tier-capped). */
+  function imgTokens(w, h){
+    if (!(w > 0) || !(h > 0)) { return 0; }
+    const cap = 4784;   // high-res tier ceiling; the server caps here whatever we send
+    let s2 = 1, t = Math.ceil(w / 28) * Math.ceil(h / 28);
+    while (t > cap && s2 > 0.05) { s2 *= 0.98; t = Math.ceil(w * s2 / 28) * Math.ceil(h * s2 / 28); }
+    return t;
+  }
+
+  /**
+   * An attached image: its thumbnail, its size, what it will cost, and a way to take it back off.
+   *
+   * The cost is shown because this product meters credits per turn and an image is not a rounding
+   * error — a full-size screenshot is a few thousand input tokens. Someone deciding whether to
+   * attach three of them should be able to see that before they send, not after they are billed.
+   */
+  function imgChip(im){
+    if (im.loading) {
+      return '<span class="chip imgchip loading" title="Preparing ' + escAttr(im.name || 'image') + '…">'
+        + '<span class="imgthumb imgskel" aria-hidden="true"></span>'
+        + '<span class="imgmeta">preparing…</span>'
+        + '</span>';
+    }
+    const tok = imgTokens(im.w, im.h);
+    // Compact on the chip, exact in the tooltip. A tray of attachments is scanned, not read — and
+    // three chips at full width wrap onto a second row, which makes the composer jump as you paste.
+    const short = tok >= 1000 ? (tok / 1000).toFixed(1) + 'k' : String(tok);
+    const title = im.w + '×' + im.h + ' · ' + fmtKB(im.bytes) + ' · ~'
+      + tok.toLocaleString(CREDIT_LOCALE) + ' input tokens · click to view full size';
+    return '<span class="chip imgchip" title="' + escAttr(title) + '">'
+      + '<img class="imgthumb" src="' + escAttr(im.url) + '" alt="" data-img="' + escAttr(im.id) + '">'
+      + '<span class="imgmeta">' + im.w + '×' + im.h + '<span class="imgcost">' + short + '</span></span>'
+      + '<span class="x imgx" data-img="' + escAttr(im.id) + '" role="button" tabindex="0" aria-label="Remove image">×</span>'
+      + '</span>';
+  }
+
   function renderChips(){
     let h = '<button class="addchip" id="addctx" title="Add files or selection as context"><span class="plus">+</span> Add context</button>';
     if (activeFileLabel) { h += fileChip(activeFileLabel); }
     for (const f of ctxFiles) { h += pinnedChip(f); }
     if (selLabel) { h += selChip(selLabel); }
+    for (const im of pendingImages) { h += imgChip(im); }
     chipsEl.innerHTML = h;
+    syncAttachImgBtn();
+    chipsEl.querySelectorAll('.imgx').forEach(function(x){
+      const go = function(e){ e.stopPropagation(); e.preventDefault(); removeImage(x.getAttribute('data-img')); };
+      x.onclick = go;
+      // It is role="button" tabindex="0", so it can be focused — without this it could be reached
+      // by keyboard and then not activated, which is worse than not being reachable at all.
+      x.onkeydown = function(e){ if (e.key === 'Enter' || e.key === ' ') { go(e); } };
+    });
     document.getElementById('addctx').onclick = () => vscode.postMessage({ type: 'addContext' });
-    chipsEl.querySelectorAll('.x').forEach(x => {
+    // :not(.imgx) — an image chip's × carries BOTH classes, and both handlers assign .onclick
+    // rather than adding a listener, so whichever runs last silently wins. It did: clicking × on an
+    // image posted removeContext with a null id and the image stayed. Excluding here rather than
+    // reordering, so it cannot come back the next time these two blocks move relative to each other.
+    chipsEl.querySelectorAll('.x:not(.imgx)').forEach(x => {
       x.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: 'removeContext', id: x.getAttribute('data-id') }); };
     });
   }
@@ -1926,7 +2101,37 @@
     if (lists){ parts.push('listed files'); }
     if (cmds){ parts.push('ran ' + (cmds === 1 ? 'a command' : cmds + ' commands')); }
     if (steps.some((s) => s.kind === 'verify')){ parts.push('verified the edits'); }
-    if (!parts.length){ return steps.length === 1 ? '1 step' : steps.length + ' steps'; }
+
+    // Setup. Named LAST so real work still leads the sentence, but named — a run whose only steps
+    // were setup should say what it set up, not how many things it did.
+    const kinds = new Set(steps.map((s) => s.kind));
+    const ctxBits = [];
+    if (kinds.has('rules')) { ctxBits.push('project rules'); }
+    if (kinds.has('memory') || kinds.has('recall')) { ctxBits.push('memory'); }
+    if (ctxBits.length) { parts.push('loaded ' + ctxBits.join(' and ')); }
+    if (kinds.has('skill')) {
+      const names = uniq(steps.filter((s) => s.kind === 'skill').map((s) => s.path).filter(Boolean));
+      parts.push(names.length ? ('used the ' + files(names) + ' skill' + (names.length > 1 ? 's' : '')) : 'used a skill');
+    }
+    const calls = steps.filter((s) => s.kind === 'mcpcall');
+    if (calls.length) {
+      const servers = uniq(calls.map((s) => s.path).filter(Boolean));
+      parts.push('called ' + (servers.length ? files(servers) : (calls.length + ' MCP tools')));
+    } else if (kinds.has('mcp')) {
+      parts.push('connected MCP tools');
+    }
+    if (kinds.has('preview')) { parts.push('opened a preview'); }
+
+    if (!parts.length){
+      // Last resort: name the FIRST thing rather than count. "3 steps" tells no one anything.
+      const first = steps.find((s) => s.base && s.base.trim());
+      if (first){
+        const rest = steps.length - 1;
+        const one = first.base.trim() + (rest > 0 ? (' and ' + rest + ' more') : '');
+        return one.charAt(0).toUpperCase() + one.slice(1);   // same sentence-casing as the built path
+      }
+      return steps.length === 1 ? '1 step' : steps.length + ' steps';
+    }
     const sentence = parts.join(', ');
     return sentence.charAt(0).toUpperCase() + sentence.slice(1);
   }
@@ -1944,6 +2149,20 @@
     }
     if (kind === 'search' || icon === 'search'){ return { kind: 'search', base: titled || 'Search the workspace' }; }
     if (icon === 'list-tree'){ return { kind: 'list', base: titled || 'List files' }; }
+    // The run's SETUP steps. These arrive as pre-baked emoji chips and used to fall through to
+    // `note`, which contributes no phrase — so a run that loaded rules, memory and an MCP server
+    // summarised as the useless "3 steps". They describe real work and should say so.
+    if (/^📋 project rules/.test(t)){ return { kind: 'rules', base: titled || t, path: t.replace(/^📋 project rules · /, '') }; }
+    if (/^🧠 project memory/.test(t)){ return { kind: 'memory', base: titled || t }; }
+    if (/^🧠 recalling:/.test(t)){ return { kind: 'recall', base: titled || t }; }
+    if (/^🧩 using skill:/.test(t)){ return { kind: 'skill', base: titled || t, path: t.replace(/^🧩 using skill: /, '') }; }
+    if (/^🔌 /.test(t)){
+      // A tool CALL through a server (🔌 name · tool) is different work from setup chatter.
+      const call = /^🔌 (?!mcp · )([^·]+) · (.+)$/.exec(t);
+      return call ? { kind: 'mcpcall', base: titled || t, path: call[1].trim() }
+                  : { kind: 'mcp', base: titled || t };
+    }
+    if (/^🌐 preview/.test(t)){ return { kind: 'preview', base: titled || t }; }
     return { kind: 'note', base: titled || t };
   }
   // The label for a command step: the model's explanation (imperative, per the system prompt), or
@@ -1965,8 +2184,9 @@
       '<div class="tl-rail"><span class="tl-node">' + codicon('sync') + '</span></div>'
       + '<div class="tl-body">'
         + '<div class="grouphead cmdhead" title="Expand / collapse">'
-          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
+          + '<span class="groupmark"></span>'
           + '<span class="grouplabel"></span>'
+          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
           + '<span class="groupcounts"></span>'
           + '<button class="groupstop" hidden title="Stop the running command">' + codicon('stop-circle') + '</button>'
           + '<span class="cmdstate groupstate running">' + LC_DOTS + '</span>'
@@ -2049,7 +2269,11 @@
     // ONE outcome glyph, in the rail. While running the rail carried a spinner and the head carried
     // dots; a finished group must not go on wearing either. The rail states the outcome, so the
     // trailing state clears on success and speaks up only when something failed.
+    // The outcome lives IN the line now, not on a rail: a small glyph ahead of the summary, the
+    // same weight as the text it sits beside. The rail node is still set for the ungrouped path.
     if (g.node){ g.node.innerHTML = codicon(g.failed ? 'circle-slash' : 'check-circle'); }
+    const mark = g.el.querySelector('.groupmark');
+    if (mark){ mark.innerHTML = codicon(g.failed ? 'circle-slash' : 'check'); }
     g.state.innerHTML = g.failed ? codicon('circle-slash') : '';
     g.state.className = 'cmdstate groupstate ' + (g.failed ? 'bad' : 'ok');
     g.stopBtn.hidden = true;
@@ -2367,8 +2591,8 @@
       '<div class="tl-rail"><span class="tl-node">' + codicon('terminal') + '</span></div>'
       + '<div class="tl-body">'
         + '<div class="cmdhead" title="Collapse / expand">'
-          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
           + '<span class="cmdverb">' + (m.background ? 'Running in background' : 'Running') + '</span>'
+          + '<span class="cmdchev">' + codicon('chevron-down') + '</span>'
           + '<span class="cmdchips">' + chips + '</span>'
           + '<span class="cmdstate running">' + LC_DOTS + '</span>'
         + '</div>'
@@ -3055,22 +3279,275 @@
   function caretAtFirstLine(el){ return el.value.lastIndexOf('\n', el.selectionStart - 1) === -1; }
   function caretAtLastLine(el){ return el.value.indexOf('\n', el.selectionEnd) === -1; }
   function histSet(text){ input.value = text; auto(); const n = text.length; try { input.setSelectionRange(n, n); } catch (e) {} }
-  function doSend(){
+  async function doSend(){
     if (streaming) { flushAll = true; ensurePump(); vscode.postMessage({ type: 'stop' }); return; }
-    const t = input.value.trim(); if (!t) return;
-    cmdHistory.push(t); if (cmdHistory.length > 200) { cmdHistory.shift(); }   // record for ↑/↓ recall
+    const t = input.value.trim();
+    // An image with no words is a real message — "look at this" is implied by attaching it.
+    if (!t && !pendingImages.length) return;
+
+    // Wait for anything still decoding. A placeholder chip carries no bytes, so sending now would
+    // post an attachment with undefined media_type and base64 — refused host-side, and the image
+    // would vanish from a message the user watched themselves attach.
+    if (inflightImages.size) {
+      note('Still preparing ' + inflightImages.size + ' image' + (inflightImages.size === 1 ? '' : 's') + '…');
+      for (let i = 0; i < 200 && inflightImages.size; i++) { await new Promise(function(r){ setTimeout(r, 50); }); }
+      const el = document.getElementById('imgnote'); if (el) { el.hidden = true; }
+      if (inflightImages.size) { note('An image is taking too long to prepare — remove it or try again.'); return; }
+    }
+    // Nothing may be sent while a placeholder survives: a decode that failed silently would
+    // otherwise ride along as an empty attachment.
+    if (pendingImages.some(function(i){ return i.loading; })) {
+      note('An image did not finish preparing — remove it and try again.'); return;
+    }
+
+    // RE-CHECK the model. The attach-time gate is not enough: a model can be switched between
+    // attaching and sending, and this path would otherwise hand images to a model that cannot read
+    // them. Refuse without discarding anything the user typed or attached.
+    if (pendingImages.length && !canSeeImages) {
+      note((canSeeImagesModel || 'The selected model') + ' cannot read images. Switch back to a vision model, or remove the attachments.');
+      return;
+    }
+    if (t) { cmdHistory.push(t); if (cmdHistory.length > 200) { cmdHistory.shift(); } }   // record for ↑/↓ recall
     histIdx = -1; histDraft = '';
     // Slash commands — handled locally (deterministic, no LLM call).
     if (/^\/skills\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); vscode.postMessage({ type: 'listSkills' }); return; }
     if (/^\/mcp\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); vscode.postMessage({ type: 'listMcp' }); return; }
     if (/^\/sessions\b/i.test(t)){ input.value = ''; auto(); openSessions(); return; }
     if (/^\/rme\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); addReminder(); return; }
-    add('user', render(t)); forceStick(); input.value = ''; auto();
-    vscode.postMessage({ type: 'send', text: t });
+    const imgs = pendingImages.map(function(i){
+      return { media_type: i.media_type, base64: i.base64, w: i.w, h: i.h, bytes: i.bytes };
+    });
+    add('user', (imgs.length ? imgs.map(function(i, k){
+      return '<img class="msgimg" src="' + escAttr(pendingImages[k].url) + '" alt="attached image">';
+    }).join('') : '') + render(t));
+    forceStick(); input.value = ''; auto(); clearImages(); renderChips();
+    vscode.postMessage({ type: 'send', text: t, images: imgs });
   }
+
+  // ── attached images ───────────────────────────────────────────────────────────────────────────
+  // Paste a screenshot, ask about it. Normalization happens HERE, before the bytes cross to the
+  // host, because this is the only place that has the decoded pixels.
+  //
+  // THE CAP IS 2000px ON THE LONG EDGE, and it is not a guess. Claude Code ships exactly this —
+  // every image it re-encodes is 2000 on the long edge — and it is the threshold the vision docs
+  // name for staying clear of the stricter per-image dimension limit that applies once a request
+  // carries more than 20 images. It is also well above either model tier's own cap, so the server
+  // does the final downscale and we never throw away fidelity it would have kept.
+  //
+  // UNDER THE CAP, THE ORIGINAL BYTES GO THROUGH UNTOUCHED — same rule, same reason: re-encoding
+  // an image that did not need resizing only stacks compression artifacts, and that is worst on
+  // screenshots of code, which is most of what gets pasted.
+  // Whether the SELECTED model can read images. Pushed with the model so an attachment is refused
+  // before anything is typed and lost, rather than after a send the provider would reject.
+  let canSeeImages = false;
+  let canSeeImagesModel = '';
+  const IMG_CAP = 2000;
+  // How many images may ride one message. Configurable because the cost is real: each image is
+  // ~1,800-3,000 input tokens, so a maxed-out message is a five-figure prompt before a word is typed.
+  let IMG_MAX_PER_TURN = 5;
+  const IMG_OK = { 'image/png': 1, 'image/jpeg': 1, 'image/gif': 1, 'image/webp': 1 };
+  let pendingImages = [];   // { id, url, w, h, media_type, base64, bytes }
+  let imgSeq = 0;
+  // Normalization is async, and a placeholder chip carries no bytes. Sending mid-decode would post
+  // an attachment with undefined media_type/base64 — the host would refuse it and the image would
+  // be silently lost from a message the user watched themselves attach. Track the work so doSend
+  // can wait for it.
+  const inflightImages = new Set();
+
+  /**
+   * A user-facing "that did not work" line, shown WHERE IT HAPPENED — directly under the composer,
+   * beside the attachment that failed.
+   *
+   * This used to post to the host and surface as a VS Code notification in the far corner of the
+   * window. That is the wrong place for it: the notification appears seconds after the paste, a
+   * long way from the thing the person is looking at, and it outlives the moment it describes.
+   * Attachment problems are small, immediate and local, so the message should be too.
+   */
+  let noteTimer = null;
+  function note(t){
+    const text = String(t || ''); if (!text) { return; }
+    const el = document.getElementById('imgnote'); if (!el) { return; }
+    el.textContent = text;
+    el.hidden = false;
+    clearTimeout(noteTimer);
+    // Long enough to read a sentence; short enough that it does not linger over the next attempt.
+    noteTimer = setTimeout(function(){ el.hidden = true; }, 6000);
+  }
+
+  function fmtKB(n){ return n >= 1024 * 1024 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+
+  /** Blob -> base64 payload, no data: prefix. */
+  function blobToBase64(blob){
+    return new Promise(function(res, rej){
+      const r = new FileReader();
+      r.onload = function(){ const s2 = String(r.result || ''); res(s2.slice(s2.indexOf(',') + 1)); };
+      r.onerror = function(){ rej(new Error('could not read the image')); };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  /** Decode, downscale only if over the cap, re-encode only if we resized. Never scales up. */
+  async function normalizeImage(file){
+    if (!IMG_OK[file.type]) { throw new Error('that image format is not supported — use PNG, JPEG, GIF or WebP'); }
+    let bmp;
+    try { bmp = await createImageBitmap(file); }
+    catch (e) { throw new Error('that file could not be read as an image'); }
+    const w = bmp.width, h = bmp.height;
+    const scale = Math.min(1, IMG_CAP / Math.max(w, h));
+    if (scale === 1) {
+      // Pass-through: the bytes we already have, in the format they arrived in.
+      bmp.close && bmp.close();
+      return { w: w, h: h, media_type: file.type, base64: await blobToBase64(file), bytes: file.size };
+    }
+    const tw = Math.round(w * scale), th = Math.round(h * scale);
+    // OffscreenCanvas keeps the decode and the draw off the layout path; a 4K decode on the main
+    // thread is a visible stall in a chat window.
+    const cv = (typeof OffscreenCanvas !== 'undefined') ? new OffscreenCanvas(tw, th)
+      : Object.assign(document.createElement('canvas'), { width: tw, height: th });
+    const g = cv.getContext('2d');
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(bmp, 0, 0, tw, th);
+    bmp.close && bmp.close();
+    const blob = cv.convertToBlob ? await cv.convertToBlob({ type: 'image/webp', quality: 0.92 })
+      : await new Promise(function(r){ cv.toBlob(r, 'image/webp', 0.92); });
+    if (!blob) { throw new Error('the image could not be resized'); }
+    return { w: tw, h: th, media_type: 'image/webp', base64: await blobToBase64(blob), bytes: blob.size };
+  }
+
+  /** Host-read bytes -> a File, so a picked/dropped path goes through the same normalizer as a paste. */
+  function b64ToFile(b64, type, name){
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) { u8[i] = bin.charCodeAt(i); }
+    return new File([u8], name || 'image', { type: type });
+  }
+
+  async function attachImageFiles(files){
+    const list = Array.from(files || []).filter(function(f){ return f && /^image\//.test(f.type); });
+    if (!list.length) { return false; }
+    if (!canSeeImages) {
+      note((canSeeImagesModel || 'This model') + ' cannot read images. Switch to a vision model — '
+        + 'Claude, GPT-4o and Gemini all read them — and paste again.');
+      return true;
+    }
+    for (let fi = 0; fi < list.length; fi++) {
+      const f = list[fi];
+      if (pendingImages.length >= IMG_MAX_PER_TURN) {
+        // From the position in THIS batch, not from the tray total. Subtracting the tray from the
+        // batch goes negative the moment the tray already holds more than the batch does — four
+        // attached, cap five, drop two, and the message claimed "-3 were not attached".
+        const dropped = list.length - fi;
+        note('Up to ' + IMG_MAX_PER_TURN + ' images per message. '
+          + (dropped > 0 ? dropped + ' not attached — ' : '') + 'remove one to add another.');
+        break;
+      }
+      // A placeholder goes in FIRST. Decoding and re-encoding a 4K screenshot takes long enough to
+      // read as "nothing happened", and the honest fix is to show the attachment immediately rather
+      // than to make the work faster. The chip is replaced in place when the bytes are ready.
+      const id = 'img' + (++imgSeq);
+      pendingImages.push({ id: id, loading: true, name: f.name || 'image' });
+      renderChips();
+      inflightImages.add(id);
+      try {
+        const im = await normalizeImage(f);
+        im.id = id;
+        im.url = 'data:' + im.media_type + ';base64,' + im.base64;
+        const at = pendingImages.findIndex(function(x){ return x.id === id; });
+        if (at < 0) { continue; }          // removed while it was decoding — respect that
+        pendingImages[at] = im;
+        renderChips();
+      } catch (e) {
+        pendingImages = pendingImages.filter(function(x){ return x.id !== id; });
+        renderChips();
+        note(String((e && e.message) || e));
+      } finally {
+        inflightImages.delete(id);
+      }
+    }
+    return true;
+  }
+
+  function removeImage(id){ pendingImages = pendingImages.filter(function(i){ return i.id !== id; }); renderChips(); }
+
+  /** Full-size view of an attachment. Escape or a click anywhere closes it. */
+  function zoomImage(src){
+    const z = document.getElementById('imgzoom'); if (!z || !src) { return; }
+    z.querySelector('img').src = src;
+    z.hidden = false;
+  }
+  function closeZoom(){ const z = document.getElementById('imgzoom'); if (z) { z.hidden = true; z.querySelector('img').src = ''; } }
+  document.getElementById('imgzoom').addEventListener('click', closeZoom);
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && !document.getElementById('imgzoom').hidden) { e.stopPropagation(); closeZoom(); }
+  }, true);
+  // Delegated so it covers both the composer tray and every image already in the transcript.
+  document.addEventListener('click', function(e){
+    const t = e.target;
+    if (!t || !(t.classList && (t.classList.contains('imgthumb') || t.classList.contains('msgimg')))) { return; }
+    const im = pendingImages.find(function(x){ return x.id === t.getAttribute('data-img'); });
+    zoomImage(im ? im.url : t.getAttribute('src'));
+  });
+
+  /** Reflect how full the image tray is on the attach button, so the cap is visible before it bites. */
+  function syncAttachImgBtn(){
+    const b = document.getElementById('attachImg'); if (!b) { return; }
+    const n = pendingImages.length, full = n >= IMG_MAX_PER_TURN;
+    b.classList.toggle('atcap', full);
+    b.title = full
+      ? ('Image limit reached (' + n + '/' + IMG_MAX_PER_TURN + ') — remove one to attach another')
+      : (n ? ('Attach an image (' + n + '/' + IMG_MAX_PER_TURN + ') — or paste with ⌘V')
+           : 'Attach an image — or paste a screenshot with ⌘V');
+  }
+  function clearImages(){ pendingImages = []; inflightImages.clear(); }
+
+  /** Everything a fresh conversation must forget about attachments. */
+  function resetImages(){ clearImages(); renderChips(); const el = document.getElementById('imgnote'); if (el) { el.hidden = true; } }
+
+  // Paste is the primary way in — the whole interaction is screenshot, then Cmd+V.
+  input.addEventListener('paste', function(ev){
+    const d = ev.clipboardData; if (!d) { return; }
+    const files = d.files && d.files.length ? d.files
+      : Array.from(d.items || []).filter(function(i){ return i.kind === 'file'; }).map(function(i){ return i.getAsFile(); });
+    const imgs = Array.from(files || []).filter(function(f){ return f && /^image\//.test(f.type); });
+    if (!imgs.length) { return; }            // a normal text paste is untouched
+    ev.preventDefault();
+    attachImageFiles(imgs);
+  });
+
+  // Drop anywhere in the panel, not just on the composer — the transcript is the bigger target.
+  document.addEventListener('dragover', function(ev){
+    if (ev.dataTransfer && Array.from(ev.dataTransfer.types || []).indexOf('Files') >= 0) {
+      ev.preventDefault(); document.body.classList.add('dropping');
+    }
+  });
+  document.addEventListener('dragleave', function(ev){ if (!ev.relatedTarget) { document.body.classList.remove('dropping'); } });
+  document.addEventListener('drop', function(ev){
+    document.body.classList.remove('dropping');
+    const dt = ev.dataTransfer; if (!dt) { return; }
+    const imgs = Array.from(dt.files || []).filter(function(f){ return /^image\//.test(f.type); });
+    if (imgs.length) { ev.preventDefault(); attachImageFiles(imgs); return; }
+    // VS Code's workbench intercepts OS file drops before a webview iframe sees them, so
+    // dataTransfer.files is usually EMPTY for a drag out of Finder — while the path is still
+    // there as a uri-list. Hand the paths to the host, which can read them off disk.
+    let uris = '';
+    try { uris = dt.getData('text/uri-list') || dt.getData('text/plain') || ''; } catch (e) {}
+    const paths = uris.split(/[\r\n]+/)
+      .map(function(u){ return u.trim(); })
+      .filter(function(u){ return u && !/^#/.test(u); })
+      .map(function(u){ try { return /^file:/i.test(u) ? decodeURIComponent(u.replace(/^file:\/\//i, '')) : u; } catch (e) { return u; } })
+      .filter(function(u){ return /\.(png|jpe?g|gif|webp)$/i.test(u); });
+    if (!paths.length) { return; }
+    ev.preventDefault();
+    if (!canSeeImages) { note((canSeeImagesModel || 'This model') + ' cannot read images.'); return; }
+    vscode.postMessage({ type: 'attachImagePaths', paths: paths });
+  });
 
   sendBtn.onclick = doSend;
   document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'addContext' });
+  document.getElementById('attachImg').onclick = function(){
+    if (!canSeeImages) { note((canSeeImagesModel || 'This model') + ' cannot read images. Switch to a vision model and try again.'); return; }
+    vscode.postMessage({ type: 'pickImages' });
+  };
   document.getElementById('model').onclick = () => vscode.postMessage({ type: 'pickModel' });
   // Approvals dropdown (mirrors the Agent/Chat menu). The host owns the flag (persists it + gates the
   // danger set); selecting an option posts setAutopilot and we reflect whatever it echoes back via the
@@ -3626,12 +4103,17 @@
       mEl.title = (m.providerLabel || (m.provider === 'claude' ? 'Claude' : m.provider)) + ' · ' + m.model + ' — click to change';
       // Update the footer context-window meter to the newly-selected model's real window.
       if (typeof m.contextLimit === 'number'){ renderContext({ limit: m.contextLimit }); }
+      if (typeof m.canSeeImages === 'boolean'){ canSeeImages = m.canSeeImages; canSeeImagesModel = label; }
+      if (typeof m.maxImages === 'number' && m.maxImages > 0){ IMG_MAX_PER_TURN = m.maxImages; renderChips(); }
       lastProvider = m.provider || '';
       lastModelId = m.modelId || m.model || '';   // gateway sends modelId (the real id); BYOK model IS the id
       // calm-transcript toggle. Turning it OFF mid-run closes any open group first, so the timeline
       // returns to fully flat immediately instead of leaving one stray group behind.
       if (typeof m.groupActivity === 'boolean'){ if (!m.groupActivity){ closeGroup(); } groupsOn = m.groupActivity; }
       renderRouting();
+    }
+    else if (m.type === 'attachImages'){
+      attachImageFiles((m.files || []).map(function(f){ return b64ToFile(f.base64, f.media_type, f.name); }));
     }
     else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
     else if (m.type === 'assistantDelta'){ pending += m.text; ensurePump(); }
@@ -3692,6 +4174,7 @@
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
+      resetImages();   // a new conversation must not inherit the previous one's attachments
       log.innerHTML = '<div id="empty"><div class="big">New chat</div>Ask about your code, or describe what to build.</div>';
       // Wiping the log detaches any open group; drop the dangling refs so the next run starts clean —
       // otherwise groupAppend() appends into a disconnected .groupbody (nothing shows), and a stale

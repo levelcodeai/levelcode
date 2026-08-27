@@ -116,6 +116,38 @@ function supportsToolsForModel(providerId, modelId) {
 	return modelCaps(modelId).tools !== false;
 }
 
+/**
+ * Whether an image may be attached for this provider+model.
+ *
+ * Deliberately STRICTER than supportsToolsForModel. That one defaults unknown models to tools:true,
+ * because most modern chat models have tools and refusing the agent is the bigger loss. Vision
+ * inverts that trade: an unknown model is assumed NOT to see. Attaching to a blind model costs the
+ * user a composed message and returns a provider error (or, worse, a confident answer about text
+ * alone); a disabled attach button that names a model which can see costs them one click. The
+ * catalog already marks every vision model we know, and heuristicCaps covers the big families, so
+ * the strict default bites only on genuinely unrecognised ids.
+ */
+function supportsVisionForModel(providerId, modelId) {
+	const p = getProvider(providerId);
+	if (!p) { return false; }
+	// The PROVIDER gate first, exactly as supportsToolsForModel does. Without it this checked only
+	// the model id, so `custom` — an arbitrary OpenAI-compatible endpoint with no declared vision
+	// capability — returned true for any model whose NAME looked like a vision model, and the
+	// attachment gate would hand images to an endpoint nobody said could read them.
+	//
+	// The registry ENUMERATES vision providers — anthropic, openai, openrouter and the gateway
+	// declare `vision: true`; ollama and `custom` deliberately do not. Reading only the model id
+	// ignored that: `custom` is an arbitrary user-supplied endpoint, and any model NAMED like a
+	// vision model would have been handed images nobody said it could read.
+	//
+	// So both halves must agree, exactly as supportsToolsForModel requires both. A custom endpoint
+	// that does serve a vision model needs `vision: true` on its registry entry to opt in; there is
+	// deliberately no per-user override, because the honest place to declare a provider's
+	// capabilities is the provider registry.
+	if (!(p.caps && p.caps.vision === true)) { return false; }
+	return modelCaps(modelId).vision === true;
+}
+
 /** The model's context window (tokens), or `fallback` (then 200000) when unknown. */
 function contextWindowFor(providerId, modelId, fallback) {
 	return modelCaps(modelId).context || fallback || 200000;
@@ -238,7 +270,7 @@ async function getModelChoices(providerId, opts) {
 
 module.exports = {
 	CAPS, modelCaps, baseName, heuristicCaps,
-	supportsToolsForModel, contextWindowFor, fastCompletionModel,
+	supportsToolsForModel, supportsVisionForModel, contextWindowFor, fastCompletionModel,
 	describeCaps, describeModel,
 	mapOpenRouterModels, mapModelIds, fetchModels, getModelChoices
 };

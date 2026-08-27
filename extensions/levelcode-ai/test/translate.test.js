@@ -261,4 +261,96 @@ test('isAnthropicFamily: gates cache_control writes to Claude upstreams only', (
 	assert.strictEqual(O.isAnthropicFamily(''), false);
 });
 
+// ── images (I1) ─────────────────────────────────────────────────────────────────────────────────
+
+test('IMAGE: a base64 block becomes an OpenAI image_url data URI, ahead of the text', () => {
+	const out = T.toOpenAIMessages('', [{ role: 'user', content: [
+		{ type: 'text', text: 'why does this look wrong?' },
+		{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAB' } }
+	] }]);
+	assert.strictEqual(out.length, 1);
+	assert.strictEqual(out[0].role, 'user');
+	assert.ok(Array.isArray(out[0].content), 'a turn carrying an image must use block content');
+	// Images lead: the model reads them best before the text, and it keeps the cache breakpoint
+	// (which lands on the LAST block) on text rather than on an image.
+	assert.strictEqual(out[0].content[0].type, 'image_url', 'the image must come first');
+	assert.strictEqual(out[0].content[0].image_url.url, 'data:image/png;base64,AAAB');
+	assert.strictEqual(out[0].content[1].type, 'text');
+	assert.strictEqual(out[0].content[1].text, 'why does this look wrong?');
+});
+
+test('IMAGE: a url source passes through as a url, not re-encoded', () => {
+	const out = T.toOpenAIMessages('', [{ role: 'user', content: [
+		{ type: 'image', source: { type: 'url', url: 'https://example.test/a.png' } }
+	] }]);
+	assert.strictEqual(out[0].content[0].image_url.url, 'https://example.test/a.png');
+});
+
+test('IMAGE: several images in one turn all survive', () => {
+	const out = T.toOpenAIMessages('', [{ role: 'user', content: [
+		{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A' } },
+		{ type: 'image', source: { type: 'base64', media_type: 'image/webp', data: 'B' } },
+		{ type: 'text', text: 'compare these' }
+	] }]);
+	assert.strictEqual(out[0].content.filter((c) => c.type === 'image_url').length, 2);
+	assert.strictEqual(out[0].content[2].text, 'compare these');
+});
+
+test('IMAGE: a text-only turn still emits a plain string, not a block array', () => {
+	// Widening every text-only turn would change the bytes of every cached prefix for no gain.
+	const out = T.toOpenAIMessages('', [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
+	assert.strictEqual(typeof out[0].content, 'string', 'text-only turns must not become block arrays');
+	assert.strictEqual(out[0].content, 'hello');
+});
+
+test('IMAGE: an image with no text emits the image alone', () => {
+	const out = T.toOpenAIMessages('', [{ role: 'user', content: [
+		{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A' } }
+	] }]);
+	assert.strictEqual(out.length, 1);
+	assert.strictEqual(out[0].content.length, 1);
+	assert.strictEqual(out[0].content[0].type, 'image_url');
+});
+
+test('LOUD: an unrecognised block throws instead of vanishing', () => {
+	// THE bug this slice exists for. The loop used to fall through on anything it did not know, so
+	// the block disappeared between composer and wire with no error and no log line — and the model
+	// answered confidently about content it was never sent.
+	assert.throws(
+		() => T.toOpenAIMessages('', [{ role: 'user', content: [
+			{ type: 'text', text: 'look at this' },
+			{ type: 'video', source: { type: 'base64', media_type: 'video/mp4', data: 'A' } }
+		] }]),
+		/unsupported content block/,
+		'an unknown block type must fail loudly, naming the type'
+	);
+});
+
+test('LOUD: a malformed image throws rather than sending a request missing its subject', () => {
+	const bad = [
+		[{ type: 'image' }, /no source/],
+		[{ type: 'image', source: { type: 'base64', media_type: 'image/png' } }, /media_type or data/],
+		[{ type: 'image', source: { type: 'base64', data: 'A' } }, /media_type or data/],
+		[{ type: 'image', source: { type: 'url' } }, /no url/],
+		// Files API references are Anthropic-only; there is nothing to translate them to.
+		[{ type: 'image', source: { type: 'file', file_id: 'file_1' } }, /source type not supported/]
+	];
+	for (const [block, re] of bad) {
+		assert.throws(() => T.toOpenAIMessages('', [{ role: 'user', content: [block] }]), re,
+			'malformed image should throw: ' + JSON.stringify(block));
+	}
+});
+
+test('IMAGE: tool_result still splits out to its own tool message alongside an image', () => {
+	const out = T.toOpenAIMessages('', [{ role: 'user', content: [
+		{ type: 'tool_result', tool_use_id: 'tu_1', content: 'ok' },
+		{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A' } },
+		{ type: 'text', text: 'and this' }
+	] }]);
+	assert.strictEqual(out[0].role, 'tool');
+	assert.strictEqual(out[0].tool_call_id, 'tu_1');
+	assert.strictEqual(out[1].role, 'user');
+	assert.strictEqual(out[1].content[0].type, 'image_url');
+});
+
 console.log('\ntranslate: ' + n + ' tests passed.');

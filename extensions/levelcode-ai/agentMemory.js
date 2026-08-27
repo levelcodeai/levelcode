@@ -6,6 +6,8 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
+
+const { imageBlockTokens } = require('./imageCost');
 /** A "goal boundary": a user message with plain STRING content (a fresh user turn, never a tool_result).
  *  It is the only splice point that cannot orphan a tool_use/tool_result pair — tool results always sit
  *  in the message immediately after their tool_use, so any pair is wholly on one side of such a cut. */
@@ -34,10 +36,32 @@ function findCompactionCut(msgs, keepRecent) {
 	return cut;
 }
 
-/** Rough token estimate for a message list — the house chars/4 heuristic, used only for the UI meter. */
-function estimateMsgTokens(msgs) {
+/**
+ * Rough token estimate for a message list — the house chars/4 heuristic, used only for the UI meter.
+ *
+ * Images are counted by their real visual cost, not by their JSON. chars/4 is sound for text and
+ * wrong for an image in whichever shape it takes: inline base64 books about a third of its byte
+ * count (a 1MB screenshot reads as ~333,000 tokens, more than most context windows, for something
+ * that really costs ~4,800), and a stored ref swings the other way — 64 hex characters read as ~18
+ * tokens for the same ~4,800. Both would make the meter lie about how much room is left.
+ *
+ * `modelId` picks the resolution tier; omitting it costs the standard tier, which over-counts
+ * rather than under-counts. See imageCost.js.
+ */
+function estimateMsgTokens(msgs, modelId) {
 	if (!Array.isArray(msgs)) { return 0; }
-	return Math.round(msgs.reduce((n, m) => n + JSON.stringify(m).length, 0) / 4);
+	let chars = 0;
+	let imageTokens = 0;
+	for (const m of msgs) {
+		if (!m) { continue; }
+		if (!Array.isArray(m.content)) { chars += JSON.stringify(m).length; continue; }
+		chars += 24;   // role + envelope, roughly what the object costs around its blocks
+		for (const b of m.content) {
+			if (b && b.type === 'image') { imageTokens += imageBlockTokens(b, modelId); }
+			else { chars += JSON.stringify(b).length; }
+		}
+	}
+	return Math.round(chars / 4) + imageTokens;
 }
 
 module.exports = { isGoalBoundary, findCompactionCut, estimateMsgTokens };

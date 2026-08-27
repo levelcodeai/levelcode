@@ -33,6 +33,30 @@ function toOpenAITools(tools) {
 	}));
 }
 
+/**
+ * Anthropic image block → OpenAI `image_url` part.
+ *
+ * Anthropic carries the bytes in `source` (base64 + media_type, or a url); OpenAI-compatible APIs take
+ * one `url` field that is either a real URL or a `data:` URI. Everything else about the block is ours.
+ */
+function toOpenAIImagePart(b) {
+	const src = b && b.source;
+	if (!src) { throw new Error('translate: image block has no source'); }
+	if (src.type === 'url') {
+		if (!src.url) { throw new Error('translate: image block has a url source with no url'); }
+		return { type: 'image_url', image_url: { url: src.url } };
+	}
+	if (src.type === 'base64') {
+		if (!src.media_type || !src.data) {
+			throw new Error('translate: image block is missing media_type or data');
+		}
+		return { type: 'image_url', image_url: { url: 'data:' + src.media_type + ';base64,' + src.data } };
+	}
+	// `file` (Files API) is Anthropic-only — there is no OpenAI equivalent to translate it to, so
+	// refuse rather than send a request whose subject is missing.
+	throw new Error('translate: image source type not supported on this provider: ' + String(src.type));
+}
+
 /** Coerce a tool_result's content (string | array of blocks | other) to a plain string for OpenAI. */
 function toolResultText(content) {
 	if (typeof content === 'string') { return content; }
@@ -82,6 +106,17 @@ function toOpenAIMessages(system, messages, opts) {
 						function: { name: b.name, arguments: JSON.stringify(b.input == null ? {} : b.input) }
 					});
 				}
+				// Reasoning an assistant produced is not something an OpenAI-shaped request carries,
+				// and re-sending it is not required to continue a conversation — dropping it is a
+				// deliberate translation, not a loss, so it is named rather than left to the
+				// fall-through below.
+				else if (b.type === 'thinking' || b.type === 'redacted_thinking') { continue; }
+				else {
+					// Same rule as the user loop. A block type we do not understand is a bug in us,
+					// and a request that silently loses part of an assistant turn desynchronises the
+					// conversation the model is asked to continue.
+					throw new Error('translate: unsupported content block in an assistant message: ' + String(b.type));
+				}
 			}
 			const msg = { role: 'assistant', content: text ? text : null };
 			if (toolCalls.length) { msg.tool_calls = toolCalls; }
@@ -92,15 +127,34 @@ function toOpenAIMessages(system, messages, opts) {
 		if (typeof m.content === 'string') { out.push({ role: 'user', content: m.content }); continue; }
 		const blocks = Array.isArray(m.content) ? m.content : [];
 		let trailingText = '';
+		const images = [];
 		for (const b of blocks) {
 			if (!b) { continue; }
 			if (b.type === 'tool_result') {
 				out.push({ role: 'tool', tool_call_id: b.tool_use_id, content: toolResultText(b.content) });
 			} else if (b.type === 'text') {
 				trailingText += (trailingText ? '\n' : '') + (b.text || '');
+			} else if (b.type === 'image') {
+				images.push(toOpenAIImagePart(b));
+			} else {
+				// Loudly, not silently. This loop used to fall through on anything it did not
+				// recognise, so a block type it had never seen vanished between the composer and
+				// the wire with no error and no log line — the model would then answer confidently
+				// about content it was never sent. A type we do not understand is a bug in us.
+				throw new Error('translate: unsupported content block in a user message: ' + String(b.type));
 			}
 		}
-		if (trailingText) { out.push({ role: 'user', content: trailingText }); }
+		// Images first: the model reads them best before the text that asks about them, and it keeps
+		// markLastOpenAICacheable's breakpoint on a text block rather than on an image.
+		if (images.length) {
+			const content = images.slice();
+			if (trailingText) { content.push({ type: 'text', text: trailingText }); }
+			out.push({ role: 'user', content });
+		} else if (trailingText) {
+			// No image — keep the plain string. Widening every text-only turn to a block array would
+			// change the bytes of every cached prefix for no gain.
+			out.push({ role: 'user', content: trailingText });
+		}
 	}
 	if (cache) { markLastOpenAICacheable(out); }
 	return out;

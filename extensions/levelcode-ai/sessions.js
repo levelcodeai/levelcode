@@ -19,6 +19,7 @@ const store = require('./sessionStore');
 const events = require('./sessionEvents');
 const planner = require('./sessionResume');
 const memory = require('./sessionMemory');
+const imageStore = require('./imageStore');
 
 /**
  * @param {{ root: string, slug: string, projectPath: string,
@@ -326,13 +327,35 @@ function createSessions(opts) {
 	}
 	/** Where this project's memory lives (for opening it — the transparency promise). */
 	function memoryPaths() { return { dir: memory.memoryDir(root, slug), journal: memory.journalFile(root, slug), memoryMd: memory.memoryMdFile(root, slug) }; }
+	/**
+	 * Where attached images live: `media/` beside this project's sessions.
+	 *
+	 * PROJECT-scoped, not session-scoped, and nothing removes a file when a session goes away —
+	 * sessions are append-only and `trash()` only writes a lifecycle event. `sweepMedia()` below is
+	 * what actually bounds this.
+	 */
+	function mediaRoot() { return { root, slug }; }
+
+	/**
+	 * Delete images no session in this project refers to any more, and that are old enough not to
+	 * belong to a live conversation. Returns { removed, bytes }; never throws.
+	 */
+	function sweepMedia(maxAgeMs) {
+		try {
+			const keep = new Set();
+			for (const entry of list()) {
+				for (const ref of imageStore.refsIn(transcript(entry.id) || [])) { keep.add(ref); }
+			}
+			return imageStore.sweep(root, slug, keep, maxAgeMs);
+		} catch (e) { return { removed: 0, bytes: 0 }; }
+	}
 
 	/** The session index for this project (what the panel/view list). Empty (never throws) if unreadable. */
 	function list() { try { return store.loadIndex(root, slug).entries; } catch (e) { return []; } }
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, list, liveId };
+	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, mediaRoot, sweepMedia, list, liveId };
 }
 
 module.exports = { createSessions };

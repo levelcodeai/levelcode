@@ -143,6 +143,12 @@
         "icon": "$(book)"
       },
       {
+        "command": "levelcode.ai.attachImage",
+        "title": "AI: Attach Image to Chat",
+        "category": "LevelCode",
+        "icon": "$(device-camera)"
+      },
+      {
         "command": "levelcode.ai.sketch",
         "title": "AI: Agent Sketch…",
         "category": "LevelCode",
@@ -233,6 +239,11 @@
           "command": "levelcode.ai.memory",
           "when": "activeWebviewPanelId == 'levelcode.ai.chat'",
           "group": "navigation@3"
+        },
+        {
+          "command": "levelcode.ai.attachImage",
+          "when": "resourceExtname =~ /\\.(png|jpe?g|gif|webp)$/",
+          "group": "navigation@0"
         },
         {
           "command": "levelcode.ai.setApiKey",
@@ -399,6 +410,13 @@
           "minimum": 0,
           "maximum": 24,
           "markdownDescription": "Font size for chat **prose** (message bodies), in pixels. `0` tracks the editor's UI font size, one step larger for reading — a 13px workbench gives 14px prose.\n\nThe workbench size is tuned for menu labels and tree rows; message bodies read a step above it so a long answer is comfortable. Controls, cards and the composer always match the workbench exactly. Values are clamped to 8–24."
+        },
+        "levelcode.ai.chat.maxImagesPerMessage": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "markdownDescription": "How many images may be attached to one message. Each image costs roughly **1,800–3,000 input tokens**, so a full message is a five-figure prompt before you type a word. Clamped to 1–20 at the boundary — the API's own ceiling is 20 per message."
         },
         "levelcode.ai.chat.proseWidth": {
           "type": "number",

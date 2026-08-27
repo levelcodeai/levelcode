@@ -26,7 +26,7 @@ So a full rebuild from nothing is: `bootstrap.sh` (clone → brand → extension
 To re-create the core patch after changing core files in `vscode/`:
 
 ```bash
-# STRUCTURAL patch only (14 files). Display-string rebrands are NOT here — they live in scripts/de-brand.mjs.
+# STRUCTURAL patch only (15 files). Display-string rebrands are NOT here — they live in scripts/de-brand.mjs.
 git -C vscode diff HEAD -- \
   src/vs/workbench/contrib/files/browser/files.contribution.ts \
   build/lib/extensions.ts build/lib/copilot.ts \
@@ -41,6 +41,7 @@ git -C vscode diff HEAD -- \
   src/vs/base/common/product.ts \
   src/vs/platform/dialogs/electron-browser/dialog.ts \
   src/vs/workbench/contrib/update/browser/updateTooltip.ts \
+  src/vs/workbench/browser/parts/editor/editorDropTarget.ts \
   > patches/levelcode-core.patch
 # NOTE 1: use `diff HEAD` (not plain `diff`) — bootstrap's `git apply` may leave these STAGED,
 # and plain `git diff` shows only UNSTAGED changes, silently dropping the staged patches.
@@ -63,6 +64,34 @@ grep -rn "\[LevelCode\]" vscode/src vscode/build
 ```
 
 ## Patches (structural / behavioural only)
+
+### `editorDropTarget.ts` — an image dropped on the chat is an attachment, not a file to open
+
+**Why it has to be here.** A webview iframe is never offered an OS file drop: the workbench takes the
+drop first and opens the file in a tab. Nothing inside `extensions/levelcode-ai` can recover it — the
+panel's own `drop` handler never fires, and the `text/uri-list` fallback has no event to fall back
+from. This is the one part of paste-a-screenshot that cannot be an extension change.
+
+**What it does.** In `DropOverlay.handleDrop`, immediately before the URI-transfer branch hands off to
+`ResourcesDropHandler`, `tryLevelCodeChatImageDrop` forwards the dropped paths to the extension via
+`levelcode.ai.attachImagePaths` and consumes the drop.
+
+**Kept narrow on purpose** — every condition is a reason not to change behaviour someone relies on:
+
+- only when the chat webview is the **active editor of the group being dropped on**, so a drop on any
+  other tab still opens the file;
+- only when **no split** is requested, so dragging to an edge still splits the group;
+- only when **every** dropped file is an image, so a mixed drop behaves as it always did;
+- only when the paths resolve — `getPathForFile` is native-only and returns undefined on web;
+- and if the command throws (extension not activated), it **falls through** to the normal handler,
+  because a dropped image doing nothing at all is worse than one that opens.
+
+The paths travel by command rather than a new IPC channel, so the diff stays a routing decision and
+nothing more — which is what keeps it cheap to re-apply on a rebase.
+
+**Regenerating:** this file was appended per NOTE 3, not swept in by a wholesale regen. A wholesale
+regen on a de-branded checkout pulls ~78 lines of link-strips into `files.contribution.ts`; I did that
+once while adding this entry and had to back it out.
 
 These can't be a content swap — behaviour, build logic, unregistrations. Kept small on purpose so they
 survive Code-OSS bumps. Each is tagged `[LevelCode]`. **The build is strict** (`noUnusedLocals` +
