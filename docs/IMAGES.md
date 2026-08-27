@@ -77,12 +77,12 @@ From the vision documentation, checked rather than recalled — the figure I had
 
 Images above either limit are **downscaled server-side, preserving aspect ratio**. I reimplemented the rule and checked it against every worked example in the documentation: the **token count matches on all twelve** (1092² → 1521, 1000² → 1296, 1920×1080 → 2691, 3840×2160 → 2576×1449 at 4784), and the sent dimensions match on eleven — one standard-tier row lands a single pixel off (1270 vs 1269 wide, same 1564 tokens), a rounding convention I could not derive from six data points. Cost is exact; geometry is correct to within a pixel:
 
-| Source | Sent as (high-res tier) | Tokens | If we cap the long edge at 1568 | Tokens |
+| Source | Sent as (high-res tier) | Tokens | After our 2000 px cap | Tokens |
 |---|---|---|---|---|
-| 4K screenshot 3840×2160 | 2576×1449 | **4784** | 1568×882 | **1792** |
-| macOS retina window 3024×1964 | 2380×1546 | 4760 | 1568×1018 | 2072 |
-| 1080p screenshot 1920×1080 | unchanged | 2691 | 1568×882 | 1792 |
-| 12 MP phone photo 4032×3024 | 2212×1659 | 4740 | 1568×1176 | 2352 |
+| 4K screenshot 3840×2160 | 2576×1449 | 4784 | 2000×1125 | 2952 |
+| macOS retina window 3024×1964 | 2380×1546 | 4760 | 2000×1299 | 3384 |
+| 1080p screenshot 1920×1080 | unchanged | 2691 | 1920×1080 | 2691 |
+| 12 MP phone photo 4032×3024 | 2212×1659 | 4740 | 2000×1500 | 3888 |
 
 **The consequence that shapes everything: token cost is already capped by the server.** Sending a 12 MB PNG does not buy more than 4784 tokens of fidelity — it buys latency and bandwidth. So client-side downscaling is **not** a defence against a token blowup. It is a deliberate fidelity-for-cost trade, and a defence against the *wire*.
 
@@ -119,9 +119,13 @@ Three rules, each earning its place:
 
 **Re-encode only if we resized.** If the source is already inside the cap, forward the original bytes untouched. Every re-encode of an already-lossy source stacks artifacts, and the documentation calls that out specifically for text legibility — which is the entire content of a code screenshot.
 
-**Default cap: 1568 px on the long edge**, with `levelcode.ai.chat.imageMaxEdge` to raise it to 2576 for dense documents. Reasoning: it is a documented breakpoint rather than an invented one; it more than halves token cost against the high-res cap (1792 vs 4784 on a 4K grab); it stays under the 2000 px many-image threshold; and at 1568 px a typical logical UI screenshot is still supersampled, so text stays legible. Users doing computer-use or dense-document work can raise it.
+**Default cap: 2000 px on the long edge.** *This was 1568 in the plan, argued from first principles. It was wrong, and measurement overturned it — see the note below.*
 
-Format policy: **PNG in, PNG out** — screenshots are flat-colour UI where PNG is both smaller and lossless. Fall back to WebP q0.9 only when a resized PNG exceeds a byte budget. Never JPEG a screenshot of text.
+**⚠️ Corrected during implementation.** Claude Code's own transcripts are on disk, so rather than reason about the right cap I read what Anthropic's client actually ships: **24 images, and every re-encoded one is exactly 2000 px on the long edge**. That is the threshold the vision docs name for staying clear of the stricter per-image dimension limit above 20 images per request — the largest size that is never unsafe. It also sits above both model tiers' own caps, so the server does the final downscale and we never discard fidelity it would have kept. The 1568 argument traded legibility for a saving the server was going to make anyway.
+
+The same transcripts confirmed the pass-through rule above, which had been derived rather than observed: images under the cap go through **untouched, in their original format** (their PNGs stay PNG, their JPEGs stay JPEG), and only oversize ones are resized and re-encoded — to **WebP**, not PNG. That is the second correction: the plan said PNG-in-PNG-out, and WebP at q0.92 is materially smaller for the same screenshot with no visible loss (a 4K PNG grab: 764 KB → 115 KB).
+
+Format policy as shipped: pass through PNG / JPEG / GIF / WebP untouched under the cap; re-encode to WebP only when resizing. Never JPEG a screenshot of text.
 
 Do the work off the main thread — `createImageBitmap` + `OffscreenCanvas` — and revoke every object URL. A 4K decode on the UI thread is a visible stall in a chat window.
 
@@ -130,12 +134,18 @@ Do the work off the main thread — `createImageBitmap` + `OffscreenCanvas` — 
 The in-memory message and the session log carry:
 
 ```js
-{ type: 'image', ref: '<sha256>', media_type: 'image/png', w: 1568, h: 882, bytes: 214_003 }
+{ type: 'image', ref: '<sha256>', media_type: 'image/webp', w: 2000, h: 1125, bytes: 115_112 }
 ```
 
 Bytes live at `media/<sha256>.<ext>` beside the session index. Base64 is materialized **only** when building the provider request, and never retained.
 
 Three reasons. The session JSONL is append-only and fully re-read on resume — multi-megabyte base64 lines make it slow to parse and impossible to read. `postMessage` between webview and extension host would otherwise carry the same blob twice. And content addressing means the same screenshot pasted twice is one file, which is the common case when someone re-pastes after a failed send.
+
+The deciding fact came from this codebase specifically: `sessionStore.scanProject` does `readFileSync` + `JSON.parse` on **every session file in a project** whenever `index.json` is missing, malformed or on an older schema — first run, and after any schema bump. Inlined bytes would make drawing a list of session titles parse every screenshot in every session. Claude Code inlines base64 in its own JSONL and that is fine there; it is not fine here.
+
+**⚠️ Corrected during implementation.** An earlier version of this section said images live beside the session "so they are deleted with it". That was never true: sessions are append-only and `trash()` only writes a lifecycle event, so nothing removed a stored image, ever. Storage is **project-scoped**, and it is bounded by an explicit sweep (`imageStore.sweep` → `sessions.sweepMedia`) that runs on session seal and deletes media no session refers to any more.
+
+The sweep has an **age floor**, which is not incidental: a normal (non-agent) chat writes media whose refs are never persisted to any session file, so an unreferenced-means-delete rule would delete files belonging to a conversation that is still open. A week is long past the point a conversation is live, and it bounds the growth — which was the actual problem.
 
 ### D5 — Token accounting must know what an image costs
 
@@ -157,15 +167,36 @@ And — separately — the fall-through that currently discards unknown blocks b
 
 ### D7 — Gate on the capability that already exists
 
-Add `supportsVisionForModel(providerId, modelId)` alongside `supportsToolsForModel`, reading the `vision` flag already in the catalog. The attach affordance is disabled, with the reason named, when the selected model cannot see. Attempting to send an image to a text-only model refuses with a message that says which model and suggests one that can.
+Add `supportsVisionForModel(providerId, modelId)` alongside `supportsToolsForModel`. The attach affordance is disabled, with the reason named, when the selected model cannot see.
+
+**Both halves must agree.** The first implementation read only the per-model `vision` flag, which meant `custom` — an arbitrary user-supplied OpenAI-compatible endpoint that deliberately declares no vision capability — was handed images whenever the model's *name* looked like a vision model. The registry already enumerates vision providers (anthropic, openai, openrouter declare it; ollama and `custom` do not), so the gate honours the provider capability **and** the model one, exactly as `supportsToolsForModel` already did. A custom endpoint opts in through its registry entry; there is deliberately no per-user override, because the honest place to declare a provider's capabilities is the provider registry.
+
+**And it is re-checked at send.** Gating only at attach time is not enough: a model can be switched between attaching an image and pressing enter, and that path would otherwise hand images to a model that cannot read them. The re-check refuses **without discarding** anything typed or attached.
 
 ### D8 — Three ways in; paste is the one that matters
 
 1. **Paste** (`⌘V` with an image on the clipboard) — the 90% case, and the whole interaction being copied.
 2. **Drag and drop** onto the transcript or composer.
-3. **The existing Add Files button**, which should accept an image file from the workspace rather than reading it as text.
+3. **A picker**, and images already open in a tab.
 
-An attached image shows as a thumbnail chip in the composer, removable before send, and renders as a bounded thumbnail in the transcript — never the base64, and never at native size.
+An attached image shows as a thumbnail chip in the composer — removable, with its size and what it will cost — and renders as a bounded thumbnail in the transcript. Either can be clicked for a full-size view: a 28px thumb cannot tell you *which* screenshot you attached, which is the one thing worth checking before sending.
+
+**⚠️ Drag-and-drop needed a core patch, which this plan did not anticipate.** A webview iframe is **never offered an OS file drop** — VS Code's workbench takes it first and opens the file in an editor tab. Nothing inside the extension can recover it: the panel's own `drop` handler never fires, and a `text/uri-list` fallback has no event to fall back from. This is the one part of the feature that could not be an extension change.
+
+The patch lives in `editorDropTarget.ts` (see `docs/CORE-PATCHES.md`) and forwards the dropped paths to the extension when the chat is the active editor of the group being dropped on. It is deliberately narrow — no split requested, every dropped file an image, paths that resolve — and falls through to the normal handler on any doubt, because a dropped image doing nothing is worse than one that opens.
+
+Two traps worth recording, both found only by testing the real thing:
+
+- The first version compared against the viewType the extension registers. **Extension-created webview panels do not keep it** — the API layer rewrites it to `mainThreadWebview-levelcode.ai.chat` — so the check was silently always false and the patch was inert.
+- **Shift-drag is a different code path entirely.** It makes `onDragEnter` return early, the overlay never appears, and `handleDrop` never runs. A report that "drag and drop + shift works" was therefore *not* evidence the patch worked; it was the webview fallback doing the job.
+
+**Because normalization is async, a send can outrun it.** A placeholder chip carries no bytes, so sending mid-decode posts an attachment with no `media_type` and no data — refused at the host, and the image disappears from a message the user watched it attach to. The send path waits on tracked in-flight work and refuses a surviving placeholder outright.
+
+### D10 — Several images are introduced by name
+
+From the vision guidance: with more than one image, precede each with `Image 1:`, `Image 2:` so the question — and every follow-up turn — can refer to them. Without it, "the second screenshot" has nothing to bind to.
+
+Only when there is more than one. A single image needs no name, and labelling it would put a pointless text block ahead of every screenshot anyone pastes.
 
 ### D9 — Multi-turn repetition is a known, deferred cost
 
@@ -201,6 +232,8 @@ clipboard / drop / picker
 
 Each is independently shippable and independently revertible. Exit criteria are the guards, and every guard is bypass-verified — the fix is reverted and the test must fail.
 
+**Status: I1–I7 all shipped** in [#90](https://github.com/levelcodeai/levelcode/pull/90), plus the core patch D8 turned out to need. What follows is the plan as written; where the implementation diverged, the decision above it says so.
+
 **I1 — Fail loudly at the translator.** Turn the silent block drop into a throw; add the image → `image_url` mapping. No UI. Ships alone because the silent-drop bug predates images.
 *Exit:* a non-text block reaching `translate.js` throws with the block type named; an image block round-trips to `image_url`; the existing text and tool_result paths are unchanged.
 
@@ -226,23 +259,32 @@ Each is independently shippable and independently revertible. Exit criteria are 
 
 ## 5. Budget
 
-Per screenshot, at the 1568 default, against doing nothing:
+Per screenshot, at the shipped 2000 px cap, against doing nothing. The wire figures are measured
+from a real 4K PNG through the shipped normalizer, not estimated:
 
 | | Native 4K | Normalized | Change |
 |---|---|---|---|
-| Visual tokens | 4784 (server-capped) | 1792 | **2.7× fewer** |
-| Pixels on the wire | 8.3 MP | 1.4 MP | **6× fewer** |
-| Base64 inflation | ×4/3 of encoded bytes | ×4/3 | unchanged — it is the pixel count that moves |
+| Visual tokens | 4784 (server-capped) | 2952 | **1.6× fewer** |
+| Encoded bytes | 764 KB PNG | 115 KB WebP | **6.6× fewer** |
+| Pixels on the wire | 8.3 MP | 2.3 MP | 3.7× fewer |
+| Base64 inflation | ×4/3 of encoded bytes | ×4/3 | unchanged — it is the byte count that moves |
 | Bytes in the session log | multi-MB per turn | ~70 bytes | ref, not blob |
-| Token-meter error | ~333,000 phantom tokens per MB | 0 | the compaction bug |
+| Token-meter error | ~333,000 phantom tokens per MB | 0 | the meter bug |
 
-The last row is the one that would have shipped as a mystery bug report: *"long conversations forget things after I paste a screenshot."*
+The token saving is smaller than the 1568 plan promised (1.6× rather than 2.7×) and that is the
+right trade: the server was going to cap the cost at 4784 either way, so the extra 432 px buys
+legibility on small editor text for tokens we were spending anyway. **The bytes are where the real
+win is**, and they moved further than the plan expected because resizing re-encodes to WebP.
+
+The last row would have shipped as a mystery report: *"the context meter says I'm full right after
+I paste a screenshot."* (An earlier draft claimed it evicted history — it does not; see §8.)
 
 ---
 
 ## 6. Not in scope
 
-- **Files API upload** (D9). Anthropic-direct only; worth doing once image use is real, and worth measuring first — the win is on repeat turns, not the first one.
+- **Files API upload** (D9). Anthropic-direct only; worth doing once image use is real, and worth measuring first — the win is on repeat turns, not the first one. *Still deferred.*
+- **S3 upload via thin.ly's existing integration.** Evaluated and rejected: it cannot serve BYOK (where the editor talks to the provider directly), it would put screenshots of customers' proprietary code in our bucket along with the retention and deletion duties that follow, and the problem it solves on the gateway path has a better answer in the Files API. Revisit only if repeat-turn uplink is measurably hurting gateway users — and then as a cache in front of the Files API, not as the store.
 - **Image *output*.** Claude does not generate images. Nothing to build.
 - **PDF and document blocks.** Adjacent, different limits, different block type.
 - **Coordinates and bounding boxes.** Only interesting if the agent gains a computer-use tool; the resize rule interacts with coordinate mapping and would need its own design.
@@ -250,5 +292,24 @@ The last row is the one that would have shipped as a mystery bug report: *"long 
 
 ## 7. Open
 
-- **Cap default 1568 or 2576.** Named a decision above rather than left open, but it should be re-measured against real code screenshots before I5 ships — if 11px editor text is unreadable at 1568, the default moves to 2576 and the setting inverts.
-- **Whether the workspace-file path should route images through this pipeline at all**, or attach by path and let the tools read them. Attaching by path costs nothing until read; pasting has no path.
+- ~~**Cap default 1568 or 2576.**~~ **Settled at 2000** by reading what Claude Code actually ships, not by argument. See D3.
+- **Whether the workspace-file path should route images through this pipeline at all**, or attach by path and let the tools read them. Attaching by path costs nothing until read; pasting has no path. *Still open — the picker currently reads and normalizes, like any other route.*
+- **Whether `custom` endpoints should be able to opt into vision.** Today they cannot without a registry edit (D7). Nobody has asked; the alternative is a per-user override that lets someone declare a capability their endpoint may not have.
+- **The sweep's age floor is a week, hard-coded.** It bounds growth without a setting, which is the right default. If someone attaches enough to notice, it should become one rather than shrink.
+
+---
+
+## 8. What this document got wrong
+
+Kept deliberately, because a design note that records where it was wrong is worth more than one quietly rewritten to match the code.
+
+| The plan said | What shipped | Why |
+|---|---|---|
+| Cap at **1568 px** | **2000 px** | Measured Claude Code's own output instead of arguing from the docs |
+| **PNG in, PNG out** | **WebP** when resizing | 764 KB → 115 KB on a 4K grab, no visible loss |
+| Cost is `w × h / 750` | `⌈w/28⌉ × ⌈h/28⌉` | A stale prior; the real formula is 28px patches |
+| A bad token estimate would make compaction **evict history** | It misreports the **UI meter** | `findCompactionCut` never reads a token number — caught in review |
+| Images are "deleted with the session" | Nothing deleted them; there is a **sweep** now | Sessions are append-only; `trash()` only writes a lifecycle event |
+| The vision gate reads the **model** flag | **Provider and model** must both allow it | `custom` would otherwise take images by model name alone |
+| Drop is handled **in the webview** | Needed a **core patch** | A webview iframe is never offered an OS file drop |
+| `describeCaps` "does not read" the vision flag | It does; nothing **gated** on it | Caught in review |
