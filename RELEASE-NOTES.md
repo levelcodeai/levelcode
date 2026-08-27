@@ -1,70 +1,128 @@
-# LevelCode v1.1.0
+# LevelCode v1.2.0
 
-The chat moves to the middle of the editor and starts reading like a document. This release takes the panel out of the narrow column on the right, gives the transcript a real measure and type scale, and lets the agent answer you even when no folder is open.
+Take a screenshot, `⌘V` into the composer, ask why the layout is wrong. That is the whole feature, and most of this release is the work underneath it — a token meter that tells the truth about pixels, a store that keeps your screenshots on your own disk, and a gate that stops an image reaching a model that cannot see it. The transcript also stops narrating itself, and Sessions is one click from the chat tab.
 
 ## Highlights
 
-### The chat is an editor tab now
+### Paste a screenshot, ask about it
 
-It opens centred, as a tab, like a file — and that is the only place it lives. Drag it to a split, move it between groups, pull it into a second window: it behaves like every other editor because it now *is* one.
+Three ways in, in the order you will actually use them:
 
-The old right-hand chat view is gone rather than deprioritised. One conversation with two possible hosts needed a hand-over card, a detached state, a move command and a replay on every transition — machinery for a choice nobody wanted. **Sessions** keeps the right-hand panel to itself, which is the right place for an index of past conversations: it no longer splits a narrow column with the conversation it indexes.
+- **Paste.** `⌘V` a screenshot straight into the composer. No dialog, no upload step, no file to manage.
+- **The image button** in the composer, or **AI: Attach Image to Chat** from the palette. It offers the image tabs you already have open before it offers a file dialog — the picture you want is usually one you were just looking at.
+- **Drag a file from Finder** onto the chat. This one needed a core patch; see below.
 
-**Closing the tab closes the chat**, and closing is an ending rather than a discard — the session is sealed into History and memory learns from it, exactly as **New Chat** has always done. `⇧⌘I` opens it again.
+`png`, `jpeg`, `gif` and `webp` are accepted and nothing else — that is the list the vision APIs take, so a wider net would only fail later and further away. Each attachment becomes a chip under the composer with a thumbnail, its cost in tokens, and a remove button. Up to **five images per message** by default, and when there is more than one they are introduced to the model as `Image 1:`, `Image 2:` so that "the second screenshot" has something to refer to on this turn and every turn after it.
 
-If you don’t want it opening on its own, set `levelcode.ai.chat.startLocation: "none"`.
+### Your screenshots never leave your machine
 
-### The transcript reads like a document
+Bytes are written beside the session that used them, content-addressed by SHA-256:
 
-Nothing constrained line length before this. In a 380px sidebar the container did that job, so it never looked wrong — but a chat in an editor tab at 900px produced **154-character lines**, and no amount of good prose survives that.
+```
+~/.levelcode/sessions/<project-slug>/media/<sha256>.png
+```
 
-- **A bounded measure.** The column caps at **820px** and centres, matched against the Claude Code console rather than derived from print typography — the 45–75 character rule assumes prose without identifiers, file paths or fenced code.
-- **Prose gets its own type.** Message bodies now read one step above the workbench UI size, with looser leading. Expressed as an offset rather than a fixed number, so it tracks the editor font instead of inverting against it if you have raised that for accessibility.
-- **Hierarchy you can see.** The heading scale moves from `1.3 / 1.18 / 1.07` — three levels inside a quarter of an em — to `1.45 / 1.25 / 1.1`, with more space above a heading than below it.
-- **Rhythm that scales.** Prose spacing is in `em`, anchored to the prose size, so raising the type opens the page instead of tightening it.
-- **Code blocks get room.** `pre` padding widens and its margins join the same rhythm.
+The conversation, the session log and the token meter all carry a **reference**, never the bytes. That is not a size optimisation: listing your History re-parses every session file in a project whenever the index is missing or on an older schema, and inlined base64 would make drawing a list of session titles parse every screenshot in every session you have ever taken.
 
-The whole panel shares one column: the composer, the status row and the notice bars line up with the prose above them instead of spanning the full width beneath it.
+Nothing is uploaded. There is no bucket, no signed URL and no retention policy to read, because there is nothing on our side to retain — which is also the only shape that works for BYOK, where the editor talks to your provider directly and a detour through our infrastructure would contradict the promise that we are not in the middle.
 
-### Speakers are told apart by treatment, not by a label
+Because the same screenshot pasted twice hashes to the same file, a re-paste after a failed send costs a hash and a stat rather than a second copy.
 
-`YOU` and `LEVELCODE AI` sat above every message restating what the shape of the message already said. Your turn is now a tinted bubble **on the right** that hugs its content — "Yes" is a short bubble, a pasted stack trace is a wide one — and the assistant's is unadorned prose on the left.
+**Media is swept, not orphaned.** Sessions are append-only and deleting one writes a lifecycle event rather than removing the transcript, so "the images go away with the session" was never going to be true. A sweep runs when a session is sealed and removes media nothing refers to any more — with a **seven-day age floor**, because a plain unreferenced-means-delete rule would delete the images of the conversation you have open right now.
 
-The labels are gone from the screen but kept in the accessibility tree: the bubble is a purely visual cue, so removing the element outright would leave a screen reader with an unattributed wall of text.
+### The context meter stopped lying about images
 
-### The agent answers without a folder open
+The estimator measured `JSON.stringify(messages).length / 4`, which is sound for text and catastrophic for an image. Base64 books about a third of its byte count as tokens, so a 1 MB screenshot read as roughly **333,000 tokens** — larger than most context windows — for something that really costs about 4,800. Storing refs instead of bytes then swung it the other way and reported a ~1,800-token image as about 18.
 
-Opening LevelCode without a workspace used to refuse every request outright — *"Open a folder first."* That guard was written for the file tools and placed where it failed the whole run, so a question that never needed a workspace died on it: what an error means, anything through an MCP server, a follow-up about the conversation itself.
+Images are now counted by what they actually cost. Claude sees an image as 28×28 patches, so the price is `⌈w/28⌉ × ⌈h/28⌉` visual tokens, capped per model tier:
 
-The root now gates the tools that resolve a path against it, and nothing else. Rootless, `list_files`, `read_file`, `search`, `edit_file`, `write_file`, `delete_file` and `run_command` are withheld — a tool that is present but always fails is worse than one that is absent, because the model retries it — while `update_plan`, `ask_user`, `use_skill` **and every MCP tool** keep working. The model is told plainly why the file tools are missing, so it says so in a line instead of improvising about files it cannot see.
+| Model tier | Long edge | Token cap |
+| --- | --- | --- |
+| Claude 4.7 and later, including the 5 line | 2576 px | 4784 |
+| Everything else | 1568 px | 1568 |
+
+An unknown model falls to the standard tier and an unknown size assumes the cap, so the meter fails toward over-counting rather than under.
+
+Worth being plain about the scope: **today this only misreported the meter you look at.** Compaction cuts on message count and goal boundaries and never reads a token number, so nothing was being silently evicted. It becomes a correctness bug the day anything automatic keys off that figure, which is why it is fixed now rather than later.
+
+### Screenshots are resized before they are sent
+
+The long edge is capped at **2000 px** in the webview before anything is stored or sent. An image already under the cap is **passed through untouched, in its original format** — re-encoding a screenshot of text only stacks compression artifacts on the thing that most needs to stay legible. One that is over gets a single resize and a single WebP pass at quality 0.92.
+
+The cap is 2000 rather than the more obvious 1568 because the server caps the *cost* at 4784 tokens either way, so the extra pixels buy legibility on small editor text for tokens that were already being spent. Measured on a dense 4K editor screenshot — small text edge to edge, the worst case for re-encoding — **770 KB → 189 KB on the wire**, and 4784 → 2952 tokens. Shots with more flat UI in them compress harder than that.
+
+| Source | Sent as | Visual tokens |
+| --- | --- | --- |
+| 4K screenshot 3840×2160 | 2000×1125 | 2952 |
+| macOS retina window 3024×1964 | 2000×1299 | 3384 |
+| 1080p screenshot 1920×1080 | unchanged | 2691 |
+| Half-screen 1280×1440 | unchanged | 2392 |
+
+Budget roughly **2,400–3,900 tokens per screenshot**, and remember it rides along on every subsequent turn in that conversation.
+
+### Dropping a file on the chat needed a core patch
+
+VS Code's workbench claims OS file drops before a webview iframe ever sees them, so a drag out of Finder arrived with an empty `dataTransfer.files` and the editor helpfully opened your screenshot in an image tab instead. The chat now handles the drop in `editorDropTarget.ts`, reads the paths, and hands them to the extension.
+
+**If you build from source, this is a core patch, not an extension change** — a fresh `vscode/` clone needs `patches/levelcode-core.patch` applied by `bootstrap.sh` before drag-and-drop works. Two things cost real time here and are written down in `docs/IMAGES.md` so they cost nobody else any: extension webview view types are rewritten with a `mainThreadWebview-` prefix before they reach the drop target, so matching the bare id makes the patch silently inert; and holding Shift takes a different code path entirely, which means "drag with Shift works" was never evidence that the patch worked.
+
+### An image only goes to a model that can actually see
+
+The provider **and** the model must both declare vision. Reading only the model id meant a custom OpenAI-compatible endpoint returned true for any model whose *name* looked like a vision model, and images went to an endpoint nobody had said could read them.
+
+Four providers declare it: **Anthropic**, **OpenAI**, **OpenRouter** and **xAI**. Ollama and custom endpoints deliberately do not — a custom endpoint that does serve a vision model needs `vision: true` on its registry entry, because the honest place to declare a provider's capabilities is the provider registry, not a per-user override. In gateway mode the check runs against the gateway's own model, so LevelCode Cloud gets images wherever the model supports them.
+
+The composer refuses an attachment *before* you type anything, and re-checks at send — you can switch models between attaching a screenshot and pressing enter, and that used to produce a provider error instead of a sentence.
+
+### The activity group reads as text, not as a widget
+
+The collapsed header said "3 steps". It now says what actually happened — which files were read, which command ran — because a count is the one thing you can already see. Context is announced **once** when it enters the conversation rather than re-stated every turn, the chevron trails the thing it discloses instead of leading it, and the group rows are inset inside a single container rather than nested in two with a rail down the side.
+
+### Sessions and Project Memory are one click from the chat
+
+Both have a button on the chat tab, and **AI: Project Memory** is a command now. The row actions inside the Sessions panel — Rename, Done, Delete, Pin — were rendered but invisible, showing an empty grey box on hover; they render, and they are visible.
 
 ## New settings
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `levelcode.ai.chat.startLocation` | `editor` | Where the chat opens with a window. `none` stops it opening on its own |
-| `levelcode.ai.chat.fontSize` | `0` | Prose size in px. `0` tracks the editor UI font, one step up for reading |
-| `levelcode.ai.chat.proseWidth` | `0` | Transcript width in px. `0` uses the 820px measure — it does **not** mean unconstrained |
+| `levelcode.ai.chat.maxImagesPerMessage` | `5` | How many images may be attached to one message. Clamped to 1–20 at the boundary — 20 is the API's own ceiling |
 
-Both sizes are clamped at the boundary (8–24 and 320–2000). The `minimum`/`maximum` in a contribution schema only drive the settings *editor*; a hand-edited `settings.json` reaches the extension unchecked, and these land directly in CSS, where `proseWidth: 1` is a one-pixel transcript with nothing left on screen to open settings with.
+## New commands
+
+| Command | Does |
+| --- | --- |
+| `AI: Attach Image to Chat` | Offers open image tabs first, then a file dialog |
+| `AI: Project Memory` | Opens the project's memory from anywhere |
 
 ## Also fixed
 
-- **Closing the chat no longer leaves the conversation loaded.** Sealing the session ended it — so the next chat opened visually empty — while the in-memory history was still there and shipped to the model on the next message. The teardown now also stops in-flight work and reaps background commands and MCP servers, which are detached children and were outliving the surface that reported on them.
-- **A teardown cannot be raced by the run it is tearing down.** Closing mid-stream aborts the request, and the abort landed in a handler that pushed the partial reply back into the history that had just been cleared — the exact leak the teardown exists to prevent, caused by the teardown's own abort.
-- **Reveals of the chat can no longer become unhandled promise rejections** in the extension host. Failures are logged with the caller named rather than surfacing as an error attributed to nothing.
+- **The context and review bars sat flush left** instead of in the transcript column, because a `margin` shorthand overwrote the `margin-inline: auto` that centred them. The guard that now prevents it reads *every* declaration rather than the first — the original check used `.exec()` without the global flag, so it inspected one rule and reported the file clean.
+- **Every image thumbnail was broken.** The chat's Content-Security-Policy declared `default-src 'none'` with no `img-src`, so the composer chip rendered as a broken-image glyph.
+- **An image with no words returned a 400.** Sending a screenshot with an empty composer produced an empty text block alongside it, which Anthropic rejects. Text-only turns also stay a plain string rather than becoming a single-element array, so cached prefixes do not churn.
+- **Agent mode dropped every pasted image.** The send path stored the bytes and then called the agent with the text alone.
+- **Opening without a folder refused images outright**, on the same guard that used to refuse everything else.
+- **The × on an image chip could not remove it**, and the target was too small to hit reliably. Both fixed, and the cap moved into one setting rather than being written in two places.
+- **A send can no longer outrun its own attachment.** Normalisation is async, so pressing enter mid-decode posted an attachment with no data — refused at the host, and the image vanished from a message you had watched it attach to. The send path now waits on in-flight work and refuses a placeholder outright.
+- **The provider boundary fails loudly.** Translating a conversation for an OpenAI-compatible provider silently dropped content blocks it did not recognise. It now throws, because a request that quietly discards its own subject is the exact failure this feature exists to avoid. Extended-thinking blocks remain an explicit, deliberate drop.
 
 ## Not in this release
 
-**The Sessions panel still does not search.** No filter, no fuzzy switcher, no keyboard jump — you scroll the list. It was the stated gap in v1.0.5 and it is still the gap; the chat surface took this cycle.
+**The Sessions panel still does not search.** No filter, no fuzzy switcher, no keyboard jump. It was the stated gap in v1.0.5 and in v1.1.0, and it is the stated gap again — the chat surface took another cycle.
 
-**The empty-state wordmark had a false start.** A redrawn mark shipped and had to be pulled: it was built from full block characters on the assumption they tile seamlessly in any monospace font, which is not true — whether `█` fills its cell is a property of the font, and in Monaco it does not, so the logo shattered into disconnected bars. The replacement is drawn from box-drawing rules and real text, and was checked in seven font families before shipping this time.
+**Images are re-sent on every turn.** Base64 rides along with each subsequent request in a conversation, so a screenshot you attached ten turns ago is still being uploaded. The Files API fixes this properly by uploading once and referencing thereafter, but it is Anthropic-direct only, so it cannot be the primary path in a multi-provider client. Deferred deliberately, and the cost is bounded by the resize.
+
+**Custom endpoints cannot opt into vision** without editing the provider registry. That is the correct default and the wrong end state; a per-endpoint capability declaration is the missing piece.
+
+**The sweep's seven-day floor is hard-coded.** It is the right default and it should probably be a setting.
 
 ## Test coverage
 
-- **34 suites**, **575 cases** across the bundled extensions — all green.
-- `test/chatSurface.test.js` (23 cases) — the single-surface contract: one live webview, one message handler, the transcript surviving a hand-over, and a close that seals rather than discards.
-- `test/webviewCss.test.js` (33 cases) — the layout invariants no DOM test can see: the measure, the shell column, the type scale, and the wordmark's width against its container.
-- `test/agentNoWorkspace.test.js` (6 cases) — which tools are withheld without a root, which must keep working, and that the context meter is billed for the list that was actually sent.
+- **40 suites**, **599 cases** across the bundled extensions — all green. v1.1.0 measured the same way was 36 suites and 527 cases.
+- `test/imageAttach.test.js` (30 cases) — the wire shape end to end: images lead and text follows, refs materialise into base64 only when a request is built, the vision gate at attach and again at send, the per-message cap, and multi-image labelling.
+- `test/imageCost.test.js` (9 cases) — the arithmetic, pinned against every worked example in the vision documentation: 1092² → 1521, 1920×1080 → 2691, 3840×2160 → 2576×1449 at 4784, and that nothing is ever scaled *up*.
+- `test/imageStore.test.js` (11 cases) — content addressing, the 5 MB ceiling, path-traversal refusal on a ref, a missing file throwing rather than sending a request without its subject, and the sweep's age floor.
+- `test/contextAnnounce.test.js` (5 cases) — context enters the conversation once and is not re-announced.
+- `test/translate.test.js` gained 92 lines covering the boundary that now throws instead of dropping blocks.
 
-**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.0.5...v1.1.0
+**Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.1.0...v1.2.0
