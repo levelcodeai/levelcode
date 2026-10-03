@@ -12,6 +12,7 @@
 const vscode = require('vscode');
 const path = require('path');
 const { SESSION_EXPIRED_MESSAGE } = require('./providers/session');
+const { sendWithAuthRetry } = require('./providers/authRetry');
 
 const SCHEME = 'levelcode-ai';
 const CTX_DIFF_ACTIVE = 'levelcode.ai.diffActive';
@@ -107,7 +108,7 @@ function fullLineRange(editor) {
 	return new vscode.Range(sel.start.line, 0, endLine, editor.document.lineAt(endLine).text.length);
 }
 
-/** @param {{aiConfig:()=>any, prepProviderRequest:(o?:any)=>Promise<any>, streamChat:Function, accountSignIn:()=>Promise<any>}} deps */
+/** @param {{aiConfig:()=>any, prepProviderRequest:(o?:any)=>Promise<any>, streamChat:Function, accountSignIn:()=>Promise<any>, authRetry?:Function}} deps */
 async function editSelection(deps) {
 	const ed = vscode.window.activeTextEditor;
 	if (!ed || ed.selection.isEmpty) {
@@ -147,11 +148,13 @@ async function editSelection(deps) {
 						: req.reason === 'insecureBaseURL' ? 'Refusing to send your API key over plain http to a non-local host. Use an https (or localhost) base URL.'
 						: 'No API key set for ' + req.label + '.');
 				}
-				await deps.streamChat({
-					providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL,
-					model: req.model, maxTokens: req.maxTokens, system: EDIT_SYSTEM,
+				// Sent through the host's authRetry: a lapsed cloud token is renewed and the edit asked for
+				// once more — unless some of it has already arrived, which a second answer would repeat.
+				await sendWithAuthRetry(deps, req, (r) => deps.streamChat({
+					providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL,
+					model: r.model, maxTokens: r.maxTokens, system: EDIT_SYSTEM,
 					messages: [{ role: 'user', content: userMsg }], signal: ac.signal, onDelta
-				});
+				}), { streamed: () => !!result, signal: ac.signal });
 			}
 		);
 	} catch (e) {

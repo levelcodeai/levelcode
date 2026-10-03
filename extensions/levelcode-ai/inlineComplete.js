@@ -9,6 +9,7 @@
 'use strict';
 
 const vscode = require('vscode');
+const { sendWithAuthRetry } = require('./providers/authRetry');
 
 const PREFIX_MAX = 2500; // chars of context before the cursor (smaller = faster first token)
 const SUFFIX_MAX = 1000; // chars of context after the cursor
@@ -58,7 +59,8 @@ function clean(text) {
  * @param {vscode.ExtensionContext} context
  * @param {{ aiConfig: () => vscode.WorkspaceConfiguration,
  *           prepProviderRequest: (o?:any) => Promise<any>,
- *           complete: Function, fastCompletionModel: (providerId:string)=>(string|null) }} deps
+ *           complete: Function, fastCompletionModel: (providerId:string)=>(string|null),
+ *           authRetry?: Function }} deps
  */
 function registerInlineComplete(context, deps) {
 	const { aiConfig, prepProviderRequest, complete, fastCompletionModel } = deps;
@@ -124,13 +126,17 @@ function registerInlineComplete(context, deps) {
 				const model = req.providerId === 'claude'
 					? cfg.get('completions.model', 'claude-haiku-4-5-20251001')
 					: (fastCompletionModel(req.providerId) || req.model);
-				text = await complete({
-					providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL,
+				// Sent through the host's authRetry: a lapsed cloud token is renewed and the request sent once
+				// more, as quietly as everything else here. `background`: nobody asked for this request and
+				// it is sent on every pause in typing, so it may start a renewal only so often.
+				text = await sendWithAuthRetry(deps, req, (r) => complete({
+					providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL,
 					model, maxTokens: MAX_TOKENS, system: SYSTEM_PROMPT,
 					messages: [{ role: 'user', content: userContent }], signal: ac.signal
-				});
+				}), { signal: ac.signal, background: true });
 			} catch (e) {
-				// Network/abort/key errors are silent — inline completion must never nag.
+				// Network/abort/key errors are silent — inline completion must never nag. That includes a
+				// renewal that failed, and one that found the session over: the chat shows the sign-in card.
 				return null;
 			} finally {
 				sub.dispose();

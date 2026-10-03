@@ -22,6 +22,7 @@ const fs = require("fs");
 const providers = require("./providers/index");
 const catalog = require("./providers/catalog");
 const { SESSION_EXPIRED_MESSAGE } = require("./providers/session");
+const { sendWithAuthRetry } = require("./providers/authRetry");
 const { AGENT_GROUPS, AGENTS, AGENT_BY_ID } = require("./sketch/agentCatalog");
 const graph = require("./sketch/graph");
 const pricing = require("./sketch/pricing");
@@ -275,10 +276,15 @@ function nodeSystem(node) {
  * continue, accumulating text + usage across up to MAX_NODE_TURNS turns. So a node that needs more
  * than one turn's worth of output (a whole code module, a long design) keeps going instead of
  * losing its work at the cap. onProgress fires after each continuation so the UI can show it.
+ *
+ * Each turn is sent through the host's authRetry (deps): a LevelCode Cloud token that lapses during
+ * a run is renewed and the turn sent once more — only while none of that turn has arrived. `req` is
+ * the run's one request, shared by every node: the renewed token is written onto it, so the nodes
+ * and turns still to come are sent on it and never see the 401 at all.
  * @returns {Promise<{text:string, usage:{input:number,output:number}, stop:string, turns:number}>}
  */
 async function runNodeTurn(o) {
-  const { req, model, system, userMsg, signal, onText, onProgress } = o;
+  const { req, deps, model, system, userMsg, signal, onText, onProgress } = o;
   const messages = [{ role: "user", content: userMsg }];
   let full = "";
   const usage = { input: 0, output: 0 };
@@ -287,20 +293,26 @@ async function runNodeTurn(o) {
   while (turns < MAX_NODE_TURNS) {
     turns++;
     const before = full.length;
-    const turn = await providers.streamAgentTurn({
-      providerId: req.providerId,
-      baseURL: req.baseURL,
-      apiKey: req.apiKey,
-      model,
-      maxTokens: NODE_MAX_TOKENS,
-      system,
-      messages,
-      signal,
-      onText: (t) => {
-        full += t;
-        if (onText) onText(t);
-      },
-    });
+    const turn = await sendWithAuthRetry(
+      deps,
+      req,
+      (r) =>
+        providers.streamAgentTurn({
+          providerId: r.providerId,
+          baseURL: r.baseURL,
+          apiKey: r.apiKey,
+          model,
+          maxTokens: NODE_MAX_TOKENS,
+          system,
+          messages,
+          signal,
+          onText: (t) => {
+            full += t;
+            if (onText) onText(t);
+          },
+        }),
+      { streamed: () => full.length > before, signal },
+    );
     let piece = full.slice(before);
     if (!piece) {
       piece = (turn.content || [])
@@ -587,6 +599,7 @@ async function runSketch(o) {
               // Run to completion with auto-continuation — the node's work is never truncated.
               const r = await runNodeTurn({
                 req,
+                deps,
                 model,
                 system: nodeSystem(node),
                 userMsg,
@@ -782,15 +795,18 @@ async function boardCommand(o) {
     "\n\nReturn ONLY the JSON object.";
   let raw = "";
   try {
-    raw = await providers.complete({
-      providerId: req.providerId,
-      baseURL: req.baseURL,
-      apiKey: req.apiKey,
-      model: req.model,
-      maxTokens: 2048,
-      system: COMMAND_SYSTEM,
-      messages: [{ role: "user", content: user }],
-    });
+    // Through the host's authRetry: a lapsed cloud token is renewed and the command sent once more.
+    raw = await sendWithAuthRetry(deps, req, (r) =>
+      providers.complete({
+        providerId: r.providerId,
+        baseURL: r.baseURL,
+        apiKey: r.apiKey,
+        model: r.model,
+        maxTokens: 2048,
+        system: COMMAND_SYSTEM,
+        messages: [{ role: "user", content: user }],
+      }),
+    );
   } catch (e) {
     post({ type: "uiError", message: "Command failed: " + String((e && e.message) || e) });
     return;
@@ -951,15 +967,18 @@ async function generateFlow(o) {
     "\n\nReturn ONLY the JSON object.";
   let raw = "";
   try {
-    raw = await providers.complete({
-      providerId: req.providerId,
-      baseURL: req.baseURL,
-      apiKey: req.apiKey,
-      model: req.model,
-      maxTokens: 3000,
-      system: GENERATE_SYSTEM,
-      messages: [{ role: "user", content: user }],
-    });
+    // Through the host's authRetry, as the board command above.
+    raw = await sendWithAuthRetry(deps, req, (r) =>
+      providers.complete({
+        providerId: r.providerId,
+        baseURL: r.baseURL,
+        apiKey: r.apiKey,
+        model: r.model,
+        maxTokens: 3000,
+        system: GENERATE_SYSTEM,
+        messages: [{ role: "user", content: user }],
+      }),
+    );
   } catch (e) {
     post({ type: "uiError", message: "Flow generation failed: " + String((e && e.message) || e) });
     return;
@@ -984,7 +1003,7 @@ function activeTierModels(providerId) {
 /**
  * Open the Agent Sketch panel.
  * @param {vscode.ExtensionContext} context
- * @param {{ prepProviderRequest:(o?:any)=>Promise<any>, aiConfig:()=>any, currentProviderId?:()=>string }} deps
+ * @param {{ prepProviderRequest:(o?:any)=>Promise<any>, aiConfig:()=>any, currentProviderId?:()=>string, authRetry?:Function }} deps
  */
 function openSketch(context, deps) {
   if (panel) {

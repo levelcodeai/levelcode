@@ -26,6 +26,21 @@ const REFRESH_TIMEOUT_MS = 10 * 1000;
 const SESSION_EXPIRED_MESSAGE = 'Your LevelCode Cloud session has expired. Sign in again to continue.';
 
 /**
+ * The payload of a JWT, or null when the token is not a JWT or is unreadable. Never throws.
+ * @param {string|null|undefined} token
+ * @returns {any}
+ */
+function jwtPayload(token) {
+	try {
+		const parts = String(token || '').split('.');
+		if (parts.length !== 3) { return null; }
+		const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+		const payload = JSON.parse(Buffer.from(b64 + '='.repeat((4 - b64.length % 4) % 4), 'base64').toString('utf8'));
+		return payload && typeof payload === 'object' ? payload : null;
+	} catch { return null; }
+}
+
+/**
  * The `exp` claim of a JWT as epoch milliseconds, or null when the token is not a JWT, carries no
  * `exp`, or is unreadable. Never throws: a malformed token is a reason to re-check with the server,
  * not a reason to crash the editor.
@@ -33,14 +48,27 @@ const SESSION_EXPIRED_MESSAGE = 'Your LevelCode Cloud session has expired. Sign 
  * @returns {number|null}
  */
 function jwtExpiresAt(token) {
-	try {
-		const parts = String(token || '').split('.');
-		if (parts.length !== 3) { return null; }
-		const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-		const payload = JSON.parse(Buffer.from(b64 + '='.repeat((4 - b64.length % 4) % 4), 'base64').toString('utf8'));
-		const exp = Number(payload && payload.exp);
-		return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
-	} catch { return null; }
+	const payload = jwtPayload(token);
+	const exp = Number(payload && payload.exp);
+	return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+}
+
+/**
+ * Who a JWT says it is for: its `sub` claim, as a string — or null when the token is not a JWT, is
+ * unreadable, or names no subject. Read, not verified, like `exp`: it is only asking the token.
+ *
+ * It is the one thing about a session that every window can see and that a renewal does not change.
+ * The stored tokens belong to all the windows, and a window only counts the sign-ins it makes
+ * itself; but two tokens that name different subjects are two accounts, whichever window stored the
+ * second one.
+ * @param {string|null|undefined} token
+ * @returns {string|null}
+ */
+function jwtSubject(token) {
+	const payload = jwtPayload(token);
+	const sub = payload ? payload.sub : undefined;
+	if (typeof sub === 'string') { return sub || null; }
+	return typeof sub === 'number' && Number.isFinite(sub) ? String(sub) : null;
 }
 
 /**
@@ -97,4 +125,4 @@ function isSessionExpiredError(e) {
 	return status === 401 || /\bAPI 401\b|token_expired|refresh_expired|signature has expired/i.test(msg);
 }
 
-module.exports = { EXPIRY_MARGIN_MS, REFRESH_TIMEOUT_MS, SESSION_EXPIRED_MESSAGE, jwtExpiresAt, accessNeedsRefresh, classifyRefresh, isSessionExpiredError };
+module.exports = { EXPIRY_MARGIN_MS, REFRESH_TIMEOUT_MS, SESSION_EXPIRED_MESSAGE, jwtExpiresAt, jwtSubject, accessNeedsRefresh, classifyRefresh, isSessionExpiredError };

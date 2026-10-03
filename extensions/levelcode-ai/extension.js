@@ -18,6 +18,7 @@ const providers = require('./providers/index');
 const catalog = require('./providers/catalog');
 const { resolveGateway } = require('./providers/gateway');
 const session = require('./providers/session');
+const { createAuthRetry } = require('./providers/authRetry');
 const { registerAiEdit } = require('./aiEdit');
 const { registerLmProvider } = require('./lmProvider');
 const { registerInlineComplete } = require('./inlineComplete');
@@ -654,6 +655,28 @@ async function refreshGatewayToken() {
 }
 
 /**
+ * A lapsed access token, for everything that sends a provider request and is neither the chat nor
+ * the agent: inline edit, Agent Sketch and inline completion (each is handed this in its `deps`),
+ * and Compact and the session-memory summary further down. They sent a request once and reported
+ * the gateway's 401 — for a token the chat would have renewed and carried on with, and one nothing
+ * renews ahead of time in a window that simply stays focused (checkCloudSession runs on the
+ * webview's `ready` and on regaining focus). Through this, the token is renewed and the request sent
+ * once more.
+ *
+ * The rules are in providers/authRetry.js. The two that matter here: it never ends a session — the
+ * refresh endpoint answering 401, above, is still the only thing that does — and a BYOK request is
+ * never refreshed or retried. The chat and the agent keep their own retry (handleSend; the agent's
+ * refreshAuth hook): they have a transcript and a sign-in card to keep in step with it.
+ *
+ * ONE instance for the window, so that requests which fail together wait on a single renewal. And it
+ * is told which session this window is on (sessionGeneration), for the reason the refresh keeps that
+ * count: a request belongs to the session it was sent in. A token stored by a LATER sign-in is not a
+ * renewal of the old one, and is never put on a request the earlier session sent. (A sign-in made in
+ * ANOTHER window this count cannot see; for that, authRetry goes by who the tokens say they are for.)
+ */
+const authRetry = createAuthRetry({ prepProviderRequest, refreshGatewayToken, isAuthError, sessionGeneration: () => sessionGeneration, dbg });
+
+/**
  * Resolve everything needed to call the active provider: id, key, model, baseURL, maxTokens.
  * Returns { ok:false, reason } when a required key/baseURL is missing (after optional prompting) or
  * a custom endpoint would leak the key over plaintext — the caller renders providerErrorMessage().
@@ -1146,11 +1169,12 @@ async function summarizeSessionOutcome(messages, existingFacts) {
 	if (ef.length) { instr += '\n\nExisting project facts (reference by NUMBER under SUPERSEDES only; do NOT repeat them as FACTS):\n' + ef.map((f, i) => (i + 1) + '. ' + f.text).join('\n'); }
 	instr += '\n\nTranscript:\n\n' + flat;
 	try {
-		const out = await providers.complete({
-			providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL, label: req.label,
+		// Through authRetry: a session sealed after the cloud token lapsed still gets its summary.
+		const out = await authRetry(req, (r) => providers.complete({
+			providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL, label: r.label,
 			model, maxTokens: 200, system: OUTCOME_SYSTEM,
 			messages: [{ role: 'user', content: instr }]
-		});
+		}));
 		return parseOutcome(out, ef);
 	} catch (e) { dbg('sessions.memory.summarize.error', { msg: String((e && e.message) || e) }); return { summary: '', facts: [], supersedes: [] }; }
 }
@@ -1877,12 +1901,14 @@ async function compactAgentMemory() {
 
 	let summary;
 	try {
-		summary = await providers.complete({
-			providerId: req.providerId, apiKey: req.apiKey, baseURL: req.baseURL, label: req.label,
-			model: req.model, maxTokens: 1500,
+		// Through authRetry: a lapsed cloud token is renewed and the summary asked for once more, rather
+		// than Compact failing on a 401 that the next chat message would have recovered from.
+		summary = await authRetry(req, (r) => providers.complete({
+			providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL, label: r.label,
+			model: r.model, maxTokens: 1500,
 			system: COMPACT_SYSTEM,
 			messages: [{ role: 'user', content: COMPACT_INSTRUCTIONS + flat }]
-		});
+		}));
 	} catch (e) { dbg('compact.error', { msg: String((e && e.message) || e) }); return { ok: false, reason: 'failed' }; }
 	if (!summary || !summary.trim()) { return { ok: false, reason: 'empty' }; }
 
@@ -3393,7 +3419,7 @@ function activate(context) {
 		// Agent Sketch: the visual multi-agent flow canvas. Lazy require — only loads when opened.
 		vscode.commands.registerCommand('levelcode.ai.sketch', () => {
 			try {
-				require('./sketch').openSketch(context, { prepProviderRequest, aiConfig, currentProviderId });
+				require('./sketch').openSketch(context, { prepProviderRequest, aiConfig, currentProviderId, authRetry });
 			} catch (e) {
 				vscode.window.showErrorMessage('Agent Sketch failed to load: ' + ((e && e.message) || e));
 			}
@@ -3432,6 +3458,7 @@ function activate(context) {
 	// AI edit-with-diff (select code → instruct → review diff → apply) — provider-agnostic.
 	registerAiEdit(context, {
 		aiConfig,
+		authRetry,   // a lapsed cloud token is renewed and the edit sent once more
 		prepProviderRequest,
 		streamChat: providers.streamChat,
 		accountSignIn   // the "Sign in" on an edit refused because the cloud session ended
@@ -3451,6 +3478,7 @@ function activate(context) {
 	// it must never pop a key dialog mid-typing.
 	registerInlineComplete(context, {
 		aiConfig,
+		authRetry,   // …and renewed as silently: a failed renewal is one missing suggestion, never a toast
 		prepProviderRequest,
 		complete: providers.complete,
 		fastCompletionModel: catalog.fastCompletionModel
