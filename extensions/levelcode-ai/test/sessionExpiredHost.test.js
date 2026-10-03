@@ -22,6 +22,8 @@
  *    - the account message tells the webview whether an expiry is still waiting, so the card leaves
  *      when BYOK is chosen in Settings and comes back if gateway mode is
  *    - a 2xx refresh reply that cannot be stored changes nothing, and nothing escapes into `ready`
+ *    - the replay asks whether an expiry is waiting AFTER its read, not only before it
+ *    - a window catches up with a session another window ended, left or renewed — on every focus
  *
  *  The functions are sliced out of the shipped extension.js and run against stand-ins for what they
  *  touch (SecretStorage, globalState, fetch, the provider adapter), the way mcpManage.test.js does
@@ -92,7 +94,7 @@ function decl(name) {
 
 const FUNCTIONS = [
 	'post', 'providerMode', 'providerErrorMessage', 'isAuthError', 'cloudEndpoint', 'cloudApiUrl',
-	'refreshCloudToken', 'renewSession', 'withSessionLock', 'sameSession', 'sessionExpired', 'postSessionExpired',
+	'refreshCloudToken', 'renewSession', 'storedToken', 'catchUpWithStoredSession', 'withSessionLock', 'sameSession', 'sessionExpired', 'postSessionExpired',
 	'sessionExpiredPending', 'isEndedSessionError', 'clearSessionExpired', 'replaySessionExpired', 'checkCloudSession',
 	'refreshGatewayToken', 'prepProviderRequest', 'handleSend', 'currentAccount', 'postAccount', 'accountSignOut',
 	'storeSession', 'newChat', 'resumeSession', 'restoreCheckpoint', 'onConfigChanged'
@@ -109,7 +111,7 @@ const makeHost = new Function('env', [
 	'let activeWebview = env.webview, cloudSignedIn = env.signedIn, agentMode = false, conversation = [], pendingContext = null, conversationEpoch = 0, abort = null;',
 	'let agentMessages = [], currentCheckpoint = null, lastAgentGoal = null;',
 	decl('ACCOUNT_TOKEN_KEY'), decl('ACCOUNT_REFRESH_KEY'), decl('ACCOUNT_PROFILE_KEY'), decl('ACCOUNT_EXPIRED_KEY'),
-	decl('sessionQueue'), decl('sessionGeneration'), decl('lastSessionCheck'),
+	decl('sessionQueue'), decl('sessionGeneration'), decl('SESSION_CHECK_EVERY_MS'), decl('lastSessionCheck'),
 	...FUNCTIONS.map(extract),
 	'return { ' + FUNCTIONS.join(', ') + ',',
 	'  KEY: { token: ACCOUNT_TOKEN_KEY, refresh: ACCOUNT_REFRESH_KEY, profile: ACCOUNT_PROFILE_KEY, expired: ACCOUNT_EXPIRED_KEY },',
@@ -197,6 +199,10 @@ function boot(over) {
 		/** @type {Error|null} */ keyError: null,
 		/** Makes SecretStorage refuse every write — a locked keychain. */
 		/** @type {Error|null} */ storeError: null,
+		/** …and every read. */
+		/** @type {Error|null} */ readError: null,
+		/** While set, every SecretStorage read waits on it — a read that is slow to come back. */
+		/** @type {Promise<any>|null} */ readGate: null,
 		/** The account messages the popover (and the sign-in card) were sent. */
 		accounts: () => posted.filter((m) => m.type === 'account'),
 		types: () => posted.map((m) => m.type),
@@ -207,7 +213,12 @@ function boot(over) {
 		session: o.refreshTimeoutMs ? Object.assign({}, session, { REFRESH_TIMEOUT_MS: o.refreshTimeoutMs }) : session,
 		ctx: {
 			secrets: {
-				get: async (k) => { await tick(); return secrets.get(k); },
+				get: async (k) => {
+					await tick();
+					if (t.readGate) { await t.readGate; }
+					if (t.readError) { throw t.readError; }
+					return secrets.get(k);
+				},
 				store: async (k, v) => {
 					const op = 'store ' + k; ops.push(op); t.onOp(op); await tick();
 					if (t.storeError) { throw t.storeError; }
@@ -957,6 +968,111 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		await t.host.checkCloudSession('ready');
 		assert.strictEqual(t.secrets.get(t.K.refresh), 'r1', 'still the session it was');
 		assert.strictEqual(t.state.get(t.K.expired), undefined);
+	});
+
+	// ── the replay asks again after its read ─────────────────────────────────────────────────────
+	for (const [how, answer] of [
+		['"Use my own key instead"', (t) => t.host.clearSessionExpired()],
+		['BYOK chosen in Settings', async (t) => { t.settings['levelcode.ai.providerMode'] = 'byok'; }]
+	]) {
+		await test('replay: an expiry answered by ' + how + ' WHILE the token read is out is not shown again', async () => {
+			const t = boot({ expired: true, profile: { name: 'Ada' } });
+			const read = deferred();
+			t.readGate = read.promise;                     // SecretStorage is slow to answer…
+			const replay = t.host.replaySessionExpired();
+			await settle();                                // …so the replay is parked on that read…
+			await answer(t);                               // …and the user answers the card meanwhile.
+			read.resolve();
+			await replay;
+			assert.deepStrictEqual(t.posted, [], 'no card for an expiry that is no longer waiting');
+		});
+	}
+
+	await test('replay: the same slow read with nothing answered still ends in the card', async () => {
+		const t = boot({ expired: true, profile: { name: 'Ada' } });
+		const read = deferred();
+		t.readGate = read.promise;
+		const replay = t.host.replaySessionExpired();
+		await settle();
+		read.resolve();
+		await replay;
+		assert.deepStrictEqual(t.types(), ['sessionExpired']);
+	});
+
+	await test('a store that will not READ: the check and the replay finish quietly — neither can break what awaits them', async () => {
+		const t = boot({ expired: true, access: deadAccess(), refresh: 'r1' });
+		t.readError = new Error('the keychain is locked');
+		await t.host.checkCloudSession('ready');
+		await t.host.replaySessionExpired();
+		assert.deepStrictEqual(t.posted, []);
+	});
+
+	// ── a window catches up with what another window did to the session they share ───────────────
+	await test('another window ENDED the session before this window\'s focus check: flag, popover and card catch up', async () => {
+		const t = boot({ access: liveAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		assert.strictEqual(t.host.signedIn(), true, 'this window is showing a live session');
+		t.secrets.delete(t.K.token); t.secrets.delete(t.K.refresh); t.state.set(t.K.expired, true);   // the other window's sessionExpired()
+		await t.host.checkCloudSession('focus');
+		assert.strictEqual(t.host.signedIn(), false);
+		assert.deepStrictEqual(t.posted.filter((m) => m.type === 'sessionExpired'), [{ type: 'sessionExpired', name: 'Ada', message: session.SESSION_EXPIRED_MESSAGE }]);
+		assert.deepStrictEqual(t.accounts().map(brief), [{ signedIn: false, mode: 'gateway', expired: true, status: 'signedout' }]);
+		assert.strictEqual(t.calls.refresh.length, 0, 'nothing to renew, nothing requested');
+		assert.deepStrictEqual(t.ops, [], 'and nothing written');
+		const before = t.posted.length;
+		await t.host.checkCloudSession('focus');   // clicking back in again
+		assert.strictEqual(t.posted.length, before, 'said once, not on every focus');
+	});
+
+	await test('another window SIGNED OUT: the popover catches up, and there is no card — nothing expired', async () => {
+		const t = boot({ access: liveAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		t.secrets.delete(t.K.token); t.secrets.delete(t.K.refresh); t.state.delete(t.K.profile);       // the other window's accountSignOut()
+		await t.host.checkCloudSession('focus');
+		assert.strictEqual(t.host.signedIn(), false);
+		assert.deepStrictEqual(t.accounts().map(brief), [{ signedIn: false, mode: 'gateway', expired: false, status: 'signedout' }]);
+		assert.ok(!t.types().includes('sessionExpired'));
+	});
+
+	await test('another window SIGNED IN while this one showed the card: the account message is its cue to go', async () => {
+		const t = boot({ expired: true, profile: { name: 'Ada' } });
+		assert.strictEqual(t.host.signedIn(), false);
+		t.secrets.set(t.K.token, liveAccess()); t.secrets.set(t.K.refresh, 'r2'); t.state.delete(t.K.expired);   // the other window's storeSession()
+		await t.host.checkCloudSession('focus');
+		assert.strictEqual(t.host.signedIn(), true);
+		assert.deepStrictEqual(t.accounts().map(brief), [{ signedIn: true, mode: 'gateway', expired: false, status: undefined }]);
+		assert.ok(!t.types().includes('sessionExpired'));
+	});
+
+	await test('a focus check that lands in the MIDDLE of this window\'s own sign-out does not take it for another window\'s', async () => {
+		// Mid-sign-out the flag already says "signed out" while the token is still stored. Read then,
+		// the two disagree, and the catch-up would announce a session this window is busy ending.
+		const t = boot({ access: liveAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		let check = null;
+		t.onOp = (op) => { if (!check && op === 'forget ' + t.K.token) { check = t.host.checkCloudSession('focus'); } };
+		await t.host.accountSignOut();
+		assert.ok(check, 'the focus check was started mid-sign-out');
+		await check;
+		assert.deepStrictEqual(t.accounts().map(brief), [{ signedIn: false, mode: 'gateway', expired: false, status: 'signedout' }], 'one resync: the sign-out\'s own');
+		assert.strictEqual(t.host.signedIn(), false);
+	});
+
+	await test('the ration is on the refresh, not on the look: a second focus skips the request but still catches up', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		t.refreshReply = 'offline';
+		await t.host.checkCloudSession('focus');
+		await t.host.checkCloudSession('focus');
+		assert.strictEqual(t.calls.refresh.length, 1, 'offline: one attempt, not one per click');
+		t.secrets.delete(t.K.token); t.secrets.delete(t.K.refresh); t.state.set(t.K.expired, true);   // meanwhile, in another window
+		await t.host.checkCloudSession('focus');
+		assert.strictEqual(t.posted.filter((m) => m.type === 'sessionExpired').length, 1, 'found inside the ten minutes');
+		assert.strictEqual(t.calls.refresh.length, 1);
+	});
+
+	await test('`ready` does not say it twice: the handler has just read the same token, and the card is replayed last', async () => {
+		const t = boot({ expired: true, profile: { name: 'Ada' } });
+		await t.host.checkCloudSession('ready');
+		assert.deepStrictEqual(t.posted, [], 'the check is quiet');
+		await t.host.replaySessionExpired();
+		assert.deepStrictEqual(t.types(), ['sessionExpired'], 'the last step speaks');
 	});
 
 	console.log('\nsessionExpiredHost: ' + n + ' tests passed.');
