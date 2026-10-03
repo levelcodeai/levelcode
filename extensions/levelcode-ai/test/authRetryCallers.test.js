@@ -215,8 +215,8 @@ const PATIENCE_MS = 2000;
 /**
  * Wait for `cond` — by the CLOCK, not by counting turns of the event loop. Inline completion waits
  * out its debounce on a real timer, a millisecond even when the setting is 0, and how many turns fit
- * into a millisecond is the machine's business: a few dozen on a Mac, well over a thousand on the
- * Linux runner the release gate uses. A count that was plenty on one ran out on the other before
+ * into a millisecond is the machine's business: a few dozen on a Mac, well over a thousand on
+ * Linux, where the release gate runs. A count that was plenty on one ran out on the other before
  * the timer had fired.
  */
 async function until(cond, what) {
