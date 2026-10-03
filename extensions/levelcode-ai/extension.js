@@ -628,9 +628,12 @@ async function refreshGatewayToken() {
  * never refreshed or retried. The chat and the agent keep their own retry (handleSend; the agent's
  * refreshAuth hook): they have a transcript and a sign-in card to keep in step with it.
  *
- * ONE instance for the window, so that requests which fail together wait on a single renewal.
+ * ONE instance for the window, so that requests which fail together wait on a single renewal. And it
+ * is told which session this window is on (sessionGeneration), for the reason the refresh keeps that
+ * count: a request belongs to the session it was sent in. A token stored by a LATER sign-in is not a
+ * renewal of the old one, and is never put on a request the earlier session sent.
  */
-const authRetry = createAuthRetry({ prepProviderRequest, refreshGatewayToken, isAuthError, dbg });
+const authRetry = createAuthRetry({ prepProviderRequest, refreshGatewayToken, isAuthError, sessionGeneration: () => sessionGeneration, dbg });
 
 /**
  * Resolve everything needed to call the active provider: id, key, model, baseURL, maxTokens.

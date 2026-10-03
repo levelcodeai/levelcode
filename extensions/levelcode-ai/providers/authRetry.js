@@ -36,9 +36,16 @@
  *    - A request refused on a token that has been renewed SINCE it was sent — by a sibling node, by
  *      the chat — is just sent again on the stored one. And the renewed token is written onto the
  *      request itself, so whatever else holds that request (the rest of a Sketch run) is on it too.
- *    - A request nobody asked for (ghost text) may start a renewal once a minute at most. It is
+ *    - A request stays with the session and the gateway it was sent on. "A different token is
+ *      stored" is only a renewal if it is the same session's token for the same URL: after a
+ *      sign-in as someone else, or a change of cloud host, the stored token is not this request's.
+ *      Putting it on the request would send one host's credential to another, or replay one
+ *      account's prompt as another's — so recovery stops there, before refreshing and again before
+ *      re-sending, and the request's own error stands.
+ *    - A request nobody asked for (ghost text) may START a renewal once a minute at most. It is
  *      sent on every pause in typing; a gateway that keeps answering 401 must not turn typing into
- *      a stream of refreshes, each one rotating the session's credentials.
+ *      a stream of refreshes, each one rotating the session's credentials. Waiting on a renewal
+ *      that is already out starts nothing, and is never held back.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -52,22 +59,21 @@ const BACKGROUND_RENEWAL_INTERVAL_MS = 60 * 1000;
 function aborted(signal) { return !!(signal && signal.aborted); }
 
 /**
- * `promise`'s value — or `undefined` the moment `signal` aborts, whichever comes first. The renewal
- * itself is not cancelled (other requests may be waiting on it, and its answer is worth having
- * either way); the caller just stops waiting, so Stop and Cancel stay as quick as they were.
- * `promise` must not reject.
- * @template T
- * @param {Promise<T>} promise
+ * Wait for `promise` — or until `signal` aborts, whichever comes first. The renewal itself is not
+ * cancelled (other requests may be waiting on it, and what it stores is worth having either way);
+ * the caller just stops waiting, so Stop and Cancel stay as quick as they were. `promise` must not
+ * reject.
+ * @param {Promise<void>} promise
  * @param {AbortSignal|undefined} signal
- * @returns {Promise<T|undefined>}
+ * @returns {Promise<void>}
  */
 function unlessAborted(promise, signal) {
 	if (!signal) { return promise; }
 	return new Promise((resolve) => {
-		if (signal.aborted) { resolve(undefined); return; }
-		const stop = () => resolve(undefined);
+		if (signal.aborted) { resolve(); return; }
+		const stop = () => resolve();
 		signal.addEventListener('abort', stop, { once: true });
-		promise.then((v) => { signal.removeEventListener('abort', stop); resolve(v); });
+		promise.then(() => { signal.removeEventListener('abort', stop); resolve(); });
 	});
 }
 
@@ -83,13 +89,16 @@ function unlessAborted(promise, signal) {
  * that fail together share.
  *
  *   prepProviderRequest — the host's; asked again (never prompting) for what is stored NOW
- *   refreshGatewayToken — the host's; true when a usable access token is in place afterwards
+ *   refreshGatewayToken — the host's; what it achieved is read back from what is stored, not from its answer
  *   isAuthError         — the host's test for "the provider refused the credentials"
+ *   sessionGeneration   — the host's count of the sessions this window has been through: it moves
+ *                         on a sign-in, a sign-out and an expiry, and stays put through a renewal
  *
  * @param {{
  *   prepProviderRequest: (opts?: any) => Promise<any>,
- *   refreshGatewayToken: () => Promise<boolean>,
+ *   refreshGatewayToken: () => Promise<any>,
  *   isAuthError: (e: any) => boolean,
+ *   sessionGeneration?: () => any,
  *   dbg?: (label: string, data?: any) => void,
  *   now?: () => number
  * }} host
@@ -98,56 +107,85 @@ function unlessAborted(promise, signal) {
 function createAuthRetry(host) {
 	const now = host.now || Date.now;
 	const dbg = host.dbg || (() => { });
-	/** @type {Promise<boolean>|null} the renewal that is out, if one is */
+	const generation = host.sessionGeneration || (() => 0);
+	/** @type {Promise<void>|null} the renewal that is out, if one is */
 	let renewing = null;
 	let lastBackgroundRenewal = -Infinity;
+	/**
+	 * The session each request's credentials came from: the host's generation, noted the first time
+	 * the request is sent through here — for every caller, the moment after it was prepared. Kept
+	 * per REQUEST, not per send: a Sketch run sends its one request many times over minutes, and a
+	 * sign-in half-way through must not put the new account's token on the nodes still to come.
+	 * @type {WeakMap<object, any>}
+	 */
+	const sessionOf = new WeakMap();
 
-	/** Renew the token — or wait on the renewal already out. Never rejects: a refresh that throws has failed. */
+	/**
+	 * Renew the token — or wait on the renewal already out. Never rejects, and says nothing: a
+	 * refresh that throws has failed, and whether one worked is read from what is stored afterwards.
+	 */
 	function renew() {
 		if (!renewing) {
 			renewing = Promise.resolve().then(() => host.refreshGatewayToken())
-				.then(Boolean, () => false)
-				.then((ok) => { renewing = null; return ok; });
+				.then(() => { }, () => { })
+				.then(() => { renewing = null; });
 		}
 		return renewing;
 	}
 
 	/**
-	 * What the host would send a request on NOW, read against the token that was just refused:
-	 * a different cloud token (`apiKey`), or the news that the session has ended.
+	 * What the host would send this request on NOW, read against what it was sent on:
+	 *
+	 *   'ended'      — the session is over: the host answers `signedOut`
+	 *   'superseded' — the request is no longer this session's to recover. The session it was sent
+	 *                  in has been replaced (a sign-in, a sign-out), or the host would now send it
+	 *                  somewhere else: another gateway URL, the user's own provider, nowhere.
+	 *                  Whatever token is stored for THAT is not put on this request.
+	 *   'renewed'    — same session, same gateway, a different token in place: `apiKey`
+	 *   'same'       — the token that was refused is still the one stored
+	 *
+	 * @param {any} req
 	 * @param {string} sent
-	 * @returns {Promise<{apiKey?: string, ended?: boolean}>}
+	 * @returns {Promise<{state: 'ended'|'superseded'|'renewed'|'same', apiKey?: string}>}
 	 */
-	async function stored(sent) {
+	async function look(req, sent) {
 		const cur = await host.prepProviderRequest({ prompt: false });   // a retry never opens a key dialog
-		if (cur && cur.ok && cur.gateway && cur.apiKey && cur.apiKey !== sent) { return { apiKey: cur.apiKey }; }
-		return { ended: !!cur && !cur.ok && cur.reason === 'signedOut' };
+		if (cur && !cur.ok && cur.reason === 'signedOut') { return { state: 'ended' }; }
+		const sameGateway = !!cur && cur.ok && cur.gateway && cur.providerId === req.providerId && cur.baseURL === req.baseURL;
+		if (!sameGateway || generation() !== sessionOf.get(req)) { return { state: 'superseded' }; }
+		return cur.apiKey && cur.apiKey !== sent ? { state: 'renewed', apiKey: cur.apiKey } : { state: 'same' };
 	}
 
 	/**
 	 * A gateway request carrying `sent` was refused. Find the token to send it again on.
+	 * @param {any} req
 	 * @param {string} sent
 	 * @param {AuthRetryOptions} o
 	 * @returns {Promise<{outcome: string, apiKey?: string}>}
 	 */
-	async function recover(sent, o) {
-		let cur = await stored(sent);
-		if (cur.apiKey) { return { outcome: 'already-renewed', apiKey: cur.apiKey }; }
-		if (cur.ended) { return { outcome: 'ended' }; }
-		if (o.background) {
+	async function recover(req, sent, o) {
+		let cur = await look(req, sent);
+		if (cur.state === 'renewed') { return { outcome: 'already-renewed', apiKey: cur.apiKey }; }
+		if (cur.state !== 'same') { return { outcome: cur.state }; }   // ended, or no longer this request's: nothing to refresh
+		// The limit is on STARTING a renewal. One that is already out costs nothing to wait on — and the
+		// request that started it may be gone by now (the next keystroke cancelled it) with this one
+		// the only one left to use what it brings back.
+		if (o.background && !renewing) {
 			if (now() - lastBackgroundRenewal < BACKGROUND_RENEWAL_INTERVAL_MS) { return { outcome: 'throttled' }; }
 			lastBackgroundRenewal = now();
 		}
-		const renewed = await unlessAborted(renew(), o.signal);
+		await unlessAborted(renew(), o.signal);
 		if (aborted(o.signal)) { return { outcome: 'aborted' }; }
-		cur = await stored(sent);
-		if (cur.ended) { return { outcome: 'ended' }; }
-		return renewed && cur.apiKey ? { outcome: 'renewed', apiKey: cur.apiKey } : { outcome: 'failed' };
+		// Asked again, not carried over: a sign-in or a sign-out can land while the renewal is out.
+		cur = await look(req, sent);
+		if (cur.state === 'renewed') { return { outcome: 'renewed', apiKey: cur.apiKey }; }
+		return { outcome: cur.state === 'same' ? 'failed' : cur.state };
 	}
 
 	return async function authRetry(req, send, opts) {
 		const o = opts || {};
 		const sent = req.apiKey;
+		if (req.gateway && !sessionOf.has(req)) { sessionOf.set(req, generation()); }
 		try {
 			return await send(req);
 		} catch (e) {
@@ -155,7 +193,7 @@ function createAuthRetry(host) {
 			/** @type {{outcome: string, apiKey?: string}} */
 			let found;
 			// Whatever goes wrong while looking for a way to recover, the request's own failure is the news.
-			try { found = await recover(sent, o); } catch { found = { outcome: 'failed' }; }
+			try { found = await recover(req, sent, o); } catch { found = { outcome: 'failed' }; }
 			dbg('auth.retry', { outcome: found.outcome });
 			if (found.outcome === 'ended') {
 				throw Object.assign(new Error(SESSION_EXPIRED_MESSAGE), { code: 'session_expired', cause: e });

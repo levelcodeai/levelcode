@@ -12,7 +12,10 @@
  *    - nothing is sent twice once part of the answer has arrived, or after the caller's own abort
  *    - requests that fail together wait on one renewal, and one refused on a token that has been
  *      renewed since is simply sent again
- *    - a request nobody asked for (ghost text) cannot turn typing into a stream of refreshes
+ *    - a request stays with the session and the gateway it was sent on: a token stored by a later
+ *      sign-in, or for another cloud host, is never put on it
+ *    - a request nobody asked for (ghost text) cannot turn typing into a stream of refreshes — but
+ *      is never kept from waiting on a renewal that is already out
  *
  *  The host is a stand-in: what is stored, and what a renewal does to it. The same rule run against
  *  the shipped host code, the real adapters and the real callers is test/authRetryCallers.test.js.
@@ -30,6 +33,8 @@ async function until(cond, what) {
 	for (let i = 0; i < 200; i++) { if (cond()) { return; } await tick(); }
 	assert.fail('never happened: ' + what);
 }
+/** Let everything already in motion get as far as it can. */
+async function settle() { for (let i = 0; i < 25; i++) { await tick(); } }
 function deferred() { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; }
 function within(promise, ms, what) {
 	let timer;
@@ -54,14 +59,17 @@ async function failure(promise) {
  *   renewal  — what a renewal does: 'renew' (a new token is stored), 'fail' (offline / 5xx: nothing
  *              changes), 'end' (the refresh endpoint said 401: the HOST ends the session), 'claim'
  *              (says it worked, stores nothing new), 'throw', or a function returning one of those
+ *   generation — the host's count of the sessions this window has been through (a sign-in, a
+ *              sign-out and an expiry each move it; a renewal does not)
+ *   baseURL  — where the gateway is
  */
 function window_(over) {
-	const w = Object.assign({ token: 'access-1', ended: false, byokKey: '', renewal: 'renew', clock: 0 }, over);
+	const w = Object.assign({ token: 'access-1', ended: false, byokKey: '', renewal: 'renew', clock: 0, generation: 0, baseURL: 'https://cloud.test/ai' }, over);
 	let serial = 1;
-	w.preps = []; w.renewals = 0; w.sent = []; w.dbg = [];
+	w.preps = []; w.renewals = 0; w.sent = []; w.sentTo = []; w.dbg = [];
 	w.refused = new Set([w.token]);   // the tokens the gateway answers 401 to: the first one has lapsed
 	const whatIsStored = () => {
-		if (w.token) { return { ok: true, gateway: true, providerId: 'openai', apiKey: w.token, baseURL: 'https://cloud.test/ai', model: 'cloud-model', label: 'LevelCode Cloud' }; }
+		if (w.token) { return { ok: true, gateway: true, providerId: 'openai', apiKey: w.token, baseURL: w.baseURL, model: 'cloud-model', label: 'LevelCode Cloud' }; }
 		if (w.ended) { return { ok: false, providerId: 'openai', label: 'LevelCode Cloud', reason: 'signedOut', gateway: true }; }
 		if (w.byokKey) { return { ok: true, providerId: 'claude', apiKey: w.byokKey, model: 'claude-model', label: 'Claude' }; }
 		return { ok: false, providerId: 'claude', label: 'Claude', reason: 'key' };
@@ -80,10 +88,11 @@ function window_(over) {
 			const how = typeof w.renewal === 'function' ? await w.renewal() : w.renewal;
 			if (how === 'throw') { throw new Error('keychain is locked'); }
 			if (how === 'renew') { w.token = 'access-' + (++serial); return true; }
-			if (how === 'end') { w.token = ''; w.ended = true; return false; }
+			if (how === 'end') { w.token = ''; w.ended = true; w.generation++; return false; }
 			return how === 'claim';
 		},
 		isAuthError: (e) => /\bAPI 401\b/.test(String((e && e.message) || e)),
+		sessionGeneration: () => w.generation,
 		dbg: (label, data) => { w.dbg.push(label + ' ' + data.outcome); },
 		now: () => w.clock
 	});
@@ -92,6 +101,7 @@ function window_(over) {
 	/** The provider adapter. */
 	w.send = async (req) => {
 		w.sent.push(req.apiKey);
+		w.sentTo.push(req.baseURL || req.providerId);
 		await tick();
 		if (w.refused.has(req.apiKey)) { throw req.gateway ? gateway401() : new Error('Claude API 401: invalid x-api-key'); }
 		return 'answered on ' + req.apiKey;
@@ -194,13 +204,15 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 	});
 
 	await test('signed out on purpose meanwhile: the request\'s own error, not a session card, and no fallback to BYOK', async () => {
-		const w = window_({ byokKey: 'sk-own', renewal: 'fail' });   // signed out: there is no refresh token to renew with
+		const w = window_({ byokKey: 'sk-own' });
 		const req = w.request();
-		w.token = '';   // no marker: a sign-out, not an expiry
+		w.token = ''; w.generation++;   // no marker: a sign-out, not an expiry
 		const e = await failure(w.authRetry(req, w.send));
 		assert.ok(/API 401/.test(e.message));
 		assert.notStrictEqual(e.code, 'session_expired');
 		assert.deepStrictEqual(w.sent, ['access-1'], 'a gateway request is not quietly re-sent to another provider');
+		assert.strictEqual(w.renewals, 0, 'and nothing is refreshed on behalf of a session that is gone');
+		assert.deepStrictEqual(w.dbg, ['auth.retry superseded']);
 	});
 
 	// ── what is never renewed ────────────────────────────────────────────────────────────────────
@@ -297,6 +309,94 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		assert.strictEqual(w.renewals, 2);
 	});
 
+	await test('our own renewal failed, but someone else\'s landed meanwhile: what is stored decides, and it is sent again', async () => {
+		const w = window_({ renewal: async () => { w.token = 'access-9'; return 'fail'; } });
+		assert.strictEqual(await w.authRetry(w.request(), w.send), 'answered on access-9');
+		assert.deepStrictEqual(w.sent, ['access-1', 'access-9']);
+	});
+
+	// ── a request stays with the session and the gateway it was sent on ──────────────────────────
+	/** While the request is out: this window signs out, and someone else signs in. */
+	const someoneElseSignsIn = (w) => { w.generation += 2; w.token = 'access-bo'; };
+
+	await test('another account signed in while the request was out: its token is NOT put on the old request', async () => {
+		const w = window_();
+		const req = w.request();
+		const send = async (r) => { if (!w.sent.length) { someoneElseSignsIn(w); } return w.send(r); };
+		const e = await failure(w.authRetry(req, send));
+		assert.ok(/API 401/.test(e.message), 'the request\'s own error');
+		assert.deepStrictEqual(w.sent, ['access-1'], 'one account\'s prompt is not replayed as another\'s');
+		assert.strictEqual(req.apiKey, 'access-1');
+		assert.strictEqual(w.renewals, 0, 'and the new session is not refreshed on the old request\'s behalf');
+		assert.deepStrictEqual(w.dbg, ['auth.retry superseded']);
+	});
+
+	await test('the sign-in lands DURING the renewal: what the renewal brought back is not this request\'s either', async () => {
+		const w = window_({ renewal: async () => { someoneElseSignsIn(w); return 'claim'; } });
+		const e = await failure(w.authRetry(w.request(), w.send));
+		assert.ok(/API 401/.test(e.message));
+		assert.deepStrictEqual(w.sent, ['access-1']);
+		assert.deepStrictEqual(w.dbg, ['auth.retry superseded']);
+	});
+
+	await test('a run\'s request stays in the session it started in, however much later it is sent', async () => {
+		const w = window_();
+		w.refused.clear();
+		const req = w.request();   // one request for the whole run, as Agent Sketch has
+		assert.strictEqual(await w.authRetry(req, w.send), 'answered on access-1');   // the first node: all is well
+		someoneElseSignsIn(w);          // …then the account changes under the run,
+		w.refused.add('access-1');      // and the old session's token stops working
+		const e = await failure(w.authRetry(req, w.send));   // the next node — sent AFTER the sign-in, on the run's request
+		assert.ok(/API 401/.test(e.message));
+		assert.deepStrictEqual(w.sent, ['access-1', 'access-1'], 'the rest of the run is not carried on as the other account');
+		assert.strictEqual(w.renewals, 0);
+	});
+
+	await test('the cloud host moved: a token stored for the new URL is never sent to the old one', async () => {
+		const w = window_();
+		const req = w.request();
+		// Changed by another window, so nothing this window counts has moved: only where the gateway is.
+		w.baseURL = 'https://other.test/ai'; w.token = 'access-other';
+		const e = await failure(w.authRetry(req, w.send));
+		assert.ok(/API 401/.test(e.message));
+		assert.deepStrictEqual(w.sentTo, ['https://cloud.test/ai'], 'one request, to the URL it was prepared for');
+		assert.deepStrictEqual(w.sent, ['access-1'], 'and the other host\'s credential never left');
+		assert.strictEqual(w.renewals, 0);
+		assert.deepStrictEqual(w.dbg, ['auth.retry superseded']);
+	});
+
+	await test('the same URL under another provider is not the same gateway', async () => {
+		const stored = { ok: true, gateway: true, providerId: 'openai', apiKey: 'access-1', baseURL: 'https://cloud.test/ai' };
+		const authRetry = createAuthRetry({
+			prepProviderRequest: async () => Object.assign({}, stored),
+			refreshGatewayToken: async () => true,
+			isAuthError: (e) => /API 401/.test(e.message)
+		});
+		const sent = [];
+		const send = async (r) => { sent.push(r.providerId + ' ' + r.apiKey); throw gateway401(); };
+		const req = Object.assign({}, stored);
+		Object.assign(stored, { providerId: 'openrouter', apiKey: 'access-2' });
+		await failure(authRetry(req, send));
+		assert.deepStrictEqual(sent, ['openai access-1']);
+	});
+
+	await test('a host that keeps no count of sessions still gets the gateway check', async () => {
+		const stored = { ok: true, gateway: true, providerId: 'openai', apiKey: 'access-1', baseURL: 'https://cloud.test/ai' };
+		let renewals = 0;
+		const authRetry = createAuthRetry({
+			prepProviderRequest: async () => Object.assign({}, stored),
+			refreshGatewayToken: async () => { renewals++; stored.apiKey = 'access-2'; return true; },
+			isAuthError: (e) => /API 401/.test(e.message)
+		});
+		const send = async (r) => { if (r.apiKey === 'access-1') { throw gateway401(); } return r.baseURL + ' ' + r.apiKey; };
+		assert.strictEqual(await authRetry(Object.assign({}, stored), send), 'https://cloud.test/ai access-2', 'renews as before');
+		const old = Object.assign({}, stored, { apiKey: 'access-1' });
+		stored.baseURL = 'https://other.test/ai';
+		const e = await failure(authRetry(old, send));
+		assert.ok(/API 401/.test(e.message));
+		assert.strictEqual(renewals, 1, 'nothing more was refreshed');
+	});
+
 	// ── Stop and Cancel ──────────────────────────────────────────────────────────────────────────
 	await test('aborted while the renewal is out: the caller stops waiting, nothing is re-sent, the renewal still lands', async () => {
 		const reply = deferred();
@@ -351,6 +451,25 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		w.clock += 1;   // the minute is up
 		await failure(w.authRetry(w.request(), w.send, background));
 		assert.strictEqual(w.renewals, 3);
+	});
+
+	await test('background: a request that only has to WAIT on a renewal already out is not held back', async () => {
+		const reply = deferred();
+		const w = window_({ renewal: () => reply.promise });
+		const typing = new AbortController();
+		const first = failure(w.authRetry(w.request(), w.send, { background: true, signal: typing.signal }));
+		await until(() => w.renewals === 1, 'the renewal');
+		typing.abort();   // the next keystroke: the completion that started the renewal is gone
+		await first;
+		// The next pause in typing — well inside the minute. (Its outcome is kept as a value: held back,
+		// it would be refused while this test is still waiting, and that should read as a failed case.)
+		const second = w.authRetry(w.request(), w.send, background).then((answer) => answer, (e) => 'refused: ' + e.message);
+		await until(() => w.sent.length === 2, 'the second request');
+		await settle();   // refused on the old token, and now waiting on the renewal that is still out
+		reply.resolve('renew');
+		assert.strictEqual(await within(second, 2000, 'the second request'), 'answered on access-2');
+		assert.strictEqual(w.renewals, 1, 'it started nothing');
+		assert.deepStrictEqual(w.dbg, ['auth.retry aborted', 'auth.retry renewed']);
 	});
 
 	await test('background: a gateway that keeps answering 401 to FRESH tokens does not rotate the session on every keystroke', async () => {

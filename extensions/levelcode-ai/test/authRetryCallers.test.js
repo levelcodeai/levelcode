@@ -22,6 +22,10 @@
  *    - a BYOK request is never refreshed and never retried
  *    - nobody is ever asked for a key, and what was silent stays silent
  *
+ *  And, where it takes a real sign-in or a real setting to show it: a request stays with the
+ *  session and the cloud host it was sent on — a token stored by someone else's sign-in, or for
+ *  another host, is never put on it.
+ *
  *  This RUNS the shipped code end to end, for the reason sessionExpiredHost.test.js gives: the
  *  callers are the real modules, driven as the editor drives them (the registered command, the
  *  panel's message handler, the completion provider) behind a minimal `vscode` mock; the provider
@@ -81,8 +85,13 @@ function decl(name) {
 const HOST_FUNCTIONS = [
 	'providerMode', 'isAuthError', 'cloudEndpoint', 'cloudApiUrl', 'refreshCloudToken', 'renewSession', 'withSessionLock', 'sameSession',
 	'sessionExpired', 'postSessionExpired', 'sessionExpiredPending', 'isEndedSessionError', 'clearSessionExpired', 'refreshGatewayToken',
-	'prepProviderRequest', 'accountSignOut', 'summarizeSessionOutcome', 'compactAgentMemory'
-];
+	'prepProviderRequest', 'accountSignOut', 'storeSession', 'summarizeSessionOutcome', 'compactAgentMemory'
+].concat(
+	// The refresh is still being reviewed (#92), and this file is stacked on it. What its later
+	// revisions have renewSession call is sliced as soon as extension.js has it; anything this list
+	// does not foresee is reported by name (sliceErrors, below) rather than passed off as a failure.
+	['storedToken', 'catchUpWithStoredSession'].filter((name) => src.includes('function ' + name + '('))
+);
 // eslint-disable-next-line no-new-func
 const makeHost = new Function('env', [
 	"'use strict';",
@@ -95,7 +104,7 @@ const makeHost = new Function('env', [
 	decl('ACCOUNT_TOKEN_KEY'), decl('ACCOUNT_REFRESH_KEY'), decl('ACCOUNT_PROFILE_KEY'), decl('ACCOUNT_EXPIRED_KEY'),
 	decl('sessionQueue'), decl('sessionGeneration'),
 	...HOST_FUNCTIONS.map(extract),
-	decl('authRetry'),   // built exactly as the extension builds it — from the three functions sliced above
+	decl('authRetry'),   // built exactly as the extension builds it — from the functions and the count sliced above
 	'return { ' + HOST_FUNCTIONS.join(', ') + ', authRetry,',
 	'  KEY: { token: ACCOUNT_TOKEN_KEY, refresh: ACCOUNT_REFRESH_KEY, profile: ACCOUNT_PROFILE_KEY, expired: ACCOUNT_EXPIRED_KEY },',
 	'  signedIn: () => cloudSignedIn, setAgentMessages: (m) => { agentMessages = m; }, agentMessages: () => agentMessages };'
@@ -205,6 +214,8 @@ async function until(cond, what) {
 	for (let i = 0; i < 400; i++) { if (cond()) { return; } await tick(); }
 	assert.fail('never happened: ' + what);
 }
+/** Let everything already in motion get as far as it can. */
+async function settle() { for (let i = 0; i < 40; i++) { await tick(); } }
 function deferred() { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; }
 function within(promise, ms, what) {
 	let timer;
@@ -225,8 +236,8 @@ const net = {
 	model: [],
 	/** @type {{refresh:string}[]} the body of every POST /auth/refresh */
 	refresh: [],
-	/** @type {Promise<any>|null} the model endpoint waits on this before it answers */
-	hold: null,
+	/** The model endpoint waits on this before it answers: a promise, or a function of the request's index returning one (or nothing). */
+	hold: /** @type {any} */ (null),
 	/** @type {string[]} anything else that tried to leave */
 	unexpected: []
 };
@@ -260,7 +271,8 @@ async function fakeFetch(url, init) {
 		const call = { url: u, bearer: String(init.headers.authorization || '').replace(/^Bearer /, ''), stream: !!body.stream };
 		net.model.push(call);
 		await tick();
-		if (net.hold) { await net.hold; }
+		const held = typeof net.hold === 'function' ? net.hold(net.model.length - 1) : net.hold;
+		if (held) { await held; }
 		if (signal && signal.aborted) { throw abortError(); }
 		if (net.refused.has(call.bearer)) { return json(401, { error: { code: 'token_expired', message: net.refusal } }); }
 		const out = typeof net.answer === 'function' ? net.answer(call) : net.answer;
@@ -796,6 +808,86 @@ async function test(name, fn) {
 		assert.deepStrictEqual({ sent: bearers(), refresh: net.refresh.length }, { sent: [LAPSED, FRESH], refresh: 1 });
 	});
 
+	await test('inline completion: the next pause, arriving while the cancelled one\'s renewal is still out, waits for it and is answered', async () => {
+		const t = lapsed();
+		const reply = deferred();
+		net.refreshReply = () => reply.promise;
+		const first = typing();
+		const cancelled = ghostText(first);
+		await until(() => net.refresh.length === 1, 'the renewal');
+		first.keystroke();   // the completion that started the renewal is gone; the renewal is not
+		assert.strictEqual(await within(cancelled, 2000, 'the cancelled completion'), null);
+
+		net.answer = ' + 1;';
+		const next = ghostText();   // sent on the old token, a moment later: the store has nothing newer yet
+		await until(() => net.model.length === 2, 'the next request');
+		await settle();             // refused, and now waiting on the renewal that is still out
+		reply.resolve(RENEWS);
+		assert.deepStrictEqual(await within(next, 2000, 'the next completion'), [' + 1;'], 'not "one renewal a minute, so nothing"');
+		assert.deepStrictEqual({ sent: bearers(), refresh: net.refresh.length }, { sent: [LAPSED, LAPSED, FRESH], refresh: 1 });
+		assert.deepStrictEqual(t.retries, ['aborted', 'renewed'], 'it waited on the renewal; it started none');
+		assert.deepStrictEqual({ toasts: ui.toasts, inputs: ui.inputs }, { toasts: [], inputs: 0 });
+	});
+
+	// ── a request stays with the session and the cloud host it was sent on ───────────────────────
+	const OTHER = 'access-of-someone-else';
+
+	await test('inline edit: someone else signs in while the request is out — the edit is not replayed as them', async () => {
+		const t = lapsed();
+		const gate = deferred();
+		net.hold = gate.promise;
+		const running = edit();
+		await until(() => net.model.length === 1, 'the request');
+		await t.host.storeSession(OTHER, 'rB', { name: 'Bo' });   // the sign-in lands; the gateway's 401 for Ada's token arrives after it
+		gate.resolve();
+		const r = await within(running, 2000, 'the edit');
+		assert.strictEqual(r.errors.length, 1);
+		assert.ok(/^LevelCode AI edit failed: .*API 401: Signature has expired$/.test(r.errors[0]), r.errors[0]);
+		assert.deepStrictEqual(r.buttons, [[]], 'nothing expired: no "Sign in"');
+		assert.deepStrictEqual(bearers(), [LAPSED], 'Ada\'s selection is not sent again on Bo\'s token');
+		assert.deepStrictEqual(net.refresh, [], 'and Bo\'s session is not refreshed on its behalf');
+		assert.deepStrictEqual({ token: t.secrets.get(t.K.token), refresh: t.secrets.get(t.K.refresh) }, { token: OTHER, refresh: 'rB' }, 'the new session is exactly as the sign-in left it');
+		assert.deepStrictEqual({ retries: t.retries, diffs: r.diffs, cards: cards(t) }, { retries: ['superseded'], diffs: 0, cards: [] });
+	});
+
+	await test('inline edit: the cloud host changes while the request is out — the new host\'s token never reaches the old one', async () => {
+		const t = lapsed();
+		const gate = deferred();
+		net.hold = gate.promise;
+		const running = edit();
+		await until(() => net.model.length === 1, 'the request');
+		// As another window would leave things: a new host in Settings, and a session for it in the store.
+		// This window counts no new session — only where the gateway is tells the two apart.
+		settings['levelcode.cloud.endpoint'] = 'https://other.test';
+		t.secrets.set(t.K.token, OTHER); t.secrets.set(t.K.refresh, 'rB');
+		gate.resolve();
+		const r = await within(running, 2000, 'the edit');
+		assert.ok(r.errors.length === 1 && /API 401: Signature has expired$/.test(r.errors[0]), JSON.stringify(r.errors));
+		const oldHost = new URL(shippedDefault('levelcode.cloud.endpoint')).host;
+		assert.deepStrictEqual(net.model.map((c) => c.bearer + ' → ' + new URL(c.url).host), [LAPSED + ' → ' + oldHost], 'one request: the old token, to the old host');
+		assert.deepStrictEqual(net.refresh, [], 'and the other host\'s refresh token is not spent on it');
+		assert.deepStrictEqual(t.retries, ['superseded']);
+		assert.strictEqual((await t.host.prepProviderRequest({ prompt: false })).baseURL, 'https://other.test' + GATEWAY_PATH, 'premise: the next request does go to the new host');
+	});
+
+	await test('Agent Sketch: a run stays in the session it started in — a sign-in half-way is not used for the nodes still to come', async () => {
+		const t = boot({ access: 'access-ada', refresh: 'r1', profile: { name: 'Ada' } });
+		const gate = deferred();
+		net.hold = (index) => (index === 0 ? gate.promise : null);   // hold node a's answer…
+		// …which is the last thing Ada's token is good for: every request after it is refused.
+		net.answer = () => (net.model.length >= 2 ? json(401, { error: { code: 'token_expired', message: 'Signature has expired' } }) : 'done');
+		const running = sketch({ type: 'run', sketch: { goal: 'ship it', nodes: [node('a'), node('d')], edges: [{ from: 'a', to: 'd' }] } });
+		await until(() => net.model.length === 1, 'node a\'s request');
+		await t.host.storeSession(OTHER, 'rB', { name: 'Bo' });   // Bo signs in while node a is still out
+		gate.resolve();
+		const posted = await within(running, 2000, 'the run');
+		assert.deepStrictEqual(posted.filter((m) => m.type === 'nodeDone').map((m) => m.id), ['a']);
+		const failed = posted.filter((m) => m.type === 'nodeStatus' && m.status === 'error');
+		assert.ok(failed.length === 1 && failed[0].id === 'd' && /API 401: Signature has expired$/.test(failed[0].message), JSON.stringify(failed));
+		assert.deepStrictEqual(bearers(), ['access-ada', 'access-ada'], 'node d went out on the run\'s own token, and was not sent again as Bo');
+		assert.deepStrictEqual({ refresh: net.refresh, retries: t.retries, token: t.secrets.get(t.K.token) }, { refresh: [], retries: ['superseded'], token: OTHER });
+	});
+
 	// ── Compact ──────────────────────────────────────────────────────────────────────────────────
 	await test('Compact: the renewed summary replaces the head of the transcript; a failed one still reports "failed"', async () => {
 		const ok = lapsed();
@@ -811,8 +903,8 @@ async function test(name, fn) {
 	});
 
 	// ── what can only be read ────────────────────────────────────────────────────────────────────
-	await test('host: authRetry is built from the host\'s own three functions, and handed to all three modules', () => {
-		assert.ok(/^const authRetry = createAuthRetry\(\{ prepProviderRequest, refreshGatewayToken, isAuthError, dbg \}\);$/m.test(src));
+	await test('host: authRetry is built from the host\'s own functions and session count, and handed to all three modules', () => {
+		assert.ok(/^const authRetry = createAuthRetry\(\{ prepProviderRequest, refreshGatewayToken, isAuthError, sessionGeneration: \(\) => sessionGeneration, dbg \}\);$/m.test(src));
 		const handed = {
 			registerAiEdit: /registerAiEdit\(context, \{([\s\S]*?)\n\t\}\);/.exec(src),
 			registerInlineComplete: /registerInlineComplete\(context, \{([\s\S]*?)\n\t\}\);/.exec(src),
