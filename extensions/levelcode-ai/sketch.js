@@ -21,6 +21,7 @@ const path = require("path");
 const fs = require("fs");
 const providers = require("./providers/index");
 const catalog = require("./providers/catalog");
+const { SESSION_EXPIRED_MESSAGE } = require("./providers/session");
 const { AGENT_GROUPS, AGENTS, AGENT_BY_ID } = require("./sketch/agentCatalog");
 const graph = require("./sketch/graph");
 const pricing = require("./sketch/pricing");
@@ -458,6 +459,24 @@ async function loadWorkspacePatchContext() {
   );
 }
 
+/**
+ * Why prepProviderRequest refused, as this panel says it. An ended LevelCode Cloud session is not a
+ * missing key, and not a provider that is "not ready": it gets the sentence chat and the agent send
+ * for it, so the user goes to sign in instead of hunting for a key they never needed. Any other
+ * reason keeps the caller's wording (`otherwise`).
+ * @param {{reason?:string, label?:string}} req
+ * @param {string} otherwise
+ */
+function notReadyMessage(req, otherwise) {
+  if (req.reason === "signedOut") {
+    return SESSION_EXPIRED_MESSAGE;
+  }
+  if (req.reason === "key") {
+    return "No API key set for " + req.label + ".";
+  }
+  return otherwise;
+}
+
 // ---- the runner -------------------------------------------------------------------------------
 /** @param {{sketch:any, deps:any}} o  deps = { prepProviderRequest } from extension.js */
 async function runSketch(o) {
@@ -497,10 +516,10 @@ async function runSketch(o) {
       clearSlot();
       post({
         type: "runError",
-        message:
-          req.reason === "key"
-            ? "No API key set for " + req.label + "."
-            : "Provider not ready (" + (req.reason || "unknown") + ").",
+        message: notReadyMessage(
+          req,
+          "Provider not ready (" + (req.reason || "unknown") + ").",
+        ),
       });
       return;
     }
@@ -745,10 +764,7 @@ async function boardCommand(o) {
   if (!req.ok) {
     post({
       type: "uiError",
-      message:
-        req.reason === "key"
-          ? "No API key set for " + req.label + "."
-          : "Provider not ready.",
+      message: notReadyMessage(req, "Provider not ready."),
     });
     return;
   }
@@ -923,10 +939,7 @@ async function generateFlow(o) {
   if (!req.ok) {
     post({
       type: "uiError",
-      message:
-        req.reason === "key"
-          ? "No API key set for " + req.label + "."
-          : "Provider not ready.",
+      message: notReadyMessage(req, "Provider not ready."),
     });
     return;
   }
