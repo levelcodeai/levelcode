@@ -143,6 +143,17 @@
      status row resolve the same values the transcript does. `--shell-x` is the log's horizontal padding
      AND the shell column's inset, which is what keeps the two edges on the same line. */
   #log { flex: 1; overflow-y: auto; padding: 12px var(--shell-x); display: flex; flex-direction: column; gap: 12px; }
+  /* THE LOG CONTAINS WHAT IS IN IT. The page is a 100vh shell and this is the only thing in it that
+     scrolls, so what sits below it — the composer, the status row — never moves. That holds only while
+     nothing in the transcript is laid out against the PAGE, and an out-of-flow box with no positioned
+     ancestor is: it sits at its unscrolled place in the transcript, where neither this element's
+     scrolling nor its clipping reaches it. `.msg .role` (below) is such a box. Every labelled message
+     that starts more than a viewport down the transcript — in practice, every turn after a long first
+     one — put its label below the fold; the page grew to reach that one pixel, and the wheel, once the
+     log was at its end, scrolled the whole shell away: transcript, composer and status row riding up
+     over a blank page. Positioned, the log is the containing block for every descendant: the label,
+     and whatever is added later. webviewCss.test.js fails if this goes. */
+  #log { position: relative; }
   /* Log is a flex column → children default to flex-shrink:1. Any child with overflow:hidden (e.g. the
      approval/edit cards) then gets an auto min-size of 0 and the flex algorithm crushes it to an invisible
      line once the log overflows. Pin every child to its natural height; the log itself scrolls instead. */
@@ -241,7 +252,11 @@
      wall of text. So the element stays in the accessibility tree and leaves the visual layer. This is
      why the rule below must never be "simplified" to `display: none` or `visibility: hidden` — both
      take it out of the a11y tree too, which is the whole thing we are preserving. webviewCss.test.js
-     fails on either. */
+     fails on either.
+
+     ABSOLUTE NEEDS AN ANCHOR. Taking the label out of flow is what stops it reserving a line — and it
+     also means the label is laid out against its nearest positioned ancestor. That is `#log` (see
+     `#log { position: relative }` above). Without one it is the page, and the page scrolls. */
   .msg .role {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
