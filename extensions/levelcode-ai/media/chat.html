@@ -2753,7 +2753,12 @@
       + '<button class="ucbtn ghost" data-act="byok">Use my own key instead</button></div>';
     log.appendChild(card); scrollIfStuck();
     card.querySelector('[data-act="signin"]').onclick = () => vscode.postMessage({ type: 'accountSignIn' });
-    card.querySelector('[data-act="byok"]').onclick = () => vscode.postMessage({ type: 'byokSettings' });
+    // Choosing your own key answers the expiry — the host stops asking — so the card goes too,
+    // rather than sitting in the transcript offering a sign-in nobody is waiting on.
+    card.querySelector('[data-act="byok"]').onclick = () => {
+      vscode.postMessage({ type: 'byokSettings' });
+      card.remove(); if (sessionCard === card){ sessionCard = null; }
+    };
     sessionCard = card;
   }
   // Our-side outage / transient issue → a neutral "service" notice, NOT the red error and NOT the

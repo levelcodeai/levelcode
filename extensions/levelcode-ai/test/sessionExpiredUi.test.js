@@ -6,6 +6,10 @@
  *  popover still said "signed in". The fix routes `code: 'session_expired'` to a sign-in card in
  *  BOTH error handlers and on a host-pushed startup check. A DOM test cannot see the routing
  *  order inside the message switch; these read the source and pin it.
+ *
+ *  The host's BEHAVIOUR — what ends a session, what replays the card, who falls back to BYOK — is
+ *  run, not read, in sessionExpiredHost.test.js. What stays here is what can only be read: the order of
+ *  the `ready` handler and the wiring between the two files.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -77,6 +81,25 @@ test('host: the webview ready handler checks the session before the first messag
 	assert.ok(/onDidChangeWindowState/.test(ext), 'focus re-check');
 });
 
+test('host: ready replays an unanswered expiry LAST — after the check, and under a replayed transcript', () => {
+	// The focus check can end the session with no chat open; post() then has nowhere to send the card,
+	// and the next `ready` finds no token to check. The replay is what shows it — and it has to come
+	// after the transcript replay, or a chat moved to an editor tab gets the card above its history.
+	const ready = /case 'ready':[^\n]*/.exec(ext)[0];
+	const check = ready.indexOf("await checkCloudSession('ready')");
+	const transcript = ready.indexOf('replayLiveTranscript(');
+	const replay = ready.indexOf('await replaySessionExpired()');
+	assert.ok(check >= 0 && transcript >= 0 && replay >= 0, 'all three steps present');
+	assert.ok(check < transcript && transcript < replay, 'order: check, transcript, expiry replay');
+	assert.ok(/await replaySessionExpired\(\); break;$/.test(ready.trimEnd()), 'the replay is the last thing ready does');
+});
+
+test('host: the card\'s "use my own key" button answers the expiry before it opens the setting', () => {
+	const byok = /case 'byokSettings':[^\n]*/.exec(ext)[0];
+	assert.ok(byok.indexOf('await clearSessionExpired()') >= 0, 'marker cleared');
+	assert.ok(byok.indexOf('await clearSessionExpired()') < byok.indexOf('workbench.action.openSettings'), 'before the settings open');
+});
+
 test('host: refresh stores the rotated refresh token and only a 401 ends the session', () => {
 	const fn = ext.slice(ext.indexOf('async function refreshCloudToken('), ext.indexOf('async function sessionExpired('));
 	assert.ok(/data\.refresh\)\s*\{\s*await ctx\.secrets\.store\(ACCOUNT_REFRESH_KEY, data\.refresh\)/.test(fn), 'rotation stored');
@@ -84,9 +107,71 @@ test('host: refresh stores the rotated refresh token and only a 401 ends the ses
 	assert.ok(/outcome === 'expired'\)\s*\{\s*await sessionExpired\(\)/.test(fn), 'expired → sessionExpired');
 });
 
-test('host: gateway mode with no token is signedOut, never "No API key set"', () => {
-	assert.ok(/reason: 'signedOut', gateway: true/.test(ext));
+test('host: only an ENDED session is signedOut — "no token" alone still falls back to BYOK', () => {
+	// Gateway is the default mode, so gating this on "no token" turned every BYOK user with no
+	// account into an expired session. It hangs off the marker sessionExpired() leaves instead.
+	const fn = ext.slice(ext.indexOf('async function prepProviderRequest('), ext.indexOf('function captureSelection('));
+	assert.ok(/if \(!token && sessionExpiredPending\(\)\) \{\s*return \{[^}]*reason: 'signedOut', gateway: true \};/.test(fn));
+	assert.ok(!/providerMode\(\) === 'gateway' && !token/.test(fn), 'the token-only condition is gone');
 	assert.ok(/req\.reason === 'signedOut'\)\s*\{ return session\.SESSION_EXPIRED_MESSAGE; \}/.test(ext));
+});
+
+test('host: the chat catch shows the card only once the session has ended, and never ends it itself', () => {
+	const fn = ext.slice(ext.indexOf('async function handleSend('), ext.indexOf('async function setModelSetting('));
+	assert.ok(/req\.gateway && !cloudSignedIn && session\.isSessionExpiredError\(e\)/.test(fn), 'same rule as the agent hook');
+	assert.ok(!/sessionExpired\(\)/.test(fn.replace(/\/\/[^\n]*/g, '')), 'handleSend does not call sessionExpired()');
+	const only = (ext.replace(/\/\/[^\n]*/g, '').match(/await sessionExpired\(\)/g) || []).length;
+	assert.strictEqual(only, 1, 'one caller ends a session: the refresh endpoint answering 401');
+});
+
+// ── the card itself, run against a stand-in DOM ─────────────────────────────────────────────────
+function signInCard() {
+	const posted = [];
+	const log = { children: [], appendChild(c) { this.children.push(c); c.parent = this; c.isConnected = true; return c; } };
+	const createElement = () => {
+		const buttons = {};
+		return {
+			className: '', parent: null, isConnected: false, _html: '',
+			set innerHTML(v) { this._html = String(v); for (const m of this._html.matchAll(/data-act="([\w-]+)"/g)) { buttons[m[1]] = { onclick: null }; } },
+			get innerHTML() { return this._html; },
+			querySelector(sel) { const m = /^\[data-act="([\w-]+)"\]$/.exec(sel); assert.ok(m, 'stand-in DOM cannot parse ' + sel); return buttons[m[1]] || null; },
+			remove() { if (this.parent) { this.parent.children.splice(this.parent.children.indexOf(this), 1); } this.parent = null; this.isConnected = false; }
+		};
+	};
+	const start = html.indexOf('function addSignInCard(');
+	const fnSrc = html.slice(start, html.indexOf('\n  }', start) + 4);
+	// eslint-disable-next-line no-new-func
+	const api = new Function('document', 'log', 'vscode',
+		'const clearStatus = () => {}, finishAgentBubble = () => {}, closeGroup = () => {}, scrollIfStuck = () => {};\n'
+		+ 'const esc = (s) => String(s), codicon = (n) => "<i:" + n + ">";\nlet sessionCard = null;\n' + fnSrc
+		+ '\nreturn { addSignInCard, current: () => sessionCard };')({ createElement }, log, { postMessage: (m) => posted.push(m) });
+	return { api, log, posted };
+}
+
+test('card: a second expiry notice replaces the first — one card, however many paths find it', () => {
+	const { api, log } = signInCard();
+	api.addSignInCard({ name: 'Ada' });
+	api.addSignInCard({});   // e.g. the assistantError that follows the host-pushed notice
+	assert.strictEqual(log.children.length, 1);
+	assert.strictEqual(api.current(), log.children[0]);
+});
+
+test('card: "Sign in" starts the sign-in and leaves the card up until an account message says it worked', () => {
+	const { api, log, posted } = signInCard();
+	api.addSignInCard({ name: 'Ada' });
+	assert.ok(/Welcome back, Ada\./.test(log.children[0].innerHTML));
+	log.children[0].querySelector('[data-act="signin"]').onclick();
+	assert.deepStrictEqual(posted, [{ type: 'accountSignIn' }]);
+	assert.strictEqual(log.children.length, 1);
+});
+
+test('card: "Use my own key instead" tells the host and takes the card away', () => {
+	const { api, log, posted } = signInCard();
+	api.addSignInCard({});
+	log.children[0].querySelector('[data-act="byok"]').onclick();
+	assert.deepStrictEqual(posted, [{ type: 'byokSettings' }]);
+	assert.strictEqual(log.children.length, 0, 'the card is gone');
+	assert.strictEqual(api.current(), null);
 });
 
 console.log('\nsessionExpiredUi: ' + n + ' tests passed.');
