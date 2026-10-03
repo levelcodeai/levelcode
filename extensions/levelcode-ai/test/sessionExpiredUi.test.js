@@ -104,7 +104,7 @@ test('host: refresh stores the rotated refresh token and only a 401 ends the ses
 	const fn = ext.slice(ext.indexOf('async function refreshCloudToken('), ext.indexOf('async function sessionExpired('));
 	assert.ok(/data\.refresh\)\s*\{\s*await ctx\.secrets\.store\(ACCOUNT_REFRESH_KEY, data\.refresh\)/.test(fn), 'rotation stored');
 	assert.ok(/session\.classifyRefresh\(/.test(fn), 'classified, not res.ok');
-	assert.ok(/outcome === 'expired'\)\s*\{\s*await sessionExpired\(\)/.test(fn), 'expired → sessionExpired');
+	assert.ok(/outcome === 'expired'\)\s*\{\s*if \(await sessionExpired\(was\)\)/.test(fn), 'expired → sessionExpired, for the session the request was about');
 });
 
 test('host: only an ENDED session is signedOut — "no token" alone still falls back to BYOK', () => {
@@ -119,8 +119,8 @@ test('host: only an ENDED session is signedOut — "no token" alone still falls 
 test('host: the chat catch shows the card only once the session has ended, and never ends it itself', () => {
 	const fn = ext.slice(ext.indexOf('async function handleSend('), ext.indexOf('async function setModelSetting('));
 	assert.ok(/req\.gateway && !cloudSignedIn && session\.isSessionExpiredError\(e\)/.test(fn), 'same rule as the agent hook');
-	assert.ok(!/sessionExpired\(\)/.test(fn.replace(/\/\/[^\n]*/g, '')), 'handleSend does not call sessionExpired()');
-	const only = (ext.replace(/\/\/[^\n]*/g, '').match(/await sessionExpired\(\)/g) || []).length;
+	assert.ok(!/\bsessionExpired\(/.test(fn.replace(/\/\/[^\n]*/g, '')), 'handleSend does not call sessionExpired()');
+	const only = (ext.replace(/\/\/[^\n]*/g, '').match(/await sessionExpired\(/g) || []).length;
 	assert.strictEqual(only, 1, 'one caller ends a session: the refresh endpoint answering 401');
 });
 

@@ -14,6 +14,14 @@
 /** Refresh this far ahead of expiry, so a request issued right now cannot land after the deadline. */
 const EXPIRY_MARGIN_MS = 5 * 60 * 1000;
 
+/**
+ * How long the whole refresh exchange may take — connecting, the headers AND the body. The webview's
+ * `ready` waits on a refresh before it restores the chat, so this is how long a host that accepts the
+ * connection and then says nothing can hold that up. Running out of it is "this attempt failed",
+ * never "the session is over".
+ */
+const REFRESH_TIMEOUT_MS = 10 * 1000;
+
 /** The sentence shown when the session is gone. Mirrors the server's own wording. */
 const SESSION_EXPIRED_MESSAGE = 'Your LevelCode Cloud session has expired. Sign in again to continue.';
 
@@ -79,4 +87,4 @@ function isSessionExpiredError(e) {
 	return status === 401 || /\bAPI 401\b|token_expired|refresh_expired|signature has expired/i.test(msg);
 }
 
-module.exports = { EXPIRY_MARGIN_MS, SESSION_EXPIRED_MESSAGE, jwtExpiresAt, accessNeedsRefresh, classifyRefresh, isSessionExpiredError };
+module.exports = { EXPIRY_MARGIN_MS, REFRESH_TIMEOUT_MS, SESSION_EXPIRED_MESSAGE, jwtExpiresAt, accessNeedsRefresh, classifyRefresh, isSessionExpiredError };

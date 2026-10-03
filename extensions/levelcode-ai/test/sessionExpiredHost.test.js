@@ -13,6 +13,10 @@
  *      being shown until the user answers it: signs in, signs out, or picks their own key
  *    - gateway is the DEFAULT mode, so "no token" still means BYOK for everyone who never had a
  *      session — only an ENDED session may stop a request and ask for a sign-in
+ *    - a refresh's answer belongs to the session it started against: one that arrives after a
+ *      sign-in or a sign-out changes nothing, and the request itself cannot outlast its deadline
+ *    - New Chat, a resumed session and a checkpoint restore rewrite the transcript in place; the
+ *      card they take with them is put back
  *
  *  The functions are sliced out of the shipped extension.js and run against stand-ins for what they
  *  touch (SecretStorage, globalState, fetch, the provider adapter), the way mcpManage.test.js does
@@ -64,25 +68,29 @@ function decl(name) {
 
 const FUNCTIONS = [
 	'post', 'providerMode', 'providerErrorMessage', 'isAuthError', 'cloudEndpoint', 'cloudApiUrl',
-	'refreshCloudToken', 'sessionExpired', 'postSessionExpired', 'sessionExpiredPending', 'clearSessionExpired',
-	'replaySessionExpired', 'checkCloudSession', 'refreshGatewayToken', 'prepProviderRequest', 'handleSend',
-	'accountSignOut', 'storeSession'
+	'refreshCloudToken', 'withSessionLock', 'sameSession', 'sessionExpired', 'postSessionExpired',
+	'sessionExpiredPending', 'clearSessionExpired', 'replaySessionExpired', 'checkCloudSession',
+	'refreshGatewayToken', 'prepProviderRequest', 'handleSend', 'accountSignOut', 'storeSession',
+	'newChat', 'resumeSession', 'restoreCheckpoint'
 ];
 // eslint-disable-next-line no-new-func
 const makeHost = new Function('env', [
 	"'use strict';",
 	'const { vscode, session, providers, resolveGateway, fetch, ctx, dbg, aiConfig, postAccount, sendConfigToWebview,',
 	'  gatewayModel, maxOutputTokens, currentProviderId, baseUrlFor, getProviderKey, activeModel, storeImages, agentFlow,',
-	'  listWorkspaceFiles, workspaceMapBlock, activeFileBlock, contextFileBlocks, gatherAutoContext, labelImages, withImages } = env;',
+	'  listWorkspaceFiles, workspaceMapBlock, activeFileBlock, contextFileBlocks, gatherAutoContext, labelImages, withImages,',
+	'  sealLiveSession, resetConversationState, postContextFiles, postMemoryDigest, sessionsManager, currentContextLimit,',
+	'  refreshSessions, focusChatView, review, checkpoints } = env;',
 	"const SYSTEM_PROMPT = 'system';",
 	'let activeWebview = env.webview, cloudSignedIn = env.signedIn, agentMode = false, conversation = [], pendingContext = null, conversationEpoch = 0, abort = null;',
+	'let agentMessages = [], currentCheckpoint = null, lastAgentGoal = null;',
 	decl('ACCOUNT_TOKEN_KEY'), decl('ACCOUNT_REFRESH_KEY'), decl('ACCOUNT_PROFILE_KEY'), decl('ACCOUNT_EXPIRED_KEY'),
-	decl('sessionExpiredAnnounced'), decl('lastSessionCheck'),
+	decl('sessionQueue'), decl('sessionGeneration'), decl('lastSessionCheck'),
 	...FUNCTIONS.map(extract),
 	'return { ' + FUNCTIONS.join(', ') + ',',
 	'  KEY: { token: ACCOUNT_TOKEN_KEY, refresh: ACCOUNT_REFRESH_KEY, profile: ACCOUNT_PROFILE_KEY, expired: ACCOUNT_EXPIRED_KEY },',
 	'  signedIn: () => cloudSignedIn, conversation: () => conversation, abort: () => abort,',
-	'  openWebview: (w) => { activeWebview = w; } };'
+	'  openWebview: (w) => { activeWebview = w; }, setAgentMessages: (m) => { agentMessages = m; } };'
 ].join('\n'));
 
 // The defaults a fresh install runs with come from package.json, not from this file: the whole
@@ -104,15 +112,38 @@ const deadAccess = () => jwt({ sub: 1, exp: now() - HOUR });
 /** The gateway's answer to an expired access token, as the openai adapter throws it. */
 const gateway401 = () => new Error('LevelCode Cloud API 401: {"error":{"code":"token_expired","message":"Your LevelCode Cloud session has expired. Sign in again to continue."}}');
 
+/** One turn of the event loop — what every SecretStorage / globalState call costs in the editor. */
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+/** Let everything already in motion finish. */
+async function settle() { for (let i = 0; i < 25; i++) { await tick(); } }
+/** Wait for something the host is doing in the background; fail rather than spin if it never happens. */
+async function until(cond, what) {
+	for (let i = 0; i < 200; i++) { if (cond()) { return; } await tick(); }
+	assert.fail('never happened: ' + what);
+}
+/** A reply that arrives when the test says so. */
+function deferred() { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; }
+/** Fail loudly, instead of hanging the suite, when something that must finish does not. */
+function within(promise, ms, what) {
+	let timer;
+	const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(what + ' did not finish within ' + ms + ' ms')), ms); });
+	return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 /**
  * One editor window: the sliced host functions wired to in-memory stand-ins.
  *   settings      — overrides on top of the shipped defaults (`null` unsets one)
  *   access/refresh/profile/expired — what SecretStorage and globalState hold at the start
  *   byokKey       — the user's own provider key ('' = none saved); t.keyError makes the lookup throw
  *   webview       — false to start with the chat closed
+ *   refreshTimeoutMs — the refresh deadline, so a test of it need not take ten seconds
+ *
+ * The stores answer a turn of the event loop LATER, as the real ones do: every call to them is a
+ * round trip to another process. That gap is where two session changes can interleave, so a
+ * stand-in that answered at once would hide exactly what the lock is for.
  */
 function boot(over) {
-	const o = Object.assign({ settings: {}, access: null, refresh: null, profile: null, expired: false, byokKey: '', webview: true }, over);
+	const o = Object.assign({ settings: {}, access: null, refresh: null, profile: null, expired: false, byokKey: '', webview: true, refreshTimeoutMs: 0 }, over);
 	const settings = {
 		'levelcode.ai.providerMode': shippedDefault('levelcode.ai.providerMode'),
 		'levelcode.cloud.endpoint': shippedDefault('levelcode.cloud.endpoint'),
@@ -126,8 +157,15 @@ function boot(over) {
 	const webview = { postMessage: (m) => { posted.push(m); } };
 	const t = {
 		posted, calls, ops, secrets, state, webview, settings,
-		/** What POST /auth/refresh answers: 'offline', or { status, body } ('garbage' body = unparseable). */
+		/**
+		 * What POST /auth/refresh answers: 'offline'; 'stall' (accepts, never answers); { status, body },
+		 * where a body of 'garbage' is unparseable and 'stall' never arrives; or a function returning any
+		 * of those, or a promise of one — which is how a reply is made to arrive late.
+		 */
 		refreshReply: 'offline',
+		/** Called with every write the host makes to the stores, as it starts — the hook for landing something mid-change. */
+		onOp: (_op) => { },
+		checkpoints: [],
 		/** The provider adapter: called with the request, and the attempt number. */
 		stream: async (_req, _attempt) => { },
 		byokKey: o.byokKey,
@@ -136,23 +174,41 @@ function boot(over) {
 		last: (type) => posted.filter((m) => m.type === type).pop()
 	};
 	const env = {
-		vscode, session, resolveGateway, webview: o.webview ? webview : undefined, signedIn: !!o.access,
+		vscode, resolveGateway, webview: o.webview ? webview : undefined, signedIn: !!o.access,
+		session: o.refreshTimeoutMs ? Object.assign({}, session, { REFRESH_TIMEOUT_MS: o.refreshTimeoutMs }) : session,
 		ctx: {
 			secrets: {
-				get: async (k) => secrets.get(k),
-				store: async (k, v) => { secrets.set(k, v); },
-				delete: async (k) => { ops.push('forget ' + k); secrets.delete(k); }
+				get: async (k) => { await tick(); return secrets.get(k); },
+				store: async (k, v) => { const op = 'store ' + k; ops.push(op); t.onOp(op); await tick(); secrets.set(k, v); },
+				delete: async (k) => { const op = 'forget ' + k; ops.push(op); t.onOp(op); await tick(); secrets.delete(k); }
 			},
 			globalState: {
 				get: (k) => state.get(k),
-				update: async (k, v) => { ops.push((v === undefined ? 'clear ' : 'set ') + k); if (v === undefined) { state.delete(k); } else { state.set(k, v); } }
+				update: async (k, v) => {
+					const op = (v === undefined ? 'clear ' : 'set ') + k; ops.push(op); t.onOp(op); await tick();
+					if (v === undefined) { state.delete(k); } else { state.set(k, v); }
+				}
 			}
 		},
 		fetch: async (url, init) => {
-			calls.refresh.push({ url, body: JSON.parse(init.body) });
-			const r = t.refreshReply;
+			const call = { url, body: JSON.parse(init.body), signal: init.signal };
+			calls.refresh.push(call);
+			// Silence until the caller's own deadline aborts the request. With no signal there is nothing
+			// to end it, and it hangs — which is the bug, and what within() then reports.
+			const silence = () => new Promise((_, reject) => {
+				if (init.signal) { init.signal.addEventListener('abort', () => reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))); }
+			});
+			const r = typeof t.refreshReply === 'function' ? await t.refreshReply(call) : t.refreshReply;
 			if (r === 'offline') { throw new TypeError('fetch failed'); }
-			return { status: r.status, json: async () => { if (r.body === 'garbage') { throw new SyntaxError('Unexpected token <'); } return r.body; } };
+			if (r === 'stall') { return silence(); }
+			return {
+				status: r.status,
+				json: async () => {
+					if (r.body === 'garbage') { throw new SyntaxError('Unexpected token <'); }
+					if (r.body === 'stall') { return silence(); }
+					return r.body;
+				}
+			};
 		},
 		providers: {
 			getProvider: (id) => ({ id, label: 'Claude' }),
@@ -170,7 +226,18 @@ function boot(over) {
 		baseUrlFor: () => '', activeModel: () => 'claude-model', storeImages: () => [], agentFlow: async () => { },
 		listWorkspaceFiles: async () => [], workspaceMapBlock: () => '', activeFileBlock: () => '',
 		contextFileBlocks: async () => [], gatherAutoContext: async () => ({ blocks: [], names: [] }),
-		labelImages: (b) => b, withImages: (m) => m
+		labelImages: (b) => b, withImages: (m) => m,
+		// What New Chat, a resumed session and a checkpoint restore touch besides the transcript.
+		sealLiveSession: () => { }, resetConversationState: () => { },
+		postContextFiles: () => { posted.push({ type: 'contextFiles' }); }, postMemoryDigest: () => { posted.push({ type: 'memoryDigest' }); },
+		sessionsManager: () => ({
+			resume: () => ({
+				messages: [{ role: 'user', content: 'an earlier goal' }], entry: { title: 'An earlier session' }, note: '', plan: { tier: 1 },
+				turns: [{ role: 'user', text: 'an earlier goal' }, { role: 'assistant', text: 'done' }]
+			})
+		}),
+		currentContextLimit: () => 200000, refreshSessions: () => { }, focusChatView: () => { },
+		review: { restoreOne: async () => true, finalizeAll: () => { } }, checkpoints: t.checkpoints
 	};
 	t.host = makeHost(env);
 	const K = t.host.KEY;
@@ -282,7 +349,8 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 
 	await test('sessionExpired: the marker is written BEFORE the credentials are forgotten', async () => {
 		const t = boot({ access: deadAccess(), refresh: 'r1' });
-		await t.host.sessionExpired();
+		t.refreshReply = { status: 401, body: { error: { code: 'refresh_expired' } } };
+		await t.host.checkCloudSession('focus');
 		const marker = t.ops.indexOf('set ' + t.K.expired), forget = t.ops.indexOf('forget ' + t.K.token);
 		assert.ok(marker >= 0 && forget >= 0 && marker < forget, 'order was: ' + t.ops.join(', '));
 	});
@@ -418,6 +486,236 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 	await test('an ended session answered by switching to BYOK mode is BYOK too', async () => {
 		const t = boot({ expired: true, byokKey: 'sk-own', settings: { 'levelcode.ai.providerMode': 'byok' } });
 		assert.strictEqual((await t.host.prepProviderRequest({ prompt: true })).ok, true);
+	});
+
+	// ── a refresh's answer belongs to the session it started against ─────────────────────────────
+	const refused = { status: 401, body: { error: { code: 'refresh_expired' } } };
+
+	await test('late 401: a sign-in that lands while the refresh is out keeps its new session', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		const reply = deferred();
+		t.refreshReply = () => reply.promise;
+		const check = t.host.checkCloudSession('focus');          // the old session's refresh goes out…
+		await until(() => t.calls.refresh.length === 1, 'the refresh request');
+		const fresh = liveAccess();
+		await t.host.storeSession(fresh, 'r2', { name: 'Ada' });  // …the user signs in again…
+		reply.resolve(refused);                                   // …and only now does the 401 for r1 arrive
+		await check;
+		assert.strictEqual(t.secrets.get(t.K.token), fresh, 'the new access token survived');
+		assert.strictEqual(t.secrets.get(t.K.refresh), 'r2', 'the new refresh token survived');
+		assert.strictEqual(t.state.get(t.K.expired), undefined, 'no expiry recorded against the new session');
+		assert.strictEqual(t.host.signedIn(), true);
+		assert.ok(!t.types().includes('sessionExpired'), 'no sign-in card');
+	});
+
+	await test('late 401: a sign-in that brought no refresh token of its own is a new session all the same', async () => {
+		// The stored refresh token is unchanged here, so comparing tokens would call this "the same
+		// session" and delete an access token minted seconds ago. Counting sign-ins does not.
+		const t = boot({ access: deadAccess(), refresh: 'r1' });
+		const reply = deferred();
+		t.refreshReply = () => reply.promise;
+		const check = t.host.checkCloudSession('focus');
+		await until(() => t.calls.refresh.length === 1, 'the refresh request');
+		const fresh = liveAccess();
+		await t.host.storeSession(fresh, null, { name: 'Ada' });
+		reply.resolve(refused);
+		await check;
+		assert.strictEqual(t.secrets.get(t.K.token), fresh);
+		assert.strictEqual(t.state.get(t.K.expired), undefined);
+		assert.ok(!t.types().includes('sessionExpired'));
+	});
+
+	await test('late 401: a sign-out while the refresh is out is not turned into an expiry', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		const reply = deferred();
+		t.refreshReply = () => reply.promise;
+		const check = t.host.checkCloudSession('focus');
+		await until(() => t.calls.refresh.length === 1, 'the refresh request');
+		await t.host.accountSignOut();
+		reply.resolve(refused);
+		await check;
+		assert.strictEqual(t.state.get(t.K.expired), undefined, 'signed out on purpose: nothing to answer');
+		assert.ok(!t.types().includes('sessionExpired'), 'no sign-in card');
+		assert.strictEqual(t.calls.account, 1, 'only the sign-out resynced the popover');
+	});
+
+	await test('late 200: a sign-out while the refresh is out stays signed out', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1' });
+		const reply = deferred();
+		t.refreshReply = () => reply.promise;
+		const renewal = t.host.refreshCloudToken();
+		await until(() => t.calls.refresh.length === 1, 'the refresh request');
+		await t.host.accountSignOut();
+		reply.resolve({ status: 200, body: { access: liveAccess(), refresh: 'r2' } });
+		assert.strictEqual(await renewal, false, 'nothing to retry with');
+		assert.strictEqual(t.secrets.get(t.K.token), undefined, 'not signed back in');
+		assert.strictEqual(t.secrets.get(t.K.refresh), undefined);
+		assert.strictEqual(t.host.signedIn(), false);
+	});
+
+	await test('late 200: tokens for the old session are not filed under a newer sign-in', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		const reply = deferred();
+		t.refreshReply = () => reply.promise;
+		const renewal = t.host.refreshCloudToken();
+		await until(() => t.calls.refresh.length === 1, 'the refresh request');
+		const other = liveAccess() + '.bo';
+		await t.host.storeSession(other, 'rB', { name: 'Bo' });   // someone else signs in on this machine
+		reply.resolve({ status: 200, body: { access: liveAccess() + '.ada', refresh: 'r1b' } });
+		assert.strictEqual(await renewal, true, 'a token is in place — the newer session\'s');
+		assert.strictEqual(t.secrets.get(t.K.token), other);
+		assert.strictEqual(t.secrets.get(t.K.refresh), 'rB');
+		assert.deepStrictEqual(t.state.get(t.K.profile), { name: 'Bo', email: '', plan: '' });
+	});
+
+	await test('the lock: a sign-in that starts in the MIDDLE of an expiry\'s deletes is not lost', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1' });
+		t.refreshReply = refused;
+		const fresh = liveAccess();
+		let signIn = null;
+		// The expiry has decided this is still the dead session and begun its writes. A sign-in arriving
+		// now must wait its turn; interleaved, its tokens would be stored and then deleted.
+		t.onOp = (op) => { if (!signIn && op === 'set ' + t.K.expired) { signIn = t.host.storeSession(fresh, 'r2', { name: 'Ada' }); } };
+		await t.host.checkCloudSession('focus');
+		assert.ok(signIn, 'the sign-in was started mid-expiry');
+		await signIn;
+		assert.strictEqual(t.secrets.get(t.K.token), fresh, 'ops were: ' + t.ops.join(', '));
+		assert.strictEqual(t.secrets.get(t.K.refresh), 'r2');
+		assert.strictEqual(t.state.get(t.K.expired), undefined, 'the sign-in answered the expiry');
+		assert.strictEqual(t.host.signedIn(), true);
+	});
+
+	await test('two refreshes at once, both renewed: one matching pair is stored and both report a token', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1' });
+		const pairs = [{ access: liveAccess() + '.a', refresh: 'r2a' }, { access: liveAccess() + '.b', refresh: 'r2b' }];
+		let i = 0;
+		t.refreshReply = () => ({ status: 200, body: pairs[i++] });
+		assert.deepStrictEqual(await Promise.all([t.host.refreshCloudToken(), t.host.refreshCloudToken()]), [true, true]);
+		const stored = { access: t.secrets.get(t.K.token), refresh: t.secrets.get(t.K.refresh) };
+		assert.ok(pairs.some((p) => p.access === stored.access && p.refresh === stored.refresh), 'an access token from one reply and a refresh token from the other: ' + JSON.stringify(stored));
+	});
+
+	await test('two refreshes at once, both refused: the session ends once — one card, one resync', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		t.refreshReply = refused;
+		assert.deepStrictEqual(await Promise.all([t.host.refreshCloudToken(), t.host.refreshCloudToken()]), [false, false]);
+		assert.strictEqual(t.posted.filter((m) => m.type === 'sessionExpired').length, 1);
+		assert.strictEqual(t.calls.account, 1);
+		assert.strictEqual(t.state.get(t.K.expired), true);
+	});
+
+	await test('another window signed in while this refresh was out: its session is left alone', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1' });
+		const reply = deferred();
+		t.refreshReply = () => reply.promise;
+		const check = t.host.checkCloudSession('focus');
+		await until(() => t.calls.refresh.length === 1, 'the refresh request');
+		const theirs = liveAccess() + '.other-window';
+		t.secrets.set(t.K.token, theirs); t.secrets.set(t.K.refresh, 'rW');   // written by another process: no counter here saw it
+		reply.resolve(refused);
+		await check;
+		assert.strictEqual(t.secrets.get(t.K.token), theirs);
+		assert.strictEqual(t.secrets.get(t.K.refresh), 'rW');
+		assert.strictEqual(t.state.get(t.K.expired), undefined);
+		assert.ok(!t.types().includes('sessionExpired'));
+	});
+
+	await test('another window ENDED the session while this refresh was out: this window catches up', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		const reply = deferred();
+		t.refreshReply = () => reply.promise;
+		const check = t.host.checkCloudSession('focus');
+		await until(() => t.calls.refresh.length === 1, 'the refresh request');
+		t.secrets.delete(t.K.token); t.secrets.delete(t.K.refresh); t.state.set(t.K.expired, true);   // the other window's sessionExpired()
+		reply.resolve(refused);
+		await check;
+		assert.strictEqual(t.host.signedIn(), false, 'stops presenting a live session');
+		assert.strictEqual(t.posted.filter((m) => m.type === 'sessionExpired').length, 1, 'shows the card');
+		assert.strictEqual(t.calls.account, 1, 'resyncs the popover');
+		assert.deepStrictEqual(t.ops, [], 'and writes nothing — there was nothing left to end');
+	});
+
+	// ── the refresh has a deadline, body included ────────────────────────────────────────────────
+	await test('a host that accepts the request and never answers: the check gives up, credentials kept', async () => {
+		const access = deadAccess();
+		const t = boot({ access, refresh: 'r1', refreshTimeoutMs: 40 });
+		t.refreshReply = 'stall';
+		await within(t.host.checkCloudSession('ready'), 2000, 'the session check `ready` waits on');
+		assert.strictEqual(t.calls.refresh[0].signal.aborted, true, 'the request was aborted at the deadline');
+		assert.strictEqual(t.secrets.get(t.K.token), access);
+		assert.strictEqual(t.secrets.get(t.K.refresh), 'r1');
+		assert.strictEqual(t.host.signedIn(), true);
+		assert.strictEqual(t.state.get(t.K.expired), undefined);
+		assert.deepStrictEqual(t.posted, []);
+	});
+
+	await test('headers arrive but the body never does: still bounded, still "this attempt failed"', async () => {
+		const access = deadAccess();
+		const t = boot({ access, refresh: 'r1', refreshTimeoutMs: 40 });
+		t.refreshReply = { status: 200, body: 'stall' };
+		assert.strictEqual(await within(t.host.refreshCloudToken(), 2000, 'the refresh'), false);
+		assert.strictEqual(t.secrets.get(t.K.token), access);
+		assert.strictEqual(t.secrets.get(t.K.refresh), 'r1');
+		assert.strictEqual(t.state.get(t.K.expired), undefined);
+	});
+
+	await test('a 401 whose body never arrives is still the server saying no: the session ends', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1', refreshTimeoutMs: 40 });
+		t.refreshReply = { status: 401, body: 'stall' };
+		assert.strictEqual(await within(t.host.refreshCloudToken(), 2000, 'the refresh'), false);
+		assert.strictEqual(t.secrets.get(t.K.token), undefined);
+		assert.strictEqual(t.state.get(t.K.expired), true);
+	});
+
+	await test('a refresh that answers in time is not aborted afterwards — its timer is cleared', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1', refreshTimeoutMs: 40 });
+		t.refreshReply = { status: 200, body: { access: liveAccess(), refresh: 'r2' } };
+		assert.strictEqual(await t.host.refreshCloudToken(), true);
+		await new Promise((resolve) => setTimeout(resolve, 90));   // well past the deadline
+		assert.strictEqual(t.calls.refresh[0].signal.aborted, false);
+	});
+
+	await test('the shipped deadline is ten seconds', () => {
+		assert.strictEqual(session.REFRESH_TIMEOUT_MS, 10000);
+	});
+
+	// ── what rewrites the transcript in place takes the card with it; it is put back ─────────────
+	const order = (t, ...of) => t.types().filter((x) => of.includes(x));
+
+	await test('New Chat: the card is replayed into the emptied transcript', async () => {
+		const t = boot({ expired: true, profile: { name: 'Ada' } });
+		t.host.newChat();
+		await until(() => t.types().includes('sessionExpired'), 'the replay after New Chat');
+		assert.deepStrictEqual(order(t, 'reset', 'memoryDigest', 'sessionExpired'), ['reset', 'memoryDigest', 'sessionExpired']);
+		assert.strictEqual(t.last('sessionExpired').name, 'Ada');
+	});
+
+	await test('a session resumed from History: the card goes back UNDER the restored transcript', async () => {
+		const t = boot({ expired: true });
+		await t.host.resumeSession('s1');
+		assert.deepStrictEqual(order(t, 'reset', 'sessionResumed', 'sessionExpired'), ['reset', 'sessionResumed', 'sessionExpired']);
+	});
+
+	await test('a checkpoint restore: the card dropped with the later turns is replayed', async () => {
+		const t = boot({ expired: true });
+		const goal = { role: 'user', content: 'a goal' };
+		t.checkpoints.push({ turnId: 7, goalMsg: goal, files: new Map() });
+		t.host.setAgentMessages([goal, { role: 'assistant', content: 'done' }]);
+		await t.host.restoreCheckpoint(7);
+		assert.deepStrictEqual(t.types(), ['checkpointRestored', 'sessionExpired']);
+	});
+
+	await test('none of the three says anything when no expiry is waiting', async () => {
+		const t = boot({});
+		const goal = { role: 'user', content: 'a goal' };
+		t.checkpoints.push({ turnId: 7, goalMsg: goal, files: new Map() });
+		t.host.setAgentMessages([goal]);
+		await t.host.restoreCheckpoint(7);
+		await t.host.resumeSession('s1');
+		t.host.newChat();
+		await settle();
+		assert.ok(t.types().includes('reset') && t.types().includes('checkpointRestored'), 'all three ran');
+		assert.ok(!t.types().includes('sessionExpired'));
 	});
 
 	console.log('\nsessionExpiredHost: ' + n + ' tests passed.');
