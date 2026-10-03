@@ -3193,13 +3193,25 @@ async function webHandoffUrl() {
 		return (data && data.url) || null;
 	} catch (e) { dbg('account.handoff', { error: String((e && e.message) || e) }); return null; }
 }
-/** Persist an editor session: access token (required), optional refresh token, and display profile. */
+/**
+ * Persist an editor session: access token (required), the refresh token if the sign-in brought one,
+ * and the display profile.
+ *
+ * A sign-in REPLACES the session; it does not top one up. A refresh token left over from whatever
+ * was here before is what the new session's first renewal would be made with: refused, it ends the
+ * session that replaced it; still good, it hands this editor the previous account's access token
+ * under the new account's name. So the refresh token is settled first — stored, or forgotten when
+ * there is none — and only then the access token. A sign-in cut short between the two (the editor
+ * closing, a keychain that will not write) must not leave the new access token over the old
+ * refresh token either.
+ */
 async function storeSession(access, refresh, profile) {
 	if (!ctx || !access) { return; }
 	await withSessionLock(async () => {
 		sessionGeneration++;   // a refresh still out for the session this replaces must not touch the new one
-		await ctx.secrets.store(ACCOUNT_TOKEN_KEY, access);
 		if (refresh) { await ctx.secrets.store(ACCOUNT_REFRESH_KEY, refresh); }
+		else { await ctx.secrets.delete(ACCOUNT_REFRESH_KEY); }
+		await ctx.secrets.store(ACCOUNT_TOKEN_KEY, access);
 		cloudSignedIn = true;
 		await ctx.globalState.update(ACCOUNT_PROFILE_KEY, {
 			name: (profile && profile.name) || '', email: (profile && profile.email) || '', plan: (profile && profile.plan) || ''

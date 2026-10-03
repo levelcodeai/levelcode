@@ -561,6 +561,50 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		assert.ok(!t.types().includes('sessionExpired'));
 	});
 
+	// The case above is a refresh already OUT when such a sign-in lands. These are the NEXT one: with no
+	// refresh token of its own, the sign-in left the previous session's in storage, and the new
+	// session's first renewal — hours later — was made with it.
+	await test('a sign-in with no refresh token of its own forgets the previous session\'s', async () => {
+		const t = boot({ access: liveAccess(), refresh: 'r-old', profile: { name: 'Ada' } });
+		const mine = deadAccess();                                  // the new session's token, at the end of its eight hours
+		await t.host.storeSession(mine, null, { name: 'Bo' });
+		assert.strictEqual(t.secrets.get(t.K.refresh), undefined, 'the old refresh token is gone');
+		t.refreshReply = refused;                                   // what the server would have said to r-old
+		await t.host.checkCloudSession('focus');
+		assert.strictEqual(t.calls.refresh.length, 0, 'it is never sent');
+		assert.strictEqual(t.secrets.get(t.K.token), mine, 'so its 401 cannot end the session that replaced it');
+		assert.strictEqual(t.state.get(t.K.expired), undefined);
+		assert.ok(!t.types().includes('sessionExpired'), 'no sign-in card');
+	});
+
+	await test('…nor can a still-valid one put the previous ACCOUNT back under the new name', async () => {
+		const t = boot({ access: liveAccess(), refresh: 'r-ada', profile: { name: 'Ada' } });
+		const bo = deadAccess();
+		await t.host.storeSession(bo, null, { name: 'Bo' });       // Bo signs in over Ada's session
+		t.refreshReply = { status: 200, body: { access: liveAccess() + '.ada', refresh: 'r-ada-2' } };   // r-ada still works — for Ada
+		await t.host.checkCloudSession('focus');
+		assert.strictEqual(t.calls.refresh.length, 0);
+		assert.strictEqual(t.secrets.get(t.K.token), bo, 'Bo\'s editor is not handed Ada\'s access token');
+		assert.strictEqual(t.state.get(t.K.profile).name, 'Bo');
+	});
+
+	await test('a sign-in settles the refresh token BEFORE the access token: one cut short never pairs new with old', async () => {
+		const t = boot({ access: liveAccess(), refresh: 'r-ada' });
+		await t.host.storeSession(liveAccess(), 'r-bo', { name: 'Bo' });
+		assert.deepStrictEqual(t.ops.slice(0, 2), ['store ' + t.K.refresh, 'store ' + t.K.token]);
+		const u = boot({ access: liveAccess(), refresh: 'r-ada' });
+		await u.host.storeSession(liveAccess(), null, { name: 'Bo' });
+		assert.deepStrictEqual(u.ops.slice(0, 2), ['forget ' + u.K.refresh, 'store ' + u.K.token]);
+
+		// The SECOND write is the one that fails — a keychain that locks half-way through a sign-in.
+		const v = boot({ access: liveAccess(), refresh: 'r-ada' });
+		const bos = liveAccess() + '.bo';
+		let writes = 0;
+		v.onOp = (op) => { if (/^(store|forget) /.test(op) && ++writes === 2) { v.storeError = new Error('keychain locked'); } };
+		await assert.rejects(v.host.storeSession(bos, 'r-bo', { name: 'Bo' }), /keychain locked/);
+		assert.ok(!(v.secrets.get(v.K.token) === bos && v.secrets.get(v.K.refresh) === 'r-ada'), 'never Bo\'s access token over Ada\'s refresh token');
+	});
+
 	await test('late 401: a sign-out while the refresh is out is not turned into an expiry', async () => {
 		const t = boot({ access: deadAccess(), refresh: 'r1', profile: { name: 'Ada' } });
 		const reply = deferred();
