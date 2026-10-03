@@ -1,0 +1,33 @@
+name: Extension tests
+
+# The release gate (scripts/test-extensions.sh), on every pull request and on develop.
+#
+# release.yml runs the same script, but only when a tag is pushed — which made a tag the first time
+# the suites ran on Linux. v1.3.0's gate failed there on a suite that had only ever run on a Mac,
+# after the pull requests that wrote it had merged. Here a suite that passes on one machine and not
+# on the runner is found on the pull request that adds it.
+
+on:
+  pull_request:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request supersedes the run before it.
+concurrency:
+  group: extension-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Extension unit tests
+    runs-on: ubuntu-latest # the runner the release gate uses
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24" # as release.yml
+      - name: Extension unit tests
+        run: ./scripts/test-extensions.sh
