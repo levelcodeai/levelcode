@@ -57,9 +57,13 @@ test('a host-pushed sessionExpired (startup / focus check) shows the card before
 	assert.ok(/m\.type === 'sessionExpired'\)\{ addSignInCard\(m\); \}/.test(html));
 });
 
-test('the card is dismissed when a signed-in account message arrives', () => {
+test('the card is dismissed when an account message says no expiry is waiting', () => {
+	// Signing in is one way to get there; BYOK chosen in Settings and a cleared cloud host are others.
+	// The host decides (currentAccount → `expired`); the webview does not keep its own list of reasons.
 	const b = branch('account');
-	assert.ok(/m\.signedIn && sessionCard/.test(b));
+	assert.ok(/if \(!m\.expired && sessionCard && sessionCard\.isConnected\)\{ sessionCard\.remove\(\); sessionCard = null; \}/.test(b));
+	assert.ok(!/m\.signedIn && sessionCard/.test(b), 'not on sign-in alone');
+	assert.ok(/signedIn: true, mode, expired: false,/.test(ext) && /signedIn: false, mode, expired: sessionExpiredPending\(\),/.test(ext), 'both account shapes carry it');
 });
 
 test('the card uses an icon the inline codicon set actually defines', () => {
@@ -118,7 +122,13 @@ test('host: only an ENDED session is signedOut — "no token" alone still falls 
 
 test('host: the chat catch shows the card only once the session has ended, and never ends it itself', () => {
 	const fn = ext.slice(ext.indexOf('async function handleSend('), ext.indexOf('async function setModelSetting('));
-	assert.ok(/req\.gateway && !cloudSignedIn && session\.isSessionExpiredError\(e\)/.test(fn), 'same rule as the agent hook');
+	// Chat and the agent ask ONE question, in one place — so a clause added for one (a sign-out is
+	// not an expiry) cannot be missing from the other.
+	assert.ok(/if \(isEndedSessionError\(req, e\)\) \{/.test(fn), 'the chat catch asks isEndedSessionError');
+	assert.ok(/isSessionExpired: \(e\) => isEndedSessionError\(req, e\),/.test(ext), 'and so does the hook handed to agent.js');
+	assert.ok(/refreshAuth: async \(\) => \{\s*if \(!req\.gateway\) \{ return null; \}\s*return \(await refreshGatewayToken\(\)\) \? await ctx\.secrets\.get\(ACCOUNT_TOKEN_KEY\) : null;/.test(ext), 'refreshAuth renews through the same refresh');
+	const rule = ext.slice(ext.indexOf('function isEndedSessionError('), ext.indexOf('async function clearSessionExpired('));
+	assert.ok(/!!\(req && req\.gateway\) && !cloudSignedIn && sessionExpiredPending\(\) && session\.isSessionExpiredError\(e\)/.test(rule), 'gateway, signed out, an expiry waiting, a 401');
 	assert.ok(!/\bsessionExpired\(/.test(fn.replace(/\/\/[^\n]*/g, '')), 'handleSend does not call sessionExpired()');
 	const only = (ext.replace(/\/\/[^\n]*/g, '').match(/await sessionExpired\(/g) || []).length;
 	assert.strictEqual(only, 1, 'one caller ends a session: the refresh endpoint answering 401');

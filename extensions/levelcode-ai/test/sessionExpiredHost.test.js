@@ -17,6 +17,11 @@
  *      sign-in or a sign-out changes nothing, and the request itself cannot outlast its deadline
  *    - New Chat, a resumed session and a checkpoint restore rewrite the transcript in place; the
  *      card they take with them is put back
+ *    - a sign-out is not an expiry, even with a 401 still in the air — in chat, and through the
+ *      real agent loop
+ *    - the account message tells the webview whether an expiry is still waiting, so the card leaves
+ *      when BYOK is chosen in Settings and comes back if gateway mode is
+ *    - a 2xx refresh reply that cannot be stored changes nothing, and nothing escapes into `ready`
  *
  *  The functions are sliced out of the shipped extension.js and run against stand-ins for what they
  *  touch (SecretStorage, globalState, fetch, the provider adapter), the way mcpManage.test.js does
@@ -30,6 +35,25 @@ const fs = require('fs');
 const path = require('path');
 const session = require('../providers/session');
 const { resolveGateway, GATEWAY_PATH } = require('../providers/gateway');
+
+// The agent loop is NOT sliced: agent.js loads whole once `vscode` resolves to something, the way
+// workspacePaths.test.js loads it, so the agent cases below run the shipped loop end to end. No
+// folder is open, which is a state it supports.
+const Module = require('module');
+const loadModule = Module._load;
+// @ts-ignore — test-only loader shim
+Module._load = function (request, parent, isMain) {
+	if (request === 'vscode') { return { workspace: { workspaceFolders: undefined }, env: { appRoot: '' }, Uri: { file: (p) => ({ fsPath: p }) } }; }
+	return loadModule.call(this, request, parent, isMain);
+};
+const agentProviders = require('../providers/index');
+const { runAgent } = require('../agent');
+
+// Nothing here may reach the network. The host functions are handed a stand-in fetch, and the agent
+// loop's provider call is replaced before every run — but if a refactor ever routed around either,
+// the suite would send a made-up token to a real gateway and call the 401 it got back a pass. So
+// the real fetch is taken away: a stray request fails here, by name.
+global.fetch = async (url) => { throw new Error('sessionExpiredHost.test.js must not touch the network: ' + String((url && url.url) || url)); };
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
 
@@ -68,15 +92,15 @@ function decl(name) {
 
 const FUNCTIONS = [
 	'post', 'providerMode', 'providerErrorMessage', 'isAuthError', 'cloudEndpoint', 'cloudApiUrl',
-	'refreshCloudToken', 'withSessionLock', 'sameSession', 'sessionExpired', 'postSessionExpired',
-	'sessionExpiredPending', 'clearSessionExpired', 'replaySessionExpired', 'checkCloudSession',
-	'refreshGatewayToken', 'prepProviderRequest', 'handleSend', 'accountSignOut', 'storeSession',
-	'newChat', 'resumeSession', 'restoreCheckpoint'
+	'refreshCloudToken', 'renewSession', 'withSessionLock', 'sameSession', 'sessionExpired', 'postSessionExpired',
+	'sessionExpiredPending', 'isEndedSessionError', 'clearSessionExpired', 'replaySessionExpired', 'checkCloudSession',
+	'refreshGatewayToken', 'prepProviderRequest', 'handleSend', 'currentAccount', 'postAccount', 'accountSignOut',
+	'storeSession', 'newChat', 'resumeSession', 'restoreCheckpoint', 'onConfigChanged'
 ];
 // eslint-disable-next-line no-new-func
 const makeHost = new Function('env', [
 	"'use strict';",
-	'const { vscode, session, providers, resolveGateway, fetch, ctx, dbg, aiConfig, postAccount, sendConfigToWebview,',
+	'const { vscode, session, providers, resolveGateway, fetch, ctx, dbg, aiConfig, refreshCloudProfile, fetchCloudRoster, sendConfigToWebview,',
 	'  gatewayModel, maxOutputTokens, currentProviderId, baseUrlFor, getProviderKey, activeModel, storeImages, agentFlow,',
 	'  listWorkspaceFiles, workspaceMapBlock, activeFileBlock, contextFileBlocks, gatherAutoContext, labelImages, withImages,',
 	'  sealLiveSession, resetConversationState, postContextFiles, postMemoryDigest, sessionsManager, currentContextLimit,',
@@ -140,7 +164,8 @@ function within(promise, ms, what) {
  *
  * The stores answer a turn of the event loop LATER, as the real ones do: every call to them is a
  * round trip to another process. That gap is where two session changes can interleave, so a
- * stand-in that answered at once would hide exactly what the lock is for.
+ * stand-in that answered at once would hide exactly what the lock is for. And SecretStorage takes
+ * strings only, as the real one does — handing it anything else is a rejection, not a quiet write.
  */
 function boot(over) {
 	const o = Object.assign({ settings: {}, access: null, refresh: null, profile: null, expired: false, byokKey: '', webview: true, refreshTimeoutMs: 0 }, over);
@@ -152,7 +177,7 @@ function boot(over) {
 	for (const k of Object.keys(o.settings)) { if (o.settings[k] === null) { delete settings[k]; } else { settings[k] = o.settings[k]; } }
 
 	const secrets = new Map(), state = new Map(), posted = [], ops = [];
-	const calls = { refresh: [], stream: [], keyPrompts: 0, account: 0 };
+	const calls = { refresh: [], stream: [], keyPrompts: 0 };
 	const vscode = { workspace: { getConfiguration: (section) => ({ get: (k, d) => (settings[section + '.' + k] === undefined ? d : settings[section + '.' + k]) }) } };
 	const webview = { postMessage: (m) => { posted.push(m); } };
 	const t = {
@@ -170,6 +195,10 @@ function boot(over) {
 		stream: async (_req, _attempt) => { },
 		byokKey: o.byokKey,
 		/** @type {Error|null} */ keyError: null,
+		/** Makes SecretStorage refuse every write — a locked keychain. */
+		/** @type {Error|null} */ storeError: null,
+		/** The account messages the popover (and the sign-in card) were sent. */
+		accounts: () => posted.filter((m) => m.type === 'account'),
 		types: () => posted.map((m) => m.type),
 		last: (type) => posted.filter((m) => m.type === type).pop()
 	};
@@ -179,7 +208,12 @@ function boot(over) {
 		ctx: {
 			secrets: {
 				get: async (k) => { await tick(); return secrets.get(k); },
-				store: async (k, v) => { const op = 'store ' + k; ops.push(op); t.onOp(op); await tick(); secrets.set(k, v); },
+				store: async (k, v) => {
+					const op = 'store ' + k; ops.push(op); t.onOp(op); await tick();
+					if (t.storeError) { throw t.storeError; }
+					if (typeof v !== 'string') { throw new TypeError('SecretStorage: the value must be a string'); }
+					secrets.set(k, v);
+				},
 				delete: async (k) => { const op = 'forget ' + k; ops.push(op); t.onOp(op); await tick(); secrets.delete(k); }
 			},
 			globalState: {
@@ -221,7 +255,7 @@ function boot(over) {
 			return t.byokKey || undefined;
 		},
 		aiConfig: () => vscode.workspace.getConfiguration('levelcode.ai'),
-		dbg: () => { }, postAccount: async () => { calls.account++; }, sendConfigToWebview: () => { },
+		dbg: () => { }, refreshCloudProfile: async () => { }, fetchCloudRoster: () => { }, sendConfigToWebview: () => { },
 		gatewayModel: () => 'cloud-model', maxOutputTokens: () => 4096, currentProviderId: () => 'claude',
 		baseUrlFor: () => '', activeModel: () => 'claude-model', storeImages: () => [], agentFlow: async () => { },
 		listWorkspaceFiles: async () => [], workspaceMapBlock: () => '', activeFileBlock: () => '',
@@ -330,7 +364,9 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		assert.strictEqual(err.code, 'session_expired');
 		assert.strictEqual(err.message, session.SESSION_EXPIRED_MESSAGE);
 		assert.deepStrictEqual(t.state.get(t.K.profile), { name: 'Ada' }, 'profile kept so the card can greet by name');
-		assert.ok(t.calls.account >= 1, 'the account popover was resynced, so it stops saying "signed in"');
+		const account = t.accounts().pop();
+		assert.ok(account, 'the account popover was resynced, so it stops saying "signed in"');
+		assert.deepStrictEqual({ signedIn: account.signedIn, expired: account.expired }, { signedIn: false, expired: true }, 'and it says an expiry is waiting');
 	});
 
 	await test('chat: a 401 whose refresh succeeds retries once on the new token and stores the rotated pair', async () => {
@@ -536,7 +572,7 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		await check;
 		assert.strictEqual(t.state.get(t.K.expired), undefined, 'signed out on purpose: nothing to answer');
 		assert.ok(!t.types().includes('sessionExpired'), 'no sign-in card');
-		assert.strictEqual(t.calls.account, 1, 'only the sign-out resynced the popover');
+		assert.strictEqual(t.accounts().length, 1, 'only the sign-out resynced the popover');
 	});
 
 	await test('late 200: a sign-out while the refresh is out stays signed out', async () => {
@@ -600,7 +636,7 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		t.refreshReply = refused;
 		assert.deepStrictEqual(await Promise.all([t.host.refreshCloudToken(), t.host.refreshCloudToken()]), [false, false]);
 		assert.strictEqual(t.posted.filter((m) => m.type === 'sessionExpired').length, 1);
-		assert.strictEqual(t.calls.account, 1);
+		assert.strictEqual(t.accounts().length, 1);
 		assert.strictEqual(t.state.get(t.K.expired), true);
 	});
 
@@ -631,7 +667,7 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		await check;
 		assert.strictEqual(t.host.signedIn(), false, 'stops presenting a live session');
 		assert.strictEqual(t.posted.filter((m) => m.type === 'sessionExpired').length, 1, 'shows the card');
-		assert.strictEqual(t.calls.account, 1, 'resyncs the popover');
+		assert.strictEqual(t.accounts().length, 1, 'resyncs the popover');
 		assert.deepStrictEqual(t.ops, [], 'and writes nothing — there was nothing left to end');
 	});
 
@@ -716,6 +752,167 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		await settle();
 		assert.ok(t.types().includes('reset') && t.types().includes('checkpointRestored'), 'all three ran');
 		assert.ok(!t.types().includes('sessionExpired'));
+	});
+
+	// ── a sign-out is not an expiry, even with a 401 still in the air ─────────────────────────────
+	const renewed = () => ({ status: 200, body: { access: liveAccess(), refresh: 'r2' } });
+
+	for (const [label, late] of [['is refused', () => refused], ['succeeds', renewed]]) {
+		await test('chat: signing out while the 401\'s refresh is out — which then ' + label + ' — shows the error, not an expiry card', async () => {
+			const t = boot({ access: liveAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+			const reply = deferred();
+			t.refreshReply = () => reply.promise;
+			t.stream = async () => { throw gateway401(); };
+			const sending = t.host.handleSend('hello');
+			await until(() => t.calls.refresh.length === 1, 'the refresh request');
+			await t.host.accountSignOut();
+			reply.resolve(late());
+			await sending;
+			const err = t.last('assistantError');
+			assert.ok(err && /API 401/.test(err.message), 'the request\'s own error is shown');
+			assert.notStrictEqual(err.code, 'session_expired', 'not an expiry');
+			assert.ok(!t.types().includes('sessionExpired'), 'no sign-in card');
+			assert.strictEqual(t.state.get(t.K.expired), undefined);
+			assert.strictEqual(t.secrets.get(t.K.token), undefined, 'and still signed out');
+		});
+	}
+
+	/**
+	 * One agent run against a gateway that answers 401 — the REAL loop from agent.js, given the two
+	 * hooks the way agentFlow hands them over (sessionExpiredUi.test.js pins that wiring).
+	 */
+	async function agentRunRefused(t, req) {
+		const real = agentProviders.streamAgentTurn;
+		let turns = 0;
+		agentProviders.streamAgentTurn = async () => { turns++; throw gateway401(); };
+		try {
+			await runAgent({
+				messages: [{ role: 'user', content: 'hello' }], providerId: req.providerId, baseURL: req.baseURL, label: req.label,
+				apiKey: req.apiKey, model: req.model, maxSteps: 3, maxTokens: 1024, signal: new AbortController().signal,
+				post: (m) => t.webview.postMessage(m), dbg: () => { }, autopilot: false, approve: async () => false, ask: async () => null,
+				mcp: { servers: {}, toolPolicy: {}, launchTrust: {} }, rememberMcpTrust: () => { },
+				verify: { enabled: false, command: '', maxRounds: 0, includeWarnings: false }, touched: new Set(),
+				refreshAuth: async () => ((await t.host.refreshGatewayToken()) ? t.secrets.get(t.K.token) : null),
+				isSessionExpired: (e) => t.host.isEndedSessionError(req, e),
+				sessionExpiredMessage: session.SESSION_EXPIRED_MESSAGE
+			});
+		} finally { agentProviders.streamAgentTurn = real; }
+		assert.strictEqual(turns, 1, 'the loop asked the stand-in provider, once: no retry without a fresh token');
+	}
+
+	await test('agent: a session that really ended, through the real loop — the sign-in card', async () => {
+		const t = boot({ access: liveAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		t.refreshReply = refused;
+		const req = await t.host.prepProviderRequest({ prompt: true });
+		assert.strictEqual(req.gateway, true);
+		await agentRunRefused(t, req);
+		assert.deepStrictEqual(t.last('agentError'), { type: 'agentError', message: session.SESSION_EXPIRED_MESSAGE, code: 'session_expired' });
+		assert.strictEqual(t.last('agentDone').reason, 'error');
+	});
+
+	await test('agent: signing out while the 401\'s refresh is out, through the real loop — the error, not an expiry card', async () => {
+		const t = boot({ access: liveAccess(), refresh: 'r1', profile: { name: 'Ada' } });
+		const reply = deferred();
+		t.refreshReply = () => reply.promise;
+		const req = await t.host.prepProviderRequest({ prompt: true });
+		const run = agentRunRefused(t, req);
+		await until(() => t.calls.refresh.length === 1, 'the refresh request');
+		await t.host.accountSignOut();
+		reply.resolve(refused);
+		await run;
+		const err = t.last('agentError');
+		assert.ok(err && /API 401/.test(err.message), 'the request\'s own error is shown');
+		assert.notStrictEqual(err.code, 'session_expired', 'not an expiry');
+		assert.ok(!t.types().includes('sessionExpired'), 'no sign-in card');
+	});
+
+	await test('the rule itself: all four clauses, one at a time', async () => {
+		const ended = boot({ expired: true });
+		assert.strictEqual(ended.host.isEndedSessionError({ gateway: true }, gateway401()), true, 'an ended session, a gateway 401');
+		assert.strictEqual(ended.host.isEndedSessionError({ gateway: false }, gateway401()), false, 'not a gateway request');
+		assert.strictEqual(ended.host.isEndedSessionError({ gateway: true }, new Error('LevelCode Cloud API 500: upstream')), false, 'not a 401');
+		assert.strictEqual(boot({}).host.isEndedSessionError({ gateway: true }, gateway401()), false, 'no expiry waiting — signed out, or never signed in');
+		assert.strictEqual(boot({ expired: true, access: liveAccess() }).host.isEndedSessionError({ gateway: true }, gateway401()), false, 'still signed in');
+	});
+
+	// ── the card follows the host's answer to "is an expiry still waiting?" ──────────────────────
+	const settingChanged = (...keys) => ({ affectsConfiguration: (k) => keys.includes(k) });
+	const brief = (a) => ({ signedIn: a.signedIn, mode: a.mode, expired: a.expired, status: a.status });
+
+	await test('account message: `expired` is true only while an ended session is waiting on the user', async () => {
+		const say = async (over) => brief(await boot(over).host.currentAccount());
+		assert.deepStrictEqual(await say({ expired: true }), { signedIn: false, mode: 'gateway', expired: true, status: 'signedout' });
+		assert.deepStrictEqual(await say({ expired: true, settings: { 'levelcode.ai.providerMode': 'byok' } }), { signedIn: false, mode: 'byok', expired: false, status: 'signedout' });
+		assert.deepStrictEqual(await say({ expired: true, settings: { 'levelcode.cloud.endpoint': '' } }), { signedIn: false, mode: 'gateway', expired: false, status: 'unconfigured' });
+		assert.deepStrictEqual(await say({}), { signedIn: false, mode: 'gateway', expired: false, status: 'signedout' });
+		assert.deepStrictEqual(await say({ expired: true, access: liveAccess() }), { signedIn: true, mode: 'gateway', expired: false, status: undefined });
+	});
+
+	await test('switching to BYOK in Settings: the account message says nothing is waiting — the card\'s cue to go', async () => {
+		const t = boot({ expired: true, profile: { name: 'Ada' } });
+		t.settings['levelcode.ai.providerMode'] = 'byok';
+		t.host.onConfigChanged(settingChanged('levelcode.ai', 'levelcode.ai.providerMode'));
+		await settle();
+		assert.deepStrictEqual(t.accounts().map(brief), [{ signedIn: false, mode: 'byok', expired: false, status: 'signedout' }]);
+		assert.ok(!t.types().includes('sessionExpired'), 'and no card is replayed while the session is out of play');
+	});
+
+	await test('switching BACK to gateway: the expiry is in force again, and the card comes back with it', async () => {
+		const t = boot({ expired: true, profile: { name: 'Ada' }, settings: { 'levelcode.ai.providerMode': 'byok' } });
+		t.settings['levelcode.ai.providerMode'] = 'gateway';
+		t.host.onConfigChanged(settingChanged('levelcode.ai', 'levelcode.ai.providerMode'));
+		await settle();
+		assert.deepStrictEqual(t.accounts().map(brief), [{ signedIn: false, mode: 'gateway', expired: true, status: 'signedout' }]);
+		assert.strictEqual(t.posted.filter((m) => m.type === 'sessionExpired').length, 1);
+		assert.strictEqual((await t.host.prepProviderRequest({ prompt: false })).reason, 'signedOut', 'the request it is there to explain');
+	});
+
+	await test('a session that ends while in BYOK mode: no card — nothing stopped working — until gateway mode is chosen', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1', profile: { name: 'Ada' }, settings: { 'levelcode.ai.providerMode': 'byok' } });
+		t.refreshReply = refused;
+		assert.strictEqual(await t.host.refreshCloudToken(), false);   // "Manage account" finding the session dead, say
+		assert.strictEqual(t.secrets.get(t.K.token), undefined, 'the session did end');
+		assert.ok(!t.types().includes('sessionExpired'), 'no card in BYOK mode');
+		assert.deepStrictEqual(t.accounts().map(brief), [{ signedIn: false, mode: 'byok', expired: false, status: 'signedout' }], 'the popover says signed out');
+		t.settings['levelcode.ai.providerMode'] = 'gateway';
+		t.host.onConfigChanged(settingChanged('levelcode.ai', 'levelcode.ai.providerMode'));
+		await settle();
+		assert.strictEqual(t.posted.filter((m) => m.type === 'sessionExpired').length, 1, 'now it matters, and now it shows');
+	});
+
+	await test('a settings change that touches neither the mode nor the cloud host resyncs neither', async () => {
+		const t = boot({ expired: true });
+		t.host.onConfigChanged(settingChanged('levelcode.ai'));
+		await settle();
+		assert.deepStrictEqual(t.posted, []);
+	});
+
+	// ── a 2xx is a renewal only if what it carries can be stored ─────────────────────────────────
+	for (const [label, body] of [
+		['an access token that is not a string', { access: {} }],
+		['a refresh token that is not a string', { access: 'new-access', refresh: {} }]
+	]) {
+		await test('malformed 200 (' + label + '): the check `ready` waits on completes, and the credentials are untouched', async () => {
+			const access = deadAccess();
+			const t = boot({ access, refresh: 'r1' });
+			t.refreshReply = { status: 200, body };
+			await t.host.checkCloudSession('ready');   // this REJECTED before, and took the rest of `ready` with it
+			assert.deepStrictEqual(t.ops, [], 'nothing was written');
+			assert.strictEqual(t.secrets.get(t.K.token), access, 'the access token was not replaced');
+			assert.strictEqual(t.secrets.get(t.K.refresh), 'r1');
+			assert.strictEqual(t.host.signedIn(), true);
+			assert.strictEqual(t.state.get(t.K.expired), undefined);
+		});
+	}
+
+	await test('a store that will not take a GOOD reply is one more failed attempt: false, and nothing escapes', async () => {
+		const t = boot({ access: deadAccess(), refresh: 'r1' });
+		t.refreshReply = renewed();
+		t.storeError = new Error('the keychain is locked');
+		assert.strictEqual(await t.host.refreshCloudToken(), false);
+		await t.host.checkCloudSession('ready');
+		assert.strictEqual(t.secrets.get(t.K.refresh), 'r1', 'still the session it was');
+		assert.strictEqual(t.state.get(t.K.expired), undefined);
 	});
 
 	console.log('\nsessionExpiredHost: ' + n + ' tests passed.');

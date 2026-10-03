@@ -2,7 +2,8 @@
  *  Unit tests for providers/session.js (pure) — run: node test/session.test.js
  *    - jwtExpiresAt: reads `exp` off a JWT payload without verifying; never throws
  *    - accessNeedsRefresh: the 5-minute margin, expired, unreadable
- *    - classifyRefresh: ONLY a 401 ends the session; offline/5xx keep the tokens
+ *    - classifyRefresh: ONLY a 401 ends the session; offline/5xx keep the tokens; a 2xx is a
+ *      renewal only when what it carries can be stored
  *    - isSessionExpiredError: the shapes a dead session arrives in
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
@@ -68,6 +69,27 @@ test('classifyRefresh: offline, 5xx, 403, a 200 with no token, nothing at all �
 	assert.strictEqual(S.classifyRefresh({ status: 403, body: {} }), 'retry');
 	assert.strictEqual(S.classifyRefresh({ status: 200, body: {} }), 'retry');
 	assert.strictEqual(S.classifyRefresh({ status: 200, body: null }), 'retry');
+});
+
+test('classifyRefresh: a 2xx whose access token is not a usable string is NOT a renewal', () => {
+	for (const access of [{}, [], ['a'], 123, true]) {
+		assert.strictEqual(S.classifyRefresh({ status: 200, body: { access } }), 'retry', 'access=' + JSON.stringify(access));
+	}
+	assert.strictEqual(S.classifyRefresh({ status: 200, body: { token: {} } }), 'retry', 'the legacy field too');
+	// The host stores `access || token`, so that is the one judged: a broken `access` is not rescued by a
+	// good `token` beside it, and an EMPTY `access` falls through to `token` exactly as the store would.
+	assert.strictEqual(S.classifyRefresh({ status: 200, body: { access: {}, token: 'legacy' } }), 'retry');
+	assert.strictEqual(S.classifyRefresh({ status: 200, body: { access: '', token: 'legacy' } }), 'ok');
+});
+test('classifyRefresh: a refresh token, when one is sent, has to be a usable string too', () => {
+	for (const refresh of [{}, [], ['r'], 123, true]) {
+		assert.strictEqual(S.classifyRefresh({ status: 200, body: { access: 'a', refresh } }), 'retry', 'refresh=' + JSON.stringify(refresh));
+	}
+});
+test('classifyRefresh: no refresh token is still ok — a server that does not rotate sends none', () => {
+	for (const body of [{ access: 'a' }, { access: 'a', refresh: null }, { access: 'a', refresh: '' }, { access: 'a', refresh: 'r' }, { token: 'a', refresh: 'r' }]) {
+		assert.strictEqual(S.classifyRefresh({ status: 200, body }), 'ok', JSON.stringify(body));
+	}
 });
 
 test('isSessionExpiredError: the adapter\'s "<label> API 401: …" shape, with and without e.status', () => {

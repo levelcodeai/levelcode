@@ -380,6 +380,16 @@ async function refreshCloudToken() {
 	if (!ctx) { return false; }
 	const endpoint = cloudApiUrl();
 	if (!/^https:\/\//i.test(endpoint) && !/^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(endpoint)) { return false; }
+	// Never rejects. The stores can throw as well as the network (a locked keychain, say), and the
+	// callers are a webview's `ready`, a timer on window focus, and the 401 path of a request that is
+	// already in trouble — none of which can do anything with that except fail worse. It is one more
+	// way for this attempt to fail.
+	try { return await renewSession(endpoint); }
+	catch (e) { dbg('cloud.refresh', { error: String((e && e.message) || e) }); return false; }
+}
+
+/** refreshCloudToken's work, free to throw. */
+async function renewSession(endpoint) {
 	// Which session this request is about. Read under the lock, so never halfway through a sign-in.
 	const was = await withSessionLock(async () => ({ generation: sessionGeneration, refresh: await ctx.secrets.get(ACCOUNT_REFRESH_KEY) }));
 	if (!was.refresh) { return false; }
@@ -496,7 +506,10 @@ async function sessionExpired(was) {
 	if (!ended) { return false; }
 	const p = ctx.globalState.get(ACCOUNT_PROFILE_KEY) || {};
 	dbg('cloud.sessionExpired', { name: p.name || p.email || '' });
-	postSessionExpired();
+	// In BYOK mode nothing the user is doing has stopped working, so there is no card to show — the
+	// popover going back to "signed out" is the whole of it. (The account message that follows would
+	// take the card straight down again anyway.) The marker is kept for if they return to gateway mode.
+	if (sessionExpiredPending()) { postSessionExpired(); }
 	await postAccount(false);
 	sendConfigToWebview();
 	return true;
@@ -512,18 +525,41 @@ function postSessionExpired() {
  * True while an ended session is still waiting on the user: sessionExpired() left its marker, and
  * nothing has answered it — a sign-in, a sign-out, or "use my own key" (clearSessionExpired).
  *
- * Two things read it, and both need more than "there is no token":
+ * Everything about the sign-in card hangs off it, and each use needs more than "there is no token":
  *
- *   1. The replay on a webview's `ready`. The session can end with no chat open to hear about it
+ *   1. Showing it — replaySessionExpired. The session can end with no chat open to hear about it
  *      (the focus check does not need one), and post() has nowhere to send the card.
- *   2. prepProviderRequest. Gateway is the DEFAULT mode, so "gateway mode, no token" describes
- *      everyone who uses LevelCode on their own key with no account. Only a session that ended may
- *      stop a request and ask for a sign-in; the rest fall back to BYOK, as the setting promises.
+ *   2. Stopping a request to ask for a sign-in — prepProviderRequest. Gateway is the DEFAULT mode,
+ *      so "gateway mode, no token" describes everyone who uses LevelCode on their own key with no
+ *      account. Only a session that ended may stop a request; the rest fall back to BYOK, as the
+ *      setting promises.
+ *   3. Calling a failed request an expiry — isEndedSessionError. A 401 that lands after a
+ *      deliberate sign-out finds no session either, and is not one.
+ *   4. Taking it away — currentAccount reports it as `expired`, and the webview drops the card as
+ *      soon as that is false.
  *
- * Scoped to where the card can be acted on: gateway mode, with a host to sign in to.
+ * Scoped to where the card can be acted on: gateway mode, with a host to sign in to. Leaving either
+ * (BYOK chosen in Settings, a cleared host) puts the expiry out of play WITHOUT answering it: the
+ * marker stays, and coming back brings the card back.
  */
 function sessionExpiredPending() {
 	return !!(ctx && ctx.globalState.get(ACCOUNT_EXPIRED_KEY)) && providerMode() === 'gateway' && !!cloudEndpoint();
+}
+
+/**
+ * Is this failure the session having ENDED — the one failure that gets the sign-in card instead of
+ * its own message? Chat and the agent both ask it about a gateway 401 their refresh could not
+ * recover, and every clause is there for a case that looks the same without it:
+ *
+ *   - a gateway request: a BYOK provider's 401 is that provider's business;
+ *   - this window no longer signed in: a refresh that merely failed leaves the session alive;
+ *   - an expiry still waiting on the user: a 401 that lands after they signed OUT, mid-request,
+ *     finds the session gone as well — and "your session has expired" is the wrong thing to tell
+ *     someone who has just pressed Sign out;
+ *   - and the error being that 401 at all.
+ */
+function isEndedSessionError(req, e) {
+	return !!(req && req.gateway) && !cloudSignedIn && sessionExpiredPending() && session.isSessionExpiredError(e);
 }
 
 /** The user has answered the expiry, so stop asking: the marker goes. Unconditional — another window
@@ -1918,8 +1954,9 @@ async function agentFlow(text, imageBlocks) {
 			},
 			// After refreshAuth has failed on a gateway 401, agent.js asks whether that was the session
 			// ending (→ it posts a sign-in card) or just an error. The refresh itself already ran
-			// sessionExpired() when the server said the refresh token was dead.
-			isSessionExpired: (e) => !!req.gateway && !cloudSignedIn && session.isSessionExpiredError(e),
+			// sessionExpired() when the server said the refresh token was dead. The same question, asked
+			// the same way, as the chat path's — see isEndedSessionError.
+			isSessionExpired: (e) => isEndedSessionError(req, e),
 			sessionExpiredMessage: session.SESSION_EXPIRED_MESSAGE,
 			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
 			projectMemory: projectMemoryMarkdown(), // cross-session memory: a verify-first digest of past sessions, injected like project rules
@@ -2242,9 +2279,9 @@ async function handleSend(text, images) {
 			// is what clears cloudSignedIn). A 401 whose refresh merely failed — offline, a 5xx, a
 			// malformed reply — is this request failing, not the session: the tokens stay, the error is
 			// shown as the error it is, and the next message tries the refresh again. Ending the session
-			// from here would delete credentials classifyRefresh deliberately kept. Same rule as the
-			// agent's isSessionExpired hook.
-			if (req.gateway && !cloudSignedIn && session.isSessionExpiredError(e)) {
+			// from here would delete credentials classifyRefresh deliberately kept. The agent's
+			// isSessionExpired hook asks the same question: isEndedSessionError.
+			if (isEndedSessionError(req, e)) {
 				post({ type: 'assistantError', message: session.SESSION_EXPIRED_MESSAGE, code: 'session_expired' });
 			} else {
 				post({ type: 'assistantError', message: String((e && e.message) || e), code: e && e.code });
@@ -3029,9 +3066,12 @@ async function currentAccount() {
 	cloudSignedIn = !!token;   // keep the footer/model gate in sync with the real session
 	if (token) {
 		const p = (ctx && ctx.globalState.get(ACCOUNT_PROFILE_KEY)) || {};
-		return { signedIn: true, mode, name: p.name || p.email || 'LevelCode user', email: p.email || '', plan: p.plan || '' };
+		return { signedIn: true, mode, expired: false, name: p.name || p.email || 'LevelCode user', email: p.email || '', plan: p.plan || '' };
 	}
-	return { signedIn: false, mode, status: cloudEndpoint() ? 'signedout' : 'unconfigured' };
+	// `expired`: an ended session is still waiting on the user. The webview keeps its sign-in card only
+	// while this says so — which is how the card leaves when the expiry is answered somewhere other
+	// than the card itself: switching to BYOK in Settings, or clearing the cloud host.
+	return { signedIn: false, mode, expired: sessionExpiredPending(), status: cloudEndpoint() ? 'signedout' : 'unconfigured' };
 }
 /**
  * Best-effort refresh of the cached profile (esp. `plan`) from the backend, so the free-tier lock /
@@ -3241,6 +3281,22 @@ async function openWorkspaceFile(rel) {
 	} catch (e) { dbg('openFile.error', { msg: String((e && e.message) || e) }); }
 }
 
+/**
+ * Settings changed. The routing mode and the cloud host decide whether a session is in play at all,
+ * so they resync the account popover — and with it the sign-in card, in BOTH directions. Leaving
+ * gateway mode (or clearing the host) answers an unanswered expiry as far as the screen goes: the
+ * account message says nothing is pending and the webview drops the card. Coming back puts the
+ * expiry back in force, and the card has to come back with it — otherwise the next message is
+ * stopped by something nothing on screen mentions.
+ */
+function onConfigChanged(e) {
+	if (e.affectsConfiguration('levelcode.ai')) { sendConfigToWebview(); }
+	if (e.affectsConfiguration('levelcode.ai.providerMode') || e.affectsConfiguration('levelcode.cloud')) {
+		postAccount();
+		replaySessionExpired().catch(() => { });
+	}
+}
+
 function activate(context) {
 	// A window that comes back after a while away may have outlived its access token (8 h). Re-check
 	// on focus, throttled, so the expiry is found before the next message rather than by it.
@@ -3316,10 +3372,7 @@ function activate(context) {
 		vscode.workspace.onDidDeleteFiles(scheduleFileIndex),
 		vscode.workspace.onDidRenameFiles(scheduleFileIndex),
 		vscode.workspace.onDidChangeWorkspaceFolders(scheduleFileIndex),
-		vscode.workspace.onDidChangeConfiguration((e) => {
-			if (e.affectsConfiguration('levelcode.ai')) { sendConfigToWebview(); }
-			if (e.affectsConfiguration('levelcode.ai.providerMode') || e.affectsConfiguration('levelcode.cloud')) { postAccount(); }
-		})
+		vscode.workspace.onDidChangeConfiguration(onConfigChanged)
 	);
 
 	// AI edit-with-diff (select code → instruct → review diff → apply) — provider-agnostic.
