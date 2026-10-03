@@ -10,12 +10,17 @@
  *    - product.overrides.json gains the identity and keeps whatever else the developer put there
  *    - the dev bundle's Info.plist changes in its identifier and its URL scheme — and nowhere else
  *    - doing it twice changes nothing
+ *    - the two files change as ONE change: a write that fails leaves both as they were, and a
+ *      rename that fails half-way is undone
+ *    - the step fails unless macOS will route the dev scheme to this bundle — told is not routed
  *    - a built app with a dev identity, or with an overrides file in it, fails the release check
  *    - the sign-in callback is built from the editor's OWN scheme: the reason no auth code changed
  *
  *  Everything runs on fixtures in a temp directory, on any OS — nothing here touches a real
- *  checkout, a real bundle, or LaunchServices. That last step (the system routing a
- *  levelcode-dev:// link to the dev bundle) is macOS's, and is not exercised by this file.
+ *  checkout, a real bundle, or LaunchServices. macOS itself is a stand-in (`system`): what the
+ *  script DOES with its answers is pinned here, the answers are not. And where a failure cannot be
+ *  provoked for real — a rename that fails after an earlier one went through — the filesystem is
+ *  handed in with that one step failing.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -109,6 +114,20 @@ function builtApp({ plist = SHIPPED, product = SHIPPED, overrides = false } = {}
 	return app;
 }
 
+/** The real filesystem, with one step replaced. */
+const failing = (step, fn) => ({ ...fs, [step]: fn });
+const temps = (dir) => fs.readdirSync(dir, { recursive: true }).map(String).filter((f) => /\.tmp$/.test(f));
+
+/** macOS as the script sees it: `handler` is what it says opens the dev scheme. */
+function system({ register = () => { }, handler }) {
+	const calls = { register: [], handlerOf: [] };
+	return {
+		calls,
+		register: (bundle) => { calls.register.push(bundle); return register(bundle); },
+		handlerOf: (scheme) => { calls.handlerOf.push(scheme); return typeof handler === 'function' ? handler() : handler; }
+	};
+}
+
 const changedLines = (before, after) => {
 	const a = before.split('\n'), b = after.split('\n');
 	assert.strictEqual(a.length, b.length, 'the file has the same number of lines');
@@ -185,6 +204,11 @@ async function signInUrl(uriScheme) {
 
 (async () => {
 	const identity = await import(pathToFileURL(SCRIPT).href);
+	// Nothing in this file may reach the real LaunchServices: a fixture registered there outlives the
+	// test that made it. Every example hands in its own stand-in, or asks not to register; one that
+	// forgets fails here instead of leaving a temp-folder bundle in the system's database.
+	identity.macOS.register = () => { throw new Error('this suite must not register anything with macOS'); };
+	identity.macOS.handlerOf = () => { throw new Error('this suite must not ask macOS anything'); };
 
 	// ── the two identities ───────────────────────────────────────────────────────────────────────
 	await test('the product that ships is levelcode:// and ai.levelcode.app — the dev identity changes neither', () => {
@@ -215,6 +239,10 @@ async function signInUrl(uriScheme) {
 		assert.throws(() => identity.devIdentity(file({ urlProtocol: 'levelcode', darwinBundleIdentifier: 'ai.levelcode.app.dev' }), SHIPPED), /levelcode-dev/);
 		assert.throws(() => identity.devIdentity(file({ urlProtocol: 'https', darwinBundleIdentifier: 'ai.levelcode.app.dev' }), SHIPPED), /levelcode-dev/);
 		assert.throws(() => identity.devIdentity(file({ urlProtocol: 'levelcode-dev' }), SHIPPED), /must name both/);
+		// Both values are written into XML as they are.
+		for (const id of ['ai.levelcode.app</string><string>x', 'ai levelcode dev', 'dev', 'ai.levelcode.app.dev.']) {
+			assert.throws(() => identity.devIdentity(file({ urlProtocol: 'levelcode-dev', darwinBundleIdentifier: id }), SHIPPED), /must look like ai\.levelcode\.app\.dev/, id);
+		}
 		assert.deepStrictEqual(identity.devIdentity(file(DEV), SHIPPED), DEV);
 	});
 
@@ -341,6 +369,141 @@ async function signInUrl(uriScheme) {
 		assert.ok(log.some((l) => /not macOS \(linux\).*will not reach this editor/.test(l)), log.join(' | '));
 	});
 
+	// ── the two files change as one change ───────────────────────────────────────────────────────
+	await test('together: every file is replaced, keeping its mode; one that was not there is created; nothing is left behind', () => {
+		const dir = tmp();
+		const a = write(path.join(dir, 'a.json'), 'old a'), b = write(path.join(dir, 'sub', 'b.plist'), 'old b');
+		fs.chmodSync(b, 0o640);
+		const c = path.join(dir, 'c.json');
+		identity.replaceTogether([{ path: a, text: 'new a' }, { path: b, text: 'new b' }, { path: c, text: 'new c' }]);
+		assert.deepStrictEqual([a, b, c].map((f) => fs.readFileSync(f, 'utf8')), ['new a', 'new b', 'new c']);
+		assert.strictEqual(fs.statSync(b).mode & 0o777, 0o640);
+		assert.deepStrictEqual(temps(dir), []);
+	});
+
+	await test('together: a symlinked file is replaced where it really is — the link stays a link', () => {
+		const dir = tmp();
+		const real = write(path.join(dir, 'shared', 'overrides.json'), 'old');
+		const link = path.join(dir, 'product.overrides.json');
+		fs.symlinkSync(real, link);
+		identity.replaceTogether([{ path: link, text: 'new' }]);
+		assert.strictEqual(fs.lstatSync(link).isSymbolicLink(), true);
+		assert.strictEqual(fs.readFileSync(real, 'utf8'), 'new');
+	});
+
+	await test('together: a file that cannot be written stops it before ANY file has changed', () => {
+		const dir = tmp();
+		const a = write(path.join(dir, 'a.json'), 'old a');
+		const nowhere = path.join(dir, 'no-such-folder', 'b.plist');   // a real failure, no stand-in
+		assert.throws(() => identity.replaceTogether([{ path: a, text: 'new a' }, { path: nowhere, text: 'new b' }]), /ENOENT/);
+		assert.strictEqual(fs.readFileSync(a, 'utf8'), 'old a');
+		assert.deepStrictEqual(temps(dir), []);
+	});
+
+	await test('together: a rename that fails after an earlier one went through is undone — old contents back, a new file gone', () => {
+		for (const existed of [true, false]) {
+			const dir = tmp();
+			const a = path.join(dir, 'a.json'), b = write(path.join(dir, 'b.plist'), 'old b');
+			if (existed) { write(a, 'old a'); }
+			let renames = 0;
+			const io = failing('renameSync', (from, to) => { if (++renames === 2) { throw new Error('EXDEV: second rename refused'); } return fs.renameSync(from, to); });
+			assert.throws(() => identity.replaceTogether([{ path: a, text: 'new a' }, { path: b, text: 'new b' }], io), /second rename refused — nothing was changed/);
+			assert.strictEqual(fs.existsSync(a) ? fs.readFileSync(a, 'utf8') : null, existed ? 'old a' : null, existed ? 'restored' : 'removed again');
+			assert.strictEqual(fs.readFileSync(b, 'utf8'), 'old b');
+			assert.deepStrictEqual(temps(dir), []);
+		}
+	});
+
+	await test('together: when even the undo fails, the error says which file was left changed', () => {
+		const dir = tmp();
+		const a = write(path.join(dir, 'a.json'), 'old a'), b = write(path.join(dir, 'b.plist'), 'old b');
+		let renames = 0;
+		const io = {
+			...failing('renameSync', (from, to) => { if (++renames === 2) { throw new Error('second rename refused'); } return fs.renameSync(from, to); }),
+			// Staging writes go to .tmp files; the write that fails here is the one putting a.json back.
+			writeFileSync: (file, ...rest) => { if (file === fs.realpathSync(a)) { throw new Error('EROFS: read-only now'); } return fs.writeFileSync(file, ...rest); }
+		};
+		assert.throws(() => identity.replaceTogether([{ path: a, text: 'new a' }, { path: b, text: 'new b' }], io),
+			(e) => /second rename refused/.test(e.message) && /could NOT be undone/.test(e.message) && e.message.includes(fs.realpathSync(a)) && /EROFS/.test(e.message));
+	});
+
+	await test('dev: a bundle that cannot be written leaves the overrides file as it was — no half identity', () => {
+		// The reviewed order wrote product.overrides.json first: a failure on Info.plist then left the
+		// editor advertising a scheme the bundle did not own.
+		for (const theirs of [null, JSON.stringify({ extensionsGallery: {} })]) {
+			const c = checkout({ overrides: theirs });
+			const io = failing('writeFileSync', (file, ...rest) => { if (/Info\.plist\.identity-\d+\.tmp$/.test(file)) { throw new Error('EACCES: permission denied'); } return fs.writeFileSync(file, ...rest); });
+			assert.throws(() => identity.applyDevIdentity({ vscodeDir: c.dir, platform: 'darwin', register: false, io }), /EACCES/);
+			assert.strictEqual(fs.existsSync(c.overrides) ? fs.readFileSync(c.overrides, 'utf8') : null, theirs);
+			assert.strictEqual(fs.readFileSync(c.plist, 'utf8'), infoPlist());
+			assert.deepStrictEqual(temps(c.dir), []);
+		}
+	});
+
+	// ── told is not routed ───────────────────────────────────────────────────────────────────────
+	await test('dev: macOS is asked what opens the dev scheme, and the step passes when it names this bundle', () => {
+		const c = checkout();
+		const bundle = path.join(c.dir, '.build', 'electron', 'LevelCode.app');
+		const mac = system({ handler: fs.realpathSync(bundle) });   // as macOS gives it: /private/var/…, not /var/…
+		const log = [];
+		const r = identity.applyDevIdentity({ vscodeDir: c.dir, platform: 'darwin', system: mac, log: (l) => log.push(l) });
+		assert.strictEqual(r.registered, true);
+		assert.deepStrictEqual(mac.calls, { register: [bundle], handlerOf: ['levelcode-dev'] });
+		assert.ok(log.some((l) => /macOS opens levelcode-dev:\/\/ with this bundle/.test(l)), log.join(' | '));
+	});
+
+	await test('dev: the bundle\'s own path in another spelling is still this bundle — macOS answers as on disk, the checkout as typed', () => {
+		const c = checkout();
+		const bundle = path.join(c.dir, '.build', 'electron', 'LevelCode.app');
+		const shouted = path.join(path.dirname(bundle), 'LEVELCODE.APP');
+		const run = () => identity.applyDevIdentity({ vscodeDir: c.dir, platform: 'darwin', system: system({ handler: shouted }) });
+		if (fs.existsSync(shouted)) {   // the volume folds case, as a Mac's does by default
+			assert.strictEqual(run().registered, true);
+		} else {                        // it does not: those really are two places
+			assert.throws(run, /macOS opens levelcode-dev:\/\/ with .*LEVELCODE\.APP, not with/);
+		}
+	});
+
+	await test('dev: a registration that fails is fatal — the launcher must not start an editor that cannot hear its callback', () => {
+		const c = checkout();
+		const mac = system({ register: () => { throw new Error('lsregister failed: failed to scan … -10811'); }, handler: '' });
+		assert.throws(() => identity.applyDevIdentity({ vscodeDir: c.dir, platform: 'darwin', system: mac }),
+			/could not be registered for levelcode-dev:\/\/ — lsregister failed: failed to scan[\s\S]*the editor was not started/);
+		assert.deepStrictEqual(mac.calls.handlerOf, [], 'nothing further is asked');
+		// The two files are left in place: they agree with each other, and the next run registers again.
+		assert.deepStrictEqual(JSON.parse(fs.readFileSync(c.overrides, 'utf8')), DEV);
+		assert.strictEqual(fs.readFileSync(c.plist, 'utf8'), infoPlist(DEV));
+		const bundle = path.join(c.dir, '.build', 'electron', 'LevelCode.app');
+		const retry = identity.applyDevIdentity({ vscodeDir: c.dir, platform: 'darwin', system: system({ handler: bundle }) });
+		assert.deepStrictEqual({ registered: retry.registered, overridesChanged: retry.overridesChanged, bundleChanged: retry.bundleChanged }, { registered: true, overridesChanged: false, bundleChanged: false });
+	});
+
+	await test('dev: registered but not ROUTED is fatal too — no app for the scheme, or another copy holding it', () => {
+		const none = checkout();
+		assert.throws(() => identity.applyDevIdentity({ vscodeDir: none.dir, platform: 'darwin', system: system({ handler: '' }) }),
+			/macOS has no app for levelcode-dev:\/\/ even after registering[\s\S]*temporary folder/);
+
+		const other = checkout();
+		assert.throws(() => identity.applyDevIdentity({ vscodeDir: other.dir, platform: 'darwin', system: system({ handler: '/Users/dev/other-checkout/vscode/.build/electron/LevelCode.app' }) }),
+			/macOS opens levelcode-dev:\/\/ with \/Users\/dev\/other-checkout\/[\s\S]*lsregister -u "\/Users\/dev\/other-checkout\//);
+	});
+
+	await test('dev: when macOS cannot be asked, a registration that succeeded stands — and the log says it is unconfirmed', () => {
+		const c = checkout();
+		const log = [];
+		const r = identity.applyDevIdentity({ vscodeDir: c.dir, platform: 'darwin', system: system({ handler: null }), log: (l) => log.push(l) });
+		assert.strictEqual(r.registered, true);
+		assert.ok(log.some((l) => /could not ask macOS .* unconfirmed/.test(l)), log.join(' | '));
+	});
+
+	await test('dev: asked not to register, macOS is not consulted at all', () => {
+		const c = checkout();
+		const mac = system({ register: () => { throw new Error('must not be called'); }, handler: () => { throw new Error('must not be called'); } });
+		const r = identity.applyDevIdentity({ vscodeDir: c.dir, platform: 'darwin', register: false, system: mac });
+		assert.strictEqual(r.registered, false);
+		assert.deepStrictEqual(mac.calls, { register: [], handlerOf: [] });
+	});
+
 	// ── a build must be the app that ships ───────────────────────────────────────────────────────
 	await test('release check: an app with the shipped identity passes', () => {
 		assert.deepStrictEqual(identity.releaseIdentityProblems(builtApp()), []);
@@ -360,6 +523,9 @@ async function signInUrl(uriScheme) {
 	await test('release check: an overrides file inside the app, a missing product.json, a missing Info.plist — each fails', () => {
 		assert.deepStrictEqual(identity.releaseIdentityProblems(builtApp({ overrides: true })), ['product.overrides.json was packaged — it is for runs from source only']);
 		assert.strictEqual(identity.releaseIdentityProblems(builtApp({ product: null })).length, 1);
+		const unreadable = builtApp();
+		write(path.join(unreadable, 'Contents', 'Resources', 'app', 'product.json'), '{ "urlProtocol": ');
+		assert.match(identity.releaseIdentityProblems(unreadable).join(' | '), /^product\.json cannot be read/);
 		assert.match(identity.releaseIdentityProblems(path.join(tmp(), 'Nothing.app'))[0], /no Info\.plist/);
 	});
 

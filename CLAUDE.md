@@ -66,6 +66,10 @@ To macOS a run from source and the installed LevelCode used to be ONE app — sa
 - **Two halves, both required.** Runtime: `vscode/product.overrides.json` (Code-OSS reads it only when
   running from source, never packages it). macOS: the dev Electron bundle's `Info.plist`, then
   `lsregister`. The bundle is regenerated when Electron changes, so the step runs on every launch.
+- **Both or neither, and confirmed.** The two files are replaced as one change (staged, renamed, undone
+  if the second rename fails). Then the step asks macOS which app opens `levelcode-dev://` and FAILS —
+  `run-dev.sh` stops before launching — unless the answer is this bundle. `lsregister` exiting 0 is
+  not that answer: it registers a bundle it will never route to.
 - **`branding/product.overlay.json` is the product that ships — never put a dev value in it.**
   `build-macos.sh` runs `editor-identity.mjs check-release` and fails a build that is not
   `levelcode://` + `ai.levelcode.app`, or that carries an overrides file.
