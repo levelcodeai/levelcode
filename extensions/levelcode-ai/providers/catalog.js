@@ -29,9 +29,19 @@ const CAPS = {
 	'claude-opus-4-8':           { context: 200000, tools: true, vision: true, caching: true },
 	'claude-sonnet-4-6':         { context: 200000, tools: true, vision: true, caching: true },
 	'claude-haiku-4-5-20251001': { context: 200000, tools: true, vision: true, fast: true },
+	// Fable reaches the composer two ways: through the gateway as the OpenRouter basename (dotted
+	// 5.1), and BYOK-native as the dashed id. Neither had a row, so both fell to the claude-*
+	// heuristic's 200k — a fifth of the real window. Fable 5 / 5.1 are Pro-tier from 2026-09-08.
+	'claude-fable-5':   { context: 1000000, tools: true, vision: true, caching: true },
+	'claude-fable-5.1': { context: 1000000, tools: true, vision: true, caching: true },
+	'claude-fable-5-1': { context: 1000000, tools: true, vision: true, caching: true },
 	// OpenAI
 	'gpt-4o':      { context: 128000, tools: true, vision: true },
 	'gpt-4o-mini': { context: 128000, tools: true, vision: true, fast: true },
+	// Not covered by the gpt-4/gpt-5 heuristic below, which would also give it a 128k window; the
+	// real one is 1.05M (OpenRouter models API, 2026-09-06) and it reads images. Without this row the
+	// gateway picker offers it while the composer refuses attachments and the meter sizes it wrong.
+	'gpt-6-astra': { context: 1050000, tools: true, vision: true },
 	'o3-mini':     { context: 200000, tools: true, reasoning: true },
 	'o1':          { context: 200000, tools: true, reasoning: true },
 	'o1-mini':     { context: 128000, tools: false, reasoning: true },   // o1-mini has no function calling
