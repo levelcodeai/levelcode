@@ -74,6 +74,12 @@ npm run gulp -- "$GULP_TARGET"
 APP_PARENT="$(cd "$VSCODE_DIR/.." && pwd)"
 BUILT_APP="$APP_PARENT/$OUT_DIR"
 
+# A build must be the app that ships: its bundle identifier, its levelcode:// scheme, and no
+# overrides file. A run from source has an identity of its own (run-dev.sh), and this is what stops
+# that one from ever being packaged. Checked first — nothing below is worth doing to the wrong app.
+echo "[build] Checking the app carries the shipped identity …"
+node "$SCRIPT_DIR/editor-identity.mjs" check-release "$BUILT_APP/LevelCode.app"
+
 # De-Microsoft: strip the proprietary Copilot/MS packages from the BUILT APP — NOT the source checkout,
 # so dev-mode typecheck (run-dev.sh → tsgo) still sees the real type declarations. Removes ~120 MB of
 # non-redistributable code from the shipped bundle. Idempotent + loud.

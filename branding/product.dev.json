@@ -1,0 +1,6 @@
+{
+	"_comment": "The identity of LevelCode RUN FROM SOURCE (scripts/run-dev.sh) — never of a build. To macOS the dev editor and the installed app were one app: same bundle id, same levelcode:// scheme, so a sign-in started in the dev editor was handed back to the app in /Applications. scripts/editor-identity.mjs gives the dev run these two values instead: at runtime through vscode/product.overrides.json (read only when running from source), and on the dev Electron bundle's Info.plist. branding/product.overlay.json — the product that ships — is not touched by any of it. The scheme must be levelcode-<variant>: that is the only shape a server can be told to accept (LEVELCODE_EXTRA_EDITOR_SCHEMES, thin.ly).",
+
+	"urlProtocol": "levelcode-dev",
+	"darwinBundleIdentifier": "ai.levelcode.app.dev"
+}
