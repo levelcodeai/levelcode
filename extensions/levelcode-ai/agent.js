@@ -311,6 +311,9 @@ function runCommand(root, command, onChunk, onExit, onStart, timeoutMs) {
 async function runTool(tu, ctx) {
 	const root = ctx.root;
 	const input = tu.input || {};
+	// The same logger runAgent uses, resolved HERE: runAgent's `dbg` is local to runAgent, so it is not
+	// in scope in this function — and a bare dbg(...) below is a ReferenceError only once the line runs.
+	const dbg = ctx.dbg || (() => {});
 	try {
 		if (tu.name === 'list_files') {
 			ctx.post({ type: 'agentTool', icon: 'list-tree', text: 'list_files ' + (input.glob || '') });
