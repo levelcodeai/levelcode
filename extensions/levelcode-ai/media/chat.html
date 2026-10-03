@@ -4198,7 +4198,11 @@
     else if (m.type === 'compactResult'){ onCompactResult(m); }
     else if (m.type === 'debug'){ addDebug(m); }
     else if (m.type === 'account'){
-      if (m.signedIn && sessionCard && sessionCard.isConnected){ sessionCard.remove(); sessionCard = null; } renderAccount(m); if (m.open) openAccount(); }
+      // The sign-in card stays only while the host says an expiry is still waiting (m.expired).
+      // Signing in answers it; so does anything that takes the session out of play — BYOK mode
+      // chosen in Settings, or no cloud host to sign in to. Requests run on the user's own key by
+      // then, so a card still asking them to sign in would be wrong.
+      if (!m.expired && sessionCard && sessionCard.isConnected){ sessionCard.remove(); sessionCard = null; } renderAccount(m); if (m.open) openAccount(); }
     else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
     else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); closeGroup(); const cap = capReachedInfo(m.message); if (isSessionExpired(m)){ addSignInCard(m); } else if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
     else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps, m.costMicros); setStreaming(false); }

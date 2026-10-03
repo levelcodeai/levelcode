@@ -65,14 +65,24 @@ function accessNeedsRefresh(token, nowMs = Date.now()) {
  *
  * Only an explicit 401 ends the session. Clearing credentials on a network blip would log a user
  * out for closing their laptop on the train.
+ *
+ * And 'ok' means the reply can be STORED as it stands, not merely that it was a 2xx with something
+ * in the right field. The tokens go into SecretStorage, which takes strings: `{ access: {} }` would
+ * throw on the way in, and `{ access: 'a', refresh: {} }` would throw after the access token had
+ * already been replaced. Either is a malformed reply — "nothing is known yet" — and the credentials
+ * in hand are still the best ones available. The refresh token is optional (a server that does not
+ * rotate sends none); when one is present it has to be usable too.
  * @param {{status?:number, body?:any}|null|undefined} res
  * @returns {'ok'|'expired'|'retry'}
  */
 function classifyRefresh(res) {
 	if (!res) { return 'retry'; }
 	if (res.status === 401) { return 'expired'; }
-	if (res.status >= 200 && res.status < 300 && res.body && (res.body.access || res.body.token)) { return 'ok'; }
-	return 'retry';
+	if (!(res.status >= 200 && res.status < 300) || !res.body) { return 'retry'; }
+	const isToken = (v) => typeof v === 'string' && v.length > 0;
+	if (!isToken(res.body.access || res.body.token)) { return 'retry'; }   // the one the host will store
+	if (res.body.refresh && !isToken(res.body.refresh)) { return 'retry'; }
+	return 'ok';
 }
 
 /**
