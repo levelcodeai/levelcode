@@ -516,6 +516,42 @@ test('TRANSCRIPT: the speaker label leaves the screen but NOT the accessibility 
 	assert.match(add, /cont \? '' : '<div class="role">/, 'a continuation must still omit the label element entirely');
 });
 
+test('SHELL: the transcript is its own containing block — nothing in it is laid out against the page', () => {
+	// The page is a 100vh flex column and #log is the only thing in it that scrolls: the composer and
+	// the status row sit under it and never move. A box taken out of flow (position: absolute) is laid
+	// out against its nearest POSITIONED ancestor — and with none, against the page, at its unscrolled
+	// place in the transcript, where neither #log's scrolling nor its clipping reaches it.
+	//
+	// The speaker label is such a box; the test above requires it to be. With nothing positioned above
+	// it, the label of every message that started more than a viewport down the transcript lay below
+	// the fold. The page grew to reach that one pixel, and once the log was at its end the wheel
+	// scrolled the PAGE: transcript, composer and status row riding up together over blank space, on
+	// every conversation past its first long turn. Measured in Chromium against the shipped file, two
+	// turns in a 1118px viewport: the page was 1963px tall, the labels' offsetParent was <body>, and
+	// four wheel ticks moved the composer up by 400px. Positioned: 1118px, #log, 0px.
+	//
+	// No DOM test can see any of that — the fake DOM lays nothing out — so the rule is pinned here.
+	const logRules = [...cssBlocks.matchAll(/(?:^|[}\n])\s*#log\s*\{([^}]*)\}/g)].map((m) => m[1]);
+	assert.ok(logRules.length, '#log no longer has a rule of its own');
+
+	// The same selector each time, so the last declaration is the one in force.
+	const declared = logRules.map((b) => (/(?:^|[;\s])position\s*:\s*([a-z-]+)/.exec(b) || [])[1]).filter(Boolean);
+	const position = declared[declared.length - 1];
+	assert.ok(position && position !== 'static',
+		'#log must be positioned (position: relative). It is the containing block for the clipped speaker\n'
+		+ 'label; without it every label is laid out against the page, the page grows past the viewport, and\n'
+		+ 'the whole chat — composer included — scrolls away. Got: ' + (position || 'no position at all'));
+
+	// The premise. If the shell is ever rebuilt, this is the test to rethink rather than delete.
+	const shell = blockAt(cssBlocks, cssBlocks.search(/(?:^|\n)\s*body\s*\{/));
+	assert.match(shell, /(?:^|[;\s])height:\s*100vh/, 'premise: the page is exactly one viewport tall (height, not min-height)');
+	assert.ok(logRules.some((b) => /overflow-y\s*:\s*auto/.test(b)), 'premise: #log is the element that scrolls');
+
+	// And the label is still what needs it: out of flow, with no offsets of its own to pin it anywhere.
+	const label = /\.msg \.role \{([^}]*)\}/.exec(cssBlocks);
+	assert.ok(label && /position:\s*absolute/.test(label[1]), 'the label is no longer out of flow — see the test above');
+});
+
 test('TRANSCRIPT: dropping the label does not collapse the gap between speakers', () => {
 	// The label was doing spacing work nobody had accounted for: ~19px above every turn. Remove it and
 	// a new turn is separated from a continuation by 12px versus 7px — not a difference you can see, so

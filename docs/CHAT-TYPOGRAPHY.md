@@ -180,6 +180,27 @@ transcript collapses into one undifferentiated column, the opposite of the inten
 height back in `em`, so it tracks D2's prose size. Net: **20.5px reclaimed per message** while the
 turn-boundary-to-continuation ratio *improves* from 1.5× to 2.2×.
 
+**Corrected after shipping: the clipped label needs an anchor.** T4 measured the label's *box* and
+never asked *where it was laid out*. The clipping pattern takes it out of flow with
+`position: absolute`, and nothing above it was positioned — so every label was laid out against the
+page rather than the transcript, at its unscrolled place in the log, out of reach of the log's
+scrolling and clipping. A label that started more than a viewport down sat below the fold, the page
+grew to reach that one pixel, and the page then scrolled: once the log was at its end, the wheel
+moved the whole shell — transcript, composer and status row — up over blank space. It showed on any
+conversation past its first long turn.
+
+`#log { position: relative }` makes the log the containing block for everything inside it: this
+label, and anything out of flow added later. Measured the same way (Chromium, the shipped
+`chat.html`, two turns, 1118px viewport):
+
+| | T4 as shipped | with the anchor |
+| --- | --- | --- |
+| label's `offsetParent` | `<body>` | **`#log`** |
+| the last label, its message scrolled to −22px | at 1962px: pinned to the page | **at −23px: 1px above its message** |
+| page height | 1963px (that label, plus its pixel) | **1118px** (the viewport) |
+| composer after 4 wheel ticks at the end of the log | 400px higher, blank page beneath | **unmoved** |
+| transcript content height | 2919px | 2919px (nothing inside the log moves) |
+
 ### D7 — It stays hackable: two settings, no hard-coded values.
 
 `levelcode.ai.chat.proseWidth` (px) and `levelcode.ai.chat.fontSize` (px). Both flow through the CSS
