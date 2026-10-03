@@ -425,18 +425,35 @@ async function renewSession(endpoint) {
 	// Not applied: the stored session is no longer the one this request was about — a sign-in, a
 	// sign-out, another refresh that finished first, or another window. What the caller needs is
 	// whether a token is in place to retry with.
-	const token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
+	const token = await storedToken();
 	dbg('cloud.refresh', { superseded: true, outcome, token: !!token });
-	if (!token && cloudSignedIn) {
-		// Gone, and not by this window's hand — a sign-out or an expiry HERE clears the flag before it
-		// deletes anything. Another window got there first, so this one catches up: the card if the
-		// session ended, and a popover and footer that stop claiming it is live either way.
-		cloudSignedIn = false;
-		if (sessionExpiredPending()) { postSessionExpired(); }
-		await postAccount(false);
-		sendConfigToWebview();
-	}
+	if (!!token !== cloudSignedIn) { await catchUpWithStoredSession(token); }
 	return !!token;
+}
+
+/**
+ * The stored access token, read between session changes rather than in the middle of one. Every
+ * change this window makes moves the token and `cloudSignedIn` together inside the lock, so a token
+ * read this way that disagrees with the flag was changed by ANOTHER window.
+ */
+function storedToken() {
+	return withSessionLock(() => ctx.secrets.get(ACCOUNT_TOKEN_KEY));
+}
+
+/**
+ * The stored session belongs to every window, and a window only hears about the changes it makes
+ * itself. When what is stored stops matching what this window is showing, another window has signed
+ * out, signed in, or found the expiry — and a chat that is already open sends no second `ready` to
+ * notice. Bring this window level: the flag, the popover and footer, and the card. An expiry that
+ * is now waiting gets its card; if none is (the other window signed in), the account message takes
+ * a card that is still up back down.
+ * @param {string|undefined} token what SecretStorage holds now
+ */
+async function catchUpWithStoredSession(token) {
+	cloudSignedIn = !!token;
+	if (!token && sessionExpiredPending()) { postSessionExpired(); }
+	await postAccount(false);
+	sendConfigToWebview();
 }
 
 /**
@@ -579,11 +596,21 @@ async function clearSessionExpired() {
  *     resumed session (both post `reset`, which empties the log) and a checkpoint restore (which
  *     drops every node after the restored turn). Each takes the card with it, and the next message
  *     would be stopped by an expiry nothing on screen mentions any more.
+ *
+ * Never rejects. It runs at the end of things that have already done their work — a resume, a
+ * restore — and a store that will not read is no reason to cut those short.
  */
 async function replaySessionExpired() {
-	if (!sessionExpiredPending() || await ctx.secrets.get(ACCOUNT_TOKEN_KEY)) { return; }
-	dbg('cloud.sessionExpired.replay', {});
-	postSessionExpired();
+	if (!sessionExpiredPending()) { return; }
+	try {
+		const token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
+		// Asked AGAIN, because the answer can change while that read is out: "Use my own key instead"
+		// clears the marker, a Settings change takes the session out of play. Posting on the earlier
+		// answer would put back a card the user has just dismissed.
+		if (token || !sessionExpiredPending()) { return; }
+		dbg('cloud.sessionExpired.replay', {});
+		postSessionExpired();
+	} catch (e) { dbg('cloud.sessionExpired.replay', { error: String((e && e.message) || e) }); }
 }
 
 /**
@@ -592,19 +619,32 @@ async function replaySessionExpired() {
  *
  * Cheap by design: the access token's own `exp` is read locally and the network is only touched
  * when it is expired or about to be. A session with hours left costs nothing here. Called on the
- * webview's `ready` and again when the window regains focus after a while away.
+ * webview's `ready` and again every time the window regains focus.
+ *
+ * Two halves. Catching up with the other windows is one local read, so it happens on every call.
+ * The half that can cost a request is rationed on focus. Never rejects: `ready` awaits this before
+ * it restores the chat.
  */
+const SESSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 let lastSessionCheck = 0;
 async function checkCloudSession(reason) {
 	if (!ctx || providerMode() !== 'gateway') { return; }
-	const token = await ctx.secrets.get(ACCOUNT_TOKEN_KEY);
-	// No token, so no session to check. One that already ENDED — found while no chat was open to hear
-	// about it — is not announced from here: `ready` replays it last, via replaySessionExpired().
-	if (!token) { return; }
-	lastSessionCheck = Date.now();
-	if (!session.accessNeedsRefresh(token)) { return; }
-	dbg('cloud.sessionCheck', { reason, expiresAt: session.jwtExpiresAt(token) });
-	await refreshCloudToken();   // an expired refresh token lands in sessionExpired() from inside
+	try {
+		const token = await storedToken();
+		// First, whether this window is still showing the session that is actually stored. On `ready`
+		// there is nothing to catch up on — the handler has just read the same token — and an expiry
+		// found while no chat was open is replayed LAST there, by replaySessionExpired(). On focus this
+		// is what tells an open chat that another window has ended, left or renewed the session.
+		if (!!token !== cloudSignedIn) { await catchUpWithStoredSession(token); }
+		if (!token) { return; }
+		// From here on it can cost a request, so focus gets a ration: a window clicked in and out of
+		// while offline must not retry the refresh on every click.
+		if (reason === 'focus' && Date.now() - lastSessionCheck <= SESSION_CHECK_EVERY_MS) { return; }
+		lastSessionCheck = Date.now();
+		if (!session.accessNeedsRefresh(token)) { return; }
+		dbg('cloud.sessionCheck', { reason, expiresAt: session.jwtExpiresAt(token) });
+		await refreshCloudToken();   // an expired refresh token lands in sessionExpired() from inside
+	} catch (e) { dbg('cloud.sessionCheck', { reason, error: String((e && e.message) || e) }); }
 }
 
 /** Gateway-mode token refresh (the streaming 401 retry path). Delegates to refreshCloudToken. */
@@ -1432,7 +1472,7 @@ function newChat() {
 	post({ type: 'reset' });
 	postContextFiles();
 	postMemoryDigest();                    // the fresh empty state shows the welcome-back strip
-	replaySessionExpired().catch(() => { });   // `reset` emptied the log, and an unanswered expiry's card with it
+	replaySessionExpired();                // `reset` emptied the log, and an unanswered expiry's card with it
 }
 
 /** The currently open file as a context block (capped), or null. */
@@ -3293,15 +3333,17 @@ function onConfigChanged(e) {
 	if (e.affectsConfiguration('levelcode.ai')) { sendConfigToWebview(); }
 	if (e.affectsConfiguration('levelcode.ai.providerMode') || e.affectsConfiguration('levelcode.cloud')) {
 		postAccount();
-		replaySessionExpired().catch(() => { });
+		replaySessionExpired();
 	}
 }
 
 function activate(context) {
-	// A window that comes back after a while away may have outlived its access token (8 h). Re-check
-	// on focus, throttled, so the expiry is found before the next message rather than by it.
+	// A window that comes back after a while away may have outlived its access token (8 h) — or
+	// another window may have ended, left or renewed the session they share. Re-check on every focus,
+	// so either is found before the next message rather than by it. The look is one local read;
+	// checkCloudSession rations the part that can cost a request.
 	context.subscriptions.push(vscode.window.onDidChangeWindowState((st) => {
-		if (st.focused && Date.now() - lastSessionCheck > 10 * 60 * 1000) { checkCloudSession('focus').catch(() => {}); }
+		if (st.focused) { checkCloudSession('focus'); }
 	}));
 	ctx = context;
 	// Constructed directly rather than by registerWebviewViewProvider: the chat is no longer a
