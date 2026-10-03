@@ -3326,7 +3326,8 @@ function activate(context) {
 	registerAiEdit(context, {
 		aiConfig,
 		prepProviderRequest,
-		streamChat: providers.streamChat
+		streamChat: providers.streamChat,
+		accountSignIn   // the "Sign in" on an edit refused because the cloud session ended
 	});
 
 	// Claude as a native Language Model provider (powers VS Code's built-in chat/edit UI).

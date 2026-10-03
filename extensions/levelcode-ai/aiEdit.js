@@ -11,9 +11,11 @@
 
 const vscode = require('vscode');
 const path = require('path');
+const { SESSION_EXPIRED_MESSAGE } = require('./providers/session');
 
 const SCHEME = 'levelcode-ai';
 const CTX_DIFF_ACTIVE = 'levelcode.ai.diffActive';
+const SIGN_IN = 'Sign in';   // the button on an edit refused for an ended session, labelled as the chat card's is
 
 /** @type {Map<string,string>} virtual-doc uri -> content */
 const contents = new Map();
@@ -105,7 +107,7 @@ function fullLineRange(editor) {
 	return new vscode.Range(sel.start.line, 0, endLine, editor.document.lineAt(endLine).text.length);
 }
 
-/** @param {{aiConfig:()=>any, prepProviderRequest:(o?:any)=>Promise<any>, streamChat:Function}} deps */
+/** @param {{aiConfig:()=>any, prepProviderRequest:(o?:any)=>Promise<any>, streamChat:Function, accountSignIn:()=>Promise<any>}} deps */
 async function editSelection(deps) {
 	const ed = vscode.window.activeTextEditor;
 	if (!ed || ed.selection.isEmpty) {
@@ -136,6 +138,10 @@ async function editSelection(deps) {
 				const onDelta = (d) => { result += d; };
 				const req = await deps.prepProviderRequest({ prompt: true });
 				if (!req.ok) {
+					// An ended LevelCode Cloud session is not a missing key: "No API key set for LevelCode
+					// Cloud." sent the user looking for one they never needed. Say so, in the sentence chat
+					// and the agent send for it, and mark it so the catch below can offer the way back.
+					if (req.reason === 'signedOut') { throw Object.assign(new Error(SESSION_EXPIRED_MESSAGE), { code: 'session_expired' }); }
 					throw new Error(
 						req.reason === 'baseURL' ? 'Set a base URL for the custom OpenAI-compatible provider first (levelcode.ai.baseURL).'
 						: req.reason === 'insecureBaseURL' ? 'Refusing to send your API key over plain http to a non-local host. Use an https (or localhost) base URL.'
@@ -149,7 +155,14 @@ async function editSelection(deps) {
 			}
 		);
 	} catch (e) {
-		vscode.window.showErrorMessage('LevelCode AI edit failed: ' + String((e && e.message) || e));
+		const failed = 'LevelCode AI edit failed: ' + String((e && e.message) || e);
+		// The one failure with its fix a click away: the same browser sign-in the chat's card starts.
+		if (e && e.code === 'session_expired') {
+			const pick = await vscode.window.showErrorMessage(failed, SIGN_IN);
+			if (pick === SIGN_IN) { await deps.accountSignIn(); }
+			return;
+		}
+		vscode.window.showErrorMessage(failed);
 		return;
 	}
 
