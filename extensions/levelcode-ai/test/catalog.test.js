@@ -19,6 +19,20 @@ test('modelCaps: exact table hit', () => {
 test('modelCaps: OpenRouter vendor/model matches on basename', () => {
 	assert.deepStrictEqual(C.modelCaps('openai/gpt-4o'), C.modelCaps('gpt-4o'));
 });
+// GPT-6 Astra is a gateway model; the picker offers whatever /account/models returns, so the caps
+// table must already know it or the composer refuses images and the meter assumes a 200k window.
+test('modelCaps: gpt-6-astra is an explicit row, not the gpt-4/5 heuristic', () => {
+	assert.deepStrictEqual(C.modelCaps('gpt-6-astra'), { context: 1050000, tools: true, vision: true });
+	assert.deepStrictEqual(C.modelCaps('openai/gpt-6-astra'), C.modelCaps('gpt-6-astra'));
+	assert.strictEqual(C.supportsVisionForModel('openai', 'gpt-6-astra'), true);
+	assert.strictEqual(C.contextWindowFor('openai', 'gpt-6-astra'), 1050000);
+});
+test('modelCaps: Fable 5 / 5.1 carry the 1M window under every id they arrive as', () => {
+	for (const id of ['anthropic/claude-fable-5', 'anthropic/claude-fable-5.1', 'claude-fable-5-1']) {
+		assert.deepStrictEqual(C.modelCaps(id), { context: 1000000, tools: true, vision: true, caching: true }, id);
+		assert.strictEqual(C.contextWindowFor('openai', id), 1000000, id);
+	}
+});
 test('modelCaps: family heuristics for unknown ids', () => {
 	assert.strictEqual(C.modelCaps('o4-mini').reasoning, true);       // o-series
 	assert.strictEqual(C.modelCaps('claude-3-5-haiku-latest').vision, true);

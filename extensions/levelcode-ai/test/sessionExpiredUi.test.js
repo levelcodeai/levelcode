@@ -85,6 +85,17 @@ test('host: the webview ready handler checks the session before the first messag
 	assert.ok(/onDidChangeWindowState/.test(ext), 'focus re-check');
 });
 
+test('host: every focus runs the check — the ten-minute ration is on the refresh, inside it', () => {
+	// With the ration in the hook, a window that had checked a minute ago did not look again, and so
+	// did not notice another window ending the session they share until the next message failed.
+	assert.ok(/onDidChangeWindowState\(\(st\) => \{\s*if \(st\.focused\) \{ checkCloudSession\('focus'\); \}/.test(ext), 'no time condition in the hook');
+	const fn = ext.slice(ext.indexOf('async function checkCloudSession('), ext.indexOf('async function refreshGatewayToken('));
+	const catchUp = fn.indexOf('await catchUpWithStoredSession(token)');
+	const ration = fn.indexOf("reason === 'focus' && Date.now() - lastSessionCheck <= SESSION_CHECK_EVERY_MS");
+	assert.ok(catchUp > 0 && ration > 0, 'both halves present');
+	assert.ok(catchUp < ration, 'catching up comes before the ration');
+});
+
 test('host: ready replays an unanswered expiry LAST — after the check, and under a replayed transcript', () => {
 	// The focus check can end the session with no chat open; post() then has nowhere to send the card,
 	// and the next `ready` finds no token to check. The replay is what shows it — and it has to come
