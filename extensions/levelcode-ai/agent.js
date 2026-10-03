@@ -1048,6 +1048,12 @@ async function runAgent(ctx) {
 			ctx.post({ type: 'agentError', message: 'You’ve hit the model’s context window (the conversation got too long). Start a New chat to reset it, switch to a larger-context model, or pin fewer files — then continue.', kind: 'context' });
 			reason = 'error';
 		}
+		else if (typeof ctx.isSessionExpired === 'function' && ctx.isSessionExpired(e)) {
+			// The gateway 401 that refreshAuth could not recover: the session is over. A sign-in card,
+			// not the adapter's raw message — the user needs a button, not a status code.
+			ctx.post({ type: 'agentError', message: ctx.sessionExpiredMessage || msg, code: 'session_expired' });
+			reason = 'error';
+		}
 		else { ctx.post({ type: 'agentError', message: msg, code }); reason = 'error'; }
 	} finally {
 		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, costMicros: runCostMicros, creditsLeftMicros: ctx.credits != null ? ctx.credits : null });

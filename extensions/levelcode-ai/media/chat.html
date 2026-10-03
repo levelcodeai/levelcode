@@ -362,6 +362,8 @@
   .upgradecard .ucbtn.primary:hover { filter: brightness(1.1); }
   .upgradecard .ucbtn.ghost { background: transparent; border: 1px solid var(--border); color: var(--vscode-foreground); }
   .upgradecard .ucbtn.ghost:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.14)); }
+  /* session expired — the upgrade card's shape, because it too ends in one button the user wants to press */
+  .sessioncard .uchead .ci { color: var(--accent); }
   /* our-side outage notice — neutral, NO accent, NO CTA (it is not the user's account/usage) */
   .noticecard { border: 1px solid var(--border); border-radius: 12px; margin: 8px 2px; padding: 13px 15px 14px; background: var(--field-bg); }
   .noticecard .uchead { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
@@ -2733,6 +2735,27 @@
     log.appendChild(card); scrollIfStuck();
     card.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => vscode.postMessage({ type: 'accountUpgrade' }); });
   }
+  // The cloud session is over (the refresh token expired — 30 days without use, or a sign-out
+  // elsewhere). This is the ONE failure the user can fix in a click, so it gets a button, not red
+  // text: the raw "API 401: Signature has expired" this replaces told them nothing about what to do,
+  // while the account popover beside it still said they were signed in.
+  function isSessionExpired(m){ return !!(m && m.code === 'session_expired'); }
+  let sessionCard = null;
+  function addSignInCard(m){
+    clearStatus(); finishAgentBubble(); closeGroup();
+    if (sessionCard && sessionCard.isConnected){ sessionCard.remove(); }   // one card, however many paths find the expiry
+    const who = m && m.name ? 'Welcome back, ' + esc(m.name) + '.' : '';
+    const card = document.createElement('div'); card.className = 'upgradecard sessioncard';
+    card.innerHTML =
+      '<div class="uchead">' + codicon('shield') + '<span>Your session has expired</span></div>'
+      + '<div class="ucbody">' + (who ? who + ' ' : '') + 'Sign in again to keep using LevelCode Cloud — your chat and files here are untouched.</div>'
+      + '<div class="ucbtns"><button class="ucbtn primary" data-act="signin">Sign in</button>'
+      + '<button class="ucbtn ghost" data-act="byok">Use my own key instead</button></div>';
+    log.appendChild(card); scrollIfStuck();
+    card.querySelector('[data-act="signin"]').onclick = () => vscode.postMessage({ type: 'accountSignIn' });
+    card.querySelector('[data-act="byok"]').onclick = () => vscode.postMessage({ type: 'byokSettings' });
+    sessionCard = card;
+  }
   // Our-side outage / transient issue → a neutral "service" notice, NOT the red error and NOT the
   // upgrade card (the gateway already sanitized the message; this just picks a calmer presentation).
   function isServiceIssue(m){
@@ -4121,7 +4144,8 @@
     else if (m.type === 'assistantError'){
       pending = ''; flushAll = false; doneSignaled = false;
       const cap = capReachedInfo(m.message);
-      if (cap){ current = null; addUpgradeCard(cap); }
+      if (isSessionExpired(m)){ current = null; addSignInCard(m); }
+      else if (cap){ current = null; addUpgradeCard(cap); }
       else if (isServiceIssue(m)){ current = null; addServiceCard(m); }
       else {
         const html = '<span class="err">' + esc(m.message) + '</span>';
@@ -4130,6 +4154,7 @@
       }
       setStreaming(false);
     }
+    else if (m.type === 'sessionExpired'){ addSignInCard(m); }
     else if (m.type === 'activeFile'){ activeFileLabel = m.label; renderChips(); }
     else if (m.type === 'contextFiles'){ ctxFiles = m.files || []; renderChips(); }
     else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
@@ -4167,9 +4192,10 @@
     else if (m.type === 'compactStart'){ ctxCompact = 'busy'; renderCtxCard(); }
     else if (m.type === 'compactResult'){ onCompactResult(m); }
     else if (m.type === 'debug'){ addDebug(m); }
-    else if (m.type === 'account'){ renderAccount(m); if (m.open) openAccount(); }
+    else if (m.type === 'account'){
+      if (m.signedIn && sessionCard && sessionCard.isConnected){ sessionCard.remove(); sessionCard = null; } renderAccount(m); if (m.open) openAccount(); }
     else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
-    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); closeGroup(); const cap = capReachedInfo(m.message); if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
+    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); closeGroup(); const cap = capReachedInfo(m.message); if (isSessionExpired(m)){ addSignInCard(m); } else if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
     else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps, m.costMicros); setStreaming(false); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
