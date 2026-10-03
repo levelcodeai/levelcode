@@ -210,11 +210,23 @@ const { registerInlineComplete } = require('../inlineComplete');
 
 // ── the network: the only stand-in ───────────────────────────────────────────────────────────────
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+/** How long anything here is given to happen. Reached only by what never does. */
+const PATIENCE_MS = 2000;
+/**
+ * Wait for `cond` — by the CLOCK, not by counting turns of the event loop. Inline completion waits
+ * out its debounce on a real timer, a millisecond even when the setting is 0, and how many turns fit
+ * into a millisecond is the machine's business: a few dozen on a Mac, well over a thousand on the
+ * Linux runner the release gate uses. A count that was plenty on one ran out on the other before
+ * the timer had fired.
+ */
 async function until(cond, what) {
-	for (let i = 0; i < 400; i++) { if (cond()) { return; } await tick(); }
-	assert.fail('never happened: ' + what);
+	const deadline = Date.now() + PATIENCE_MS;
+	while (!cond()) {
+		if (Date.now() > deadline) { assert.fail('never happened: ' + what); }
+		await tick();
+	}
 }
-/** Let everything already in motion get as far as it can. */
+/** Let everything already in motion get as far as it can. Turns, not time — so only for what no timer stands in the way of. */
 async function settle() { for (let i = 0; i < 40; i++) { await tick(); } }
 function deferred() { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; }
 function within(promise, ms, what) {
