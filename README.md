@@ -49,6 +49,8 @@ LevelCode is a **clean overlay on top of Code-OSS**, not a vendored copy of the 
 ./scripts/make-dmg.sh         # wrap it into a distributable .dmg
 ```
 
+**A run from source is its own app.** `run-dev.sh` gives the dev editor its own macOS identity — bundle id `ai.levelcode.app.dev` and the `levelcode-dev://` scheme (`branding/product.dev.json`) — so it can sit beside an installed LevelCode without the two answering each other's links. Signing in from it needs a server that accepts that scheme: set `LEVELCODE_EXTRA_EDITOR_SCHEMES=levelcode-dev` on the backend it signs in to. No server accepts it otherwise, and a sign-in that ends on the account page in the browser, with the editor hearing nothing, is the sign that it is not set.
+
 See [`CLAUDE.md`](./CLAUDE.md) for the full repo map + build details and [`PLAN.md`](./PLAN.md) for the roadmap.
 
 ## Status

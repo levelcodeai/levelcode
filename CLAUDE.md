@@ -40,7 +40,7 @@ extensions/levelcode-hackability/ user init script + Atom/NPP keymap presets + p
 extensions/levelcode-sync/       'levelcode' auth provider that lights up the built-in Settings Sync (LevelCode Sync, S0)
 extensions/levelcode-updater/    notify-only update checker (polls the update feed; never auto-applies)
 patches/levelcode-core.patch     our core source edits, applied on bootstrap
-scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, build-macos.sh, make-dmg.sh, make-icon.sh; atom (CLI launcher) + install-level.sh
+scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, editor-identity.mjs, build-macos.sh, make-dmg.sh, make-icon.sh; atom (CLI launcher) + install-level.sh
 tools/                      dependency-free reference servers: sync-server (/v1 Settings-Sync), update-server (/api/update feed)
 vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 ```
@@ -54,6 +54,33 @@ vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 ./scripts/make-dmg.sh         # ad-hoc sign LevelCode.app + wrap it into a single distributable LevelCode-<arch>.dmg
 ./scripts/make-icon.sh        # regenerate .icns from branding/icons/levelcode-source.png (sips+iconutil)
 ```
+
+## The dev editor is its own app (keep it that way)
+
+To macOS a run from source and the installed LevelCode used to be ONE app — same bundle id, same
+`levelcode://` scheme — so a sign-in started in the dev editor was handed back to the app in
+/Applications. `run-dev.sh` now gives the dev run its own identity (`scripts/editor-identity.mjs dev`):
+
+- **Identity:** `branding/product.dev.json` — scheme `levelcode-dev`, bundle id `ai.levelcode.app.dev`.
+  Both must differ from the shipped ones; a scheme alone still lets macOS confuse the two apps.
+- **Two halves, both required.** Runtime: `vscode/product.overrides.json` (Code-OSS reads it only when
+  running from source, never packages it). macOS: the dev Electron bundle's `Info.plist`, then
+  `lsregister`. The bundle is regenerated when Electron changes, so the step runs on every launch.
+- **Both or neither, and confirmed.** The two files are replaced as one change (staged, renamed, undone
+  if the second rename fails). Then the step asks macOS which app opens `levelcode-dev://` and FAILS —
+  `run-dev.sh` stops before launching — unless the answer is this bundle. `lsregister` exiting 0 is
+  not that answer: it registers a bundle it will never route to.
+- **`branding/product.overlay.json` is the product that ships — never put a dev value in it.**
+  `build-macos.sh` runs `editor-identity.mjs check-release` and fails a build that is not
+  `levelcode://` + `ai.levelcode.app`, or that carries an overrides file.
+- **Auth code never spells a scheme.** `accountSignIn()` builds the callback from
+  `vscode.env.uriScheme`; that is why the dev identity needed no auth change. Keep it so.
+- **The server must be told:** `LEVELCODE_EXTRA_EDITOR_SCHEMES=levelcode-dev` on the backend the dev
+  editor signs in to (thin.ly `Levelcode::EditorCallback`). Off by default, and it only ever accepts
+  `levelcode-<variant>`. Symptom when missing: the browser lands on the account page and the editor
+  hears nothing.
+- A LaunchServices handler must live outside temp folders — a bundle under `/tmp` is registered but
+  never chosen. Tests therefore run on fixtures and do not register anything (`test/editorIdentity.test.js`).
 
 ## Toolchain (hard requirements — these bit us)
 
