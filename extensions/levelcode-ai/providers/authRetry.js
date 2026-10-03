@@ -20,7 +20,8 @@
  *    - Only a GATEWAY request is renewed. A 401 from the user's own provider is a wrong key, and no
  *      amount of refreshing a cloud session fixes that: it is rethrown untouched.
  *    - Only an auth failure, only before any of the answer has arrived (a second send would repeat
- *      it), and not once the caller has aborted. One retry: the second failure is the answer.
+ *      it), and not once the caller has aborted — a request nobody is waiting for starts no renewal
+ *      either, wherever in the recovery the abort lands. One retry: the second failure is the answer.
  *    - It never ends a session. One thing does — the refresh endpoint answering 401, inside the
  *      host's own refresh. This only FINDS OUT, by asking the host for a provider again: `signedOut`
  *      means the session is over, and the caller gets the sentence the chat shows — coded
@@ -41,7 +42,10 @@
  *      sign-in as someone else, or a change of cloud host, the stored token is not this request's.
  *      Putting it on the request would send one host's credential to another, or replay one
  *      account's prompt as another's — so recovery stops there, before refreshing and again before
- *      re-sending, and the request's own error stands.
+ *      re-sending, and the request's own error stands. Two things say whose a token is. The host
+ *      counts the sessions THIS window has been through. What another window does to the store
+ *      they share no window can count — but the tokens name their subject, and a token that names
+ *      a different one is another account's, whoever stored it.
  *    - A request nobody asked for (ghost text) may START a renewal once a minute at most. It is
  *      sent on every pause in typing; a gateway that keeps answering 401 must not turn typing into
  *      a stream of refreshes, each one rotating the session's credentials. Waiting on a renewal
@@ -50,7 +54,7 @@
 // @ts-check
 'use strict';
 
-const { SESSION_EXPIRED_MESSAGE } = require('./session');
+const { SESSION_EXPIRED_MESSAGE, jwtSubject } = require('./session');
 
 /** How often requests the user did not ask for may START a renewal. */
 const BACKGROUND_RENEWAL_INTERVAL_MS = 60 * 1000;
@@ -138,9 +142,11 @@ function createAuthRetry(host) {
 	 *
 	 *   'ended'      — the session is over: the host answers `signedOut`
 	 *   'superseded' — the request is no longer this session's to recover. The session it was sent
-	 *                  in has been replaced (a sign-in, a sign-out), or the host would now send it
-	 *                  somewhere else: another gateway URL, the user's own provider, nowhere.
-	 *                  Whatever token is stored for THAT is not put on this request.
+	 *                  in has been replaced — a sign-in or a sign-out here (the host's count), a
+	 *                  sign-in as someone else in another window (the stored token names another
+	 *                  subject) — or the host would now send it somewhere else: another gateway
+	 *                  URL, the user's own provider, nowhere. Whatever token is stored for THAT is
+	 *                  not put on this request.
 	 *   'renewed'    — same session, same gateway, a different token in place: `apiKey`
 	 *   'same'       — the token that was refused is still the one stored
 	 *
@@ -153,7 +159,12 @@ function createAuthRetry(host) {
 		if (cur && !cur.ok && cur.reason === 'signedOut') { return { state: 'ended' }; }
 		const sameGateway = !!cur && cur.ok && cur.gateway && cur.providerId === req.providerId && cur.baseURL === req.baseURL;
 		if (!sameGateway || generation() !== sessionOf.get(req)) { return { state: 'superseded' }; }
-		return cur.apiKey && cur.apiKey !== sent ? { state: 'renewed', apiKey: cur.apiKey } : { state: 'same' };
+		if (!cur.apiKey || cur.apiKey === sent) { return { state: 'same' }; }
+		// A different token. The store is shared with the other windows, and their sign-ins are not in
+		// this window's count: it is a renewal only if it is for whoever the refused one was for. (Tokens
+		// that name no subject cannot be told apart this way, and are left to the checks above.)
+		if (jwtSubject(cur.apiKey) !== jwtSubject(sent)) { return { state: 'superseded' }; }
+		return { state: 'renewed', apiKey: cur.apiKey };
 	}
 
 	/**
@@ -165,6 +176,9 @@ function createAuthRetry(host) {
 	 */
 	async function recover(req, sent, o) {
 		let cur = await look(req, sent);
+		// Cancel, Stop or the next keystroke can land while that read is out. A request nobody is waiting
+		// for any more starts no renewal — and, for ghost text, does not use up the minute.
+		if (aborted(o.signal)) { return { outcome: 'aborted' }; }
 		if (cur.state === 'renewed') { return { outcome: 'already-renewed', apiKey: cur.apiKey }; }
 		if (cur.state !== 'same') { return { outcome: cur.state }; }   // ended, or no longer this request's: nothing to refresh
 		// The limit is on STARTING a renewal. One that is already out costs nothing to wait on — and the

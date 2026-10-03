@@ -13,7 +13,7 @@
  *    - requests that fail together wait on one renewal, and one refused on a token that has been
  *      renewed since is simply sent again
  *    - a request stays with the session and the gateway it was sent on: a token stored by a later
- *      sign-in, or for another cloud host, is never put on it
+ *      sign-in — in this window or in another — or for another cloud host, is never put on it
  *    - a request nobody asked for (ghost text) cannot turn typing into a stream of refreshes — but
  *      is never kept from waiting on a renewal that is already out
  *
@@ -41,6 +41,15 @@ function within(promise, ms, what) {
 	const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(what + ' did not finish within ' + ms + ' ms')), ms); });
 	return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
+
+/** An unsigned JWT with the given payload: a real access token says who it is for. */
+function jwt(payload) {
+	const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	return b64({ alg: 'HS256', typ: 'JWT' }) + '.' + b64(payload) + '.sig';
+}
+/** Ada's n-th access token, and one of Bo's. */
+const ada = (n) => jwt({ sub: 'ada', exp: 1_800_000_000 + n });
+const BO = jwt({ sub: 'bo', exp: 1_800_000_000 });
 
 /** The gateway's answer to a lapsed access token, as the openai adapter throws it. */
 const gateway401 = () => Object.assign(new Error('LevelCode Cloud API 401: Signature has expired'), { status: 401 });
@@ -365,6 +374,53 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		assert.deepStrictEqual(w.dbg, ['auth.retry superseded']);
 	});
 
+	// What another WINDOW does to the store they share is in nobody's count. The tokens say whose they are.
+	await test('another WINDOW signed in as someone else: this window counted nothing, the token names another subject — not replayed', async () => {
+		const w = window_({ token: ada(1) });
+		const req = w.request();
+		w.token = BO;   // the shared store, changed elsewhere: no sign-in here, same host, same provider
+		const e = await failure(w.authRetry(req, w.send));
+		assert.ok(/API 401/.test(e.message), 'the request\'s own error');
+		assert.deepStrictEqual(w.sent, [ada(1)], 'Ada\'s prompt is not sent again on Bo\'s token');
+		assert.strictEqual(w.renewals, 0, 'and Bo\'s session is not refreshed for it');
+		assert.deepStrictEqual(w.dbg, ['auth.retry superseded']);
+	});
+
+	await test('another window RENEWED the same account: the same subject, so it is sent again on that token', async () => {
+		const w = window_({ token: ada(1) });
+		const req = w.request();
+		w.token = ada(2);
+		assert.strictEqual(await w.authRetry(req, w.send), 'answered on ' + ada(2));
+		assert.deepStrictEqual({ renewals: w.renewals, dbg: w.dbg }, { renewals: 0, dbg: ['auth.retry already-renewed'] });
+	});
+
+	await test('the renewal itself comes back as someone else\'s (the other window signed in just before it): not this request\'s', async () => {
+		const w = window_({ token: ada(1), renewal: async () => { w.token = BO; return 'claim'; } });
+		const e = await failure(w.authRetry(w.request(), w.send));
+		assert.ok(/API 401/.test(e.message));
+		assert.deepStrictEqual({ sent: w.sent, dbg: w.dbg }, { sent: [ada(1)], dbg: ['auth.retry superseded'] });
+	});
+
+	await test('a renewal within the account is taken as one, by tokens that say who they are for', async () => {
+		const w = window_({ token: ada(1), renewal: async () => { w.token = ada(2); return 'claim'; } });
+		assert.strictEqual(await w.authRetry(w.request(), w.send), 'answered on ' + ada(2));
+	});
+
+	await test('a token that cannot be read as the same subject is not taken for the same account', async () => {
+		for (const [sentOn, stored] of [[ada(1), 'opaque-token'], ['opaque-token', ada(2)], [jwt({ sub: 7 }), jwt({ sub: '8' })]]) {
+			const w = window_({ token: sentOn });
+			const req = w.request();
+			w.token = stored;
+			await failure(w.authRetry(req, w.send));
+			assert.deepStrictEqual(w.sent, [sentOn], JSON.stringify([sentOn, stored]));
+		}
+		// …while 7 and '7' are one subject: a server may write the id either way.
+		const w = window_({ token: jwt({ sub: 7, exp: 1 }) });
+		const req = w.request();
+		w.token = jwt({ sub: '7', exp: 2 });
+		assert.strictEqual(await w.authRetry(req, w.send), 'answered on ' + w.token);
+	});
+
 	await test('the same URL under another provider is not the same gateway', async () => {
 		const stored = { ok: true, gateway: true, providerId: 'openai', apiKey: 'access-1', baseURL: 'https://cloud.test/ai' };
 		const authRetry = createAuthRetry({
@@ -414,6 +470,18 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		await until(() => w.token === 'access-2', 'the renewal landing');
 		assert.strictEqual(await w.authRetry(w.request(), w.send), 'answered on access-2', 'the next request finds the new token');
 		assert.strictEqual(w.renewals, 1);
+	});
+
+	await test('aborted while the stored session is being READ: no renewal is started — and ghost text\'s minute is not used up', async () => {
+		const w = window_({ renewal: 'fail' });
+		const ac = new AbortController();
+		w.onPrep = (nth) => { if (nth === 1) { ac.abort(); } };   // the keystroke lands while authRetry is looking at what is stored
+		const e = await failure(w.authRetry(w.request(), w.send, { background: true, signal: ac.signal }));
+		assert.ok(/API 401/.test(e.message));
+		assert.deepStrictEqual({ renewals: w.renewals, dbg: w.dbg }, { renewals: 0, dbg: ['auth.retry aborted'] });
+		w.onPrep = null;
+		await failure(w.authRetry(w.request(), w.send, { background: true }));   // the next pause, well inside the minute
+		assert.deepStrictEqual({ renewals: w.renewals, dbg: w.dbg }, { renewals: 1, dbg: ['auth.retry aborted', 'auth.retry failed'] }, 'it may still start the minute\'s one renewal');
 	});
 
 	await test('aborted AFTER the renewal landed, before the re-send: the new token is kept, the request is not sent', async () => {

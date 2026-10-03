@@ -671,7 +671,8 @@ async function refreshGatewayToken() {
  * ONE instance for the window, so that requests which fail together wait on a single renewal. And it
  * is told which session this window is on (sessionGeneration), for the reason the refresh keeps that
  * count: a request belongs to the session it was sent in. A token stored by a LATER sign-in is not a
- * renewal of the old one, and is never put on a request the earlier session sent.
+ * renewal of the old one, and is never put on a request the earlier session sent. (A sign-in made in
+ * ANOTHER window this count cannot see; for that, authRetry goes by who the tokens say they are for.)
  */
 const authRetry = createAuthRetry({ prepProviderRequest, refreshGatewayToken, isAuthError, sessionGeneration: () => sessionGeneration, dbg });
 

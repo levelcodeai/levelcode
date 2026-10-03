@@ -1,6 +1,8 @@
 /*---------------------------------------------------------------------------------------------
  *  Unit tests for providers/session.js (pure) — run: node test/session.test.js
  *    - jwtExpiresAt: reads `exp` off a JWT payload without verifying; never throws
+ *    - jwtSubject: reads `sub` the same way — who the token says it is for, the same across a
+ *      renewal and different across accounts
  *    - accessNeedsRefresh: the 5-minute margin, expired, unreadable
  *    - classifyRefresh: ONLY a 401 ends the session; offline/5xx keep the tokens; a 2xx is a
  *      renewal only when what it carries can be stored
@@ -22,6 +24,25 @@ function jwt(payload) {
 }
 
 const NOW = 1_800_000_000_000;   // fixed "now" so the margin arithmetic is exact
+
+test('jwtSubject: who the token says it is for — a string or a number, read as a string', () => {
+	assert.strictEqual(S.jwtSubject(jwt({ sub: 'user_42', exp: 7 })), 'user_42');
+	assert.strictEqual(S.jwtSubject(jwt({ sub: 42 })), '42');
+});
+test('jwtSubject: the same across a renewal, different across accounts', () => {
+	assert.strictEqual(S.jwtSubject(jwt({ sub: 1, exp: 100, jti: 'a' })), S.jwtSubject(jwt({ sub: 1, exp: 200, jti: 'b' })));
+	assert.notStrictEqual(S.jwtSubject(jwt({ sub: 1, exp: 100 })), S.jwtSubject(jwt({ sub: 2, exp: 100 })));
+});
+test('jwtSubject: null for a token that names nobody — not a JWT, no sub, an empty or odd one, garbage, nothing; never throws', () => {
+	const five = 'a.' + Buffer.from('5').toString('base64') + '.c';   // a payload that is JSON, and not an object
+	for (const token of ['opaque-token', jwt({ exp: 7 }), jwt({ sub: '' }), jwt({ sub: null }), jwt({ sub: { id: 1 } }), jwt({ sub: true }), 'a.!!!.c', five, '', null, undefined]) {
+		assert.strictEqual(S.jwtSubject(token), null, JSON.stringify(token));
+	}
+});
+test('jwtExpiresAt: a payload that is not an object is still just "no exp"', () => {
+	assert.strictEqual(S.jwtExpiresAt('a.' + Buffer.from('5').toString('base64') + '.c'), null);
+	assert.strictEqual(S.jwtExpiresAt('a.' + Buffer.from('[1]').toString('base64') + '.c'), null);
+});
 
 test('jwtExpiresAt: reads exp (seconds) as epoch milliseconds', () => {
 	assert.strictEqual(S.jwtExpiresAt(jwt({ sub: 1, exp: 1_800_000_123 })), 1_800_000_123_000);

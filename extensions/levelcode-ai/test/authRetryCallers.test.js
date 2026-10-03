@@ -313,13 +313,14 @@ function boot(over) {
 	net.model.length = 0; net.refresh.length = 0;
 
 	const secrets = new Map(), state = new Map(), posted = [];
-	const t = /** @type {any} */ ({ secrets, state, posted, keyPrompts: 0, account: 0, retries: [], byokKey: o.byokKey });
+	/** onRead(key): called as the host starts each SecretStorage read — the hook for landing something while one is out. */
+	const t = /** @type {any} */ ({ secrets, state, posted, keyPrompts: 0, account: 0, retries: [], byokKey: o.byokKey, onRead: null });
 	t.host = makeHost({
 		vscode: vscodeMock, session, providers, catalog, resolveGateway, createAuthRetry, fetch: fakeFetch, signedIn: !!o.access,
 		// The stores answer a turn of the event loop later, as the real ones do — and SecretStorage takes strings only.
 		ctx: {
 			secrets: {
-				get: async (k) => { await tick(); return secrets.get(k); },
+				get: async (k) => { if (t.onRead) { t.onRead(k); } await tick(); return secrets.get(k); },
 				store: async (k, v) => {
 					await tick();
 					if (typeof v !== 'string') { throw new TypeError('SecretStorage: the value must be a string'); }
@@ -482,7 +483,13 @@ async function run(caller) {
 	return r;
 }
 
-const LAPSED = 'access-lapsed', FRESH = 'access-fresh';
+/** An unsigned JWT with the given payload. The tokens here say who they are for, as real ones do. */
+function jwt(payload) {
+	const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	return b64({ alg: 'HS256', typ: 'JWT' }) + '.' + b64(payload) + '.sig';
+}
+const LAPSED = jwt({ sub: 'ada', exp: 1 });            // Ada's access token, eight hours and a bit after she signed in
+const FRESH = jwt({ sub: 'ada', exp: 4102444800 });    // …and what a renewal of her session brings back
 const RENEWS = { status: 200, body: { access: FRESH, refresh: 'r2' } };
 const REFUSES = { status: 401, body: { error: { code: 'refresh_expired' } } };
 const bearers = () => net.model.map((c) => c.bearer);
@@ -808,6 +815,22 @@ async function test(name, fn) {
 		assert.deepStrictEqual({ sent: bearers(), refresh: net.refresh.length }, { sent: [LAPSED, FRESH], refresh: 1 });
 	});
 
+	await test('inline completion: a keystroke while the stored session is being read starts no renewal, and leaves the minute unspent', async () => {
+		const t = lapsed();
+		net.refreshReply = { status: 503, body: null };   // a renewal, were one started, would fail — and use up ghost text's minute
+		const typed = typing();
+		let reads = 0;
+		// The first read of the token is the request being prepared; the second is authRetry looking at what is stored, after the 401.
+		t.onRead = (key) => { if (key === t.K.token && ++reads === 2) { typed.keystroke(); } };
+		assert.strictEqual(await ghostText(typed), null);
+		await settle();
+		assert.deepStrictEqual({ refresh: net.refresh.length, retries: t.retries }, { refresh: 0, retries: ['aborted'] }, 'the cancelled completion started nothing');
+		t.onRead = null;
+		assert.strictEqual(await ghostText(), null);   // the next pause…
+		assert.deepStrictEqual({ refresh: net.refresh.length, retries: t.retries }, { refresh: 1, retries: ['aborted', 'failed'] }, '…may still start the minute\'s one renewal');
+		assert.deepStrictEqual({ toasts: ui.toasts, inputs: ui.inputs }, { toasts: [], inputs: 0 });
+	});
+
 	await test('inline completion: the next pause, arriving while the cancelled one\'s renewal is still out, waits for it and is answered', async () => {
 		const t = lapsed();
 		const reply = deferred();
@@ -830,7 +853,11 @@ async function test(name, fn) {
 	});
 
 	// ── a request stays with the session and the cloud host it was sent on ───────────────────────
-	const OTHER = 'access-of-someone-else';
+	const OTHER = jwt({ sub: 'bo', exp: 4102444800 });   // somebody else's access token
+	/** What a sign-in in ANOTHER window leaves behind: the stores every window shares have changed, and nothing this one counts. */
+	const anotherWindowSignsIn = (t, access, refresh, profile) => {
+		t.secrets.set(t.K.token, access); t.secrets.set(t.K.refresh, refresh); t.state.set(t.K.profile, profile);
+	};
 
 	await test('inline edit: someone else signs in while the request is out — the edit is not replayed as them', async () => {
 		const t = lapsed();
@@ -857,9 +884,11 @@ async function test(name, fn) {
 		const running = edit();
 		await until(() => net.model.length === 1, 'the request');
 		// As another window would leave things: a new host in Settings, and a session for it in the store.
-		// This window counts no new session — only where the gateway is tells the two apart.
+		// The SAME person signed in there, so the token names the same subject and this window counts no
+		// new session — only where the gateway is tells the two apart.
+		const elsewhere = jwt({ sub: 'ada', iss: 'https://other.test', exp: 4102444800 });
 		settings['levelcode.cloud.endpoint'] = 'https://other.test';
-		t.secrets.set(t.K.token, OTHER); t.secrets.set(t.K.refresh, 'rB');
+		t.secrets.set(t.K.token, elsewhere); t.secrets.set(t.K.refresh, 'rB');
 		gate.resolve();
 		const r = await within(running, 2000, 'the edit');
 		assert.ok(r.errors.length === 1 && /API 401: Signature has expired$/.test(r.errors[0]), JSON.stringify(r.errors));
@@ -871,7 +900,7 @@ async function test(name, fn) {
 	});
 
 	await test('Agent Sketch: a run stays in the session it started in — a sign-in half-way is not used for the nodes still to come', async () => {
-		const t = boot({ access: 'access-ada', refresh: 'r1', profile: { name: 'Ada' } });
+		const t = boot({ access: FRESH, refresh: 'r1', profile: { name: 'Ada' } });
 		const gate = deferred();
 		net.hold = (index) => (index === 0 ? gate.promise : null);   // hold node a's answer…
 		// …which is the last thing Ada's token is good for: every request after it is refused.
@@ -884,8 +913,60 @@ async function test(name, fn) {
 		assert.deepStrictEqual(posted.filter((m) => m.type === 'nodeDone').map((m) => m.id), ['a']);
 		const failed = posted.filter((m) => m.type === 'nodeStatus' && m.status === 'error');
 		assert.ok(failed.length === 1 && failed[0].id === 'd' && /API 401: Signature has expired$/.test(failed[0].message), JSON.stringify(failed));
-		assert.deepStrictEqual(bearers(), ['access-ada', 'access-ada'], 'node d went out on the run\'s own token, and was not sent again as Bo');
+		assert.deepStrictEqual(bearers(), [FRESH, FRESH], 'node d went out on the run\'s own token, and was not sent again as Bo');
 		assert.deepStrictEqual({ refresh: net.refresh, retries: t.retries, token: t.secrets.get(t.K.token) }, { refresh: [], retries: ['superseded'], token: OTHER });
+	});
+
+	// The same three, when the sign-in happens in ANOTHER window: same host, and nothing this window
+	// counts has moved. The stored token names another subject, and that is what stops the replay.
+	await test('inline edit: another WINDOW signs in as someone else while the request is out — still not replayed as them', async () => {
+		const t = lapsed();
+		const gate = deferred();
+		net.hold = gate.promise;
+		const running = edit();
+		await until(() => net.model.length === 1, 'the request');
+		anotherWindowSignsIn(t, OTHER, 'rB', { name: 'Bo', email: '', plan: '' });
+		gate.resolve();
+		const r = await within(running, 2000, 'the edit');
+		assert.strictEqual(t.host.signedIn(), true, 'premise: this window has seen no sign-in, no sign-out');
+		assert.strictEqual(r.errors.length, 1);
+		assert.ok(/^LevelCode AI edit failed: .*API 401: Signature has expired$/.test(r.errors[0]), r.errors[0]);
+		assert.deepStrictEqual(bearers(), [LAPSED], 'Ada\'s selection is not sent again on Bo\'s token');
+		assert.deepStrictEqual(net.refresh, [], 'and Bo\'s session is not refreshed on its behalf');
+		assert.deepStrictEqual({ token: t.secrets.get(t.K.token), refresh: t.secrets.get(t.K.refresh) }, { token: OTHER, refresh: 'rB' });
+		assert.deepStrictEqual({ retries: t.retries, diffs: r.diffs }, { retries: ['superseded'], diffs: 0 });
+	});
+
+	await test('inline edit: another window RENEWS the same session while the request is out — the edit goes out again on that token', async () => {
+		const t = lapsed();
+		const gate = deferred();
+		net.hold = gate.promise;
+		net.answer = 'const a = 1; // one';
+		const running = edit();
+		await until(() => net.model.length === 1, 'the request');
+		t.secrets.set(t.K.token, FRESH); t.secrets.set(t.K.refresh, 'r2');   // the other window's refresh landed: Ada's token, renewed
+		gate.resolve();
+		const r = await within(running, 2000, 'the edit');
+		assert.deepStrictEqual({ errors: r.errors, diffs: r.diffs }, { errors: [], diffs: 1 });
+		assert.deepStrictEqual(bearers(), [LAPSED, FRESH]);
+		assert.deepStrictEqual({ refresh: net.refresh, retries: t.retries }, { refresh: [], retries: ['already-renewed'] }, 'no second refresh of a token another window just rotated');
+	});
+
+	await test('Agent Sketch: a sign-in in another window half-way through a run is not used for the nodes still to come either', async () => {
+		const t = boot({ access: FRESH, refresh: 'r1', profile: { name: 'Ada' } });
+		const gate = deferred();
+		net.hold = (index) => (index === 0 ? gate.promise : null);
+		net.answer = () => (net.model.length >= 2 ? json(401, { error: { code: 'token_expired', message: 'Signature has expired' } }) : 'done');
+		const running = sketch({ type: 'run', sketch: { goal: 'ship it', nodes: [node('a'), node('d')], edges: [{ from: 'a', to: 'd' }] } });
+		await until(() => net.model.length === 1, 'node a\'s request');
+		anotherWindowSignsIn(t, OTHER, 'rB', { name: 'Bo', email: '', plan: '' });
+		gate.resolve();
+		const posted = await within(running, 2000, 'the run');
+		assert.deepStrictEqual(posted.filter((m) => m.type === 'nodeDone').map((m) => m.id), ['a']);
+		const failed = posted.filter((m) => m.type === 'nodeStatus' && m.status === 'error');
+		assert.ok(failed.length === 1 && failed[0].id === 'd' && /API 401: Signature has expired$/.test(failed[0].message), JSON.stringify(failed));
+		assert.deepStrictEqual(bearers(), [FRESH, FRESH], 'node d was not sent again as Bo');
+		assert.deepStrictEqual({ refresh: net.refresh, retries: t.retries }, { refresh: [], retries: ['superseded'] });
 	});
 
 	// ── Compact ──────────────────────────────────────────────────────────────────────────────────
