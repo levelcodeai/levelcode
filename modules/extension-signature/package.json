@@ -1,0 +1,9 @@
+{
+	"name": "@vscode/vsce-sign",
+	"version": "0.0.0-levelcode",
+	"private": true,
+	"description": "LevelCode's extension signature verifier for Open VSX. It stands where the editor looks for Microsoft's module of this name, which only Microsoft's products may use and which no build from the open source contains. See index.js.",
+	"license": "MIT",
+	"main": "index.js",
+	"levelcode": "modules/extension-signature"
+}

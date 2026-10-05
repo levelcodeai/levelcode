@@ -1,0 +1,14 @@
+{
+	"_comment": "The Open VSX signing keys this build of LevelCode trusts. A signature is accepted only if one of these made it; the key the registry serves over the network is never used. Adding or removing a key is a security decision, not a config tweak: docs/EXTENSION-SIGNATURES.md says how a key is checked before it goes in here and what to do when Open VSX changes its key. `id` is the registry's own name for the key (the last segment of the public-key URL); `publicKey` is the key itself, base64 of its SPKI DER — the body of the PEM the registry serves; `registry` is the gallery these keys are for, and must be the one branding/product.overlay.json points the editor at. The other fields are provenance for a reader and are not used by the code.",
+
+	"keys": [
+		{
+			"id": "14ccb407-4e79-41ed-be5a-6d608325c45a",
+			"publicKey": "MCowBQYDK2VwAyEAje+vAaSS1zHV5WHCJSa5UXvxRo6+yerEU3IEmtuEuF4=",
+			"registry": "https://open-vsx.org",
+			"source": "https://open-vsx.org/api/-/public-key/14ccb407-4e79-41ed-be5a-6d608325c45a",
+			"pinned": "2026-10-04",
+			"evidence": "Fetched over TLS from open-vsx.org on 2026-10-04. Named as the signing key by every one of 762 extensions sampled that day — the newest, the oldest (back to March 2020), the most and the least downloaded; none was unsigned and none named another key. The signatures of 64 of them, 87 MB of packages published between 2020 and that day, were verified against the downloaded files with this key."
+		}
+	]
+}
