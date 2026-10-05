@@ -305,6 +305,19 @@ test('PORTS: connectors that share a side each get their own point on it — and
 	assert.ok(byId(big, 'h').h > byId(big, 't0').h, 'the hub grew along its side');
 });
 
+test('MEASURE: the estimate used where there is no canvas errs WIDE, class by class — an emoji is wider than a CJK character', () => {
+	// Regular weight at 11.5px, so the numbers are plain multiples of the em.
+	const px = (t) => theme.approxMeasure(t, 'sub');
+	assert.ok(px('i') < px('a') && px('a') < px('m'), 'narrow, ordinary and wide letters');
+	assert.ok(px('7') > px('a') && px('A') > px('7'), 'digits and capitals are wider than lower case');
+	assert.strictEqual(px('\u65e5'), 11.5, 'a CJK character is a full em');
+	assert.strictEqual(px('\u{1f680}'), 12.7, 'an emoji is 1.1 em — the widest class, not lumped in with CJK');
+	assert.ok(px('\u{1f680}') > px('\u65e5'));
+	assert.strictEqual(px('\u{1f680}\u{1f680}'), 25.3, 'and it is ONE character, though it is two code units');
+	assert.strictEqual(px('\u{20000}'), 12.7, 'anything else beyond the basic plane is measured the same generous way');
+	assert.strictEqual(px(''), 0); assert.strictEqual(px(null), 0);
+});
+
 test('SHAPES: size comes from the measured text — and a connector stops ON a diamond\'s outline', () => {
 	const double = (t, role) => theme.approxMeasure(t, role) * 2;
 	const s = R.prepare({ title: 'T', nodes: [{ id: 'a', label: 'A fairly long label' }], edges: [] }).spec;

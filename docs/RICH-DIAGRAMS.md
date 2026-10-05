@@ -391,7 +391,7 @@ on the default models, then use it for a week and read the counters.
 
 Verified:
 
-- 12 suites, 251 tests (`test/diagram*.test.js`), including a 1,500-spec layout fuzz, the corpus,
+- 12 suites, 252 tests (`test/diagram*.test.js`), including a 1,500-spec layout fuzz, the corpus,
   SVG snapshots in both palettes, the gallery at chat-panel widths, the real `runAgent` loop with a
   scripted provider, and the host functions sliced out of `extension.js` against a `vscode`
   stand-in.

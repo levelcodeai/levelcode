@@ -178,8 +178,8 @@
 		const c = ch.codePointAt(0) || 0;
 		if (c >= 0x30 && c <= 0x39) { return 0.60; }          // digits
 		if (c >= 0x41 && c <= 0x5a) { return 0.69; }          // A–Z
+		if (c > 0xffff) { return 1.1; }                       // emoji and everything else beyond the basic plane — asked first: all of it is above U+2E80 too
 		if (c >= 0x2e80) { return 1.0; }                      // CJK and other full-width scripts
-		if (c > 0xffff) { return 1.1; }                       // emoji / astral
 		return 0.57;
 	}
 	/**

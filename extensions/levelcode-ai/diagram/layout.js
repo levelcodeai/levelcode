@@ -381,7 +381,7 @@
 				const lane = S.labelLane != null ? S.labelLane : T.edge.line + S.labelGap + 2;
 				const floor = labelled ? lane : (S.portMin != null ? S.portMin : 6);
 				let gap = Math.max(S.portGap, labelled ? floor : 0);
-				let span = portSpan(it.node, it.cs, S);
+				const span = portSpan(it.node, it.cs, S);
 				if (n > 1 && (n - 1) * gap > span) {
 					gap = Math.max(floor, span / (n - 1));
 					if ((n - 1) * gap > span + 1e-6) {
@@ -389,7 +389,7 @@
 						const need = (n - 1) * gap;
 						const grow = it.node.shape === 'decision' ? need / 0.5 : it.node.shape === 'actor' ? need / 0.55 : need + 2 * S.portInset;
 						if (right) { it.node.h = Math.ceil(grow); } else { it.node.w = Math.ceil(grow); }
-						it.cs = cs(it.node); span = portSpan(it.node, it.cs, S);
+						it.cs = cs(it.node);   // (the node now holds exactly `need`: there is nothing left to re-measure)
 					}
 				}
 				ends.forEach((en, i) => {
