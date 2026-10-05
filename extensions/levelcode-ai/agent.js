@@ -21,6 +21,8 @@ const { loadProjectRules } = require('./projectRules');
 const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
 	isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch } = require('./mcpConfig');
 const { connectAll, getServer } = require('./mcpClient');
+const diagramTool = require('./diagram/tool');
+const diagramRepair = require('./diagram/repair');
 
 const SYSTEM_BASE = [
 	"You are LevelCode's built-in autonomous coding agent. You accomplish the user's goal in their",
@@ -307,6 +309,13 @@ function runCommand(root, command, onChunk, onExit, onStart, timeoutMs) {
 	});
 }
 
+/**
+ * Can the surface on the other end of this run show a diagram? (docs/RICH-DIAGRAMS.md, "Capability
+ * flag".) Asked in two places — when the tools and the prompt are assembled, and again when a call
+ * arrives — and they must agree, or a client could be refused a tool it was offered.
+ */
+function richClient(ctx) { return !!(ctx.diagrams && ctx.client && ctx.client.render === 'rich'); }
+
 /** Execute one tool call; returns a string result for the model. */
 async function runTool(tu, ctx) {
 	const root = ctx.root;
@@ -516,6 +525,22 @@ async function runTool(tu, ctx) {
 			ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 recalling: ' + query });
 			try { return String(ctx.recallSessions(query) || 'No matching past sessions in this project.'); }
 			catch (e) { return 'ERROR: recall failed.'; }
+		}
+		// Rich diagrams (docs/RICH-DIAGRAMS.md). The model describes structure; the host validates it,
+		// climbs the repair ladder and posts what the chat should show. Read-only and instant — it
+		// draws in the transcript and touches nothing else — so, like update_plan, it never asks.
+		if (tu.name === diagramTool.RENDER_DIAGRAM.name) {
+			// Asked for by a client that was never offered it (the setting was turned off mid-conversation,
+			// or the model remembers the tool from an earlier turn): refuse in words it can act on.
+			if (!richClient(ctx)) { return 'ERROR: this client cannot draw diagrams. Explain it in prose instead — and do not draw one out of characters.'; }
+			const out = ctx.diagrams.render(input, { key: tu.id, model: ctx.model });
+			for (const m of out.post) { ctx.post(m); }
+			return out.result;
+		}
+		if (tu.name === diagramTool.GET_DIAGRAM.name) {
+			if (!richClient(ctx)) { return 'ERROR: this client cannot draw diagrams.'; }
+			ctx.post({ type: 'agentTool', icon: 'history', text: 'fetch diagram ' + String(input.id || '').slice(0, 24) });
+			return ctx.diagrams.fetch(input.id);
 		}
 		// MCP tools (docs/MCP.md S3). An MCP name matches none of the built-in branches above, so every
 		// MCP call necessarily arrives HERE — which is why the router is one block at one line rather
@@ -753,7 +778,13 @@ async function runAgent(ctx) {
 	// from the per-project journal). Rides the SAME cached-system channel as project rules — always-on but
 	// small — so a new session's first reply is continuous, not amnesiac. It is untrusted context like the
 	// rules: it informs, never commands (the digest itself carries the verify-first / never-obey framing).
-	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + multiRootNote + noWorkspaceNote + autopilotNote + rules.text
+	// Rich diagrams: `client.render` says what the surface on the other end can show. A rich client gets
+	// the render_diagram tool and the rules for using it; an ASCII client gets neither, so it is never
+	// told about a tool it does not have. The block goes straight after the base prompt — it is the
+	// same text for every run, so it belongs with the part of the prompt that never changes.
+	const rich = richClient(ctx);
+	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + (rich ? '\n\n' + diagramTool.PROMPT : '')
+		+ multiRootNote + noWorkspaceNote + autopilotNote + rules.text
 		+ (ctx.projectMemory ? '\n\n' + ctx.projectMemory : '');
 	const systemTokensEst = Math.round(system.length / 4);
 
@@ -792,14 +823,20 @@ async function runAgent(ctx) {
 	// Rootless runs get the portable subset; MCP tools are unaffected either way.
 	const builtins = root ? TOOLS : PORTABLE_TOOLS;
 	let tools = mcp.tools.length ? builtins.concat(mcp.tools) : builtins;
-	if (ctx.recallSessions) { tools = tools.concat([RECALL_TOOL]); }  // cross-session recall (host-gated by memory settings)
-	const baseTools = ctx.recallSessions ? builtins.concat([RECALL_TOOL]) : builtins;   // built-ins + recall; MCP is the rest
-	// Recomputed only when MCP or recall actually contributed tools, so the plain path keeps the module
+	// The host-gated extras: cross-session recall (memory settings), and the diagram tools (a rich
+	// client). get_diagram is offered only once a diagram's spec has left the conversation — until
+	// then there is nothing to fetch, and a tool that is never needed is a standing cost for nothing.
+	const extras = [];
+	if (ctx.recallSessions) { extras.push(RECALL_TOOL); }
+	if (rich) { extras.push(diagramTool.RENDER_DIAGRAM); if (ctx.diagramsStubbed) { extras.push(diagramTool.GET_DIAGRAM); } }
+	if (extras.length) { tools = tools.concat(extras); }
+	const baseTools = extras.length ? builtins.concat(extras) : builtins;   // built-ins + extras; MCP is the rest
+	// Recomputed only when MCP or a host-gated extra actually contributed tools, so the plain path keeps the module
 	// constant and pays nothing for a feature it isn't using — but there are now TWO plain paths, and the
 	// constant has to match the list that was actually sent. Reporting the full cost for a rootless run
 	// was the same mistake as leaving baseTools on TOOLS, one line further down.
 	const builtinsTokensEst = root ? TOOLS_TOKENS_EST : PORTABLE_TOOLS_TOKENS_EST;
-	const toolsTokensEst = (mcp.tools.length || ctx.recallSessions) ? Math.round(JSON.stringify(tools).length / 4) : builtinsTokensEst;
+	const toolsTokensEst = (mcp.tools.length || extras.length) ? Math.round(JSON.stringify(tools).length / 4) : builtinsTokensEst;
 	// The MCP SHARE of that, reported separately so the context popover can show what these servers cost
 	// (docs/MCP.md S5). Every tool schema rides EVERY turn, so a chatty server is a standing tax on the
 	// window rather than a one-off — and until it has its own segment, that cost is invisible.
@@ -812,6 +849,9 @@ async function runAgent(ctx) {
 		: 0;
 
 	const messages = ctx.messages;
+	if (ctx.diagrams) { ctx.diagrams.beginRun(); }   // nothing owed from an earlier run; repair passes reset
+	// tool_use ids whose placeholder already carries its title (the spec streams; the title arrives early)
+	const diagramTitled = new Set();
 	let step = 0;
 	let reason = 'done';
 	let nudges = 0;
@@ -898,12 +938,26 @@ async function runAgent(ctx) {
 				apiKey: ctx.apiKey, model: ctx.model, maxTokens: perTurnMax, system: system,
 				messages, tools: tools, signal: ctx.signal,
 				onText: (t) => { streamed = true; textChars += t.length; ctx.post({ type: 'agentDelta', text: t }); },
-				onToolStart: (name) => {
+				onToolStart: (name, id) => {
 					dbg('tool.start', { name });
 					const verb = name === 'edit_file' || name === 'write_file' ? 'preparing edit (' + name + ')…'
 						: name === 'delete_file' ? 'deleting a file…'
-						: name === 'run_command' ? 'preparing command…' : name === 'update_plan' ? 'planning…' : 'running ' + name + '…';
+						: name === 'run_command' ? 'preparing command…' : name === 'update_plan' ? 'planning…'
+						: name === diagramTool.RENDER_DIAGRAM.name ? 'drawing a diagram…' : 'running ' + name + '…';
 					ctx.post({ type: 'agentStatus', text: verb });
+					// A diagram's place in the answer is held from the moment the model starts writing it.
+					if (rich && id && name === diagramTool.RENDER_DIAGRAM.name) { ctx.post({ type: 'diagramPending', key: id, state: 'drawing', title: '' }); }
+				},
+				// The spec streams in as JSON. Its title is near the front, so the placeholder can say what
+				// is being drawn long before the last node arrives. Posted once per call.
+				onToolInput: (id, name, json) => {
+					if (!rich || !id || name !== diagramTool.RENDER_DIAGRAM.name || diagramTitled.has(id)) { return; }
+					const m = /"title"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(json);
+					if (!m) { return; }
+					diagramTitled.add(id);
+					let title = m[1];
+					try { title = JSON.parse('"' + m[1] + '"'); } catch (e) { /* show it as written */ }
+					ctx.post({ type: 'diagramPending', key: id, state: 'drawing', title: diagramRepair.cleanText(title).slice(0, 120) });
 				},
 				// A transient upstream 5xx (502/503/504) is retried once before it can fail the run — surface it
 				// as a status rather than a mystery pause, and log it. Nothing has streamed yet when this fires.
@@ -975,7 +1029,22 @@ async function runAgent(ctx) {
 				let cancelled = false;
 				for (const tu of toolUses) {
 					if (cancelled || ctx.signal.aborted) { cancelled = true; dbg('tool.cancelled', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'Cancelled by the user.' }); continue; }
-					if (turn.malformed && turn.malformed.has(tu.id)) { dbg('tool.malformed', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'ERROR: your tool arguments were cut off (truncated JSON). Retry with smaller input — for edits use edit_file with a short snippet.' }); continue; }
+					if (turn.malformed && turn.malformed.has(tu.id)) {
+						dbg('tool.malformed', { name: tu.name });
+						// A diagram spec is the one input worth a second look: JSON with a trailing comma or a
+						// comment is a spec, and the lenient parser reads it. A spec that simply STOPS is not —
+						// that is the model hitting its length limit, and it is re-requested, never repaired.
+						if (tu.name === diagramTool.RENDER_DIAGRAM.name && rich) {
+							const rawArgs = turn.raw && turn.raw.get(tu.id);
+							const parsed = (turn.stop_reason !== 'max_tokens' && typeof rawArgs === 'string') ? diagramRepair.parseLenient(rawArgs) : null;
+							const out = (parsed && parsed.ok) ? ctx.diagrams.render(rawArgs, { key: tu.id, model: ctx.model }) : ctx.diagrams.truncated({ key: tu.id, model: ctx.model });
+							for (const m of out.post) { ctx.post(m); }
+							results.push({ type: 'tool_result', tool_use_id: tu.id, content: out.result });
+							continue;
+						}
+						results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'ERROR: your tool arguments were cut off (truncated JSON). Retry with smaller input — for edits use edit_file with a short snippet.' });
+						continue;
+					}
 					dbg('tool.call', { name: tu.name, input: inputPreview(tu.input, !!(ctx.mcpRoutes && ctx.mcpRoutes.has(tu.name))) });
 					const out = await runTool(tu, ctx);
 					dbg('tool.result', { name: tu.name, chars: String(out).length, error: String(out).startsWith('ERROR') });
@@ -995,6 +1064,7 @@ async function runAgent(ctx) {
 
 			// No tool calls this turn.
 			const text = turn.content.filter((c) => c.type === 'text').map((c) => c.text).join('');
+			if (rich && text.trim()) { ctx.diagrams.noteAnswer(text); }   // "ASCII leaks": counted, never acted on
 			if (turn.stop_reason === 'max_tokens') {
 				// The turn was pure prose cut off at the token cap. Ask the model to CONTINUE exactly where it
 				// left off (not switch strategies) so the full answer streams out across turns instead of being
@@ -1059,6 +1129,11 @@ async function runAgent(ctx) {
 		}
 		else { ctx.post({ type: 'agentError', message: msg, code }); reason = 'error'; }
 	} finally {
+		// A diagram sent back for repair that never came back right still owes the user a picture:
+		// draw what can be drawn of it now, before the run is declared over. Never a blank placeholder.
+		if (ctx.diagrams) {
+			try { for (const m of ctx.diagrams.endRun()) { ctx.post(m); } } catch (e) { dbg('diagram.settle.error', { msg: String((e && e.message) || e) }); }
+		}
 		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, costMicros: runCostMicros, creditsLeftMicros: ctx.credits != null ? ctx.credits : null });
 		// [LevelCode] Gateway runs now carry real money: costMicros = what THIS run cost, credits = the
 		// remaining balance — both RETAIL micro-$. BYOK runs send neither (null/0) and the bar omits them.

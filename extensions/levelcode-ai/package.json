@@ -125,6 +125,11 @@
         "category": "LevelCode"
       },
       {
+        "command": "levelcode.ai.diagramStats",
+        "title": "AI: Diagram Statistics",
+        "category": "LevelCode"
+      },
+      {
         "command": "levelcode.ai.openChatInEditor",
         "title": "AI: Open Chat in Editor",
         "category": "LevelCode",
@@ -485,6 +490,11 @@
           "type": "boolean",
           "default": false,
           "description": "Autopilot: let the agent run commands without asking, and prefer verifying its own work over pausing to ask you. It still stops and asks before anything hard to undo — deleting files, sudo, force-push / history rewrite, piping a remote script into a shell, publishing a package, or writing outside the project. File edits stay reviewable with Keep/Undo either way. Off by default."
+        },
+        "levelcode.ai.diagrams.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Let the agent draw diagrams in the chat. When structure is the point — a flow, an architecture, a decision tree, a state machine — the model sends a small description (nodes, edges, groups) and the editor lays it out, styles it to your theme and renders it; nodes can link to the code they describe. Turn this off and the agent is not offered the drawing tool at all: it answers in prose. Costs about 1,000 tokens of standing prompt per request while on."
         },
         "levelcode.ai.skills.enabled": {
           "type": "boolean",

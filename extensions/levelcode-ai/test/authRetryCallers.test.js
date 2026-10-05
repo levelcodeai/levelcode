@@ -101,6 +101,10 @@ const makeHost = new Function('env', [
 	// The prompts themselves are beside the point here.
 	"const OUTCOME_SYSTEM = 'system', OUTCOME_FORMAT = 'format', OUTCOME_SUPERSEDES_FORMAT = '', COMPACT_SYSTEM = 'system', COMPACT_INSTRUCTIONS = 'Summarize:\\n';",
 	'let cloudSignedIn = env.signedIn, abort = null, agentMessages = [];',
+	// Compaction also stubs out the specs of diagrams it summarizes away (docs/RICH-DIAGRAMS.md). No
+	// diagram is drawn in these scenarios, so the stand-in has none to stub; test/diagramHost.test.js
+	// runs the same function with the real service.
+	'let diagramsStubbed = false; const diagrams = { stubsFor: () => [] };',
 	decl('ACCOUNT_TOKEN_KEY'), decl('ACCOUNT_REFRESH_KEY'), decl('ACCOUNT_PROFILE_KEY'), decl('ACCOUNT_EXPIRED_KEY'),
 	decl('sessionQueue'), decl('sessionGeneration'),
 	...HOST_FUNCTIONS.map(extract),
