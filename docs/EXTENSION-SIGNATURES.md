@@ -74,6 +74,7 @@ something in the path.
 | `release.yml`, after the build | `smoke` on the built app | The job fails; a registry that cannot be reached is a warning |
 | `release.yml`, in the test gate | `registry` | The release stops before the hour-long build; unreachable is a warning |
 | `make-dmg.sh` step 0, before signing | `install`, then `check` | The app is not signed |
+| `openvsx-key.yml`, daily | `registry --strict` | The run fails — that is the alarm |
 | Every pull request | The suite, via `test-extensions.sh` | The gate is red |
 
 All four commands are `node scripts/extension-signature.mjs <command>`.
@@ -160,8 +161,8 @@ automatic update of extensions fails without a dialog. Nothing already installed
 Users can still click *Install Anyway*, which is exactly the habit this feature exists to end, so
 the gap should be short. After `delete`, every install is refused with `NotSigned`.
 
-**How you find out.** The release gate's `registry` step fails, or a user reports `Untrusted`.
-To ask by hand:
+**How you find out.** In order of likelihood: the daily *Open VSX signing key* workflow fails;
+the release gate's `registry` step fails; a user reports `Untrusted`. To ask by hand:
 
 ```bash
 node scripts/extension-signature.mjs registry

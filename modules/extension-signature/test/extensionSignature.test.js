@@ -980,6 +980,7 @@ function moduleTrusting(keys) {
 		const smoked = position(release, 'run: node scripts/extension-signature.mjs smoke "VSCode-darwin-${{ matrix.arch }}/LevelCode.app"', 'release.yml');
 		const zipped = position(release, 'ditto -c -k --sequesterRsrc --keepParent', 'release.yml');
 		assert.deepStrictEqual([gate, asked, built, smoked, zipped], [gate, asked, built, smoked, zipped].sort((a, b) => a - b));
+		assert.match(read('.github', 'workflows', 'openvsx-key.yml'), /node scripts\/extension-signature\.mjs registry --strict/);
 	});
 
 	console.log('\nextensionSignature: ' + n + ' tests passed.');

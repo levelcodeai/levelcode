@@ -102,7 +102,7 @@ module for that slot. Full account + runbooks: `docs/EXTENSION-SIGNATURES.md`.
   the editor imports it — accepts a real package and refuses a changed one.
 - **`smoke <LevelCode.app>`** asks the app itself (its command line installs one tiny extension into
   temp folders). It is the check that would have caught the original bug; CI runs it after each build.
-- **`registry`** watches for Open VSX changing its key (the release gate runs it). Exit 1 means
+- **`registry`** watches for Open VSX changing its key (daily workflow + release gate). Exit 1 means
   evidence, and every shipped build is refusing extensions until a release carries the new key.
 - **Do not "fix" a refusal by turning verification off** (`extensions.verifySignature`, a patch like
   VSCodium's). And a run from source proves nothing here: the editor only enforces on a built app.
