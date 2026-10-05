@@ -715,6 +715,28 @@ async function setupMcp(ctx, wsFolders, dbg) {
 	}
 }
 
+/**
+ * Did the model say it is finished — a line starting with "Done:" (what SYSTEM_BASE asks for), or
+ * text that simply ends in "done"?
+ *
+ * The LINE is looked for with markdown marks stripped. A model that writes it as `**Done:** …`,
+ * `## Done: …` or `- Done: …` has still said it; read literally, the marks sit between the line start
+ * and the word, so a finished run was taken for an unfinished one and — when the answer also read as
+ * a promise of more work, for which one "next " is enough — nudged until the model said Done a second
+ * time.
+ * @param {string} text the text of a turn that called no tool
+ * @returns {boolean}
+ */
+function saysDone(text) {
+	// Strip quote, heading and list marks at line starts, then emphasis marks, before the line test.
+	const plain = text
+		.replace(/^[ \t]*(?:[>#]+|[-*+]|\d+\.)[ \t]+/gm, '')
+		.replace(/[*_`~]+/g, '');
+	// The last-word test reads the text AS WRITTEN. With the backticks gone, a turn that ends in a fenced
+	// shell loop ends in "done" as well — and a command pasted where a tool call belonged is a stall.
+	return /(^|\n)\s*done\s*:/i.test(plain) || /\bdone\.?\s*$/i.test(text.trim());
+}
+
 async function runAgent(ctx) {
 	// No workspace is no longer a refusal. It used to fail the whole run here, which meant a question
 	// that never needed a folder — "what does this error mean?", anything through an MCP server, a
@@ -1021,7 +1043,7 @@ async function runAgent(ctx) {
 				}
 				reason = 'limit'; break;
 			}
-			if (/(^|\n)\s*done\s*:/i.test(text) || /\bdone\.?\s*$/i.test(text.trim())) {
+			if (saysDone(text)) {
 				if (await attemptVerify()) { continue; }   // verification failed → fix feedback pushed, keep going
 				reason = 'done'; break;
 			}
@@ -1070,4 +1092,4 @@ async function runAgent(ctx) {
 	}
 }
 
-module.exports = { resetContextAnnounce, runAgent, makeDiff, resolveWorkspacePath };
+module.exports = { resetContextAnnounce, runAgent, makeDiff, resolveWorkspacePath, saysDone };
