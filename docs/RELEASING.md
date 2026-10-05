@@ -53,8 +53,8 @@ export NOTARY_PROFILE="levelcode-notary"
 
 ```bash
 ./scripts/bootstrap.sh        # first time / after an upstream bump (clone + brand + patch + npm ci)
-./scripts/build-macos.sh      # → VSCode-darwin-<arch>/LevelCode.app; strips proprietary MS/Copilot code, then stamps the release version (§3)
-./scripts/make-dmg.sh         # de-Microsoft (defensive) → sign (Developer ID) → dmg → notarize → staple → verify
+./scripts/build-macos.sh      # → VSCode-darwin-<arch>/LevelCode.app; strips proprietary MS/Copilot code, installs + checks the extension signature verifier, then stamps the release version (§3)
+./scripts/make-dmg.sh         # de-Microsoft (defensive) + verifier check → sign (Developer ID) → dmg → notarize → staple → verify
 ```
 With `CODESIGN_IDENTITY` + `NOTARY_PROFILE` set, `make-dmg.sh` runs the whole signed+notarized pipeline;
 without them it's ad-hoc (unnotarized). **The de-Microsoft strip runs on the built *app*, never the source
@@ -74,6 +74,18 @@ Confirm the app carries no proprietary code:
 find VSCode-darwin-arm64/LevelCode.app \( -path "*@github/copilot*" -o -path "*mxc-sdk*" \) \
   \( -name "*.node" -o -name "*.dylib" -o -name "mxc-exec-mac" \) -print   # → prints NOTHING
 ```
+
+Confirm the app can install an extension. Until 1.3.1 no build could — every signed extension from Open
+VSX was refused with "Signature verification was not executed" — and nothing in a release said so:
+```bash
+node scripts/extension-signature.mjs smoke VSCode-darwin-arm64/LevelCode.app
+# → [extension-signature] the app verified perrinjerome.git-rebase-syntax and installed it
+```
+It runs the app's own command line with throwaway data folders (no window, nothing of your installed
+LevelCode is touched) and reads the app's log. CI runs the same on each arch after building; here it is
+the *signed* app being asked. The x64 app needs Rosetta on an Apple-silicon Mac; without it the answer
+is a warning, not a pass. If the release gate stopped on **"Open VSX still signs with a key this release
+trusts"**, the registry has changed its signing key: `docs/EXTENSION-SIGNATURES.md` is the runbook.
 
 Confirm the app reports **its own** version rather than the Code-OSS base — this **fails silently**, so
 check it every release:

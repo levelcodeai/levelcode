@@ -4,7 +4,7 @@
  *  A LevelCode built from the open source could not verify an extension: the editor loads a module
  *  only Microsoft's products may ship, found none, and refused every signed extension from Open VSX
  *  ("Signature verification was not executed"). modules/extension-signature is LevelCode's module
- *  for that slot. Pinned here:
+ *  for that slot, and scripts/extension-signature.mjs puts it into a built app. Pinned here:
  *
  *    - a package verifies if, and only if, a key this build trusts signed exactly those bytes
  *    - every other outcome is a refusal the editor has a code for — never an exception
@@ -12,9 +12,15 @@
  *      surprise a zip reader, it is refused; nothing inflates past what it declares
  *    - the keys are the ones that ship, for the gallery the product points at, and nothing is fetched
  *    - real packages, as Open VSX serves them, verify with the shipped key — and not when changed
+ *    - the build step installs exactly the module, and `check` fails for each way a built app
+ *      could end up unable to verify: no module, another module, a module the editor would not
+ *      find or could not call, or an editor that no longer asks for it
+ *    - `smoke` reads the app's own words, and `registry` tells a changed signing key (evidence)
+ *      from a registry that could not be asked (not evidence)
  *
  *  Keys are generated here and archives are written by hand, so each lie an archive can tell is
- *  told on purpose. The two real packages are in fixtures/. The network is refused.
+ *  told on purpose. The two real packages are in fixtures/. The network is refused: the registry
+ *  and the app are stand-ins, and what the script DOES with their answers is what is pinned.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -26,9 +32,11 @@ const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
 const { spawnSync } = require('child_process');
+const { pathToFileURL } = require('url');
 
 const MODULE_DIR = path.join(__dirname, '..');
 const REPO = path.join(MODULE_DIR, '..', '..');
+const SCRIPT = path.join(REPO, 'scripts', 'extension-signature.mjs');
 const FIXTURES = path.join(__dirname, 'fixtures');
 const read = (/** @type {string[]} */ ...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 
@@ -133,7 +141,67 @@ function archiveFor(vsix, by, { manifest = manifestOf(vsix), method = 8, signatu
 	return zip(entries);
 }
 
+// ── a built app, as far as this step can tell ───────────────────────────────────────────────
+/** The editor's code names the module in two bundles and imports it by that name; so do these. */
+const ASKS = 'const mod = "@vscode/vsce-sign";\nexport const load = () => import(mod);\n';
+function builtApp({ asks = true } = {}) {
+	const app = path.join(tmp(), 'app');
+	fs.mkdirSync(path.join(app, 'node_modules', '@vscode'), { recursive: true });
+	for (const [folder, name] of [[['vs', 'code', 'electron-utility', 'sharedProcess'], 'sharedProcessMain.js'], [['vs', 'code', 'node'], 'cliProcessMain.js']]) {
+		const dir = path.join(app, 'out', ...folder);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, name), asks ? ASKS : 'export const load = () => null;\n');
+	}
+	fs.writeFileSync(path.join(app, 'out', 'main.js'), 'export {};\n');
+	return app;
+}
+const ASKERS = ['out/vs/code/electron-utility/sharedProcess/sharedProcessMain.js', 'out/vs/code/node/cliProcessMain.js'];
+
+// ── a registry that answers what it is told to ──────────────────────────────────────────────
+const REGISTRY = 'https://registry.test';
+/**
+ * A stand-in for the network: the search listing, and each extension's two files. An extension
+ * may claim a length it does not have (`claims`), be listed with a package or a signature that
+ * is not there to download (`missing`, `missingSignature`), live somewhere else (`origin`), or
+ * name a key.
+ */
+function registry(extensions, { listingStatus = 200, listingBody } = {}) {
+	const requested = [];
+	const files = new Map();
+	const listed = extensions.map((e, i) => {
+		const id = `ext${i}`;
+		const base = `${e.origin || REGISTRY}/api/ns/${id}/1.0.0/file/ns.${id}-1.0.0`;
+		if (!e.missing) { files.set(base + '.vsix', { bytes: e.vsix, claims: e.claims }); }
+		if (e.archive && !e.missingSignature) { files.set(base + '.sigzip', { bytes: e.archive }); }
+		return {
+			namespace: 'ns', name: id, version: '1.0.0',
+			files: { download: base + '.vsix', ...(e.archive ? { signature: base + '.sigzip' } : {}), ...(e.key ? { publicKey: `${REGISTRY}/api/-/public-key/${e.key}` } : {}) }
+		};
+	});
+	const fetch = async (url) => {
+		url = String(url);
+		requested.push(url);
+		if (url.startsWith(REGISTRY + '/api/-/search')) {
+			return new Response(listingBody === undefined ? JSON.stringify({ extensions: listed }) : listingBody, { status: listingStatus });
+		}
+		const found = files.get(url);
+		if (!found) { return new Response('not found', { status: 404 }); }
+		return new Response(found.bytes, { status: 200, headers: { 'content-length': String(found.claims || found.bytes.length) } });
+	};
+	return { fetch, requested };
+}
+/** A copy of the module that pins `keys` — what `registry` is run against in place of the shipped one. */
+function moduleTrusting(keys) {
+	const dir = path.join(tmp(), 'module');
+	fs.mkdirSync(dir);
+	for (const f of ['index.js', 'package.json']) { fs.copyFileSync(path.join(MODULE_DIR, f), path.join(dir, f)); }
+	fs.writeFileSync(path.join(dir, 'keys.json'), JSON.stringify({ keys }));
+	return dir;
+}
+
 (async () => {
+	const build = await import(pathToFileURL(SCRIPT).href);
+
 	const openVsx = signer('the-registry');
 	const other = signer('someone-else');
 	const verify = signing.createVerifier([openVsx.trusted]);
@@ -507,6 +575,411 @@ function archiveFor(vsix, by, { manifest = manifestOf(vsix), method = 8, signatu
 	await test('a real signature is not accepted by a build that trusts another key', async () => {
 		const elsewhere = signing.createVerifier([other.trusted]);
 		for (const f of REAL) { assert.strictEqual((await elsewhere(f.vsix, f.archive, false)).code, Code.Untrusted, f.name); }
+	});
+
+	// ── the build step: scripts/extension-signature.mjs ─────────────────────────────────────
+	const moduleFiles = () => Object.fromEntries(build.MODULE_FILES.map((f) => [f, fs.readFileSync(path.join(MODULE_DIR, f))]));
+
+	await test('install puts the module, and only the module, where a built app looks for it', () => {
+		const app = builtApp();
+		// What a run stopped half-way would have left beside the module's place.
+		const leftover = path.join(app, 'node_modules', '@vscode', 'vsce-sign.installing');
+		fs.mkdirSync(leftover);
+		fs.writeFileSync(path.join(leftover, 'index.js'), 'half a module');
+		fs.writeFileSync(path.join(leftover, 'left-behind.js'), 'and a file the module does not have');
+		const result = build.installModule(app);
+		const target = path.join(app, 'node_modules', '@vscode', 'vsce-sign');
+		assert.deepStrictEqual({ ...result, target: fs.realpathSync(result.target) }, { target: fs.realpathSync(target), changed: true, replaced: null, kept: false });
+		assert.deepStrictEqual(listing(target), ['index.js', 'keys.json', 'package.json'], 'no tests, no fixtures');
+		for (const [name, bytes] of Object.entries(moduleFiles())) { assert.ok(fs.readFileSync(path.join(target, name)).equals(bytes), name); }
+		assert.deepStrictEqual(listing(path.join(app, 'node_modules', '@vscode')), ['vsce-sign'], 'nothing left beside it');
+		assert.strictEqual(JSON.parse(fs.readFileSync(path.join(target, 'package.json'), 'utf8')).name, '@vscode/vsce-sign', 'under the name the editor imports');
+	});
+
+	await test('installing twice changes nothing', () => {
+		const app = builtApp();
+		build.installModule(app);
+		const target = build.installedPath(app);
+		const before = build.MODULE_FILES.map((f) => fs.statSync(path.join(target, f)).ino);
+		assert.deepStrictEqual(build.installModule(app), { target, changed: false, replaced: null, kept: false });
+		assert.deepStrictEqual(build.MODULE_FILES.map((f) => fs.statSync(path.join(target, f)).ino), before, 'the same files, not rewritten');
+	});
+
+	await test('a verifier from another commit is left as it was built — unless the build says replace', () => {
+		const app = builtApp();
+		build.installModule(app);
+		const keys = path.join(build.installedPath(app), 'keys.json');
+		const theirs = JSON.stringify({ keys: [other.trusted] });
+		fs.writeFileSync(keys, theirs);
+
+		assert.deepStrictEqual(build.installModule(app), { target: build.installedPath(app), changed: false, replaced: null, kept: true });
+		assert.strictEqual(fs.readFileSync(keys, 'utf8'), theirs, 'the keys the app was built with are the keys it keeps');
+
+		assert.deepStrictEqual(build.installModule(app, { replace: true }), { target: build.installedPath(app), changed: true, replaced: 'levelcode', kept: false });
+		assert.ok(fs.readFileSync(keys).equals(moduleFiles()['keys.json']));
+	});
+
+	await test('a module of that name that is not LevelCode\'s never ships in the verifier\'s place', () => {
+		const app = builtApp();
+		const target = build.installedPath(app);
+		fs.mkdirSync(path.join(target, 'bin'), { recursive: true });
+		fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name: '@vscode/vsce-sign', version: '2.0.6', main: 'src/main.js' }));
+		fs.writeFileSync(path.join(target, 'bin', 'vsce-sign'), 'a binary');
+
+		assert.throws(() => build.installModule(app), /not LevelCode's.*--replace/s);
+		assert.deepStrictEqual(listing(target), ['bin', 'package.json'], 'and refusing touched nothing');
+
+		assert.strictEqual(build.installModule(app, { replace: true }).replaced, 'foreign');
+		assert.deepStrictEqual(listing(target), ['index.js', 'keys.json', 'package.json'], 'nothing of the other module is left');
+
+		// A file where the folder should be is not ours either.
+		const second = builtApp();
+		fs.writeFileSync(build.installedPath(second), 'not a folder');
+		assert.throws(() => build.installModule(second), /not LevelCode's/);
+		assert.strictEqual(build.installModule(second, { replace: true }).replaced, 'foreign');
+	});
+
+	await test('a folder that is not a built app, or a module that is not whole, changes nothing', () => {
+		assert.throws(() => build.installModule(tmp()), /not a folder — expected a built app's code folder/);
+
+		const app = builtApp();
+		const partial = path.join(tmp(), 'module');
+		fs.mkdirSync(partial);
+		fs.copyFileSync(path.join(MODULE_DIR, 'index.js'), path.join(partial, 'index.js'));
+		fs.copyFileSync(path.join(MODULE_DIR, 'package.json'), path.join(partial, 'package.json'));
+		assert.throws(() => build.installModule(app, { source: partial }), /keys\.json/);
+		assert.deepStrictEqual(listing(path.join(app, 'node_modules', '@vscode')), [], 'nothing was written, and nothing left half-written');
+	});
+
+	await test('check passes an app that will verify, and says who loads the module and which keys it trusts', () => {
+		const app = builtApp();
+		build.installModule(app);
+		const { problems, keys, askedBy } = build.installedModuleProblems(app);
+		assert.deepStrictEqual(problems, []);
+		assert.deepStrictEqual(askedBy.map((f) => f.split(path.sep).join('/')), ASKERS);
+		assert.deepStrictEqual(keys, signing.trustedKeyIds);
+	});
+
+	await test('check fails for each way a built app could end up unable to verify', () => {
+		const installed = () => { const app = builtApp(); build.installModule(app); return app; };
+		const at = (app, ...p) => path.join(build.installedPath(app), ...p);
+		/** @type {Record<string, [() => string, RegExp]>} */
+		const cases = {
+			'no module': [() => builtApp(), /no verifier: .* is missing.*install/s],
+			'an editor that no longer asks for the module': [() => { const app = builtApp({ asks: false }); build.installModule(app); return app; }, /no longer loads its verifier by that name/],
+			'a module that is not LevelCode\'s': [() => { const app = installed(); fs.writeFileSync(at(app, 'package.json'), JSON.stringify({ name: '@vscode/vsce-sign', main: 'index.js' })); return app; }, /is not LevelCode's module/],
+			'a file that is not part of the module': [() => { const app = installed(); fs.writeFileSync(at(app, 'postinstall.js'), ''); return app; }, /carries a file that is not part of it: postinstall\.js/],
+			'a missing file': [() => { const app = installed(); fs.rmSync(at(app, 'keys.json')); return app; }, /the module is missing keys\.json/],
+			'another module nearer to the code that asks': [() => {
+				const app = installed();
+				const decoy = path.join(app, 'out', 'node_modules', '@vscode', 'vsce-sign');
+				fs.mkdirSync(decoy, { recursive: true });
+				fs.writeFileSync(path.join(decoy, 'package.json'), JSON.stringify({ name: '@vscode/vsce-sign', main: 'index.js' }));
+				fs.writeFileSync(path.join(decoy, 'index.js'), 'exports.verify = async () => ({ code: "Success", didExecute: true });\n');
+				return app;
+			}, /would load .*out.node_modules.* not .*vsce-sign.index\.js/],
+			'keys that are not the registry\'s': [() => { const app = installed(); fs.writeFileSync(at(app, 'keys.json'), JSON.stringify({ keys: [other.trusted] })); return app; }, /does not accept a real Open VSX package: Untrusted.*someone-else/s],
+			'no keys': [() => { const app = installed(); fs.writeFileSync(at(app, 'keys.json'), JSON.stringify({ keys: [] })); return app; }, /the module fails: .*no trusted signing keys/s],
+			// Node can load this module; an ES import cannot see its verify(). The editor imports.
+			'a verify() the editor\'s import cannot see': [() => {
+				const app = installed();
+				fs.writeFileSync(at(app, 'index.js'), `const real = require(${JSON.stringify(path.join(MODULE_DIR, 'index.js'))});\nmodule.exports = Object.assign({}, real);\n`);
+				return app;
+			}, /it has no verify\(\) an import can see/],
+			'a module that accepts anything': [() => {
+				const app = installed();
+				fs.writeFileSync(at(app, 'index.js'), 'exports.verify = async () => ({ code: "Success", didExecute: true, output: "" });\nexports.trustedKeyIds = [];\n');
+				return app;
+			}, /ACCEPTS a package with one byte changed/],
+			'a module that says it did not run': [() => {
+				const app = installed();
+				fs.writeFileSync(at(app, 'index.js'), 'exports.verify = async (a) => ({ code: a.endsWith("changed.vsix") ? "Untrusted" : "Success", didExecute: false, output: "" });\nexports.trustedKeyIds = [];\n');
+				return app;
+			}, /does not accept a real Open VSX package/]
+		};
+		for (const [what, [make, expected]] of Object.entries(cases)) {
+			const { problems } = build.installedModuleProblems(make());
+			assert.ok(problems.length > 0, what + ': passed');
+			assert.match(problems.join('\n'), expected, what);
+		}
+	});
+
+	await test('the command line: install then check is exit 0; an app with no module is exit 1 and told the fix', () => {
+		const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+		const app = builtApp();
+
+		const bare = run('check', app);
+		assert.strictEqual(bare.status, 1);
+		assert.match(bare.stderr, /cannot verify extension signatures[\s\S]*extension-signature\.mjs install/);
+
+		const installed = run('install', app);
+		assert.strictEqual(installed.status, 0, installed.stderr);
+		assert.match(installed.stdout, /installed the Open VSX signature verifier/);
+		assert.match(run('install', app).stdout, /already in place/);
+
+		const checked = run('check', app);
+		assert.strictEqual(checked.status, 0, checked.stderr);
+		assert.match(checked.stdout, /a real package accepted, a changed one refused/);
+		assert.ok(signing.trustedKeyIds.every((id) => checked.stdout.includes(id)), 'and it prints the keys the app trusts');
+
+		fs.writeFileSync(path.join(build.installedPath(app), 'keys.json'), JSON.stringify({ keys: [other.trusted] }));
+		assert.match(run('install', app).stdout, /left as built/);
+		assert.strictEqual(run('check', app).status, 1, 'an app whose keys are not the registry\'s is not signed off');
+		assert.match(run('install', app, '--replace').stdout, /replaced another version/);
+		assert.strictEqual(run('check', app).status, 0);
+
+		assert.strictEqual(run('install', tmp()).status, 1);
+		for (const args of [[], ['install'], ['check'], ['smoke'], ['verify', app]]) { assert.strictEqual(run(...args).status, 2, 'usage for: ' + args.join(' ')); }
+	});
+
+	// ── smoke: the built app, asked directly ────────────────────────────────────────────────
+	const ID = build.SMOKE_EXTENSION;
+	const SUCCESS_LOG = `2026-10-04 23:18:02.111 [info] Extension signature verification result for ${ID}: Success. Executed: true. Duration: 2ms.`;
+
+	await test('smoke reads the app\'s own words', () => {
+		const verdict = (status, output, log = '') => build.smokeVerdict({ status, output, log, extension: ID }).verdict;
+		assert.strictEqual(verdict(0, `Extension '${ID}' v0.0.1 was successfully installed.`, SUCCESS_LOG), 'pass');
+		assert.strictEqual(verdict(0, 'installed', SUCCESS_LOG.replace(ID, ID.toUpperCase())), 'pass', 'the app lower-cases identifiers; either spelling is the same extension');
+
+		// What every LevelCode build said before this module existed.
+		const notExecuted = build.smokeVerdict({ status: 1, output: `Error while installing extension ${ID}: Signature verification was not executed.`, log: 'Could not load vsce-sign module', extension: ID });
+		assert.strictEqual(notExecuted.verdict, 'fail');
+		assert.match(notExecuted.why, /could not run its verifier/);
+
+		const untrusted = build.smokeVerdict({ status: 1, output: `Signature verification failed with 'Untrusted' error.`, log: '', extension: ID });
+		assert.strictEqual(untrusted.verdict, 'fail');
+		assert.match(untrusted.why, /'Untrusted'/);
+
+		assert.strictEqual(verdict(0, 'installed', ''), 'fail', 'installed with no signature check in the log: installing unverified');
+		assert.strictEqual(verdict(0, 'installed', SUCCESS_LOG.replace('Executed: true', 'Executed: false')), 'fail');
+		assert.strictEqual(verdict(0, 'installed', SUCCESS_LOG.replace(ID, 'some.other-extension')), 'fail', 'another extension\'s check is not this one\'s');
+
+		// Not a signature: the registry could not be reached. That is not the app's fault, and not a pass.
+		assert.strictEqual(verdict(1, 'getaddrinfo ENOTFOUND open-vsx.org'), 'unknown');
+		assert.strictEqual(verdict(1, `Extension '${ID}' not found.`), 'unknown');
+		assert.strictEqual(verdict(null, ''), 'unknown', 'killed, or never started');
+	});
+
+	await test('smoke runs the app as a command-line process, in folders of its own that it removes', () => {
+		// A stand-in for the app's executable: it records how it was run and answers as told.
+		const bundle = path.join(tmp(), 'LevelCode.app');
+		const executable = path.join(bundle, 'Contents', 'MacOS', 'LevelCode Editor');
+		const cli = path.join(bundle, 'Contents', 'Resources', 'app', 'out', 'cli.js');
+		fs.mkdirSync(path.dirname(executable), { recursive: true });
+		fs.mkdirSync(path.dirname(cli), { recursive: true });
+		fs.writeFileSync(cli, '');
+		fs.writeFileSync(path.join(bundle, 'Contents', 'Info.plist'), '<plist><dict>\n<key>CFBundleExecutable</key>\n<string>LevelCode Editor</string>\n</dict></plist>');
+		const record = path.join(tmp(), 'record.json'), answer = path.join(tmp(), 'answer.json');
+		fs.writeFileSync(executable, [
+			'#!/usr/bin/env node',
+			'const fs = require("fs"), path = require("path");',
+			'const args = process.argv.slice(2);',
+			'const after = (flag) => args[args.indexOf(flag) + 1];',
+			`fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args, runAsNode: process.env.ELECTRON_RUN_AS_NODE }));`,
+			`const answer = JSON.parse(fs.readFileSync(${JSON.stringify(answer)}, "utf8"));`,
+			'const logs = path.join(after("--user-data-dir"), "logs", "20261004T231802");',
+			'fs.mkdirSync(logs, { recursive: true }); fs.mkdirSync(after("--extensions-dir"), { recursive: true });',
+			'fs.writeFileSync(path.join(logs, "cli.log"), answer.log);',
+			'process.stdout.write(answer.output); process.exit(answer.status);'
+		].join('\n'));
+		fs.chmodSync(executable, 0o755);
+
+		fs.writeFileSync(answer, JSON.stringify({ status: 0, output: 'installed', log: SUCCESS_LOG }));
+		assert.strictEqual(build.smokeTest({ app: bundle }).verdict, 'pass');
+
+		const ran = JSON.parse(fs.readFileSync(record, 'utf8'));
+		assert.strictEqual(ran.runAsNode, '1', 'as a command-line process — no window opens');
+		assert.deepStrictEqual([ran.args[0], ran.args[1], ran.args[2], ran.args[3], ran.args[5]], [cli, '--install-extension', ID, '--user-data-dir', '--extensions-dir']);
+		const [data, extensions] = [ran.args[4], ran.args[6]];
+		for (const folder of [data, extensions]) {
+			assert.ok(fs.realpathSync(path.dirname(path.dirname(folder))) === fs.realpathSync(os.tmpdir()), folder + ' is a throwaway folder, not the machine\'s LevelCode');
+			assert.ok(!fs.existsSync(folder), 'and it is gone afterwards');
+		}
+
+		fs.writeFileSync(answer, JSON.stringify({ status: 1, output: 'Error while installing extension: Signature verification was not executed.', log: '' }));
+		assert.strictEqual(build.smokeTest({ app: bundle }).verdict, 'fail');
+
+		const run = (...args) => spawnSync(process.execPath, [SCRIPT, 'smoke', bundle, ...args], { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+		assert.strictEqual(run().status, 1, 'an app that cannot verify fails the step');
+		fs.writeFileSync(answer, JSON.stringify({ status: 0, output: 'installed', log: SUCCESS_LOG }));
+		assert.strictEqual(run().status, 0);
+		fs.writeFileSync(answer, JSON.stringify({ status: 1, output: 'getaddrinfo ENOTFOUND open-vsx.org', log: '' }));
+		const offline = run();
+		assert.strictEqual(offline.status, 0, 'a registry that cannot be reached does not fail a build');
+		assert.match(offline.stdout, /WARNING: could not tell/);
+		assert.strictEqual(run('--strict').status, 2);
+		assert.throws(() => build.smokeTest({ app: tmp() }), /Info\.plist/);
+	});
+
+	// ── registry: is Open VSX still signing with a key this build trusts? ───────────────────
+	const pinnedModule = moduleTrusting([openVsx.trusted]);
+	const signedBy = (by, { key = by.id, ...rest } = {}) => { const vsix = crypto.randomBytes(300); return { vsix, archive: archiveFor(vsix, by), key, ...rest }; };
+	const check = (extensions, options, limits) => {
+		const net = registry(extensions, options);
+		return build.checkRegistry({ fetch: net.fetch, source: pinnedModule, origin: REGISTRY, ...limits }).then((result) => ({ ...result, requested: net.requested, said: result.lines.join('\n') }));
+	};
+
+	await test('registry: a registry that signs with the pinned key is fine, and the check verified real files to say so', async () => {
+		const r = await check([signedBy(openVsx), signedBy(openVsx), signedBy(openVsx)]);
+		assert.strictEqual(r.status, 'ok', r.said);
+		assert.match(r.said, /signs with a pinned key: 2 of its newest packages verified.*3 of 3 name the-registry/s);
+		assert.strictEqual(r.requested.filter((u) => u.endsWith('.vsix')).length, 2, 'two packages were downloaded and verified, not the listing taken at its word');
+		assert.match(r.requested[0], /\/api\/-\/search\?size=\d+&sortBy=timestamp&sortOrder=desc$/, 'the newest: a new key shows there first');
+	});
+
+	await test('registry: a key that is not pinned is a mismatch, and the message says which key and what to do', async () => {
+		const r = await check([signedBy(other), signedBy(other), signedBy(other)]);
+		assert.strictEqual(r.status, 'mismatch');
+		assert.match(r.said, /signing with a key this build does not trust: someone-else, named by 3 of its 3 newest/);
+		assert.match(r.said, new RegExp(REGISTRY + '/api/-/public-key/someone-else'));
+		assert.match(r.said, /refused with the pinned keys: ns\.ext0 1\.0\.0: Untrusted/);
+		assert.match(r.said, /docs\/EXTENSION-SIGNATURES\.md \("When Open VSX changes its key"\)/);
+		assert.match(read('docs', 'EXTENSION-SIGNATURES.md'), /^## When Open VSX changes its key$/m, 'and the place it points to exists');
+	});
+
+	await test('registry: one new key among the old is already news — and its package is the one put to the test', async () => {
+		const r = await check([signedBy(openVsx), signedBy(openVsx), signedBy(openVsx), signedBy(other)]);
+		assert.strictEqual(r.status, 'mismatch', 'Open VSX signs new packages with a new key at once, and the old ones again over time');
+		assert.match(r.said, /someone-else, named by 1 of its 4 newest/);
+		assert.match(r.said, /refused with the pinned keys: ns\.ext3 1\.0\.0: Untrusted/, 'the claim is confirmed on the file, not left to the listing');
+	});
+
+	await test('registry: not being able to ask is not evidence of anything', async () => {
+		const offline = await build.checkRegistry({ fetch: async () => { throw new Error('getaddrinfo ENOTFOUND registry.test'); }, source: pinnedModule, origin: REGISTRY });
+		assert.deepStrictEqual([offline.status, offline.lines.length], ['unknown', 1]);
+		assert.match(offline.lines[0], /could not be asked: getaddrinfo ENOTFOUND/);
+		for (const [what, options] of Object.entries({
+			'503': { listingStatus: 503 },
+			'not JSON': { listingBody: '<html>maintenance</html>' },
+			'an empty list': { listingBody: '{"extensions":[]}' },
+			'no list': { listingBody: '{}' }
+		})) {
+			assert.strictEqual((await check([signedBy(openVsx)], options)).status, 'unknown', what);
+		}
+	});
+
+	await test('registry: signatures that stop verifying under a pinned key are a mismatch too', async () => {
+		// The listing still names the pinned key; the files are no longer something it verifies.
+		const r = await check([signedBy(other, { key: openVsx.id }), signedBy(other, { key: openVsx.id })]);
+		assert.strictEqual(r.status, 'mismatch');
+		assert.match(r.said, /names a pinned key, but none of the 2 packages checked verifies/);
+		const garbled = await check([{ vsix: pkg, archive: Buffer.from('a new format'), key: openVsx.id }]);
+		assert.strictEqual(garbled.status, 'mismatch');
+		assert.match(garbled.said, /SignatureArchiveIsInvalidZip/);
+	});
+
+	await test('registry: one bad package among good ones is a warning, not an alarm', async () => {
+		const r = await check([signedBy(other, { key: openVsx.id }), signedBy(openVsx), signedBy(openVsx)]);
+		assert.strictEqual(r.status, 'ok');
+		assert.match(r.said, /warning — one package did not verify.*ns\.ext0 1\.0\.0: Untrusted/s);
+	});
+
+	await test('registry: a package too large to fetch is passed over for the next', async () => {
+		const large = 50 * 1024 * 1024;
+		const r = await check([signedBy(openVsx, { claims: large }), signedBy(openVsx, { claims: large }), signedBy(openVsx)]);
+		assert.strictEqual(r.status, 'ok', r.said);
+		assert.match(r.said, /1 of its newest packages verified \(ns\.ext2 1\.0\.0\)/);
+		assert.deepStrictEqual(r.requested.filter((u) => u.endsWith('.sigzip')).map((u) => /ext\d/.exec(u)[0]), ['ext2'], 'a package that was not read has no signature fetched for it');
+
+		const allLarge = await check([signedBy(openVsx, { claims: large }), signedBy(openVsx, { claims: large })]);
+		assert.strictEqual(allLarge.status, 'unknown', 'nothing verified is not "fine"');
+		assert.match(allLarge.said, /none of the 2 newest signed extensions .* could be downloaded/);
+
+		// A length that is not stated truthfully is found out as the bytes arrive.
+		const understated = await check([signedBy(openVsx, { claims: 10 }), signedBy(openVsx, { claims: 10 })], undefined, { maxPackageBytes: 100 });
+		assert.strictEqual(understated.status, 'unknown', '300 bytes behind a claim of 10 are still over a limit of 100');
+	});
+
+	await test('registry: a package that cannot be downloaded is not a package that failed to verify', async () => {
+		const r = await check([signedBy(openVsx, { missing: true }), signedBy(openVsx, { missingSignature: true }), signedBy(openVsx), signedBy(openVsx)]);
+		assert.strictEqual(r.status, 'ok', r.said);
+		assert.doesNotMatch(r.said, /did not verify/, 'a 404 is not evidence about a signature');
+		assert.match(r.said, /2 of its newest packages verified \(ns\.ext2 1\.0\.0, ns\.ext3 1\.0\.0\)/);
+	});
+
+	await test('registry: only addresses on the registry itself are followed', async () => {
+		const r = await check([signedBy(openVsx, { origin: 'https://elsewhere.test' }), signedBy(openVsx), { vsix: pkg, key: openVsx.id }]);
+		assert.strictEqual(r.status, 'ok', r.said);
+		assert.ok(r.requested.every((u) => u.startsWith(REGISTRY + '/')), r.requested.join('\n'));
+		assert.match(r.said, /2 of the 3 newest extensions are listed without a signature/, 'one elsewhere, one with none');
+	});
+
+	await test('registry: a registry that has stopped signing is as loud as one that changed its key', async () => {
+		// Open VSX has a switch that deletes every signature. The editor requires one for each extension.
+		const r = await check([{ vsix: pkg }, { vsix: pkg }, { vsix: pkg }]);
+		assert.strictEqual(r.status, 'mismatch');
+		assert.match(r.said, /none of the 3 newest extensions .* is listed with a signature.*'NotSigned'/s);
+		assert.deepStrictEqual(r.requested.length, 1, 'and nothing was downloaded to learn it');
+	});
+
+	await test('registry: a pinned key the registry has stopped naming is pointed out', async () => {
+		const both = moduleTrusting([openVsx.trusted, other.trusted]);
+		const net = registry([signedBy(openVsx), signedBy(openVsx)]);
+		const r = await build.checkRegistry({ fetch: net.fetch, source: both, origin: REGISTRY });
+		assert.strictEqual(r.status, 'ok');
+		assert.match(r.lines.join('\n'), /pinned key someone-else is named by none of the 2 newest extensions/);
+	});
+
+	await test('registry, from the command line: evidence is exit 1, silence is a warning — or exit 2 when asked to be strict', () => {
+		const gallery = new URL(JSON.parse(read('branding', 'product.overlay.json')).extensionsGallery.serviceUrl).origin;
+		const preloadWith = (body) => file(`globalThis.fetch = async (url) => { ${body} };\n`, '.cjs');
+		const run = (preload, ...args) => spawnSync(process.execPath, ['-r', preload, SCRIPT, 'registry', ...args], { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+
+		const offline = preloadWith('throw new Error("offline");');
+		const quiet = run(offline);
+		assert.strictEqual(quiet.status, 0, quiet.stderr);
+		assert.match(quiet.stdout, /WARNING: could not check/);
+		assert.strictEqual(run(offline, '--strict').status, 2);
+
+		// The shipped keys against a registry that has moved to a key of its own.
+		const listed = JSON.stringify({ extensions: [{ namespace: 'ns', name: 'x', version: '1.0.0', files: {
+			download: gallery + '/api/ns/x/1.0.0/file/ns.x-1.0.0.vsix', signature: gallery + '/api/ns/x/1.0.0/file/ns.x-1.0.0.sigzip', publicKey: gallery + '/api/-/public-key/a-new-key' } }] });
+		const moved = run(preloadWith(`if (String(url).includes("/api/-/search")) { return new Response(${JSON.stringify(listed)}); } return new Response("", { status: 404 });`));
+		assert.strictEqual(moved.status, 1);
+		assert.match(moved.stderr, /a-new-key/);
+		assert.ok(signing.trustedKeyIds.every((id) => moved.stderr.includes(id)), 'and it prints what IS pinned');
+
+		const onRunner = spawnSync(process.execPath, ['-r', offline, SCRIPT, 'registry'], { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: 'true' } });
+		assert.match(onRunner.stdout, /^::warning::/m, 'on a runner a warning is an annotation: nobody reads a green log');
+	});
+
+	// ── what can only be read ───────────────────────────────────────────────────────────────
+	const position = (text, needle, what) => { const i = text.indexOf(needle); assert.ok(i >= 0, `${what} no longer has: ${needle}`); return i; };
+
+	await test('a build installs the verifier into the app it built, then proves it — and stops if it cannot', () => {
+		const sh = read('scripts', 'build-macos.sh');
+		const app = '"$BUILT_APP/LevelCode.app/Contents/Resources/app"';
+		const order = [
+			position(sh, 'npm run gulp -- "$GULP_TARGET"', 'build-macos.sh'),
+			position(sh, 'strip-proprietary.mjs" ' + app, 'build-macos.sh'),
+			position(sh, `extension-signature.mjs" install ${app} --replace`, 'build-macos.sh'),
+			position(sh, `extension-signature.mjs" check ${app}`, 'build-macos.sh')
+		];
+		assert.deepStrictEqual(order, [...order].sort((a, b) => a - b), 'build, strip, install, check');
+		assert.match(sh, /^set -euo pipefail$/m, 'a failing check stops the script');
+	});
+
+	await test('an app is not signed until it has a verifier that works — and signing never swaps the one it was built with', () => {
+		const sh = read('scripts', 'make-dmg.sh');
+		const app = '"$APP/Contents/Resources/app"';
+		const install = position(sh, `extension-signature.mjs" install ${app}`, 'make-dmg.sh');
+		const check = position(sh, `extension-signature.mjs" check ${app}`, 'make-dmg.sh');
+		assert.ok(install < check, 'install, then check');
+		assert.ok(check < position(sh, 'notarize.sh" sign "$APP"', 'make-dmg.sh'), 'before Developer ID signing');
+		assert.ok(check < position(sh, 'codesign --force --deep --sign - "$APP"', 'make-dmg.sh'), 'and before ad-hoc signing');
+		assert.doesNotMatch(sh, /extension-signature\.mjs" install [^\n]*--replace/, 'the keys an app trusts are its build\'s');
+		assert.match(sh, /^set -euo pipefail$/m);
+	});
+
+	await test('the gate runs this suite, and a release asks the registry and the built app', () => {
+		assert.match(read('scripts', 'test-extensions.sh'), /^for t in extensions\/\*\/test\/\*\.test\.js modules\/\*\/test\/\*\.test\.js; do$/m);
+		const release = read('.github', 'workflows', 'release.yml');
+		const gate = position(release, 'run: ./scripts/test-extensions.sh', 'release.yml');
+		const asked = position(release, 'run: node scripts/extension-signature.mjs registry', 'release.yml');
+		const built = position(release, 'run: ./scripts/build-macos.sh ${{ matrix.arch }}', 'release.yml');
+		const smoked = position(release, 'run: node scripts/extension-signature.mjs smoke "VSCode-darwin-${{ matrix.arch }}/LevelCode.app"', 'release.yml');
+		const zipped = position(release, 'ditto -c -k --sequesterRsrc --keepParent', 'release.yml');
+		assert.deepStrictEqual([gate, asked, built, smoked, zipped], [gate, asked, built, smoked, zipped].sort((a, b) => a - b));
 	});
 
 	console.log('\nextensionSignature: ' + n + ' tests passed.');
