@@ -104,6 +104,8 @@ module for that slot. Full account + runbooks: `docs/EXTENSION-SIGNATURES.md`.
   temp folders). It is the check that would have caught the original bug; CI runs it after each build.
 - **`registry`** watches for Open VSX changing its key (daily workflow + release gate). Exit 1 means
   evidence, and every shipped build is refusing extensions until a release carries the new key.
+  It asks the registry and the one host the registry redirects downloads to (`CONTENT_ORIGINS`),
+  following redirects by hand; a redirect anywhere else is not followed, and it says so.
 - **Do not "fix" a refusal by turning verification off** (`extensions.verifySignature`, a patch like
   VSCodium's). And a run from source proves nothing here: the editor only enforces on a built app.
 - Its tests live in `modules/extension-signature/test/` — outside `extensions/`, whose `test/` folders

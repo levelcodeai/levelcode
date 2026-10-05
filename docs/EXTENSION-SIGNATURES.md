@@ -1,8 +1,8 @@
 # Extension signatures
 
 How LevelCode verifies the extensions it installs from Open VSX, what that does and does not
-prove, and what to do on the two days it will need attention: when Open VSX changes its signing
-key, and when Code-OSS is bumped.
+prove, and what to do on the days it will need attention: when Open VSX changes its signing key
+or moves its files, and when Code-OSS is bumped.
 
 ## What was wrong
 
@@ -30,7 +30,7 @@ Open VSX signs every package it serves. Next to each `.vsix` is a signature arch
 | --- | --- |
 | `.signature.sig` | A 64-byte Ed25519 signature over the bytes of the `.vsix` |
 | `.signature.manifest` | JSON: the size and SHA-256 of the package and of each file in it. Not signed. |
-| `.signature.p7s` | Empty. The slot Microsoft's format keeps its signature in; the editor checks it exists. |
+| `.signature.p7s` | Empty. It is the slot Microsoft's format keeps its signature in. The editor requires the entry to be there: its downloader looks for it before handing an archive to any verifier (`downloadSignatureArchive` in `extensionDownloader.ts`), and discards an archive without it as a failed download. The module does not read it. There is nothing in it to check, and an archive without it never reaches the module in the app. |
 
 `modules/extension-signature` is LevelCode's own module for the slot the editor loads from. It
 reads `.signature.sig`, and accepts the package only if `crypto.verify` says one of the keys it
@@ -94,7 +94,13 @@ All four commands are `node scripts/extension-signature.mjs <command>`.
   `Extension signature verification result … Success. Executed: true`. No window opens and
   nothing of an installed LevelCode is touched. Run against 1.3.1 it fails with "not executed",
   which is the bug.
-- **`registry`** is described below.
+- **`registry`** asks Open VSX which key its newest extensions name, then downloads a couple of
+  them and verifies them with the pinned keys. Every request starts at the registry. The registry
+  answers a download with a redirect to the host it keeps its files on, so that redirect is
+  followed, by hand: each destination is checked before anything is sent to it, and only the
+  registry and the hosts named in `CONTENT_ORIGINS` (in the script; today
+  `openvsx.eclipsecontent.org`) pass. What its answers mean is under "When Open VSX changes its
+  key" and "When Open VSX moves its files".
 
 `<app-code-folder>` is `LevelCode.app/Contents/Resources/app`.
 
@@ -218,6 +224,38 @@ with `--strict`.
 If Open VSX has stopped signing altogether, there is no key to add. That is a decision, not a
 runbook step: ship with verification relaxed, or wait. Raise it before doing either.
 
+## When Open VSX moves its files
+
+Open VSX does not serve a package from `open-vsx.org`. Asked for one, it answers with a redirect
+to its content host, today `openvsx.eclipsecontent.org`. The editor follows such a redirect
+wherever it leads, and for the editor that is safe: whatever arrives is verified before it is
+installed. `registry` is stricter. It runs on a release runner, the address it would be sent to
+comes from the server it is checking, and it has no reason to go anywhere it was not told about.
+It follows a redirect only to the registry itself or to a host listed in `CONTENT_ORIGINS` in
+`scripts/extension-signature.mjs`, at most three redirects deep.
+
+So the day Open VSX moves its files, nothing changes for users, and `registry` can no longer
+download anything to verify. It says so, and names the host:
+
+```
+could not check: none of the 30 newest signed extensions on https://open-vsx.org could be
+downloaded to verify: https://open-vsx.org redirects to https://<new host>, which is neither
+the registry nor a host it is known to keep its files on. …
+```
+
+In the release gate that is a warning and the release goes on. In the daily workflow it fails
+the run after three tries, on purpose: a watch that cannot see would let a changed key pass.
+
+What to do: make sure the new host is Open VSX's — the same places as step 1 above, and the
+`location` of a download asked for from two networks:
+
+```bash
+curl -sI https://open-vsx.org/api/perrinjerome/git-rebase-syntax/0.0.1/file/perrinjerome.git-rebase-syntax-0.0.1.vsix
+```
+
+Then add it to `CONTENT_ORIGINS`, and take the old host off once downloads no longer go there.
+Nothing ships to users for this: the list is used by this check and by nothing in the app.
+
 ## When Code-OSS is bumped
 
 The module depends on four things in the editor, none of which LevelCode controls:
@@ -261,5 +299,8 @@ go, not be kept beside it.
   it cannot be streamed; Open VSX's own signer has the same constraint. A 300 MB extension costs
   300 MB for a moment. The signature check itself runs off the event loop.
 - **The keys are only as good as the day they were pinned.** See "The pinned key".
+- **`registry` checks signatures with the module, not through the editor.** Something only the
+  editor asks of an archive — that the empty `.signature.p7s` is in it — is covered by `smoke`,
+  which runs at release time, and not by the daily watch.
 - **macOS only today.** The module is plain JavaScript; a Linux or Windows build would run the
   same `install` and `check` against its own code folder.

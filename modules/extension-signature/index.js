@@ -15,8 +15,9 @@
  *  Open VSX signs each extension file with an Ed25519 key and serves the signature in an archive
  *  beside it: `.signature.sig` (the 64-byte signature over the .vsix bytes), `.signature.manifest`
  *  (sizes and digests, of the package and of every file in it) and an empty `.signature.p7s`, the
- *  slot Microsoft's format uses. The check is one call — crypto.verify over the whole file — and it
- *  passes only for a file the registry signed, byte for byte.
+ *  slot Microsoft's format uses. (The editor's downloader insists that entry is present before it
+ *  calls any verifier; this module does not read it.) The check is one call — crypto.verify over
+ *  the whole file — and it passes only for a file the registry signed, byte for byte.
  *
  *  THE KEY IS NOT ASKED FOR, IT IS KNOWN
  *

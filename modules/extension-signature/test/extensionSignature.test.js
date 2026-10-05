@@ -159,34 +159,53 @@ const ASKERS = ['out/vs/code/electron-utility/sharedProcess/sharedProcessMain.js
 
 // ── a registry that answers what it is told to ──────────────────────────────────────────────
 const REGISTRY = 'https://registry.test';
+/** Where the stand-in keeps its files. Like Open VSX, it answers a download with a redirect there. */
+const CONTENT = 'https://files.registry.test';
 /**
- * A stand-in for the network: the search listing, and each extension's two files. An extension
- * may claim a length it does not have (`claims`), be listed with a package or a signature that
- * is not there to download (`missing`, `missingSignature`), live somewhere else (`origin`), or
- * name a key.
+ * A stand-in for the network, shaped like the real one: the registry serves the search listing and
+ * answers each file with a redirect to its content host, which serves the bytes. An extension may
+ * claim a length it does not have (`claims`), be listed with a package or a signature that is not
+ * there to download (`missing`, `missingSignature`), be listed somewhere else (`origin`), be
+ * redirected somewhere of its own (`location`, `signatureLocation`; null for a redirect that names
+ * no address) with a status of its own (`via`), or name a key. `routes` answers other addresses.
+ *
+ * Like fetch(), it follows a redirect by itself unless it is told `redirect: 'manual'` — so a
+ * caller that does not say so is seen going wherever it is sent.
  */
-function registry(extensions, { listingStatus = 200, listingBody } = {}) {
+function registry(extensions, { listingStatus = 200, listingBody, routes = {} } = {}) {
 	const requested = [];
-	const files = new Map();
+	const answers = new Map(Object.entries(routes));
 	const listed = extensions.map((e, i) => {
 		const id = `ext${i}`;
-		const base = `${e.origin || REGISTRY}/api/ns/${id}/1.0.0/file/ns.${id}-1.0.0`;
-		if (!e.missing) { files.set(base + '.vsix', { bytes: e.vsix, claims: e.claims }); }
-		if (e.archive && !e.missingSignature) { files.set(base + '.sigzip', { bytes: e.archive }); }
+		const listedAt = `${e.origin || REGISTRY}/api/ns/${id}/1.0.0/file/ns.${id}-1.0.0`;
+		const keptAt = `${CONTENT}/ns/${id}/1.0.0/ns.${id}-1.0.0`;
+		answers.set(listedAt + '.vsix', { status: e.via || 302, location: e.location === undefined ? keptAt + '.vsix' : e.location });
+		if (e.archive) { answers.set(listedAt + '.sigzip', { status: e.via || 302, location: e.signatureLocation === undefined ? keptAt + '.sigzip' : e.signatureLocation }); }
+		if (!e.missing) { answers.set(keptAt + '.vsix', { bytes: e.vsix, claims: e.claims }); }
+		if (e.archive && !e.missingSignature) { answers.set(keptAt + '.sigzip', { bytes: e.archive }); }
 		return {
 			namespace: 'ns', name: id, version: '1.0.0',
-			files: { download: base + '.vsix', ...(e.archive ? { signature: base + '.sigzip' } : {}), ...(e.key ? { publicKey: `${REGISTRY}/api/-/public-key/${e.key}` } : {}) }
+			files: { download: listedAt + '.vsix', ...(e.archive ? { signature: listedAt + '.sigzip' } : {}), ...(e.key ? { publicKey: `${REGISTRY}/api/-/public-key/${e.key}` } : {}) }
 		};
 	});
-	const fetch = async (url) => {
-		url = String(url);
+	const answer = (url) => {
 		requested.push(url);
 		if (url.startsWith(REGISTRY + '/api/-/search')) {
 			return new Response(listingBody === undefined ? JSON.stringify({ extensions: listed }) : listingBody, { status: listingStatus });
 		}
-		const found = files.get(url);
+		const found = answers.get(url);
 		if (!found) { return new Response('not found', { status: 404 }); }
+		if (found.status) { return new Response(null, { status: found.status, headers: found.location === null ? {} : { location: found.location } }); }
 		return new Response(found.bytes, { status: 200, headers: { 'content-length': String(found.claims || found.bytes.length) } });
+	};
+	const fetch = async (url, init = {}) => {
+		let at = String(url);
+		let response = answer(at);
+		for (let hops = 0; init.redirect !== 'manual' && response.status >= 300 && response.status < 400 && response.headers.get('location') && hops < 20; hops++) {
+			at = new URL(response.headers.get('location'), at).href;
+			response = answer(at);
+		}
+		return response;
 	};
 	return { fetch, requested };
 }
@@ -216,6 +235,10 @@ function moduleTrusting(keys) {
 		}
 		const empty = Buffer.alloc(0);
 		assert.strictEqual((await ask(verify, empty, archiveFor(empty, openVsx))).code, Code.Success, 'even an empty file, if that is what was signed');
+		// The empty .signature.p7s is the editor's requirement: its downloader looks for the entry before
+		// it hands an archive to any verifier. An archive without it is not this module's to refuse.
+		const withoutTheSlot = zip([{ name: '.signature.sig', data: sign(pkg, openVsx) }]);
+		assert.strictEqual((await ask(verify, pkg, withoutTheSlot)).code, Code.Success);
 	});
 
 	await test('any one of the trusted keys is enough, and the answer names the key that signed', async () => {
@@ -814,17 +837,20 @@ function moduleTrusting(keys) {
 	// ── registry: is Open VSX still signing with a key this build trusts? ───────────────────
 	const pinnedModule = moduleTrusting([openVsx.trusted]);
 	const signedBy = (by, { key = by.id, ...rest } = {}) => { const vsix = crypto.randomBytes(300); return { vsix, archive: archiveFor(vsix, by), key, ...rest }; };
+	const origins = (requested) => [...new Set(requested.map((u) => new URL(u).origin))].sort();
+	const extensionsOf = (requested, ending) => [...new Set(requested.filter((u) => u.endsWith(ending)).map((u) => /ext\d/.exec(u)[0]))];
 	const check = (extensions, options, limits) => {
 		const net = registry(extensions, options);
-		return build.checkRegistry({ fetch: net.fetch, source: pinnedModule, origin: REGISTRY, ...limits }).then((result) => ({ ...result, requested: net.requested, said: result.lines.join('\n') }));
+		return build.checkRegistry({ fetch: net.fetch, source: pinnedModule, origin: REGISTRY, contentOrigins: [CONTENT], ...limits }).then((result) => ({ ...result, requested: net.requested, said: result.lines.join('\n') }));
 	};
 
 	await test('registry: a registry that signs with the pinned key is fine, and the check verified real files to say so', async () => {
 		const r = await check([signedBy(openVsx), signedBy(openVsx), signedBy(openVsx)]);
 		assert.strictEqual(r.status, 'ok', r.said);
 		assert.match(r.said, /signs with a pinned key: 2 of its newest packages verified.*3 of 3 name the-registry/s);
-		assert.strictEqual(r.requested.filter((u) => u.endsWith('.vsix')).length, 2, 'two packages were downloaded and verified, not the listing taken at its word');
+		assert.deepStrictEqual(extensionsOf(r.requested, '.vsix'), ['ext0', 'ext1'], 'two packages were downloaded and verified, not the listing taken at its word');
 		assert.match(r.requested[0], /\/api\/-\/search\?size=\d+&sortBy=timestamp&sortOrder=desc$/, 'the newest: a new key shows there first');
+		assert.deepStrictEqual(origins(r.requested), [CONTENT, REGISTRY], 'the registry, and the host it keeps its files on: nobody else was asked anything');
 	});
 
 	await test('registry: a key that is not pinned is a mismatch, and the message says which key and what to do', async () => {
@@ -879,7 +905,7 @@ function moduleTrusting(keys) {
 		const r = await check([signedBy(openVsx, { claims: large }), signedBy(openVsx, { claims: large }), signedBy(openVsx)]);
 		assert.strictEqual(r.status, 'ok', r.said);
 		assert.match(r.said, /1 of its newest packages verified \(ns\.ext2 1\.0\.0\)/);
-		assert.deepStrictEqual(r.requested.filter((u) => u.endsWith('.sigzip')).map((u) => /ext\d/.exec(u)[0]), ['ext2'], 'a package that was not read has no signature fetched for it');
+		assert.deepStrictEqual(extensionsOf(r.requested, '.sigzip'), ['ext2'], 'a package that was not read has no signature fetched for it');
 
 		const allLarge = await check([signedBy(openVsx, { claims: large }), signedBy(openVsx, { claims: large })]);
 		assert.strictEqual(allLarge.status, 'unknown', 'nothing verified is not "fine"');
@@ -897,11 +923,96 @@ function moduleTrusting(keys) {
 		assert.match(r.said, /2 of its newest packages verified \(ns\.ext2 1\.0\.0, ns\.ext3 1\.0\.0\)/);
 	});
 
-	await test('registry: only addresses on the registry itself are followed', async () => {
+	await test('registry: a request is only ever started at the registry', async () => {
+		// The listing is a server's answer, not a list of places to go.
 		const r = await check([signedBy(openVsx, { origin: 'https://elsewhere.test' }), signedBy(openVsx), { vsix: pkg, key: openVsx.id }]);
 		assert.strictEqual(r.status, 'ok', r.said);
-		assert.ok(r.requested.every((u) => u.startsWith(REGISTRY + '/')), r.requested.join('\n'));
+		assert.deepStrictEqual(origins(r.requested), [CONTENT, REGISTRY], r.requested.join('\n'));
 		assert.match(r.said, /2 of the 3 newest extensions are listed without a signature/, 'one elsewhere, one with none');
+	});
+
+	await test('registry: a redirect is followed to the host the registry keeps its files on, and nowhere else', async () => {
+		// How Open VSX serves a file: asked for it, the registry answers with a redirect to its content host.
+		for (const via of [301, 302, 303, 307, 308]) {
+			const r = await check([signedBy(openVsx, { via })]);
+			assert.strictEqual(r.status, 'ok', `${via}: ${r.said}`);
+		}
+
+		const elsewhere = {
+			'another site': 'https://elsewhere.test/ns.ext0-1.0.0.vsix',
+			'a host that only looks like the content host': 'https://files.registry.test.elsewhere.test/ns.ext0-1.0.0.vsix',
+			'the content host, without TLS': 'http://files.registry.test/ns/ext0/1.0.0/ns.ext0-1.0.0.vsix',
+			'the registry, without TLS': 'http://registry.test/api/ns/ext0/1.0.0/file/ns.ext0-1.0.0.vsix',
+			'the content host, on another port': 'https://files.registry.test:8443/ns.ext0-1.0.0.vsix',
+			'this machine': 'http://localhost:8080/admin',
+			'a cloud metadata address': 'http://169.254.169.254/latest/meta-data/',
+			'a file': 'file:///etc/passwd'
+		};
+		for (const [what, location] of Object.entries(elsewhere)) {
+			const r = await check([signedBy(openVsx, { location })]);
+			assert.strictEqual(r.status, 'unknown', what);
+			assert.deepStrictEqual(r.requested.map((u) => new URL(u).origin), [REGISTRY, REGISTRY], `${what}: the listing and the file were asked for, and the redirect was not followed`);
+			assert.match(r.said, /redirects to \S+, which is neither the registry nor a host it is known to keep its files on/, what);
+			assert.match(r.said, /add the new host to CONTENT_ORIGINS in scripts\/extension-signature\.mjs/, 'and it says what to change if the registry has moved its files');
+		}
+		assert.match((await check([signedBy(openVsx, { location: 'file:///etc/passwd' })])).said, /redirects to file:, which/, 'what has no host is named by what it is');
+
+		// The signature is a download too.
+		const signature = await check([signedBy(openVsx, { signatureLocation: 'https://elsewhere.test/ns.ext0-1.0.0.sigzip' })]);
+		assert.strictEqual(signature.status, 'unknown');
+		assert.deepStrictEqual(origins(signature.requested), [CONTENT, REGISTRY], 'the package was fetched; its signature was not followed elsewhere');
+
+		for (const location of [null, 'https://[not an address']) {
+			const nowhere = await check([signedBy(openVsx, { location })]);
+			assert.strictEqual(nowhere.status, 'unknown', String(location));
+			assert.match(nowhere.said, /a redirect that names no usable address/, String(location));
+			assert.deepStrictEqual(origins(nowhere.requested), [REGISTRY]);
+		}
+	});
+
+	await test('registry: a redirect may be relative, and may come in a few steps — not in many', async () => {
+		const file = `${CONTENT}/ns/ext0/1.0.0/ns.ext0-1.0.0.vsix`;
+		const relative = await check([signedBy(openVsx, { location: '/moved/ns.ext0-1.0.0.vsix' })], { routes: { [`${REGISTRY}/moved/ns.ext0-1.0.0.vsix`]: { status: 307, location: file } } });
+		assert.strictEqual(relative.status, 'ok', relative.said);
+		assert.ok(relative.requested.includes(`${REGISTRY}/moved/ns.ext0-1.0.0.vsix`), 'read against the address that sent it');
+		// …which, a step further on, is no longer the address that was first asked.
+		const later = await check([signedBy(openVsx, { location: `${CONTENT}/step/1` })], { routes: { [`${CONTENT}/step/1`]: { status: 302, location: '../ns/ext0/1.0.0/ns.ext0-1.0.0.vsix' } } });
+		assert.strictEqual(later.status, 'ok', later.said);
+
+		// The registry redirects to the first step; each step redirects to the next; the last, to the file.
+		const step = (n) => `${CONTENT}/step/${n}`;
+		const inSteps = (steps) => check([signedBy(openVsx, { location: step(1) })],
+			{ routes: Object.fromEntries(Array.from({ length: steps }, (_, i) => [step(i + 1), { status: 302, location: i + 1 < steps ? step(i + 2) : file }])) });
+		assert.strictEqual((await inSteps(2)).status, 'ok', 'three redirects are followed');
+		const tour = await inSteps(3);
+		assert.strictEqual(tour.status, 'unknown', 'a fourth is not');
+		assert.match(tour.said, /redirects more than 3 times/);
+		assert.ok(!tour.requested.includes(file), 'and the file at the end of it was never asked for');
+	});
+
+	await test('registry: a host is followed because it is on the list, and the list is written down', async () => {
+		// Taken off the list, the registry's own content host is somewhere a redirect is not followed to:
+		// this is what Open VSX moving its files will look like.
+		const net = registry([signedBy(openVsx), signedBy(openVsx)]);
+		const moved = await build.checkRegistry({ fetch: net.fetch, source: pinnedModule, origin: REGISTRY, contentOrigins: [] });
+		assert.strictEqual(moved.status, 'unknown');
+		assert.deepStrictEqual(origins(net.requested), [REGISTRY]);
+		assert.match(moved.lines.join('\n'), new RegExp(`redirects to ${CONTENT}, which is neither`));
+
+		// One download led elsewhere among others that did not: still fine, and said.
+		const one = await check([signedBy(openVsx, { location: 'https://elsewhere.test/x.vsix' }), signedBy(openVsx), signedBy(openVsx)]);
+		assert.strictEqual(one.status, 'ok', one.said);
+		assert.match(one.said, /warning — a download was not followed: .*redirects to https:\/\/elsewhere\.test/);
+
+		// The list that ships.
+		const gallery = new URL(JSON.parse(read('branding', 'product.overlay.json')).extensionsGallery.serviceUrl).origin;
+		assert.ok(build.CONTENT_ORIGINS.length >= 1);
+		for (const host of build.CONTENT_ORIGINS) {
+			assert.strictEqual(new URL(host).origin, host, 'an origin — scheme and host, nothing after');
+			assert.ok(host.startsWith('https://'), host);
+			assert.notStrictEqual(host, gallery, 'the registry itself needs no entry');
+			assert.ok(read('docs', 'EXTENSION-SIGNATURES.md').includes(new URL(host).host), `${host} is named in the docs, with why`);
+		}
 	});
 
 	await test('registry: a registry that has stopped signing is as loud as one that changed its key', async () => {
@@ -915,7 +1026,7 @@ function moduleTrusting(keys) {
 	await test('registry: a pinned key the registry has stopped naming is pointed out', async () => {
 		const both = moduleTrusting([openVsx.trusted, other.trusted]);
 		const net = registry([signedBy(openVsx), signedBy(openVsx)]);
-		const r = await build.checkRegistry({ fetch: net.fetch, source: both, origin: REGISTRY });
+		const r = await build.checkRegistry({ fetch: net.fetch, source: both, origin: REGISTRY, contentOrigins: [CONTENT] });
 		assert.strictEqual(r.status, 'ok');
 		assert.match(r.lines.join('\n'), /pinned key someone-else is named by none of the 2 newest extensions/);
 	});

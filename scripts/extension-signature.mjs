@@ -38,6 +38,8 @@
  *  carries it. This asks the registry which key its newest extensions name and verifies some of
  *  them for real. It exits 1 only on evidence — a key that is not pinned, or signatures that no
  *  longer verify. Not reaching the registry is not evidence: a warning, or exit 2 with --strict.
+ *  It asks the registry and the one host the registry keeps its files on, and nobody else: a
+ *  redirect is followed by hand, and only to a place named in this file.
  *
  *  The functions are exported so modules/extension-signature/test/ can run them on fixtures, with
  *  the network and the app replaced by stand-ins.
@@ -65,6 +67,16 @@ export const FIXTURE = {
 };
 /** The extension `smoke` installs: the fixture's — four kilobytes, published in 2020. */
 export const SMOKE_EXTENSION = 'perrinjerome.git-rebase-syntax';
+/**
+ * Where Open VSX keeps its files. The registry answers every download with a redirect to this host,
+ * so `registry` has to follow one — and this is the only place it follows one to. It is named here
+ * rather than taken from the answer: a host the check is merely told about is a host anyone who can
+ * answer for the registry could choose. If Open VSX moves its files, `registry` says where to and
+ * stops being able to check; add the new host here once you know it is theirs.
+ */
+export const CONTENT_ORIGINS = ['https://openvsx.eclipsecontent.org'];
+/** A download is one redirect. This leaves the registry room for another hop, not for a tour. */
+const MAX_REDIRECTS = 3;
 const SHIPPED_PRODUCT = join(REPO, 'branding', 'product.overlay.json');
 const DOCS = 'docs/EXTENSION-SIGNATURES.md';
 
@@ -295,18 +307,50 @@ async function bodyWithin(response, limit) {
 	}
 }
 
+/** A redirect that was not followed, and why. Not a network failure: the check chose not to go. */
+class NotFollowed extends Error { }
+
+/**
+ * GET `url`, going only where `allowed` says. fetch() follows a redirect wherever it leads, so it
+ * is told not to, and each redirect is followed here instead: its destination is checked BEFORE
+ * anything is sent to it.
+ * @param {typeof fetch} fetch
+ * @param {string} url
+ * @param {string[]} allowed origins a redirect may lead to
+ * @returns {Promise<Response>} the answer that is not a redirect
+ */
+async function getWithin(fetch, url, allowed) {
+	const signal = AbortSignal.timeout(60000);
+	let at = new URL(url);
+	for (let redirects = 0; ; redirects++) {
+		const response = await fetch(at.href, { redirect: 'manual', headers: { accept: 'application/json, */*', 'user-agent': 'levelcode-extension-signature-check' }, signal });
+		if (![301, 302, 303, 307, 308].includes(response.status)) { return response; }
+		try { await response.body?.cancel(); } catch { /* a redirect with nothing to drop */ }
+		const location = response.headers.get('location');
+		let next = null;
+		try { next = location ? new URL(location, at) : null; } catch { /* an address that cannot be read is no address */ }
+		if (!next) { throw new NotFollowed(`${at.origin} answered with a redirect that names no usable address`); }
+		if (!allowed.includes(next.origin)) {
+			const where = next.origin === 'null' ? next.protocol : next.origin;
+			throw new NotFollowed(`${at.origin} redirects to ${where}, which is neither the registry nor a host it is known to keep its files on`);
+		}
+		if (redirects >= MAX_REDIRECTS) { throw new NotFollowed(`${new URL(url).origin} redirects more than ${MAX_REDIRECTS} times`); }
+		at = next;
+	}
+}
+
 /**
  * Ask the registry which key signs its newest extensions, and verify some of them with the pinned keys.
- * @param {{fetch?: typeof fetch, source?: string, origin?: string, sample?: number, verifyUpTo?: number, maxPackageBytes?: number}} [options]
+ * @param {{fetch?: typeof fetch, source?: string, origin?: string, contentOrigins?: string[], sample?: number, verifyUpTo?: number, maxPackageBytes?: number}} [options]
  * @returns {Promise<{status: 'ok'|'mismatch'|'unknown', lines: string[]}>}
  *          'mismatch' is evidence that shipped builds cannot verify what the registry serves now.
  */
-export async function checkRegistry({ fetch = globalThis.fetch, source = MODULE_SOURCE, origin = galleryOrigin(), sample = 30, verifyUpTo = 2, maxPackageBytes = 20 * 1024 * 1024 } = {}) {
+export async function checkRegistry({ fetch = globalThis.fetch, source = MODULE_SOURCE, origin = galleryOrigin(), contentOrigins = CONTENT_ORIGINS, sample = 30, verifyUpTo = 2, maxPackageBytes = 20 * 1024 * 1024 } = {}) {
 	const pinned = JSON.parse(fs.readFileSync(join(source, 'keys.json'), 'utf8')).keys;
 	const pinnedIds = pinned.map((k) => k.id);
 	const { createVerifier } = createRequire(import.meta.url)(source);
 	const verify = createVerifier(pinned);
-	const get = (url) => fetch(url, { headers: { accept: 'application/json, */*', 'user-agent': 'levelcode-extension-signature-check' }, signal: AbortSignal.timeout(60000) });
+	const get = (url) => getWithin(fetch, url, [origin, ...contentOrigins]);
 	const unknown = (why) => ({ status: /** @type {'unknown'} */ ('unknown'), lines: [`could not check: ${why}`] });
 
 	let listed;
@@ -319,8 +363,9 @@ export async function checkRegistry({ fetch = globalThis.fetch, source = MODULE_
 	} catch (e) { return unknown(`${origin} could not be asked: ${reason(e)}`); }
 	if (!Array.isArray(listed) || !listed.length) { return unknown(`${origin} listed no extensions`); }
 
-	// What the listing says: which key each of the newest extensions names. Only addresses on the
-	// registry itself are followed — the listing is a server's answer, not a list of places to go.
+	// What the listing says: which key each of the newest extensions names. A request is only ever
+	// STARTED at the registry — the listing is a server's answer, not a list of places to go — and
+	// where the registry then redirects is checked hop by hop (getWithin).
 	const named = new Map();
 	const candidates = [];
 	let unsigned = 0;
@@ -344,6 +389,7 @@ export async function checkRegistry({ fetch = globalThis.fetch, source = MODULE_
 	// What the files say. A package naming a key that is not pinned goes first: it is the one to confirm.
 	candidates.sort((a, b) => Number(notPinned.includes(b.keyId)) - Number(notPinned.includes(a.keyId)));
 	const results = [];
+	const notFollowed = new Set();
 	const scratch = fs.mkdtempSync(join(os.tmpdir(), 'levelcode-signature-registry-'));
 	try {
 		for (const c of candidates.slice(0, verifyUpTo * 4)) {
@@ -358,7 +404,11 @@ export async function checkRegistry({ fetch = globalThis.fetch, source = MODULE_
 				const a = join(scratch, `${results.length}.vsix`), b = join(scratch, `${results.length}.sigzip`);
 				fs.writeFileSync(a, vsix); fs.writeFileSync(b, archive);
 				results.push({ ...c, ...(await verify(a, b)) });
-			} catch { /* one package that cannot be fetched is not news; the next is tried */ }
+			} catch (e) {
+				// One package that cannot be fetched is not news, and the next is tried. A redirect this
+				// check would not follow is worth saying: it is how a registry that moved its files looks.
+				if (e instanceof NotFollowed) { notFollowed.add(e.message); }
+			}
 		}
 	} finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 	const verified = results.filter((r) => r.code === 'Success');
@@ -371,7 +421,10 @@ export async function checkRegistry({ fetch = globalThis.fetch, source = MODULE_
 			`pinned: ${pinnedIds.join(', ')}. Every shipped LevelCode will refuse what that key signs. What to do: ${DOCS} ("When Open VSX changes its key").`
 		] };
 	}
-	if (!results.length) { return unknown(`none of the ${candidates.length} newest signed extensions on ${origin} could be downloaded to verify`); }
+	const moved = notFollowed.size
+		? `${[...notFollowed].join('; ')}. Files are fetched only from ${[origin, ...contentOrigins].join(' and ')}; if Open VSX has moved them, add the new host to CONTENT_ORIGINS in scripts/extension-signature.mjs once you know it is theirs (${DOCS})`
+		: '';
+	if (!results.length) { return unknown(`none of the ${candidates.length} newest signed extensions on ${origin} could be downloaded to verify${moved && ': ' + moved}`); }
 	if (!verified.length) {
 		return { status: 'mismatch', lines: [
 			`${origin} names a pinned key, but none of the ${results.length} packages checked verifies with it:`,
@@ -381,6 +434,7 @@ export async function checkRegistry({ fetch = globalThis.fetch, source = MODULE_
 	}
 	const lines = [`${origin} signs with a pinned key: ${verified.length} of its newest packages verified (${verified.map((r) => r.name).join(', ')}); ${[...named].map(([id, n]) => `${n} of ${listed.length} name ${id}`).join(', ')}`];
 	for (const r of refused) { lines.push(`warning — one package did not verify, though the registry as a whole does: ${r}`); }
+	if (moved) { lines.push(`warning — a download was not followed: ${moved}`); }
 	for (const id of pinnedIds.filter((id) => !named.has(id))) { lines.push(`note — pinned key ${id} is named by none of the ${listed.length} newest extensions. If Open VSX has left it for good, stop trusting it: ${DOCS}.`); }
 	if (unsigned) { lines.push(`note — ${unsigned} of the ${listed.length} newest extensions are listed without a signature on the registry itself; LevelCode refuses those ('NotSigned').`); }
 	return { status: 'ok', lines };
