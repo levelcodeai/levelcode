@@ -106,6 +106,12 @@ const PASTED_LOOP = 'Let me run this to rename them:\n'
 	+ 'done\n'
 	+ '```';
 
+// And a file pasted where a write_file call belonged. `_done` is a key: one mark, and nothing closes it.
+const PASTED_FILE = 'Let me write config.yaml:\n'
+	+ '```yaml\n'
+	+ '_done: false\n'
+	+ '```';
+
 (async () => {
 	try {
 		// ---- 1. the verdict --------------------------------------------------------------------------
@@ -126,6 +132,39 @@ const PASTED_LOOP = 'Let me run this to rename them:\n'
 			}
 		});
 
+		test('VERDICT: the marks may be stacked, and the emphasis may hold the word or the whole sentence', () => {
+			const done = [
+				// #102 review: one mark was taken off the line start, where a model may stack several.
+				'> ## **Done:** quote, heading and bold',
+				'- > **Done:** list, quote and bold',
+				'> - Done: a quoted list item',
+				// Emphasis is unwrapped as a pair, so every way of closing it has to be found.
+				'**Done**: the colon outside the bold',
+				'**Done: the whole sentence in bold.**',
+				'_Done: the whole sentence in italics._',
+				'**_Done:_** two kinds at once',
+				// And the line may still sit below blank ones, indented — with marks or without.
+				'The suite passes.\n\n\n\t Done: after blank lines, behind a tab and a space.',
+				'The suite passes.\n\n   **Done:** indented, and in no list.'
+			];
+			for (const text of done) {
+				assert.strictEqual(saysDone(text), true, 'not read as finished: ' + JSON.stringify(text));
+			}
+		});
+
+		test('VERDICT: a lone mark belongs to a name — it is not emphasis', () => {
+			// #102 review: every `_` used to be deleted, and that made a Done line of a key in a pasted file.
+			// The second text is here for its later `_`: inside a word, it closes nothing.
+			const names = [
+				PASTED_FILE,
+				'_done: bool = field(default_factory=bool)',
+				'*done: x'
+			];
+			for (const text of names) {
+				assert.strictEqual(saysDone(text), false, 'read as finished: ' + JSON.stringify(text));
+			}
+		});
+
 		test('VERDICT: the word alone, or no word at all, is not a Done line', () => {
 			// Stripping marks must not turn "done" somewhere in a sentence into the line the prompt asks for.
 			const notDone = [
@@ -143,10 +182,12 @@ const PASTED_LOOP = 'Let me run this to rename them:\n'
 			assert.strictEqual(saysDone('The diagram is in docs/flow.html and it renders. All done.'), true);
 		});
 
-		test('VERDICT: the "done" that closes a shell loop is not the model saying it', () => {
-			// Why that second clause reads the text as written, and only the Done LINE is looked for with the
-			// marks stripped: take the fence's backticks away and this turn ends in the word.
+		test('VERDICT: a "done" that is code is not the model saying it', () => {
+			// The shell's own keyword, closing a pasted loop — and the same keyword quoted on a turn's last
+			// line. The second is why that clause reads the text as written: the marks come off to find a
+			// LINE, and taken off here as well they would leave this turn ending in the word.
 			assert.strictEqual(saysDone(PASTED_LOOP), false);
+			assert.strictEqual(saysDone('Let me check how the loop is closed. Its last line is:\n`done`'), false);
 		});
 
 		// ---- 2. the loop asks it ---------------------------------------------------------------------
@@ -171,11 +212,28 @@ const PASTED_LOOP = 'Let me run this to rename them:\n'
 			assert.deepStrictEqual(r.end, ['done']);
 		});
 
-		await testAsync('LOOP: a command pasted in a fence is still nudged, though its last word is "done"', async () => {
-			const r = await run([PASTED_LOOP, 'Done: renamed the files.']);
-			assert.strictEqual(r.nudges, 1, 'a pasted command passed for a finished run');
-			assert.strictEqual(r.asked, 2);
-			assert.deepStrictEqual(r.end, ['done']);
+		await testAsync('LOOP: code pasted in a fence is still nudged, whatever word or key it holds', async () => {
+			for (const pasted of [PASTED_LOOP, PASTED_FILE]) {
+				const r = await run([pasted, 'Done: it is on disk now.']);
+				assert.strictEqual(r.nudges, 1, 'pasted code passed for a finished run: ' + JSON.stringify(pasted));
+				assert.strictEqual(r.asked, 2);
+				assert.deepStrictEqual(r.end, ['done']);
+			}
+		});
+
+		// ---- 3. the cost of asking -------------------------------------------------------------------
+
+		test('SOURCE: the line test does not read on across blank lines', () => {
+			// `(^|\n)\s*done` and `(^|\n)[^\S\n]*done` accept exactly the same texts. The first one reads from
+			// every line start through all the blank lines below it, so its work grows with the square of
+			// their number: a turn that is mostly line breaks — or mostly lines of bare marks, once those are
+			// stripped — took seconds at 64,000 lines. No verdict can tell the two apart, and a clock in a
+			// test is a flake; so the pattern itself is read out of the source, as agentNoWorkspace.test.js
+			// reads NEEDS_ROOT.
+			const src = fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8');
+			const m = /\/\(\^\|\\n\)(.*?)done\\s\*:\/i\.test\(plain\)/.exec(src);
+			assert.ok(m, 'agent.js no longer tests for the Done line where this suite looks');
+			assert.ok(!m[1].includes('\\s'), 'the line test may match whitespace across lines again: ' + m[1]);
 		});
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
