@@ -31,7 +31,17 @@ function empty(since) {
 	return { v: VERSION, since: since || null, calls: 0, byModel: {}, errors: {}, fixes: {}, tokens: TOKEN_BUCKETS.map(() => 0).concat([0]), renderMs: MS_BUCKETS.map(() => 0).concat([0]), rendered: 0, renderFailed: 0, flipped: 0, asciiLeaks: 0, answers: 0, linkClicks: 0, exports: {} };
 }
 const bucket = (bounds, value) => { let i = 0; while (i < bounds.length && value > bounds[i]) { i++; } return i; };
-const inc = (obj, key, cap) => { if (obj[key] !== undefined || Object.keys(obj).length < cap) { obj[key] = (obj[key] || 0) + 1; } };
+// The stores below are keyed by names that arrive from outside — a model id is whatever a provider
+// calls it. A plain `map[key]` answers to names every object has: map["constructor"] is Object, and
+// map["__proto__"] is the prototype all objects share, which a careless `++` then writes to. So a key
+// is only ever READ as an own property, and only ever WRITTEN as one (assignment to "__proto__" would
+// go to the prototype setter instead).
+const own = (map, key) => (Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined);
+const put = (map, key, value) => { Object.defineProperty(map, key, { value, writable: true, enumerable: true, configurable: true }); return value; };
+const inc = (map, key, cap) => {
+	const cur = own(map, key);
+	if (cur !== undefined || Object.keys(map).length < cap) { put(map, key, (cur || 0) + 1); }
+};
 
 /**
  * Fold one event in.
@@ -49,10 +59,13 @@ function record(stats, ev) {
 		if (!outcome) { return s; }
 		s.calls++;
 		const model = String(ev.model || 'unknown').slice(0, 80);
-		if (!s.byModel[model] && Object.keys(s.byModel).length >= MAX_MODELS) { return s; }
-		const m = s.byModel[model] || (s.byModel[model] = { calls: 0, outcomes: {}, errors: {} });
+		let m = own(s.byModel, model);
+		if (m === undefined) {
+			if (Object.keys(s.byModel).length >= MAX_MODELS) { return s; }
+			m = put(s.byModel, model, { calls: 0, outcomes: {}, errors: {} });
+		}
 		m.calls++;
-		m.outcomes[outcome] = (m.outcomes[outcome] || 0) + 1;
+		m.outcomes[outcome] = (m.outcomes[outcome] || 0) + 1;   // (`outcome` is one of OUTCOMES: no name to collide with)
 		for (const cls of Object.keys(ev.errorClasses || {})) { if (CLASS_RE.test(cls)) { inc(s.errors, cls, MAX_CLASSES); inc(m.errors, cls, MAX_CLASSES); } }
 		for (const cls of Object.keys(ev.fixClasses || {})) { if (CLASS_RE.test(cls)) { inc(s.fixes, cls, MAX_CLASSES); } }
 		if (Number.isFinite(ev.tokens) && ev.tokens > 0) { s.tokens[bucket(TOKEN_BUCKETS, ev.tokens)]++; }

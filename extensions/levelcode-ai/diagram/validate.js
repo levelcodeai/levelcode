@@ -152,7 +152,7 @@
 			return { ok: false, errors };
 		}
 		const v = spec.v === undefined ? schema.VERSION : spec.v;
-		const known = schema.SCHEMAS[v];
+		const known = schema.schemaFor(v);
 		if (!known) {
 			errors.push({ pointer: '/v', cls: 'version', message: 'unknown schema version ' + JSON.stringify(spec.v) + '. This editor reads: ' + schema.KNOWN_VERSIONS.join(', ') + '.' });
 			return { ok: false, errors };

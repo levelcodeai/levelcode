@@ -181,6 +181,22 @@ test('VERSION: an unknown version is refused by name; no version reads as v1', (
 	assert.strictEqual(none.v, undefined, 'migrate() returns a copy');
 });
 
+test('VERSION: a version is one of the NUMBERS this editor reads — "toString" is on every object, and is not a schema', () => {
+	const spec = (v) => ({ v, title: 'T', nodes: [{ id: 'a', label: 'A' }], edges: [] });
+	// (the string "1" and the list [1] are here too: both spell the key of v1, and neither is version 1)
+	for (const v of ['toString', '__proto__', 'constructor', 'hasOwnProperty', 'valueOf', '1', [1], 1.5, 0, -1, 2, true, null, [], {}]) {
+		let r;
+		assert.doesNotThrow(() => { r = V.validate(spec(v)); }, 'v = ' + JSON.stringify(v));
+		assert.deepStrictEqual(r.errors.map((e) => [e.pointer, e.cls]), [['/v', 'version']], 'v = ' + JSON.stringify(v));
+		assert.match(r.errors[0].message, /^unknown schema version .*\. This editor reads: 1\.$/);
+		assert.strictEqual(V.validate(spec(v), { tier: 'hard' }).ok, false);
+	}
+	assert.strictEqual(V.validate(spec(1)).ok, true);
+	assert.strictEqual(V.validate(spec(undefined)).ok, true, 'and a spec that names no version is read as the current one');
+	assert.strictEqual(schema.schemaFor(1), schema.SCHEMAS[1]);
+	for (const v of ['1', [1], 'toString', '__proto__', 'constructor', 2, undefined, null]) { assert.strictEqual(schema.schemaFor(v), null, JSON.stringify(v)); }
+});
+
 test('VERSION: every schema version in the registry has both tiers and still reads the example (NFR-4)', () => {
 	assert.ok(schema.KNOWN_VERSIONS.includes(schema.VERSION));
 	for (const v of schema.KNOWN_VERSIONS) {

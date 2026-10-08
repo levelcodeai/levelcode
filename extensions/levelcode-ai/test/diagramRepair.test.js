@@ -337,6 +337,56 @@ test('SAFETY: a spec cannot reach Object.prototype', () => {
 	for (const x of r.spec.nodes) { assert.deepStrictEqual(Object.keys(x).sort(), ['id', 'label']); }
 });
 
+test('VERSION: a crafted version goes up the ladder like any other mistake — an error for the model, then drawn as v1 with a note', () => {
+	for (const v of ['toString', '__proto__', 'constructor', 'hasOwnProperty']) {
+		const input = Object.assign(JSON.parse('{"v":' + JSON.stringify(v) + '}'), jev(), { v });
+		const first = R.prepare(input);
+		assert.strictEqual(first.status, 'errors', v);
+		assert.deepStrictEqual(first.errors.map((e) => e.cls), ['version'], v);
+		const last = R.prepare(input, { final: true });
+		assert.strictEqual(last.status, 'degraded', v);
+		assert.strictEqual(last.spec.v, 1, 'it is drawn as the version this editor reads');
+		assert.ok(last.notes.some((n) => /written for schema v/.test(n)), JSON.stringify(last.notes));
+		// and a stored record that claims such a version is read the same way, not thrown on
+		const stored = R.accept(input);
+		assert.strictEqual(stored.ok, true, v);
+		assert.strictEqual(stored.spec.v, 1);
+		assert.strictEqual(stored.spec.nodes.length, 4);
+	}
+	// a version written as a string of digits is still just a tidy-up
+	const asText = R.prepare(Object.assign(jev(), { v: '1' }));
+	assert.strictEqual(asText.spec.v, 1);
+	assert.ok(asText.status === 'ok' || asText.status === 'fixed', asText.status);
+});
+
+test('SYNONYMS: a word every object answers to is an unknown word like any other — "constructor" is not a shape', () => {
+	// The synonym tables are objects. Looked up by name alone, `constructor` finds Object itself: the
+	// spec came out with a FUNCTION for a direction, and the model was told "expected a string, got
+	// function" about a string it had written.
+	const outcomeOf = (word) => {
+		const input = jev();
+		input.direction = word; input.nodes[0].shape = word; input.edges[0].style = word;
+		const first = R.prepare(JSON.parse(JSON.stringify(input)));
+		return {
+			status: first.status,
+			errors: first.errors.map((e) => e.pointer + ' ' + e.cls),
+			fixes: first.fixes.map((f) => f.pointer + ' ' + f.cls + ' ' + f.message.split(word).join('<word>')).sort(),
+			spec: first.spec ? [first.spec.direction, first.spec.nodes[0].shape, first.spec.edges[0].style] : null
+		};
+	};
+	const unknown = outcomeOf('zigzag');
+	assert.strictEqual(unknown.status, 'fixed', 'an unknown word is drawn with the default, and says so');
+	assert.deepStrictEqual(unknown.spec, ['right', undefined, undefined]);
+	assert.deepStrictEqual(unknown.fixes, ['/direction enum "<word>" is not a direction; used "right".', '/edges/0/style enum "<word>" is not a line style; drew it solid.', '/nodes/0/shape enum "<word>" is not a shape; drew a box.']);
+	for (const word of ['constructor', 'Constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf', 'prototype']) {
+		assert.deepStrictEqual(outcomeOf(word), unknown, word);
+	}
+	// and the real synonyms are still read
+	const real = jev(); real.direction = 'TB'; real.nodes[0].shape = 'Diamond'; real.edges[0].style = 'dotted';
+	const read = R.prepare(real);
+	assert.deepStrictEqual([read.spec.direction, read.spec.nodes[0].shape, read.spec.edges[0].style], ['down', 'decision', 'dashed']);
+});
+
 test('ROBUST: prepare() never throws and always names a status — seeded junk, both attempts', () => {
 	let seed = 20261004;
 	const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };

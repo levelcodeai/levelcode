@@ -172,6 +172,9 @@
 	};
 	const WRAPPERS = ['spec', 'diagram', 'graph', 'input', 'json', 'arguments', 'data'];
 	const key = (s) => String(s == null ? '' : s).toLowerCase().trim().replace(/[\s_]+/g, '-');
+	// A synonym table is an object, and every object answers to "constructor": the word is looked up as
+	// the table's OWN entry, so a word it has never heard of is unknown whatever it happens to be.
+	const synonym = (table, word) => { const k = key(word); return Object.prototype.hasOwnProperty.call(table, k) ? table[k] : undefined; };
 	const pick = (obj, names) => { for (const n of names) { if (obj[n] !== undefined && obj[n] !== null) { return obj[n]; } } return undefined; };
 	const asBool = (v) => (v === true || v === 1 || (typeof v === 'string' && /^(true|yes|1)$/i.test(v.trim())));
 	const scalar = (v) => (typeof v === 'string' || typeof v === 'number') ? String(v) : undefined;
@@ -239,7 +242,7 @@
 		const dirRaw = pick(raw, ['direction', 'dir', 'rankdir', 'orientation', 'flow']);
 		if (dirRaw === undefined) { spec.direction = 'right'; }
 		else {
-			const d = DIRECTION_SYNONYMS[key(dirRaw)];
+			const d = synonym(DIRECTION_SYNONYMS, dirRaw);
 			if (d) { spec.direction = d; if (d !== dirRaw) { fix('/direction', 'synonym', JSON.stringify(dirRaw) + ' read as "' + d + '".'); } }
 			else { spec.direction = 'right'; fix('/direction', 'enum', JSON.stringify(dirRaw) + ' is not a direction; used "right".', { show: true }); }
 		}
@@ -317,7 +320,7 @@
 				if (sub) { out.sub = sub; }
 				const shapeRaw = pick(n, ['shape', 'type', 'kind']);
 				if (shapeRaw !== undefined) {
-					const s = SHAPE_SYNONYMS[key(shapeRaw)];
+					const s = synonym(SHAPE_SYNONYMS, shapeRaw);
 					if (s) { if (s !== 'box') { out.shape = s; } if (s !== shapeRaw) { fix(at + '/shape', 'synonym', JSON.stringify(shapeRaw) + ' read as "' + s + '".'); } }
 					else { fix(at + '/shape', 'enum', JSON.stringify(shapeRaw) + ' is not a shape; drew a box.', { show: true }); }
 				}
@@ -409,7 +412,7 @@
 				if (label !== undefined && cleanText(label)) { out.label = cleanText(label); }
 				const styleRaw = pick(e, ['style', 'type', 'line', 'kind']);
 				if (styleRaw !== undefined) {
-					const s = STYLE_SYNONYMS[key(styleRaw)];
+					const s = synonym(STYLE_SYNONYMS, styleRaw);
 					if (s === 'dashed') { out.style = 'dashed'; }
 					if (!s) { fix(at + '/style', 'enum', JSON.stringify(styleRaw) + ' is not a line style; drew it solid.', { show: true }); }
 					else if (s !== styleRaw) { fix(at + '/style', 'synonym', JSON.stringify(styleRaw) + ' read as "' + s + '".'); }
@@ -523,7 +526,7 @@
 		else { out.title = 'Untitled diagram'; notes.push('no title given'); }
 		if (typeof spec.tip === 'string') { out.tip = truncate(spec.tip, HARD.tip); }
 		// A spec from a NEWER editor than this one: draw what this schema understands, and say so.
-		if (spec.v !== undefined && !schema.SCHEMAS[spec.v]) { notes.push('written for schema v' + String(spec.v).slice(0, 8) + '; drawn as v' + schema.VERSION); }
+		if (spec.v !== undefined && !schema.schemaFor(spec.v)) { notes.push('written for schema v' + String(spec.v).slice(0, 8) + '; drawn as v' + schema.VERSION); }
 
 		// nodes: keep the well-formed ones, up to the hard ceiling
 		const ids = new Set();
@@ -679,7 +682,7 @@
 		if (r.ok) {
 			// Valid — but the validator checks the fields it knows and is silent about any others, and a
 			// record from a session file can carry anything. What is handed on is the declared shape only.
-			const declared = schema.project(schema.SCHEMAS[m.v].hard, m);
+			const declared = schema.project(schema.schemaFor(m.v).hard, m);
 			return { ok: true, spec: Object.assign({ v: m.v }, declared), notes: [] };
 		}
 		const p = prepare(spec, { final: true });

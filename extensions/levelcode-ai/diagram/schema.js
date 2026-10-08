@@ -139,6 +139,16 @@
 		1: { house: build('house'), hard: build('hard') }
 	});
 	const KNOWN_VERSIONS = Object.keys(SCHEMAS).map(Number);
+	/**
+	 * The registry entry for a version — or null. `v` is INPUT (a model wrote it, or a session file
+	 * holds it), and a plain lookup answers to names every object has: SCHEMAS["toString"] is a
+	 * function, not a schema, and SCHEMAS["__proto__"] is the prototype. So it is looked up only when
+	 * it IS one of the versions this editor reads — a number, which also means the string "1" is not
+	 * version 1: no schema declares `v`, so nothing after this would say so.
+	 */
+	function schemaFor(v) {
+		return KNOWN_VERSIONS.indexOf(v) >= 0 ? SCHEMAS[v] : null;
+	}
 
 	// ---- a JSON-Schema-subset interpreter -------------------------------------------------------
 	// Exactly the keywords build() uses, and no more: type, properties, required, items, enum,
@@ -249,5 +259,5 @@
 		return value;
 	}
 
-	return { VERSION, KNOWN_VERSIONS, SHAPES, DIRECTIONS, EDGE_STYLES, ID_RE, ID_PATTERN, HOUSE, HARD, SCHEMAS, build, check, project, typeOf, seg };
+	return { VERSION, KNOWN_VERSIONS, SHAPES, DIRECTIONS, EDGE_STYLES, ID_RE, ID_PATTERN, HOUSE, HARD, SCHEMAS, schemaFor, build, check, project, typeOf, seg };
 }));

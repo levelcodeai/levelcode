@@ -105,6 +105,40 @@ test('BOUNDED: a flood of model ids or class names cannot grow the store without
 	assert.ok(JSON.stringify(s).length < 2000);
 });
 
+test('NAMES EVERY OBJECT ANSWERS TO: a model called "__proto__" or "constructor" is one more model — counted, and nothing else is touched', () => {
+	// A model id is whatever the user's provider calls it. Looked up carelessly in a plain object,
+	// "constructor" finds Object itself and "__proto__" finds the prototype every object shares.
+	const hostile = ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf', 'prototype'];
+	try {
+		let s = S.empty('2026-10-05');
+		for (const model of hostile) { s = S.record(s, call(model, 'clean')); s = S.record(s, call(model, 'degraded', { errorClasses: { constructor: 1, 'unknown-node': 1 } })); }
+		assert.strictEqual(({}).calls, undefined, 'the prototype every object shares was written to');
+		assert.strictEqual(/** @type {any} */ (Object).calls, undefined, 'Object itself was written to');
+		assert.strictEqual(Object.getPrototypeOf(s.byModel), Object.prototype, 'and the store is still an ordinary object');
+		assert.deepStrictEqual(Object.keys(s.byModel).sort(), hostile.slice().sort(), 'each is an entry of its own');
+		for (const model of hostile) {
+			const m = Object.getOwnPropertyDescriptor(s.byModel, model).value;
+			assert.deepStrictEqual([m.calls, m.outcomes.clean, m.outcomes.degraded], [2, 1, 1], model);
+			assert.strictEqual(m.errors.constructor, 1, 'an error class with such a name is a count too, not text glued to a function');
+		}
+		assert.strictEqual(s.calls, 12);
+		assert.deepStrictEqual(Object.getOwnPropertyDescriptor(s.errors, 'constructor').value, 6);
+		const sum = S.summarize(s);
+		assert.deepStrictEqual(sum.byModel.map((m) => m.model), hostile.slice().sort());
+		assert.ok(sum.byModel.every((m) => m.verdicts === 2 && m.firstPassValid === 50 && m.degraded === 50));
+		assert.deepStrictEqual(sum.topErrors.map((e) => [e.cls, e.count]), [['constructor', 6], ['unknown-node', 6]]);
+		// …and it survives the trip through the editor's storage, which is JSON
+		let back = JSON.parse(JSON.stringify(s));
+		assert.deepStrictEqual(Object.keys(back.byModel).sort(), hostile.slice().sort());
+		back = S.record(back, call('__proto__', 'clean'));
+		assert.strictEqual(Object.getOwnPropertyDescriptor(back.byModel, '__proto__').value.calls, 3);
+		assert.strictEqual(({}).calls, undefined);
+	} finally {
+		// if this test fails it must not take every later one down with it
+		delete (/** @type {any} */ (Object.prototype)).calls; delete (/** @type {any} */ (Object)).calls;
+	}
+});
+
 test('ROBUST: junk events are ignored; an unknown outcome is not counted; an old store starts over', () => {
 	let s = S.empty('2026-10-04');
 	for (const junk of [null, undefined, 3, 'call', {}, { type: 'call' }, { type: 'call', outcome: 'exploded' }, { type: 'render', ms: NaN }, { type: 'render', ms: -4 }, { type: 'nope' }]) { s = S.record(s, junk); }
