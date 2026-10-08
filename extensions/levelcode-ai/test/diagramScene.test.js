@@ -157,6 +157,17 @@ test('LINKS: a clickable node carries its NODE ID, never the path — the host l
 		assert.ok(node.children.some((c) => c.attrs.class === 'lcd-link-icon'), 'and a small file glyph marks it');
 	});
 	assert.strictEqual(linked, 2);
+	// A saved file has nothing to open a link WITH: the node keeps its glyph and its tooltip, and is
+	// not a tab stop or a "link" that does nothing when it is activated.
+	let marked = 0;
+	walk(build(spec, { title: true, background: true, standalone: true, css: theme.css({ resolved: theme.PALETTES.light }) }), (node) => {
+		for (const a of ['data-lc-link', 'tabindex', 'role', 'aria-label']) { if (node.tag !== 'svg') { assert.strictEqual(node.attrs[a], undefined, a + ' on <' + node.tag + '> in a file'); } }
+		if (/\blcd-linked\b/.test(String(node.attrs.class || ''))) {
+			marked++;
+			assert.ok(node.children.some((c) => c.tag === 'title') && node.children.some((c) => c.attrs.class === 'lcd-link-icon'), 'still marked as a file, and still says which');
+		}
+	});
+	assert.strictEqual(marked, 2);
 	const hostile = repair.prepare(HOSTILE, { final: true }).spec;
 	walk(build(hostile), (node) => { if (node.attrs['data-lc-link']) { assert.strictEqual(node.attrs['data-lc-link'], 'b', 'the javascript: "path" is nowhere in an attribute the host acts on'); } });
 });

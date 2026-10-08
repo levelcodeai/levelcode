@@ -124,7 +124,7 @@
 	 * @param {any} geo   layout.layout(spec, …)
 	 * @param {{ title?: boolean, css?: string, measure?: (t:string, role:string)=>number, standalone?: boolean, background?: boolean }} [opts]
 	 *        title: draw the spec's title inside the SVG (exports — in the chat it is HTML above the picture)
-	 *        css: a stylesheet to embed (exports)        standalone: add xmlns (a file, not inline SVG)
+	 *        css: a stylesheet to embed (exports)        standalone: a file, not inline SVG — xmlns, and no live links
 	 *        background: paint the editor background behind the drawing (exports — a file has no page behind it)
 	 */
 	function build(spec, geo, opts) {
@@ -162,7 +162,9 @@
 		const nodes = geo.nodes.map((n) => {
 			const cls = 'lcd-node lcd-' + n.shape + (n.accent ? ' lcd-accent' : '') + (n.link ? ' lcd-linked' : '');
 			const attrs = { class: cls, 'data-lc-node': n.id };
-			if (n.link) {
+			if (n.link && !o.standalone) {
+				// A link is something the CHAT can open. A saved file cannot, so there the node keeps its
+				// glyph and its tooltip and is not a link: nothing to tab to that does nothing.
 				// The attribute carries the NODE ID, not the path: the host looks the link up in its own
 				// copy of the spec, so nothing the webview says can choose which file is opened.
 				attrs['data-lc-link'] = n.id; attrs.tabindex = '0'; attrs.role = 'link';
