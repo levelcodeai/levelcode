@@ -18,6 +18,7 @@ lives in the tracked repo and is re-applied onto a clean clone:
 | `extensions/levelcode-npp-pack/`, `extensions/levelcode-ai/` | `vscode/extensions/*` | `apply-branding.mjs` (copy) |
 | `branding/product.overlay.json`, `branding/icons/` | `vscode/product.json`, `vscode/resources/...` | `apply-branding.mjs` (merge/copy) |
 | `patches/levelcode-core.patch` | edits to `vscode/src/**`, `vscode/build/**` | `bootstrap.sh` (`git apply`) |
+| `modules/extension-signature/` | the BUILT app's `node_modules/@vscode/vsce-sign` (never `vscode/`) | `extension-signature.mjs install` (from `build-macos.sh`, `make-dmg.sh`) |
 
 So: **edit extensions in `extensions/…`, not `vscode/extensions/…`.** After editing, run
 `./scripts/run-dev.sh` (it syncs canonical → checkout first) to test.
@@ -39,8 +40,9 @@ extensions/levelcode-themes/     signature One Dark / One Light themes (JSON, de
 extensions/levelcode-hackability/ user init script + Atom/NPP keymap presets + package generator & hot-reload dev loader
 extensions/levelcode-sync/       'levelcode' auth provider that lights up the built-in Settings Sync (LevelCode Sync, S0)
 extensions/levelcode-updater/    notify-only update checker (polls the update feed; never auto-applies)
+modules/extension-signature/     Open VSX signature verifier the built app loads as @vscode/vsce-sign, + the signing keys it trusts
 patches/levelcode-core.patch     our core source edits, applied on bootstrap
-scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, editor-identity.mjs, build-macos.sh, make-dmg.sh, make-icon.sh; atom (CLI launcher) + install-level.sh
+scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, editor-identity.mjs, extension-signature.mjs, build-macos.sh, make-dmg.sh, make-icon.sh; atom (CLI launcher) + install-level.sh
 tools/                      dependency-free reference servers: sync-server (/v1 Settings-Sync), update-server (/api/update feed)
 vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 ```
@@ -81,6 +83,33 @@ To macOS a run from source and the installed LevelCode used to be ONE app — sa
   hears nothing.
 - A LaunchServices handler must live outside temp folders — a bundle under `/tmp` is registered but
   never chosen. Tests therefore run on fixtures and do not register anything (`test/editorIdentity.test.js`).
+
+## Extensions are verified (keep it that way)
+
+Every release up to 1.3.1 refused every signed extension from Open VSX — "Signature verification was
+not executed" — and silently never updated one. The editor verifies through `import('@vscode/vsce-sign')`,
+a Microsoft-only module no open-source build contains. `modules/extension-signature` is LevelCode's
+module for that slot. Full account + runbooks: `docs/EXTENSION-SIGNATURES.md`.
+
+- **What it checks:** Open VSX's Ed25519 signature over the `.vsix` bytes. A repository signature —
+  "this is what Open VSX published" — not the publisher's, and not a statement about safety.
+- **The key is pinned, never fetched:** `modules/extension-signature/keys.json`. Adding or removing a
+  key is a security decision; the doc says how a key is checked first. The module may `require` only
+  `node:crypto`/`fs`/`path`/`zlib`, and its suite runs it with every socket refused.
+- **No core patch.** `extension-signature.mjs install` copies three files into the BUILT app (like
+  `strip-proprietary.mjs`). `check` then fails the build unless the built editor still asks for that
+  name, the name resolves to our module from the bundles that ask, and the module — imported the way
+  the editor imports it — accepts a real package and refuses a changed one.
+- **`smoke <LevelCode.app>`** asks the app itself (its command line installs one tiny extension into
+  temp folders). It is the check that would have caught the original bug; CI runs it after each build.
+- **`registry`** watches for Open VSX changing its key (daily workflow + release gate). Exit 1 means
+  evidence, and every shipped build is refusing extensions until a release carries the new key.
+  It asks the registry and the one host the registry redirects downloads to (`CONTENT_ORIGINS`),
+  following redirects by hand; a redirect anywhere else is not followed, and it says so.
+- **Do not "fix" a refusal by turning verification off** (`extensions.verifySignature`, a patch like
+  VSCodium's). And a run from source proves nothing here: the editor only enforces on a built app.
+- Its tests live in `modules/extension-signature/test/` — outside `extensions/`, whose `test/` folders
+  ship in the app. `scripts/test-extensions.sh` discovers `modules/*/test/*.test.js` too.
 
 ## Toolchain (hard requirements — these bit us)
 
@@ -213,7 +242,7 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
   is not in the editor until you load it: `./scripts/run-dev.sh --extensionDevelopmentPath=<worktree>/extensions/levelcode-ai`
   (from the main checkout; the dev extension replaces the built-in one). Uncommitted work is not "on the branch" —
   checking the branch out somewhere else gets none of it. Run it in the editor before telling anyone to try it.
-- Commit `extensions/`, `patches/`, `branding/`, `scripts/`, `docs/`, `PLAN.md`, `CLAUDE.md`. Never commit `vscode/`.
+- Commit `extensions/`, `modules/`, `patches/`, `branding/`, `scripts/`, `docs/`, `PLAN.md`, `CLAUDE.md`. Never commit `vscode/`.
 - `extensions/levelcode-ai/diagram/` modules listed in `bundle.FILES` are pasted INTO a script block in `chat.html`.
   They must never contain the text of a script tag or an HTML comment opener — not even in a comment — or the block
   ends early; `bundle.js` refuses to build if one does. Keep them dependency-free and free of `require('vscode')`/`fs`.

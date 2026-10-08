@@ -41,8 +41,16 @@ jobs:
           node-version: "24"
       - name: Extension unit tests
         # The gate itself lives in a script, so the pull-request workflow (test.yml) runs exactly what
-        # this does. It discovers every extensions/*/test/*.test.js and fails if it finds none.
+        # this does. It discovers every extensions/*/test/*.test.js and modules/*/test/*.test.js, and
+        # fails if it finds none.
         run: ./scripts/test-extensions.sh
+      - name: Open VSX still signs with a key this release trusts
+        # The app verifies extensions against Open VSX's signing key, and the key is pinned in the app
+        # (modules/extension-signature/keys.json). If the registry has moved to another key, the app
+        # about to be built could not install or update one extension: stop here, an hour early.
+        # Fails only on evidence — a registry that cannot be reached is a warning. What to do when it
+        # fails: docs/EXTENSION-SIGNATURES.md.
+        run: node scripts/extension-signature.mjs registry
 
   build:
     name: Build ${{ matrix.arch }}
@@ -85,6 +93,12 @@ jobs:
           VSCODE_TAG: ${{ github.event.inputs.vscode_tag }}
       - name: Build LevelCode.app (${{ matrix.arch }}, proprietary stripped)
         run: ./scripts/build-macos.sh ${{ matrix.arch }}
+      - name: The built app installs an extension from Open VSX
+        # The one check that asks the app itself. Its own command line installs one four-kilobyte
+        # extension into throwaway folders, and its log must show the signature verified. Every
+        # LevelCode release before this step existed failed it: none could verify an extension.
+        # Fails only on the app's own words; a registry that cannot be reached is a warning.
+        run: node scripts/extension-signature.mjs smoke "VSCode-darwin-${{ matrix.arch }}/LevelCode.app"
       - name: Zip the unsigned app
         run: ditto -c -k --sequesterRsrc --keepParent "VSCode-darwin-${{ matrix.arch }}/LevelCode.app" "UNSIGNED-LevelCode-${{ matrix.arch }}.app.zip"
       - name: Upload app artifact

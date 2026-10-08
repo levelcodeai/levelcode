@@ -12,3 +12,10 @@ LevelCode is not produced by, endorsed by, or affiliated with Microsoft.
 "Visual Studio Code" and related marks are trademarks of Microsoft.
 The upstream Code-OSS source is fetched at build time and is not redistributed
 in this repository.
+
+modules/extension-signature/test/fixtures/ holds two extension packages as
+published on Open VSX (https://open-vsx.org), unmodified, used only as test
+data and not shipped in the app:
+  - git-rebase-syntax 0.0.1, MIT License, Copyright (c) 2020 Jérome Perrin
+  - systemd-unit-file 1.0.6, MIT License, Copyright (c) 2018 Takashi Oguma
+Each package carries its own licence text; see the README in that folder.
