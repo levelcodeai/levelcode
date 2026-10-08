@@ -83,8 +83,12 @@ test('the portable subset is what a rootless run actually offers', () => {
 	// popover would bill the user for tools that were never sent.
 	assert.match(agent, /let tools = mcp\.tools\.length \? builtins\.concat\(mcp\.tools\) : builtins;/,
 		'the model is still handed the unfiltered TOOLS');
-	assert.match(agent, /const baseTools = ctx\.recallSessions \? builtins\.concat\(\[RECALL_TOOL\]\) : builtins;/,
+	// `extras` is every host-gated tool (recall, and since rich diagrams the diagram tools). What this
+	// pins is unchanged: baseTools starts from `builtins`, never from the unfiltered TOOLS.
+	assert.match(agent, /const baseTools = extras\.length \? builtins\.concat\(extras\) : builtins;/,
 		'baseTools still counts the full TOOLS — the context popover would report tools that were not sent');
+	assert.match(agent, /if \(ctx\.recallSessions\) \{ extras\.push\(RECALL_TOOL\); \}/,
+		'recall is no longer one of the extras');
 });
 
 test('the context popover is billed for the list that was actually sent', () => {
@@ -96,7 +100,7 @@ test('the context popover is billed for the list that was actually sent', () => 
 		'no rootless token estimate — the popover reports the full tool cost for a list that was not sent');
 	assert.match(agent, /const builtinsTokensEst = root \? TOOLS_TOKENS_EST : PORTABLE_TOOLS_TOKENS_EST;/,
 		'the estimate no longer switches on the root');
-	assert.match(agent, /const toolsTokensEst = \(mcp\.tools\.length \|\| ctx\.recallSessions\)[\s\S]{0,120}: builtinsTokensEst;/,
+	assert.match(agent, /const toolsTokensEst = \(mcp\.tools\.length \|\| extras\.length\)[\s\S]{0,120}: builtinsTokensEst;/,
 		'the plain path still falls back to the full-TOOLS constant');
 
 	// The two constants must actually differ, or the guard above passes on a list that gates nothing —

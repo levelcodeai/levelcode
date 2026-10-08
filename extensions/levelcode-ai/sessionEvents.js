@@ -59,6 +59,14 @@ function agentTurnEvent(newMessages, model, t) {
 	return { kind: 'agent', t: t || null, model: model || null, messages: msgs, tools, edits };
 }
 
+/**
+ * A diagram the chat drew this turn (docs/RICH-DIAGRAMS.md, "Storage"): the FINAL record — the spec
+ * as it was rendered, after the repair ladder, with its status and what was fixed or lost. Stored so
+ * that reopening the session shows exactly the picture it showed before without validating, fixing or
+ * asking a model again. It carries no `messages`, so it never enters the rebuilt conversation.
+ */
+function diagramEvent(record, t) { return { kind: 'diagram', t: t || null, record: record }; }
+
 function endEvent(state, t) { return { kind: 'end', t: t || null, state: state || 'done' }; }
 function titleEvent(title, t) { return { kind: 'title', t: t || null, title: String(title == null ? '' : title) }; }
 /** A lifecycle/pin change — append-only, so archiving/pinning never rewrites the file (experience §4.9). */
@@ -84,6 +92,22 @@ function eventsToMessages(events) {
 	return out;
 }
 
+/**
+ * Every diagram a session drew, in the order they were drawn. A later record for the same id wins
+ * (append-only: nothing is rewritten, so an update is a second line).
+ */
+function diagramsFromEvents(events) {
+	const byId = new Map();
+	for (const e of (Array.isArray(events) ? events : [])) {
+		const r = e && e.kind === 'diagram' ? e.record : null;
+		if (r && typeof r === 'object' && typeof r.id === 'string') { byId.delete(r.id); byId.set(r.id, r); }
+	}
+	return Array.from(byId.values());
+}
+
+/** The tool whose calls draw diagrams — named here (not imported) so this module stays dependency-free. */
+const DIAGRAM_TOOL = 'render_diagram';
+
 // ── the readable transcript for a resume replay (pure) ───────────────────────────────────────────
 
 /** The human-visible text of a provider message: a string as-is, or the joined `text` blocks of an array. */
@@ -101,16 +125,44 @@ function messageText(content) {
  * prompt and per assistant answer, in order. Tool plumbing is dropped — a user message that is only a
  * `tool_result`, and an assistant turn that is only `tool_use` (no prose) — so the replay reads like the
  * chat did, not like the raw transcript. Pure, so the webview never has to know provider message shapes.
+ *
+ * With `diagrams` (the session's stored records), each diagram comes back as a turn of its own —
+ * `{ role: 'diagram', key, record }` — at the place in the answer where the model drew it: a message
+ * that says something, draws, and says more comes back as prose, picture, prose, the way it was on
+ * screen. Every piece of such a message after its first is marked `cont: true` — the same message
+ * going on, not the next one — so a reader of the turns can still tell where a message ends. A
+ * drawing that a later one replaced is left out, as it was on screen. Without `diagrams` the result
+ * is exactly what it always was: prose only, one turn per message.
  */
-function toDisplayTurns(messages) {
+function toDisplayTurns(messages, diagrams) {
 	const out = [];
+	const records = Array.isArray(diagrams) ? diagrams : [];
+	const byKey = new Map(records.filter((r) => r && r.key).map((r) => [String(r.key), r]));
+	const replaced = new Set(records.filter((r) => r && r.replaces && String(r.replaces) !== String(r.id)).map((r) => String(r.replaces)));
+	/** The diagram this block drew — if it drew one, and that one is still what the chat shows. */
+	const drawnBy = (b) => {
+		const r = b && b.type === 'tool_use' && b.name === DIAGRAM_TOOL ? byKey.get(String(b.id)) : null;
+		return r && !replaced.has(String(r.id)) ? r : null;
+	};
 	for (const m of (Array.isArray(messages) ? messages : [])) {
 		if (!m || (m.role !== 'user' && m.role !== 'assistant')) { continue; }
 		// a user message whose content is purely tool_result blocks is plumbing, not something the user typed
 		if (m.role === 'user' && Array.isArray(m.content) && m.content.length && m.content.every((b) => b && b.type === 'tool_result')) { continue; }
+		if (m.role === 'assistant' && Array.isArray(m.content)) {
+			// An answer, block by block: the prose so far, then a picture, then the rest. With no picture
+			// in it — the usual case — that is one piece: all of its text, as it always was.
+			let prose = [], pieces = 0;
+			const piece = (turn) => { out.push(pieces++ ? Object.assign(turn, { cont: true }) : turn); };
+			const flush = () => { const text = messageText(prose); prose = []; if (text.trim()) { piece({ role: 'assistant', text }); } };
+			for (const b of m.content) {
+				const r = drawnBy(b);
+				if (r) { flush(); piece({ role: 'diagram', key: String(r.key), record: r }); } else { prose.push(b); }
+			}
+			flush();
+			continue;
+		}
 		const text = messageText(m.content);
-		if (!text.trim()) { continue; }   // e.g. an assistant turn that was only tool calls
-		out.push({ role: m.role, text });
+		if (text.trim()) { out.push({ role: m.role, text }); }   // (an assistant turn that was only tool calls has none)
 	}
 	return out;
 }
@@ -140,14 +192,27 @@ function tailFrom(messages, storedCount) {
  * @param {{title?:string, id?:string, model?:string, createdAt?:string, updatedAt?:string,
  *          filesEdited?:string[], turns?:number}} meta  a sessionStore index entry
  * @param {Array<{role:string, content:any}>} messages   the session's messages
- * @param {{redact?:(s:string)=>string, now?:string}} [opts]  `redact` is injected so this module
- *          stays dependency-free and the scrub is visible at the call site rather than implied
+ * DIAGRAMS: a diagram the session drew is exported where it stood, as a fenced block of whatever
+ * `opts.diagram(record)` returns — the caller passes Mermaid, which GitHub and most docs sites render
+ * natively, so a transcript pasted into a pull request shows the picture. It is scrubbed like any
+ * other text: a label is free text too.
+ *
+ * @param {{redact?:(s:string)=>string, now?:string, diagrams?:any[],
+ *          diagram?:(record:any)=>({lang:string, body:string}|null)}} [opts]  `redact` and `diagram`
+ *          are injected so this module stays dependency-free and both are visible at the call site
  */
 function toMarkdown(meta, messages, opts) {
 	const m = meta || {};
 	const o = opts || {};
 	const scrub = typeof o.redact === 'function' ? o.redact : (s) => s;
-	const turns = toDisplayTurns(messages);
+	// Message by message: the pieces of one message (prose, pictures, more prose) stay together. A
+	// diagram that was never drawn has nothing to export, and is dropped only AFTER the pieces are
+	// grouped — it may be the first piece of its message, and the prose after it is not the tail of
+	// the message before.
+	const answers = [];
+	for (const t of toDisplayTurns(messages, o.diagrams)) { if (t.cont && answers.length) { answers[answers.length - 1].push(t); } else { answers.push([t]); } }
+	const said = (pieces) => pieces.some((t) => t.role !== 'diagram');
+	const shown = answers.map((pieces) => pieces.filter((t) => t.role !== 'diagram' || (t.record && t.record.spec))).filter((pieces) => pieces.length);
 
 	const title = scrub(String(m.title || 'Untitled session')).trim() || 'Untitled session';
 	const when = String(m.updatedAt || m.createdAt || '').slice(0, 10);
@@ -157,19 +222,43 @@ function toMarkdown(meta, messages, opts) {
 	// never named a model or touched a file should read as a transcript, not as a form with blanks.
 	const bits = [];
 	if (when) { bits.push(when); }
-	bits.push(turns.length + ' turn' + (turns.length === 1 ? '' : 's'));
+	const spoken = shown.filter(said).length;   // a turn is a message that says something: a diagram is part of an answer, not a turn of its own
+	bits.push(spoken + ' turn' + (spoken === 1 ? '' : 's'));
 	if (m.model) { bits.push('`' + scrub(String(m.model)) + '`'); }
 	if (files.length) { bits.push(files.slice(0, 6).map((f) => '`' + f + '`').join(', ')); }
 
 	let md = '# ' + title + '\n\n';
 	md += '_LevelCode session · ' + bits.join(' · ') + '_\n';
 
-	for (const t of turns) {
-		md += '\n---\n\n**' + (t.role === 'user' ? 'You' : 'LevelCode') + '**\n\n';
+	// One rule and one speaker label per message that says something; its pictures stand in it where
+	// they stood. A message that is ONLY a picture joins the answer above it — no rule, no second
+	// label — unless there is none: under the question, it would read as part of the question.
+	let speaker = '';
+	const piece = (t) => {
+		if (t.role === 'diagram') {
+			const title = scrub(String((t.record.spec && t.record.spec.title) || 'Diagram')).replace(/\s+/g, ' ').trim();
+			let block = null;
+			try { block = typeof o.diagram === 'function' ? o.diagram(t.record) : null; } catch (e) { block = null; }
+			if (block && block.body) {
+				const body = scrub(String(block.body)).replace(/\n+$/, '');
+				// a fence one backtick longer than any run inside it, so nothing in a label can close it early
+				const longest = (body.match(/`+/g) || []).reduce((k, run) => Math.max(k, run.length), 0);
+				const fence = '`'.repeat(Math.max(3, longest + 1));
+				md += '\n' + fence + String(block.lang || '').replace(/[^a-z0-9-]/gi, '') + '\n' + body + '\n' + fence + '\n';
+			} else {
+				md += '\n_[diagram: ' + title + ']_\n';
+			}
+			return;
+		}
 		// Verbatim aside from redaction — NOT trimmed. Trimming changes Markdown semantics: it de-indents a
-		// leading 4-space (indented code block) and eats trailing "  " (a hard line break). The `**role**\n\n`
-		// above already supplies the blank line an indented block needs after it.
-		md += scrub(String(t.text)) + '\n';
+		// leading 4-space (indented code block) and eats trailing "  " (a hard line break). The blank line
+		// before it — after the `**role**` label, or after a picture — is the one an indented block needs.
+		md += '\n' + scrub(String(t.text)) + '\n';
+	};
+	for (const pieces of shown) {
+		const role = pieces[0].role === 'user' ? 'user' : 'assistant';
+		if (said(pieces) || speaker !== 'assistant') { md += '\n---\n\n**' + (role === 'user' ? 'You' : 'LevelCode') + '**\n'; speaker = role; }
+		pieces.forEach(piece);
 	}
 	// An empty session still exports — a file with a header and no turns is a truthful answer, and
 	// silently producing nothing would read as a broken button.
@@ -179,6 +268,6 @@ function toMarkdown(meta, messages, opts) {
 module.exports = {
 	EDIT_TOOLS,
 	toolStatsFromMessages,
-	userTurnEvent, agentTurnEvent, endEvent, titleEvent, labelEvent,
-	eventsToMessages, messageText, toDisplayTurns, tailFrom, toMarkdown
+	userTurnEvent, agentTurnEvent, diagramEvent, endEvent, titleEvent, labelEvent,
+	eventsToMessages, diagramsFromEvents, DIAGRAM_TOOL, messageText, toDisplayTurns, tailFrom, toMarkdown
 };

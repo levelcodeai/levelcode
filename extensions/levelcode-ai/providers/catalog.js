@@ -127,6 +127,21 @@ function supportsToolsForModel(providerId, modelId) {
 }
 
 /**
+ * How this provider+model draws diagrams (docs/RICH-DIAGRAMS.md, "Model differences").
+ *
+ *   'tool'  it is offered `render_diagram` — the default for every model the agent can run on.
+ *   'none'  it is not: the model is treated as an ASCII client and answers in prose.
+ *
+ * A model opts out with `diagrams: false` in its CAPS row. That is the registry switch the spec asks
+ * for: a model that fails the diagram eval is turned off here, in one line, without touching code.
+ * (The spec's third state — fenced Mermaid only — arrives with the Mermaid phase.)
+ */
+function diagramSupportForModel(providerId, modelId) {
+	if (!supportsToolsForModel(providerId, modelId)) { return 'none'; }
+	return modelCaps(modelId).diagrams === false ? 'none' : 'tool';
+}
+
+/**
  * Whether an image may be attached for this provider+model.
  *
  * Deliberately STRICTER than supportsToolsForModel. That one defaults unknown models to tools:true,
@@ -280,7 +295,7 @@ async function getModelChoices(providerId, opts) {
 
 module.exports = {
 	CAPS, modelCaps, baseName, heuristicCaps,
-	supportsToolsForModel, supportsVisionForModel, contextWindowFor, fastCompletionModel,
+	supportsToolsForModel, diagramSupportForModel, supportsVisionForModel, contextWindowFor, fastCompletionModel,
 	describeCaps, describeModel,
 	mapOpenRouterModels, mapModelIds, fetchModels, getModelChoices
 };

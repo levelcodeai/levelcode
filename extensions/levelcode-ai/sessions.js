@@ -64,18 +64,24 @@ function createSessions(opts) {
 	 * Persist ONE turn — the new messages the loop produced this turn (goal + the agent's messages). The
 	 * leading user message becomes a `user` event (turn count / title / preview); the rest a verbatim
 	 * `agent` event (sparkline + files-edited derive from it). Creates the session on the first turn.
+	 *
+	 * `extras.diagrams` are the diagrams the chat drew this turn (docs/RICH-DIAGRAMS.md, "Storage"):
+	 * each is appended as its own event AFTER the turn it belongs to, as rendered — so a reopened
+	 * session replays the same pictures without running the repair ladder again.
 	 */
-	function recordTurn(turnMessages, model) {
+	function recordTurn(turnMessages, model, extras) {
 		ensure();
 		const msgs = Array.isArray(turnMessages) ? turnMessages : [];
-		if (!msgs.length) { return; }
-		if (msgs[0] && msgs[0].role === 'user') {
+		const drawn = extras && Array.isArray(extras.diagrams) ? extras.diagrams.filter((r) => r && typeof r.id === 'string') : [];
+		if (!msgs.length && !drawn.length) { return; }
+		if (msgs.length && msgs[0] && msgs[0].role === 'user') {
 			store.appendEvent(live.file, events.userTurnEvent(msgs[0], iso()));
 			const rest = msgs.slice(1);
 			if (rest.length) { store.appendEvent(live.file, events.agentTurnEvent(rest, model, iso())); }
-		} else {
+		} else if (msgs.length) {
 			store.appendEvent(live.file, events.agentTurnEvent(msgs, model, iso()));
 		}
+		for (const r of drawn) { store.appendEvent(live.file, events.diagramEvent(r, iso())); }
 		reindex();
 	}
 
@@ -116,8 +122,10 @@ function createSessions(opts) {
 		live = { id, file: store.sessionFile(root, slug, id) };
 		if (state) { try { state.set('liveSessionId', id); } catch (e) { /* convenience */ } }
 		reindexId(id);
+		const drawn = events.diagramsFromEvents(s.events);
 		return { id, meta: s.meta, entry: store.deriveEntry(s.meta, s.events), full, messages, plan,
-			turns: events.toDisplayTurns(full),   // the readable transcript to replay in the webview
+			diagrams: drawn,                               // every diagram it drew, as stored (for links, export, get_diagram)
+			turns: events.toDisplayTurns(full, drawn),     // the readable transcript to replay in the webview, pictures included
 			note: planner.describeResume(plan, turnsSummarized) };
 	}
 
@@ -309,6 +317,11 @@ function createSessions(opts) {
 		try { return events.eventsToMessages(store.readSession(store.sessionFile(root, slug, id)).events); }
 		catch (e) { return []; }
 	}
+	/** The diagrams a session drew, as stored. Read-only; empty on error. */
+	function diagrams(id) {
+		try { return events.diagramsFromEvents(store.readSession(store.sessionFile(root, slug, id)).events); }
+		catch (e) { return []; }
+	}
 	/**
 	 * Replace a session's journal summary with a refined (model-written) outcome — append a superseding line
 	 * for that id (latestBySession then wins) and re-consolidate MEMORY.md. Append-only; best-effort.
@@ -355,7 +368,7 @@ function createSessions(opts) {
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, mediaRoot, sweepMedia, list, liveId };
+	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, diagrams, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, mediaRoot, sweepMedia, list, liveId };
 }
 
 module.exports = { createSessions };

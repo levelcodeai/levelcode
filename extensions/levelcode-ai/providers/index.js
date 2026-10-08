@@ -199,7 +199,8 @@ function supportsTools(id) {
  * {content, stop_reason, usage, malformed} shape for both, so agent.js is provider-agnostic.
  * @param {{providerId:string, apiKey?:string, baseURL?:string, label?:string, model:string, maxTokens?:number,
  *          system:string, messages:any[], tools?:any[], signal?:AbortSignal,
- *          onText?:(t:string)=>void, onToolStart?:(name:string)=>void,
+ *          onText?:(t:string)=>void, onToolStart?:(name:string, id?:string)=>void,
+ *          onToolInput?:(id:string, name:string, partialJson:string)=>void,
  *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} o
  */
 async function streamAgentTurn(o) {
@@ -208,13 +209,14 @@ async function streamAgentTurn(o) {
 	if (p.kind === 'anthropic') {
 		return anthropic.streamClaudeAgentTurn({
 			apiKey: o.apiKey, model: o.model, maxTokens: o.maxTokens, system: o.system,
-			messages: o.messages, tools: o.tools, signal: o.signal, onText: o.onText, onToolStart: o.onToolStart
+			messages: o.messages, tools: o.tools, signal: o.signal, onText: o.onText, onToolStart: o.onToolStart,
+			onToolInput: o.onToolInput
 		});
 	}
 	return openai.streamOpenAIAgentTurn({
 		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: o.label || p.label,
 		model: o.model, maxTokens: o.maxTokens, system: o.system, messages: o.messages, tools: o.tools,
-		signal: o.signal, onText: o.onText, onToolStart: o.onToolStart, onRetry: o.onRetry
+		signal: o.signal, onText: o.onText, onToolStart: o.onToolStart, onToolInput: o.onToolInput, onRetry: o.onRetry
 	});
 }
 

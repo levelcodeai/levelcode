@@ -250,9 +250,10 @@ async function listOpenAIModels(opts) {
  * to {type:'text'} / {type:'tool_use', id, name, input} blocks.
  * @param {{baseURL:string, apiKey?:string, headers?:object, label?:string, model:string,
  *          maxTokens?:number, system:string, messages:any[], tools?:any[], signal?:AbortSignal,
- *          onText?:(t:string)=>void, onToolStart?:(name:string)=>void,
+ *          onText?:(t:string)=>void, onToolStart?:(name:string, id?:string)=>void,
+ *          onToolInput?:(id:string, name:string, partialJson:string)=>void,
  *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} opts
- * @returns {Promise<{content:any[], stop_reason:string, usage:any, malformed:Set<string>}>}
+ * @returns {Promise<{content:any[], stop_reason:string, usage:any, malformed:Set<string>, raw:Map<string,string>}>}
  */
 async function streamOpenAIAgentTurn(opts) {
 	const label = opts.label || 'OpenAI-compatible';
@@ -301,14 +302,14 @@ async function streamOpenAIAgentTurn(opts) {
 		if (!c) { return; }
 		const d = c.delta || {};
 		if (typeof d.content === 'string' && d.content) { text += d.content; if (opts.onText) { opts.onText(d.content); } }
-		if (Array.isArray(d.tool_calls)) { translate.accumulateToolCalls(acc, d.tool_calls, opts.onToolStart); }
+		if (Array.isArray(d.tool_calls)) { translate.accumulateToolCalls(acc, d.tool_calls, opts.onToolStart, opts.onToolInput); }
 		if (c.finish_reason) { finish = c.finish_reason; }
 	});
-	const { content, malformed } = translate.finalizeOpenAIBlocks(text, acc);
+	const { content, malformed, raw } = translate.finalizeOpenAIBlocks(text, acc);
 	// If tool calls were assembled, the effective stop is tool_use even when a provider reports 'stop'.
 	let stopReason = translate.fromOpenAIFinishReason(finish);
 	if (stopReason !== 'max_tokens' && content.some((b) => b.type === 'tool_use')) { stopReason = 'tool_use'; }
-	return { content, stop_reason: stopReason, usage, malformed };
+	return { content, stop_reason: stopReason, usage, malformed, raw };
 }
 
 module.exports = { streamOpenAI, completeOpenAI, listOpenAIModels, streamOpenAIAgentTurn, buildChatBody, deltaFromEvent, isReasoningModel, isAnthropicFamily, splitOutCachedTokens, extractApiError, httpError, postChat };

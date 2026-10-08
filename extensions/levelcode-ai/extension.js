@@ -37,6 +37,14 @@ const { openCustomize } = require('./customize');
 const { importFromVscode } = require('./importVscode');
 const { reapMcp, listActive, getServer } = require('./mcpClient');
 const { userScopedSetting, isNamespacedToolName, safeCopy, loadServerConfig, summarizeMcp, parseArgv, UNSAFE_KEYS } = require('./mcpConfig');
+const { createDiagrams } = require('./diagram/service');
+const diagramBundle = require('./diagram/bundle');
+const diagramLinks = require('./diagram/links');
+const diagramExport = require('./diagram/exportCheck');
+const diagramText = require('./diagram/text');
+const diagramStats = require('./diagram/stats');
+const diagramTool = require('./diagram/tool');
+const diagramAscii = require('./diagram/ascii');
 
 const SECRET_KEY = 'levelcode.ai.anthropicKey';   // legacy Anthropic key location (kept for back-compat)
 const FILE_EXCLUDES = '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/.vscode-test/**,**/*.map}';
@@ -1025,6 +1033,198 @@ function workspaceMapBlock(allFiles) {
 // /sessions modal + the sidebar view. Everything here is best-effort: a persistence failure must never
 // disturb a chat turn — callers guard, and the manager swallows index errors (the index is a rebuildable
 // cache). Off entirely when levelcode.ai.sessions.enabled is false.
+// ---- Rich diagrams (docs/RICH-DIAGRAMS.md) --------------------------------------------------------
+// The model emits a small spec through `render_diagram`; diagram/service.js validates it, climbs the
+// repair ladder and decides what the chat shows. This block is the editor's half: which files a
+// node may open, where an export is written, and where the numbers are kept.
+
+const DIAGRAM_STATS_KEY = 'levelcode.ai.diagrams.stats';
+let _diagramStats = null, _diagramStatsTimer = null;
+/** The local counters behind the spec's telemetry table. Kept in the editor's own storage; never sent anywhere. */
+function diagramStatsNow() {
+	if (!_diagramStats) {
+		const stored = ctx ? ctx.globalState.get(DIAGRAM_STATS_KEY) : null;
+		_diagramStats = stored && stored.v === diagramStats.VERSION ? stored : diagramStats.empty(new Date().toISOString().slice(0, 10));
+	}
+	return _diagramStats;
+}
+function recordDiagramStat(ev) {
+	_diagramStats = diagramStats.record(diagramStatsNow(), ev);
+	if (ev && ev.type === 'call') { dbg('diagram.call', { outcome: ev.outcome, errors: ev.errorClasses, fixes: ev.fixClasses, tokens: ev.tokens }); }
+	if (_diagramStatsTimer) { return; }
+	_diagramStatsTimer = setTimeout(() => {
+		_diagramStatsTimer = null;
+		try { if (ctx) { ctx.globalState.update(DIAGRAM_STATS_KEY, _diagramStats); } } catch (e) { /* counters are best-effort */ }
+	}, 2000);
+}
+const diagramFolders = () => (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath }));
+/** This conversation's diagrams. One for the life of the extension; reset with the conversation. */
+const diagrams = createDiagrams({
+	resolveLink: (link) => diagramLinks.resolveLink(link, diagramFolders()),
+	onStat: recordDiagramStat
+});
+/** True once a diagram's spec has left the model's context (a compaction, or a resume that did not fit) —
+ *  which is the moment `get_diagram` starts being offered. */
+let diagramsStubbed = false;
+
+/**
+ * What the chat on the other end can show: `rich` (it renders diagrams) or `ascii` (it does not).
+ * The chat webview is rich; the setting is the user's way to say otherwise, and a model whose catalog
+ * row opts out of diagrams is treated as an ASCII client — it is given neither the tool nor the rules.
+ */
+function clientRender(providerId, modelId) {
+	if (!aiConfig().get('diagrams.enabled', true)) { return 'ascii'; }
+	return catalog.diagramSupportForModel(providerId, modelId) === 'tool' ? 'rich' : 'ascii';
+}
+
+/** A node was clicked. The webview says WHICH node; the file comes from the host's own record. */
+async function openDiagramLink(id, nodeId) {
+	const record = diagrams.get(id);
+	const node = record && record.spec ? record.spec.nodes.find((n) => n.id === String(nodeId)) : null;
+	if (!node || !node.link) { dbg('diagram.link.unknown', { id }); return; }
+	// Checked again at the moment of the click: the file may have moved, or become a link, since it was drawn.
+	const r = diagramLinks.resolveLink(node.link, diagramFolders());
+	if (!r.ok) { vscode.window.showWarningMessage('LevelCode: that link cannot be opened — ' + r.reason + '.'); dbg('diagram.link.refused', { reason: r.reason }); return; }
+	recordDiagramStat({ type: 'link' });
+	try {
+		const uri = vscode.Uri.file(r.abs);
+		const doc = await vscode.workspace.openTextDocument(uri);
+		let line = Number.isInteger(node.link.line) ? node.link.line : null;
+		if (node.link.symbol) {
+			let found = null;
+			try {
+				const symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri);
+				const want = String(node.link.symbol).split(/[^\w$]+/).filter(Boolean).pop();
+				const walk = (list) => { for (const sym of (list || [])) { if (!found && sym && sym.name && String(sym.name).split(/[^\w$]+/).filter(Boolean).pop() === want) { found = sym; } if (!found && sym && sym.children) { walk(sym.children); } } };
+				walk(symbols);
+			} catch (e) { /* no symbol provider for this language */ }
+			if (found) { line = ((found.selectionRange || found.range || (found.location && found.location.range)).start.line) + 1; }
+			else { line = diagramLinks.findSymbolLine(doc.getText(), node.link.symbol) || line; }
+		}
+		const at = new vscode.Position(Math.max(0, Math.min(doc.lineCount - 1, (line || 1) - 1)), 0);
+		await vscode.window.showTextDocument(doc, { preview: false, selection: new vscode.Range(at, at) });
+	} catch (e) { dbg('diagram.link.error', { msg: String((e && e.message) || e) }); }
+}
+
+/**
+ * The fenced Mermaid block for a diagram — what goes into a Markdown file. The fence is one tick
+ * longer than any run of ticks inside, so nothing in a label can close it early. (The tick is built
+ * by code, never typed: a literal one here would be read as a template string by the brace matcher
+ * the host test suites slice this file with.)
+ */
+function diagramMarkdown(record) {
+	const tick = String.fromCharCode(96);
+	const body = diagramText.toMermaid(record.spec).replace(/\n+$/, '');
+	let longest = 0, run = 0;
+	for (const ch of body) { run = ch === tick ? run + 1 : 0; if (run > longest) { longest = run; } }
+	const fence = tick.repeat(Math.max(3, longest + 1));
+	return fence + 'mermaid\n' + body + '\n' + fence + '\n';
+}
+
+/**
+ * Export a diagram. `source`, `mermaid` and `markdown` are produced HERE from the stored spec; only
+ * `svg` and `png` carry bytes from the webview (that is where the real font and theme are), and those
+ * are checked structurally before a single byte is written — see diagram/exportCheck.js.
+ */
+async function exportDiagram(id, format, data) {
+	const record = diagrams.get(id);
+	if (!record || !record.spec) { return; }
+	const fmt = String(format);
+	try {
+		if (fmt === 'source') {
+			await vscode.env.clipboard.writeText(diagramText.toSource(record.spec));
+		} else if (fmt === 'mermaid') {
+			const langs = await vscode.languages.getLanguages();
+			const doc = await vscode.workspace.openTextDocument({ content: diagramText.toMermaid(record.spec), language: langs.includes('mermaid') ? 'mermaid' : 'plaintext' });
+			await vscode.window.showTextDocument(doc, { preview: false });
+		} else if (fmt === 'markdown') {
+			const block = '\n' + diagramMarkdown(record);
+			const ed = vscode.window.activeTextEditor;
+			let target = ed && ed.document.languageId === 'markdown' && isWorkspaceFile(ed.document.uri) ? ed : null;
+			if (!target) {
+				const files = await vscode.workspace.findFiles('**/*.{md,markdown}', FILE_EXCLUDES, 300);
+				if (!files.length) { vscode.window.showInformationMessage('LevelCode: there is no Markdown file in this workspace to insert into. Use “Open as Mermaid” instead.'); return; }
+				const pick = await vscode.window.showQuickPick(files.map((u) => ({ label: vscode.workspace.asRelativePath(u), uri: u })).sort((a, b) => a.label.localeCompare(b.label)), { placeHolder: 'Insert the diagram at the end of…', matchOnDescription: false });
+				if (!pick) { return; }
+				const doc = await vscode.workspace.openTextDocument(pick.uri);
+				target = await vscode.window.showTextDocument(doc, { preview: false });
+				const end = doc.lineAt(doc.lineCount - 1).range.end;
+				target.selection = new vscode.Selection(end, end);
+			}
+			const where = target.selection.active;
+			await target.edit((b) => b.insert(where, block));
+		} else if (fmt === 'svg' || fmt === 'png') {
+			const checked = fmt === 'svg' ? diagramExport.checkSvg(data) : diagramExport.checkPng(data);
+			if (!checked.ok) { dbg('diagram.export.refused', { format: fmt, reason: checked.reason }); vscode.window.showWarningMessage('LevelCode: the diagram could not be exported (' + checked.reason + ').'); return; }
+			// The title becomes a file name, and a title is free text: redact it the way a session export does.
+			const stem = diagramExport.fileStem(sessionMemory.redactSecrets(String(record.spec.title || 'diagram')));
+			const dir = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]) ? vscode.workspace.workspaceFolders[0].uri.fsPath : os.homedir();
+			const target = await vscode.window.showSaveDialog({ filters: fmt === 'svg' ? { 'SVG image': ['svg'] } : { 'PNG image': ['png'] }, defaultUri: vscode.Uri.file(path.join(dir, stem + '.' + fmt)) });
+			if (!target) { return; }
+			await vscode.workspace.fs.writeFile(target, fmt === 'svg' ? Buffer.from(String(data), 'utf8') : checked.bytes);
+			vscode.window.showInformationMessage('Saved ' + path.basename(target.fsPath) + '.');
+		} else { return; }
+		recordDiagramStat({ type: 'export', format: fmt });
+	} catch (e) {
+		dbg('diagram.export.error', { format: fmt, msg: String((e && e.message) || e) });
+		vscode.window.showErrorMessage('LevelCode: could not export the diagram — ' + String((e && e.message) || e));
+	}
+}
+
+/** The Retry button on a degraded or failed diagram: the USER asks for another go. Never automatic. */
+async function retryDiagram(id) {
+	const record = diagrams.get(id);
+	if (!record || abort) { return; }
+	const what = record.spec ? '“' + record.spec.title + '” (id ' + record.id + ')' : 'you tried to draw (id ' + record.id + ')';
+	const problems = (record.errors || []).concat(record.notes || []).slice(0, diagramTool.MAX_LINES);   // the same cap a tool result uses
+	const keep = lastAgentGoal;
+	await agentFlow('Redraw the diagram ' + what + ' with render_diagram.' + (problems.length ? ' The last attempt had these problems:\n- ' + problems.join('\n- ') : '') + '\nSend a corrected, complete spec. Say nothing else unless it fails again.');
+	lastAgentGoal = keep;   // Retry/Continue on the response bar still mean the user's own goal
+}
+
+/**
+ * The chat could not load its renderer. The fallback the spec asks for: "an ASCII rendering generated
+ * from the same spec, so the model never has to draw ASCII itself" — made here, from the host's own
+ * record, by the same layout. Empty when there is nothing to draw; the chat then keeps the source open.
+ */
+function diagramAsciiText(id, cols) {
+	const record = diagrams.get(id);
+	if (!record || !record.spec) { return ''; }
+	// How wide the chat's card is, in characters — the one thing the page knows and the host does not.
+	// A number, bounded; anything else is the default.
+	const maxCols = Math.max(40, Math.min(200, Math.floor(Number(cols)) || 110));
+	// (Every spec the service holds has passed the validator — drawn this session, or checked on load.)
+	try { return diagramAscii.render(record.spec, { maxCols, title: false }); }   // the card already shows the title
+	catch (e) {
+		dbg('diagram.ascii.error', { msg: String((e && e.message) || e) });
+		try { return diagramText.outline(record.spec).text; } catch (e2) { return ''; }   // it still says what connects to what
+	}
+}
+
+/**
+ * The whole of what a diagram may ask of the editor. Each branch looks the diagram up in the host's
+ * own records by id — an id that names no record does nothing (or, for the text fallback, answers
+ * with no text) — and no branch reads a path, a URL or a command from the message.
+ */
+async function handleDiagramAction(msg) {
+	const action = String((msg && msg.action) || '');
+	const id = String((msg && msg.id) || '');
+	if (action === 'openLink') { await openDiagramLink(id, msg.node); }
+	else if (action === 'export') { await exportDiagram(id, msg.format, msg.data); }
+	else if (action === 'retry') { await retryDiagram(id); }
+	else if (action === 'ascii') { post({ type: 'diagramAscii', id, text: diagramAsciiText(id, msg.cols) }); }
+}
+
+/** "LevelCode: AI: Diagram Statistics" — the numbers the rollout gates are read from. */
+async function showDiagramStats() {
+	const summary = diagramStats.summarize(diagramStatsNow());
+	const doc = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify({
+		note: 'Local counters for rich diagrams (docs/RICH-DIAGRAMS.md, "Telemetry and evaluation"). Kept in this editor only; nothing here is sent anywhere, and nothing here is text from a diagram.',
+		summary, raw: diagramStatsNow()
+	}, null, 2) });
+	await vscode.window.showTextDocument(doc, { preview: true });
+}
+
 let _sessionsMgr = null, _sessionsSlug = null;
 function sessionsRoot() {
 	const dir = String(aiConfig().get('sessions.dir', '') || '').trim();
@@ -1347,7 +1547,12 @@ async function exportSession(id) {
 	const m = sessionsManager();
 	if (!m || !id) { return; }
 	const entry = (m.list().find((e) => e.id === id)) || {};
-	const md = sessionEvents.toMarkdown(entry, m.transcript(id), { redact: sessionMemory.redactSecrets });
+	const md = sessionEvents.toMarkdown(entry, m.transcript(id), {
+		redact: sessionMemory.redactSecrets,
+		// A diagram the session drew is exported as a Mermaid block, which a pull request renders.
+		diagrams: m.diagrams(id),
+		diagram: (r) => ({ lang: 'mermaid', body: diagramText.toMermaid(r.spec) })
+	});
 
 	try { await vscode.env.clipboard.writeText(md); }
 	catch (e) {
@@ -1399,9 +1604,15 @@ async function resumeSession(id) {
 	// note so the model KNOWS earlier turns exist (a real head-summary is a later refinement) — the user
 	// still sees the whole transcript in the replay. Ephemeral: never persisted (recordTurn appends only
 	// new turns from the goal onward).
+	// The session's diagrams come back exactly as stored — never re-validated, never re-repaired.
+	diagrams.load(r.diagrams);
+	const omittedHead = (r.plan && r.plan.tier > 1) ? (Array.isArray(r.full) ? r.full : []).slice(0, Math.max(0, (Array.isArray(r.full) ? r.full.length : 0) - agentMessages.length)) : [];
+	const lostDiagrams = diagrams.stubsFor(omittedHead);
+	diagramsStubbed = lostDiagrams.length > 0;
 	if (r.plan && r.plan.tier > 1) {
 		const omitted = Math.max(0, (Array.isArray(r.full) ? r.full.length : 0) - agentMessages.length);
-		agentMessages.unshift({ role: 'user', content: '[Resumed session — the earlier part of this conversation (' + omitted + ' message' + (omitted === 1 ? '' : 's') + ') was omitted to fit the context window. It is shown above in the transcript but not included here; ask if you need details from it.]' });
+		agentMessages.unshift({ role: 'user', content: '[Resumed session — the earlier part of this conversation (' + omitted + ' message' + (omitted === 1 ? '' : 's') + ') was omitted to fit the context window. It is shown above in the transcript but not included here; ask if you need details from it.'
+			+ (lostDiagrams.length ? '\nDiagrams drawn in that part (call get_diagram with the id before editing one):\n- ' + lostDiagrams.join('\n- ') : '') + ']' });
 	}
 	conversation = [];
 	checkpoints.length = 0; currentCheckpoint = null;                       // old file-snapshots can't be restored
@@ -1479,6 +1690,8 @@ function resetConversationState() {
 	clearQuestions();
 	conversation = [];
 	agentMessages = [];
+	diagrams.reset();                      // the next conversation starts at d-1, owing nothing
+	diagramsStubbed = false;
 	checkpoints.length = 0; currentCheckpoint = null;   // drop the per-turn restore stack
 	pendingContext = null;
 	contextFiles = [];
@@ -1849,6 +2062,8 @@ function serializeMsgForSummary(m) {
 	const parts = [];
 	for (const c of m.content) {
 		if (c.type === 'text' && c.text) { parts.push(c.text.slice(0, 4000)); }
+		// A diagram's spec is structure the summarizer cannot use and should not pay for: one line.
+		else if (c.type === 'tool_use' && c.name === diagramTool.RENDER_DIAGRAM.name) { parts.push('[draws a diagram: ' + String((c.input && c.input.title) || 'untitled').slice(0, 120) + ']'); }
 		else if (c.type === 'tool_use') { parts.push('[calls ' + c.name + ' ' + JSON.stringify(c.input || {}).slice(0, 400) + ']'); }
 		else if (c.type === 'tool_result') { const t = typeof c.content === 'string' ? c.content : JSON.stringify(c.content); parts.push('[tool result: ' + String(t).slice(0, 800) + ']'); }
 	}
@@ -1920,10 +2135,18 @@ async function compactAgentMemory() {
 	// is unharmed and the user can compact again once the turn ends.
 	if (agentMessages !== msgs || msgs[cut] !== anchor || abort) { dbg('compact.stale', { cut, running: !!abort }); return { ok: false, reason: 'changed' }; }
 
+	// Rich diagrams: the specs in the head are about to leave the conversation. Each is replaced by a
+	// one-line stub (the full spec stays on file; get_diagram fetches it). This is the ONLY place a
+	// spec is stubbed — at compaction, never turn by turn — so the cached prefix is rebuilt once, here,
+	// along with everything else this splice already invalidates.
+	const stubs = diagrams.stubsFor(msgs.slice(0, cut));
+	if (stubs.length) { diagramsStubbed = true; }
+	const stubNote = stubs.length ? '\n\nDiagrams drawn earlier (their specs are no longer in this conversation — call get_diagram with the id before editing one):\n- ' + stubs.join('\n- ') : '';
+
 	// Replace the head with [summary(user) → ack(assistant)]; the kept tail begins with the user goal at
 	// `cut`, so role alternation (user → assistant → user …) holds across the seam.
 	msgs.splice(0, cut,
-		{ role: 'user', content: '[Summary of the earlier conversation, compacted to save context]\n\n' + summary.trim() },
+		{ role: 'user', content: '[Summary of the earlier conversation, compacted to save context]\n\n' + summary.trim() + stubNote },
 		{ role: 'assistant', content: 'Got it — I have that summary of the work so far and will continue from here.' }
 	);
 	// Drop checkpoints whose goal message was summarized away: restoreCheckpoint can no longer truncate the
@@ -2026,6 +2249,12 @@ async function agentFlow(text, imageBlocks) {
 			sessionExpiredMessage: session.SESSION_EXPIRED_MESSAGE,
 			skills: skillsObj,                  // M6.5: implicit skills (name+desc menu in SYSTEM + use_skill resolver)
 			projectMemory: projectMemoryMarkdown(), // cross-session memory: a verify-first digest of past sessions, injected like project rules
+			// Rich diagrams: what this surface can show, and the service that draws. An `ascii` client is
+			// offered neither the tool nor its rules; `diagramsStubbed` adds get_diagram once a spec has
+			// left the conversation.
+			client: { render: clientRender(req.providerId, capsModel(req.model)) },
+			diagrams: diagrams,
+			diagramsStubbed: diagramsStubbed,
 			// The recall_sessions tool: search past-session outcomes on demand. Off → the tool isn't offered at all.
 			recallSessions: (aiConfig().get('sessions.memory.enabled', true) && aiConfig().get('sessions.memory.recallTool', true)) ? recallSessionsTool : undefined,
 
@@ -2073,7 +2302,9 @@ async function agentFlow(text, imageBlocks) {
 		// into the chat, and never re-throws past this turn's own error.
 		try {
 			const m = sessionsManager();
-			if (m && sessTurnStart >= 0) { m.recordTurn(agentMessages.slice(sessTurnStart), req.model); }
+			// The diagrams drawn this turn are stored with it, as rendered — so reopening the session
+			// replays the same pictures without running the repair ladder again.
+			if (m && sessTurnStart >= 0) { m.recordTurn(agentMessages.slice(sessTurnStart), req.model, { diagrams: diagrams.takeNew() }); }
 		} catch (e) { dbg('sessions.record.error', { msg: String((e && e.message) || e) }); }
 	}
 }
@@ -2882,6 +3113,10 @@ class ChatViewProvider {
 				case 'sessionAction': await handleSessionAction(msg.action, msg.id); break;
 				case 'feedback': dbg('feedback', { value: msg.value, model: msg.model }); await recordFeedback(msg.value, msg.model); break;
 				case 'openFile': await openWorkspaceFile(msg.path); break;
+				// Rich diagrams: the only two things a diagram can ask the editor for are to open a node's
+				// file and to export itself (plus the user's own Retry). Nothing else is routed.
+				case 'diagramAction': await handleDiagramAction(msg); break;
+				case 'diagramRendered': recordDiagramStat({ type: 'render', ok: msg.ok !== false, ms: Number(msg.ms), flipped: !!msg.flipped }); if (msg.ok === false) { dbg('diagram.render.failed', { message: String(msg.message || '').slice(0, 200) }); } break;
 				case 'reviewKeepFile': dbg('review.keep', { id: msg.id }); review.keepFile(msg.id, 'kept'); break;
 				case 'reviewUndoFile': dbg('review.undo', { id: msg.id }); await review.undoFile(msg.id); break;
 				case 'reviewKeepAll': review.keepAll(); break;
@@ -3026,7 +3261,7 @@ function replayLiveTranscript(tag) {
 	const id = m.liveId();
 	if (!id) { return; }                       // nothing said yet — an empty chat is the honest state
 	let turns = [];
-	try { turns = sessionEvents.toDisplayTurns(m.transcript(id)); }
+	try { turns = sessionEvents.toDisplayTurns(m.transcript(id), m.diagrams(id)); }
 	catch (e) { dbg('chat.replay.failed', { msg: String((e && e.message) || e) }); return; }
 	if (!turns.length) { return; }
 	const entry = m.list().find((e) => e.id === id) || {};
@@ -3056,7 +3291,11 @@ function webviewCsp() {
 
 function getHtml() {
 	const { nonce, csp } = webviewCsp();
-	const html = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'chat.html'), 'utf8');
+	let html = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'chat.html'), 'utf8');
+	// Rich diagrams: the renderer is the host's own modules, inlined under this page's nonce — the CSP
+	// above is unchanged, and the page still loads nothing from anywhere. If the bundle cannot be
+	// built the placeholders stay as the comments they are, and the chat falls back to showing source.
+	try { html = diagramBundle.inject(html); } catch (e) { dbg('diagram.bundle.failed', { msg: String((e && e.message) || e) }); }
 	return html.replace(/__CSP__/g, csp).replace(/__NONCE__/g, nonce);
 }
 
@@ -3426,6 +3665,7 @@ function activate(context) {
 		}),
 		vscode.commands.registerCommand('levelcode.import.vscode', () => importFromVscode(context)),
 		vscode.commands.registerCommand('levelcode.ai.newChat', newChat),
+		vscode.commands.registerCommand('levelcode.ai.diagramStats', showDiagramStats),
 		vscode.commands.registerCommand('levelcode.ai.pickModel', pickModel),
 		vscode.commands.registerCommand('levelcode.ai.manageMcp', manageMcpServers),
 		// Wrapped, NOT passed by reference: a menu invocation hands the command its context as the first

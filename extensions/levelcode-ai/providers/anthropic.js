@@ -122,6 +122,10 @@ async function claudeAgentTurn(opts) {
  */
 function finalizeAgentBlocks(blocks) {
 	const malformed = new Set();
+	// The raw argument text of every malformed call, by id. A caller that knows a tool's input is
+	// worth a second look (a diagram spec with a trailing comma) can try a lenient parse; nothing
+	// here does, and the block itself still carries input:{}.
+	const raw = new Map();
 	const content = [];
 	for (const blk of (blocks || [])) {
 		if (!blk) { continue; }
@@ -132,8 +136,8 @@ function finalizeAgentBlocks(blocks) {
 					try {
 						const parsed = JSON.parse(blk._json);
 						if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) { input = parsed; }
-						else { input = {}; malformed.add(blk.id); }   // valid JSON but not a tool-input object
-					} catch { input = {}; malformed.add(blk.id); }    // truncated / corrupt partial JSON
+						else { input = {}; malformed.add(blk.id); raw.set(blk.id, blk._json); }   // valid JSON but not a tool-input object
+					} catch { input = {}; malformed.add(blk.id); raw.set(blk.id, blk._json); }    // truncated / corrupt partial JSON
 				} else { input = {}; }                                // genuinely no args (not "cut off")
 			}
 			content.push({ type: 'tool_use', id: blk.id, name: blk.name, input: input });
@@ -146,7 +150,7 @@ function finalizeAgentBlocks(blocks) {
 			content.push(out);
 		}
 	}
-	return { content, malformed };
+	return { content, malformed, raw };
 }
 
 /**
@@ -154,7 +158,8 @@ function finalizeAgentBlocks(blocks) {
  * and returns the full content + stop_reason for the agent loop.
  * @param {{apiKey:string, model:string, maxTokens:number, system:string,
  *          messages:any[], tools?:any[], signal?:AbortSignal, onText:(t:string)=>void,
- *          onToolStart?:(name:string)=>void}} opts
+ *          onToolStart?:(name:string, id?:string)=>void,
+ *          onToolInput?:(id:string, name:string, partialJson:string)=>void}} opts
  * @returns {Promise<{content:any[], stop_reason:string}>}
  */
 /**
@@ -230,7 +235,7 @@ async function streamClaudeAgentTurn(opts) {
 			const b = ev.content_block || {};
 			if (b.type === 'tool_use') {
 				blocks[ev.index] = { type: 'tool_use', id: b.id, name: b.name, _json: '' };
-				if (opts.onToolStart) { opts.onToolStart(b.name); }
+				if (opts.onToolStart) { opts.onToolStart(b.name, b.id); }
 			} else {
 				blocks[ev.index] = { type: 'text', text: '' };
 			}
@@ -238,7 +243,11 @@ async function streamClaudeAgentTurn(opts) {
 			const blk = blocks[ev.index];
 			if (!blk) { return; }
 			if (ev.delta.type === 'text_delta') { blk.text += ev.delta.text; opts.onText(ev.delta.text); }
-			else if (ev.delta.type === 'input_json_delta') { blk._json += ev.delta.partial_json || ''; }
+			else if (ev.delta.type === 'input_json_delta') {
+				blk._json += ev.delta.partial_json || '';
+				// The arguments so far, for a caller that shows progress while a long input streams.
+				if (opts.onToolInput) { opts.onToolInput(blk.id, blk.name, blk._json); }
+			}
 		} else if (ev.type === 'message_delta') {
 			if (ev.delta && ev.delta.stop_reason) { stopReason = ev.delta.stop_reason; }
 			if (ev.usage && ev.usage.output_tokens) { usage.output_tokens = ev.usage.output_tokens; }
@@ -247,8 +256,8 @@ async function streamClaudeAgentTurn(opts) {
 		}
 	});
 	// Build API-clean content + the malformed-id set in one pass (the only place input is resolved).
-	const { content, malformed } = finalizeAgentBlocks(blocks);
-	return { content: content, stop_reason: stopReason, usage: usage, malformed: malformed };
+	const { content, malformed, raw } = finalizeAgentBlocks(blocks);
+	return { content: content, stop_reason: stopReason, usage: usage, malformed: malformed, raw: raw };
 }
 
 module.exports = { streamClaude, completeClaude, claudeAgentTurn, streamClaudeAgentTurn, finalizeAgentBlocks, withRollingCacheBreakpoint };
