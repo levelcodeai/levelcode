@@ -1,0 +1,1811 @@
+[
+	{
+		"name": "spec-example",
+		"why": "The worked example in the spec. Must pass untouched.",
+		"input": {
+			"v": 1,
+			"title": "Jev classifies; your code decides the action",
+			"direction": "right",
+			"nodes": [
+				{
+					"id": "in",
+					"label": "Customer message",
+					"sub": "plus account details"
+				},
+				{
+					"id": "jev",
+					"label": "Jev",
+					"sub": "returns probabilities",
+					"accent": true
+				},
+				{
+					"id": "bill",
+					"label": "Route to billing"
+				},
+				{
+					"id": "rev",
+					"label": "Human review"
+				}
+			],
+			"edges": [
+				{
+					"from": "in",
+					"to": "jev"
+				},
+				{
+					"from": "jev",
+					"to": "bill",
+					"label": "0.90 or more"
+				},
+				{
+					"from": "jev",
+					"to": "rev",
+					"label": "under 0.90"
+				}
+			]
+		},
+		"first": {
+			"status": "ok"
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 4,
+				"edges": 3,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "spec-error-format",
+		"why": "The three errors the spec uses to show the error format: an unknown node, a 46-char sub, two accents.",
+		"input": {
+			"v": 1,
+			"title": "Jev classifies; your code decides the action",
+			"direction": "right",
+			"nodes": [
+				{
+					"id": "in",
+					"label": "Customer message",
+					"sub": "plus the account details we already hold on file"
+				},
+				{
+					"id": "jev",
+					"label": "Jev",
+					"sub": "returns probabilities",
+					"accent": true
+				},
+				{
+					"id": "bill",
+					"label": "Route to billing",
+					"accent": true
+				},
+				{
+					"id": "rev",
+					"label": "Human review"
+				}
+			],
+			"edges": [
+				{
+					"from": "in",
+					"to": "jev"
+				},
+				{
+					"from": "jev",
+					"to": "billing",
+					"label": "0.90 or more"
+				},
+				{
+					"from": "jev",
+					"to": "rev",
+					"label": "under 0.90"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/nodes: 2 nodes have accent=true, max 1 (jev, bill). Keep it on the node the title is about.",
+				"/edges/1/to: unknown node \"billing\". Known ids: in, jev, bill, rev."
+			],
+			"shown": [
+				"/nodes/0/sub: 48 chars, max 32 — shortened to \"plus the account details we…\" (the full text is kept as a tooltip)."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"1 edge dropped: unknown nodes",
+				"1 extra accent removed"
+			],
+			"drawn": {
+				"nodes": 4,
+				"edges": 2,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "trailing-commas-and-comments",
+		"why": "Models write JSON5: comments and a comma after the last item.",
+		"input": "{\n  \"title\": \"Requests are cached before they are routed\", // the takeaway\n  \"nodes\": [\n    {\"id\": \"a\", \"label\": \"Request\"},\n    {\"id\": \"b\", \"label\": \"Cache\"},\n  ],\n  \"edges\": [{\"from\": \"a\", \"to\": \"b\"},],\n}",
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"lenient-json"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "fenced",
+		"why": "A spec pasted inside a Markdown fence.",
+		"input": "```json\n{\"title\":\"One step\",\"nodes\":[{\"id\":\"a\",\"label\":\"A\"}],\"edges\":[]}\n```",
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"lenient-json"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 1,
+				"edges": 0,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "single-quotes-bare-keys",
+		"why": "JavaScript object literal instead of JSON.",
+		"input": "{ title: 'It is a two-step flow', nodes: [{ id: 'a', label: 'Parse' }, { id: 'b', label: 'Don\\'t retry' }], edges: [{ from: 'a', to: 'b' }] }",
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"lenient-json"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "smart-quotes",
+		"why": "Typographic quotes from a chat UI.",
+		"input": "{“title”: “Two boxes”, “nodes”: [{“id”: “a”, “label”: “A”}, {“id”: “b”, “label”: “B”}], “edges”: [{“from”: “a”, “to”: “b”}]}",
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"lenient-json"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "python-literals",
+		"why": "True/False/None from a Python-flavoured model.",
+		"input": "{\"title\": \"One accent\", \"nodes\": [{\"id\": \"a\", \"label\": \"A\", \"accent\": True}, {\"id\": \"b\", \"label\": \"B\", \"accent\": False, \"sub\": None}], \"edges\": []}",
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"lenient-json"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 2,
+				"edges": 0,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "truncated-mid-string",
+		"why": "The model hit max_tokens inside a label. Never repaired: re-requested.",
+		"input": "{\"title\":\"Cut off\",\"nodes\":[{\"id\":\"a\",\"label\":\"A\"},{\"id\":\"b\",\"la",
+		"first": {
+			"status": "truncated",
+			"errors": [
+				"/: the spec was cut off before it was complete."
+			]
+		},
+		"final": {
+			"status": "truncated"
+		}
+	},
+	{
+		"name": "truncated-mid-array",
+		"why": "The model hit max_tokens between nodes.",
+		"input": "{\"title\":\"Cut off\",\"nodes\":[{\"id\":\"a\",\"label\":\"A\"},",
+		"first": {
+			"status": "truncated",
+			"errors": [
+				"/: the spec was cut off before it was complete."
+			]
+		},
+		"final": {
+			"status": "truncated"
+		}
+	},
+	{
+		"name": "wrapped-in-spec",
+		"why": "The arguments arrive nested under a \"spec\" key.",
+		"input": {
+			"spec": {
+				"v": 1,
+				"title": "Jev classifies; your code decides the action",
+				"direction": "right",
+				"nodes": [
+					{
+						"id": "in",
+						"label": "Customer message",
+						"sub": "plus account details"
+					},
+					{
+						"id": "jev",
+						"label": "Jev",
+						"sub": "returns probabilities",
+						"accent": true
+					},
+					{
+						"id": "bill",
+						"label": "Route to billing"
+					},
+					{
+						"id": "rev",
+						"label": "Human review"
+					}
+				],
+				"edges": [
+					{
+						"from": "in",
+						"to": "jev"
+					},
+					{
+						"from": "jev",
+						"to": "bill",
+						"label": "0.90 or more"
+					},
+					{
+						"from": "jev",
+						"to": "rev",
+						"label": "under 0.90"
+					}
+				]
+			}
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"unwrapped"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 4,
+				"edges": 3,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "stringified",
+		"why": "The whole spec arrives as one JSON string.",
+		"input": "{\"v\":1,\"title\":\"Jev classifies; your code decides the action\",\"direction\":\"right\",\"nodes\":[{\"id\":\"in\",\"label\":\"Customer message\",\"sub\":\"plus account details\"},{\"id\":\"jev\",\"label\":\"Jev\",\"sub\":\"returns probabilities\",\"accent\":true},{\"id\":\"bill\",\"label\":\"Route to billing\"},{\"id\":\"rev\",\"label\":\"Human review\"}],\"edges\":[{\"from\":\"in\",\"to\":\"jev\"},{\"from\":\"jev\",\"to\":\"bill\",\"label\":\"0.90 or more\"},{\"from\":\"jev\",\"to\":\"rev\",\"label\":\"under 0.90\"}]}",
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"stringified"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 4,
+				"edges": 3,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "stringified-inside-wrapper",
+		"why": "Both at once: {\"diagram\": \"<json>\"}.",
+		"input": {
+			"diagram": "{\"v\":1,\"title\":\"Jev classifies; your code decides the action\",\"direction\":\"right\",\"nodes\":[{\"id\":\"in\",\"label\":\"Customer message\",\"sub\":\"plus account details\"},{\"id\":\"jev\",\"label\":\"Jev\",\"sub\":\"returns probabilities\",\"accent\":true},{\"id\":\"bill\",\"label\":\"Route to billing\"},{\"id\":\"rev\",\"label\":\"Human review\"}],\"edges\":[{\"from\":\"in\",\"to\":\"jev\"},{\"from\":\"jev\",\"to\":\"bill\",\"label\":\"0.90 or more\"},{\"from\":\"jev\",\"to\":\"rev\",\"label\":\"under 0.90\"}]}"
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"stringified",
+				"unwrapped"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 4,
+				"edges": 3,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "shape-synonyms",
+		"why": "Mermaid and draw.io vocabulary for shapes.",
+		"input": {
+			"title": "Shapes by any other name",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "User",
+					"shape": "person"
+				},
+				{
+					"id": "b",
+					"label": "Valid?",
+					"shape": "diamond"
+				},
+				{
+					"id": "c",
+					"label": "Orders",
+					"shape": "database"
+				},
+				{
+					"id": "d",
+					"label": "Step",
+					"shape": "rectangle"
+				},
+				{
+					"id": "e",
+					"label": "Blob",
+					"shape": "hexagon"
+				}
+			],
+			"edges": [
+				{
+					"from": "a",
+					"to": "b"
+				},
+				{
+					"from": "b",
+					"to": "c"
+				},
+				{
+					"from": "b",
+					"to": "d"
+				},
+				{
+					"from": "d",
+					"to": "e"
+				}
+			]
+		},
+		"first": {
+			"status": "fixed",
+			"shown": [
+				"/nodes/4/shape: \"hexagon\" is not a shape; drew a box."
+			],
+			"tidied": [
+				"synonym"
+			]
+		},
+		"final": {
+			"status": "fixed",
+			"drawn": {
+				"nodes": 5,
+				"edges": 4,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "direction-synonyms",
+		"why": "Graphviz rankdir.",
+		"input": {
+			"title": "Top to bottom",
+			"rankdir": "TB",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "A"
+				},
+				{
+					"id": "b",
+					"label": "B"
+				}
+			],
+			"edges": [
+				{
+					"from": "a",
+					"to": "b"
+				}
+			]
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"synonym"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "nodes-as-map",
+		"why": "Nodes keyed by id instead of listed.",
+		"input": {
+			"title": "A map of nodes",
+			"nodes": {
+				"api": {
+					"label": "API"
+				},
+				"db": {
+					"label": "Postgres",
+					"shape": "store"
+				}
+			},
+			"edges": [
+				{
+					"from": "api",
+					"to": "db"
+				}
+			]
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"coerced"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "edges-as-pairs-and-arrows",
+		"why": "Three ways to write an edge that are not {from,to}.",
+		"input": {
+			"title": "Edges written three ways",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "A"
+				},
+				{
+					"id": "b",
+					"label": "B"
+				},
+				{
+					"id": "c",
+					"label": "C"
+				},
+				{
+					"id": "d",
+					"label": "D"
+				}
+			],
+			"edges": [
+				[
+					"a",
+					"b"
+				],
+				"b -> c: next",
+				{
+					"source": "c",
+					"target": "d",
+					"style": "dotted"
+				}
+			]
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"coerced",
+				"renamed-field",
+				"synonym"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 4,
+				"edges": 3,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "edge-names-a-label",
+		"why": "An edge points at a node by its label, not its id. One node has that label, so this is a lookup.",
+		"input": {
+			"title": "The edge names the label",
+			"nodes": [
+				{
+					"id": "n1",
+					"label": "Load balancer"
+				},
+				{
+					"id": "n2",
+					"label": "API server"
+				}
+			],
+			"edges": [
+				{
+					"from": "Load balancer",
+					"to": "API server"
+				}
+			]
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"ref-by-label"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "ids-not-slugs",
+		"why": "Ids with capitals and spaces; edges use the same spelling.",
+		"input": {
+			"title": "Ids that need tidying",
+			"nodes": [
+				{
+					"id": "Auth Service",
+					"label": "Auth"
+				},
+				{
+					"id": "DB_Main",
+					"label": "Database",
+					"shape": "store"
+				}
+			],
+			"edges": [
+				{
+					"from": "Auth Service",
+					"to": "DB_Main"
+				}
+			]
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"slug"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "label-too-long",
+		"why": "The most common violation: a label over 28 characters.",
+		"input": {
+			"title": "Long labels are shortened, not rejected",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "Validate the incoming request payload"
+				},
+				{
+					"id": "b",
+					"label": "Store"
+				}
+			],
+			"edges": [
+				{
+					"from": "a",
+					"to": "b",
+					"label": "when every field checks out"
+				}
+			]
+		},
+		"first": {
+			"status": "fixed",
+			"shown": [
+				"/nodes/0/label: 37 chars, max 28 — shortened to \"Validate the incoming…\" (the full text is kept as a tooltip).",
+				"/edges/0/label: 27 chars, max 20 — shortened to \"when every field…\" (the full text is kept as a tooltip)."
+			]
+		},
+		"final": {
+			"status": "fixed",
+			"notes": [
+				"2 labels shortened"
+			],
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "two-line-label",
+		"why": "Label and sub written as one string with a newline.",
+		"input": {
+			"title": "One field, two lines",
+			"nodes": [
+				{
+					"id": "jev",
+					"label": "Jev\nreturns probabilities"
+				}
+			],
+			"edges": []
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"split-label"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 1,
+				"edges": 0,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "same-node-twice",
+		"why": "A node repeated verbatim.",
+		"input": {
+			"title": "Listed twice",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "A"
+				},
+				{
+					"id": "a",
+					"label": "A"
+				},
+				{
+					"id": "b",
+					"label": "B"
+				}
+			],
+			"edges": [
+				{
+					"from": "a",
+					"to": "b"
+				}
+			]
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"duplicate-node"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "two-nodes-one-id",
+		"why": "Two different nodes share an id — which one do the edges mean? Only the model knows.",
+		"input": {
+			"title": "One id, two nodes",
+			"nodes": [
+				{
+					"id": "api",
+					"label": "Public API"
+				},
+				{
+					"id": "api",
+					"label": "Admin API"
+				},
+				{
+					"id": "db",
+					"label": "Postgres"
+				}
+			],
+			"edges": [
+				{
+					"from": "api",
+					"to": "db"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/nodes/1/id: duplicate id \"api\" (already used by /nodes/0). Every node needs its own id."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"1 duplicate id renamed"
+			],
+			"drawn": {
+				"nodes": 3,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "fourteen-nodes",
+		"why": "Over the 12-node cap: the model must split it.",
+		"input": {
+			"title": "Too much for one picture",
+			"nodes": [
+				{
+					"id": "n0",
+					"label": "Step 1"
+				},
+				{
+					"id": "n1",
+					"label": "Step 2"
+				},
+				{
+					"id": "n2",
+					"label": "Step 3"
+				},
+				{
+					"id": "n3",
+					"label": "Step 4"
+				},
+				{
+					"id": "n4",
+					"label": "Step 5"
+				},
+				{
+					"id": "n5",
+					"label": "Step 6"
+				},
+				{
+					"id": "n6",
+					"label": "Step 7"
+				},
+				{
+					"id": "n7",
+					"label": "Step 8"
+				},
+				{
+					"id": "n8",
+					"label": "Step 9"
+				},
+				{
+					"id": "n9",
+					"label": "Step 10"
+				},
+				{
+					"id": "n10",
+					"label": "Step 11"
+				},
+				{
+					"id": "n11",
+					"label": "Step 12"
+				},
+				{
+					"id": "n12",
+					"label": "Step 13"
+				},
+				{
+					"id": "n13",
+					"label": "Step 14"
+				}
+			],
+			"edges": [
+				{
+					"from": "n0",
+					"to": "n1"
+				},
+				{
+					"from": "n1",
+					"to": "n2"
+				},
+				{
+					"from": "n2",
+					"to": "n3"
+				},
+				{
+					"from": "n3",
+					"to": "n4"
+				},
+				{
+					"from": "n4",
+					"to": "n5"
+				},
+				{
+					"from": "n5",
+					"to": "n6"
+				},
+				{
+					"from": "n6",
+					"to": "n7"
+				},
+				{
+					"from": "n7",
+					"to": "n8"
+				},
+				{
+					"from": "n8",
+					"to": "n9"
+				},
+				{
+					"from": "n9",
+					"to": "n10"
+				},
+				{
+					"from": "n10",
+					"to": "n11"
+				},
+				{
+					"from": "n11",
+					"to": "n12"
+				},
+				{
+					"from": "n12",
+					"to": "n13"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/nodes: 14 nodes, max 12. Draw an overview, then one diagram per sub-flow."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"14 nodes — over the 12-node limit, drawn anyway"
+			],
+			"drawn": {
+				"nodes": 14,
+				"edges": 13,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "thirty-nodes",
+		"why": "Over the HARD ceiling: even a degraded diagram stops at 24.",
+		"input": {
+			"title": "Too much for one picture",
+			"nodes": [
+				{
+					"id": "n0",
+					"label": "Step 1"
+				},
+				{
+					"id": "n1",
+					"label": "Step 2"
+				},
+				{
+					"id": "n2",
+					"label": "Step 3"
+				},
+				{
+					"id": "n3",
+					"label": "Step 4"
+				},
+				{
+					"id": "n4",
+					"label": "Step 5"
+				},
+				{
+					"id": "n5",
+					"label": "Step 6"
+				},
+				{
+					"id": "n6",
+					"label": "Step 7"
+				},
+				{
+					"id": "n7",
+					"label": "Step 8"
+				},
+				{
+					"id": "n8",
+					"label": "Step 9"
+				},
+				{
+					"id": "n9",
+					"label": "Step 10"
+				},
+				{
+					"id": "n10",
+					"label": "Step 11"
+				},
+				{
+					"id": "n11",
+					"label": "Step 12"
+				},
+				{
+					"id": "n12",
+					"label": "Step 13"
+				},
+				{
+					"id": "n13",
+					"label": "Step 14"
+				},
+				{
+					"id": "n14",
+					"label": "Step 15"
+				},
+				{
+					"id": "n15",
+					"label": "Step 16"
+				},
+				{
+					"id": "n16",
+					"label": "Step 17"
+				},
+				{
+					"id": "n17",
+					"label": "Step 18"
+				},
+				{
+					"id": "n18",
+					"label": "Step 19"
+				},
+				{
+					"id": "n19",
+					"label": "Step 20"
+				},
+				{
+					"id": "n20",
+					"label": "Step 21"
+				},
+				{
+					"id": "n21",
+					"label": "Step 22"
+				},
+				{
+					"id": "n22",
+					"label": "Step 23"
+				},
+				{
+					"id": "n23",
+					"label": "Step 24"
+				},
+				{
+					"id": "n24",
+					"label": "Step 25"
+				},
+				{
+					"id": "n25",
+					"label": "Step 26"
+				},
+				{
+					"id": "n26",
+					"label": "Step 27"
+				},
+				{
+					"id": "n27",
+					"label": "Step 28"
+				},
+				{
+					"id": "n28",
+					"label": "Step 29"
+				},
+				{
+					"id": "n29",
+					"label": "Step 30"
+				}
+			],
+			"edges": [
+				{
+					"from": "n0",
+					"to": "n1"
+				},
+				{
+					"from": "n1",
+					"to": "n2"
+				},
+				{
+					"from": "n2",
+					"to": "n3"
+				},
+				{
+					"from": "n3",
+					"to": "n4"
+				},
+				{
+					"from": "n4",
+					"to": "n5"
+				},
+				{
+					"from": "n5",
+					"to": "n6"
+				},
+				{
+					"from": "n6",
+					"to": "n7"
+				},
+				{
+					"from": "n7",
+					"to": "n8"
+				},
+				{
+					"from": "n8",
+					"to": "n9"
+				},
+				{
+					"from": "n9",
+					"to": "n10"
+				},
+				{
+					"from": "n10",
+					"to": "n11"
+				},
+				{
+					"from": "n11",
+					"to": "n12"
+				},
+				{
+					"from": "n12",
+					"to": "n13"
+				},
+				{
+					"from": "n13",
+					"to": "n14"
+				},
+				{
+					"from": "n14",
+					"to": "n15"
+				},
+				{
+					"from": "n15",
+					"to": "n16"
+				},
+				{
+					"from": "n16",
+					"to": "n17"
+				},
+				{
+					"from": "n17",
+					"to": "n18"
+				},
+				{
+					"from": "n18",
+					"to": "n19"
+				},
+				{
+					"from": "n19",
+					"to": "n20"
+				},
+				{
+					"from": "n20",
+					"to": "n21"
+				},
+				{
+					"from": "n21",
+					"to": "n22"
+				},
+				{
+					"from": "n22",
+					"to": "n23"
+				},
+				{
+					"from": "n23",
+					"to": "n24"
+				},
+				{
+					"from": "n24",
+					"to": "n25"
+				},
+				{
+					"from": "n25",
+					"to": "n26"
+				},
+				{
+					"from": "n26",
+					"to": "n27"
+				},
+				{
+					"from": "n27",
+					"to": "n28"
+				},
+				{
+					"from": "n28",
+					"to": "n29"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/nodes: 30 nodes, max 12. Draw an overview, then one diagram per sub-flow."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"6 nodes dropped: malformed or over the limit",
+				"24 nodes — over the 12-node limit, drawn anyway",
+				"6 edges dropped: no valid ends"
+			],
+			"drawn": {
+				"nodes": 24,
+				"edges": 23,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "two-accents",
+		"why": "More than one accent.",
+		"input": {
+			"v": 1,
+			"title": "Jev classifies; your code decides the action",
+			"direction": "right",
+			"nodes": [
+				{
+					"id": "in",
+					"label": "Customer message",
+					"sub": "plus account details",
+					"accent": true
+				},
+				{
+					"id": "jev",
+					"label": "Jev",
+					"sub": "returns probabilities",
+					"accent": true
+				},
+				{
+					"id": "bill",
+					"label": "Route to billing"
+				},
+				{
+					"id": "rev",
+					"label": "Human review"
+				}
+			],
+			"edges": [
+				{
+					"from": "in",
+					"to": "jev"
+				},
+				{
+					"from": "jev",
+					"to": "bill",
+					"label": "0.90 or more"
+				},
+				{
+					"from": "jev",
+					"to": "rev",
+					"label": "under 0.90"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/nodes: 2 nodes have accent=true, max 1 (in, jev). Keep it on the node the title is about."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"1 extra accent removed"
+			],
+			"drawn": {
+				"nodes": 4,
+				"edges": 3,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "groups-three-deep",
+		"why": "Nesting past depth 2.",
+		"input": {
+			"title": "Nested too deep",
+			"groups": [
+				{
+					"id": "a",
+					"label": "Cloud"
+				},
+				{
+					"id": "b",
+					"label": "Region",
+					"parent": "a"
+				},
+				{
+					"id": "c",
+					"label": "Zone",
+					"parent": "b"
+				}
+			],
+			"nodes": [
+				{
+					"id": "x",
+					"label": "VM",
+					"group": "c"
+				},
+				{
+					"id": "y",
+					"label": "LB",
+					"group": "a"
+				}
+			],
+			"edges": [
+				{
+					"from": "y",
+					"to": "x"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/groups/2/parent: nested 3 deep, max 2. Flatten it."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"1 group flattened: nested too deep"
+			],
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 2
+			}
+		}
+	},
+	{
+		"name": "groups-in-a-circle",
+		"why": "a contains b contains a.",
+		"input": {
+			"title": "Groups in a circle",
+			"groups": [
+				{
+					"id": "a",
+					"label": "A",
+					"parent": "b"
+				},
+				{
+					"id": "b",
+					"label": "B",
+					"parent": "a"
+				}
+			],
+			"nodes": [
+				{
+					"id": "x",
+					"label": "X",
+					"group": "a"
+				},
+				{
+					"id": "y",
+					"label": "Y",
+					"group": "b"
+				}
+			],
+			"edges": [
+				{
+					"from": "x",
+					"to": "y"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/groups/0/parent: groups contain each other in a circle (\"a\" → \"b\" → …). Nesting must be a tree.",
+				"/groups/1/parent: groups contain each other in a circle (\"b\" → \"a\" → …). Nesting must be a tree."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"group references that did not resolve were removed"
+			],
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 2
+			}
+		}
+	},
+	{
+		"name": "unknown-group",
+		"why": "A node names a group that was never declared.",
+		"input": {
+			"title": "A group that is not there",
+			"groups": [
+				{
+					"id": "edge",
+					"label": "Edge"
+				}
+			],
+			"nodes": [
+				{
+					"id": "x",
+					"label": "CDN",
+					"group": "edge"
+				},
+				{
+					"id": "y",
+					"label": "API",
+					"group": "backend"
+				}
+			],
+			"edges": [
+				{
+					"from": "x",
+					"to": "y"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/nodes/1/group: unknown group \"backend\". Known groups: edge."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"group references that did not resolve were removed"
+			],
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 1
+			}
+		}
+	},
+	{
+		"name": "no-title",
+		"why": "The takeaway is missing.",
+		"input": {
+			"nodes": [
+				{
+					"id": "a",
+					"label": "A"
+				}
+			],
+			"edges": []
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/title: missing. This field is required."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"no title given"
+			],
+			"drawn": {
+				"nodes": 1,
+				"edges": 0,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "no-nodes",
+		"why": "Nothing to draw.",
+		"input": {
+			"title": "Empty",
+			"nodes": [],
+			"edges": []
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/nodes: 0 nodes, min 1."
+			]
+		},
+		"final": {
+			"status": "failed"
+		}
+	},
+	{
+		"name": "not-json",
+		"why": "Prose where a spec should be.",
+		"input": "I would draw a box that points at another box.",
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/: not valid JSON (no JSON object found). Send one JSON object with \"title\", \"nodes\" and \"edges\"."
+			]
+		},
+		"final": {
+			"status": "failed"
+		}
+	},
+	{
+		"name": "nodes-not-a-list",
+		"why": "A scalar where the node list should be.",
+		"input": {
+			"title": "Wrong type",
+			"nodes": "a, b, c",
+			"edges": []
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/nodes: expected an array, got string."
+			]
+		},
+		"final": {
+			"status": "failed"
+		}
+	},
+	{
+		"name": "future-version",
+		"why": "A spec from a newer editor, read back from a saved session.",
+		"input": {
+			"v": 3,
+			"title": "Jev classifies; your code decides the action",
+			"direction": "right",
+			"nodes": [
+				{
+					"id": "in",
+					"label": "Customer message",
+					"sub": "plus account details"
+				},
+				{
+					"id": "jev",
+					"label": "Jev",
+					"sub": "returns probabilities",
+					"accent": true
+				},
+				{
+					"id": "bill",
+					"label": "Route to billing"
+				},
+				{
+					"id": "rev",
+					"label": "Human review"
+				}
+			],
+			"edges": [
+				{
+					"from": "in",
+					"to": "jev"
+				},
+				{
+					"from": "jev",
+					"to": "bill",
+					"label": "0.90 or more"
+				},
+				{
+					"from": "jev",
+					"to": "rev",
+					"label": "under 0.90"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/v: unknown schema version 3. This editor reads: 1."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"written for schema v3; drawn as v1"
+			],
+			"drawn": {
+				"nodes": 4,
+				"edges": 3,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "hostile-text",
+		"why": "Markup, control characters and a bidi override in labels. They are TEXT: kept as written, minus the invisible ones.",
+		"input": {
+			"title": "<script>alert(1)</script>",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "\"><img src=x onerror=alert(1)>"
+				},
+				{
+					"id": "b",
+					"label": "safe‮gnp.exe",
+					"sub": "bell\u0007 and ​zero width"
+				}
+			],
+			"edges": [
+				{
+					"from": "a",
+					"to": "b",
+					"label": "</text><script>"
+				}
+			]
+		},
+		"first": {
+			"status": "fixed",
+			"shown": [
+				"/nodes/0/label: 30 chars, max 28 — shortened to \"\\\"><img src=x onerror=alert…\" (the full text is kept as a tooltip)."
+			]
+		},
+		"final": {
+			"status": "fixed",
+			"notes": [
+				"1 label shortened"
+			],
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "links-three-ways",
+		"why": "A link as an object, as path:line, as path#symbol.",
+		"input": {
+			"title": "Links",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "Agent",
+					"link": {
+						"path": "agent.js",
+						"symbol": "runAgent"
+					}
+				},
+				{
+					"id": "b",
+					"label": "Loop",
+					"link": "agent.js:890"
+				},
+				{
+					"id": "c",
+					"label": "Tool",
+					"link": "agent.js#runTool"
+				},
+				{
+					"id": "d",
+					"label": "File",
+					"file": "file:///etc/passwd"
+				}
+			],
+			"edges": [
+				{
+					"from": "a",
+					"to": "b"
+				},
+				{
+					"from": "b",
+					"to": "c"
+				},
+				{
+					"from": "c",
+					"to": "d"
+				}
+			]
+		},
+		"first": {
+			"status": "ok"
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 4,
+				"edges": 3,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "prototype-keys",
+		"why": "A spec that tries to reach Object.prototype.",
+		"input": "{\"title\":\"Proto\",\"__proto__\":{\"polluted\":true},\"constructor\":{\"prototype\":{\"polluted\":true}},\"nodes\":[{\"id\":\"a\",\"label\":\"A\",\"__proto__\":{\"x\":1}}],\"edges\":[]}",
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"stringified",
+				"unknown-field"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 1,
+				"edges": 0,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "self-loop-and-back-edge",
+		"why": "A state machine: a retry loop and an edge back to the start.",
+		"input": {
+			"title": "Retries stay inside the worker",
+			"nodes": [
+				{
+					"id": "q",
+					"label": "Queued"
+				},
+				{
+					"id": "run",
+					"label": "Running",
+					"accent": true
+				},
+				{
+					"id": "ok",
+					"label": "Done"
+				}
+			],
+			"edges": [
+				{
+					"from": "q",
+					"to": "run"
+				},
+				{
+					"from": "run",
+					"to": "run",
+					"label": "retry"
+				},
+				{
+					"from": "run",
+					"to": "ok"
+				},
+				{
+					"from": "ok",
+					"to": "q",
+					"label": "reschedule",
+					"style": "dashed"
+				}
+			]
+		},
+		"first": {
+			"status": "ok"
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 3,
+				"edges": 4,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "edge-to-nowhere-and-missing-end",
+		"why": "One edge names a node that does not exist; another has no \"to\".",
+		"input": {
+			"title": "Edges that lead nowhere",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "A"
+				},
+				{
+					"id": "b",
+					"label": "B"
+				}
+			],
+			"edges": [
+				{
+					"from": "a",
+					"to": "b"
+				},
+				{
+					"from": "a",
+					"to": "c"
+				},
+				{
+					"from": "b"
+				}
+			]
+		},
+		"first": {
+			"status": "errors",
+			"errors": [
+				"/edges/2/to: missing. This field is required.",
+				"/edges/1/to: unknown node \"c\". Known ids: a, b."
+			]
+		},
+		"final": {
+			"status": "degraded",
+			"notes": [
+				"1 edge dropped: unknown nodes",
+				"1 edge dropped: no valid ends"
+			],
+			"drawn": {
+				"nodes": 2,
+				"edges": 1,
+				"groups": 0
+			}
+		}
+	},
+	{
+		"name": "empty-group",
+		"why": "A declared group with nothing in it is simply not drawn.",
+		"input": {
+			"title": "An empty container",
+			"groups": [
+				{
+					"id": "used",
+					"label": "Used"
+				},
+				{
+					"id": "unused",
+					"label": "Unused"
+				}
+			],
+			"nodes": [
+				{
+					"id": "a",
+					"label": "A",
+					"group": "used"
+				}
+			],
+			"edges": []
+		},
+		"first": {
+			"status": "ok",
+			"tidied": [
+				"empty-group"
+			]
+		},
+		"final": {
+			"status": "ok",
+			"drawn": {
+				"nodes": 1,
+				"edges": 0,
+				"groups": 1
+			}
+		}
+	}
+]

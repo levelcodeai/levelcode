@@ -179,7 +179,9 @@ test('MEMORY (enrichment): a cheap-lane model call refines the journal outcome w
 test('MEMORY (recall): a recall_sessions agent tool searches past-session outcomes on demand', () => {
 	const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8');
 	assert.match(agentSrc, /name: 'recall_sessions'/, 'the tool schema exists');
-	assert.match(agentSrc, /if \(ctx\.recallSessions\) \{ tools = tools\.concat\(\[RECALL_TOOL\]\)/, 'offered ONLY when the host wires it (host-gated)');
+	// (recall is one of the run's host-gated `extras` since rich diagrams added two more;
+	//  test/diagramAgent.test.js runs the loop and checks the tool list that is actually sent)
+	assert.match(agentSrc, /if \(ctx\.recallSessions\) \{ extras\.push\(RECALL_TOOL\); \}/, 'offered ONLY when the host wires it (host-gated)');
 	assert.match(agentSrc, /tu\.name === 'recall_sessions'/, 'and dispatched to ctx.recallSessions');
 	assert.match(ext, /function recallSessionsTool/, 'extension.js provides the recall callback');
 	assert.match(ext, /recallSessions: \(aiConfig\(\)\.get\('sessions\.memory\.enabled'.*recallTool/, 'gated by enabled + recallTool');
@@ -290,7 +292,10 @@ test('ACTIONS: below the label threshold the buttons fall back to an ICON, not t
 });
 
 test('EXPORT: the body is scrubbed on the way out, and the save-dialog filename is redacted too', () => {
-	assert.match(ext, /toMarkdown\(entry, m\.transcript\(id\), \{ redact: sessionMemory\.redactSecrets \}\)/, 'the exported body is scrubbed');
+	// The options object grew (an export now carries the session's diagrams); what is pinned is that
+	// the scrub is still the first thing handed to toMarkdown. That a DIAGRAM's text is scrubbed too
+	// is exercised, not pattern-matched, in test/diagramSession.test.js.
+	assert.match(ext, /toMarkdown\(entry, m\.transcript\(id\), \{\s*redact: sessionMemory\.redactSecrets\b/, 'the exported body is scrubbed');
 	assert.match(ext, /redactSecrets\(String\(entry\.title[\s\S]{0,140}stem/, 'and the default filename is redacted BEFORE the save path (a title token cannot leak into the dialog)');
 });
 

@@ -194,9 +194,10 @@ function fromOpenAIFinishReason(reason) {
  * Fold one streamed delta.tool_calls[] fragment array into an accumulator keyed by tool-call index.
  * OpenAI sends id + function.name only on the FIRST fragment per index, then incremental
  * function.arguments string fragments. `acc` is a sparse array indexed by tool-call index.
- * onNew(name) fires the first time an index gains a name (drives onToolStart). Mutates + returns acc.
+ * onNew(name, id) fires the first time an index gains a name (drives onToolStart); onArgs(id, name,
+ * argsSoFar) fires whenever an index's arguments grow (drives onToolInput). Mutates + returns acc.
  */
-function accumulateToolCalls(acc, deltaToolCalls, onNew) {
+function accumulateToolCalls(acc, deltaToolCalls, onNew, onArgs) {
 	for (const tc of (deltaToolCalls || [])) {
 		if (!tc) { continue; }
 		const i = (tc.index != null) ? tc.index : acc.length;
@@ -204,8 +205,11 @@ function accumulateToolCalls(acc, deltaToolCalls, onNew) {
 		if (!slot) { slot = acc[i] = { id: tc.id || '', name: '', args: '' }; }
 		if (tc.id && !slot.id) { slot.id = tc.id; }
 		const fn = tc.function || {};
-		if (fn.name && !slot.name) { slot.name = fn.name; if (onNew) { onNew(fn.name); } }
-		if (typeof fn.arguments === 'string') { slot.args += fn.arguments; }
+		if (fn.name && !slot.name) { slot.name = fn.name; if (onNew) { onNew(fn.name, slot.id); } }
+		if (typeof fn.arguments === 'string') {
+			slot.args += fn.arguments;
+			if (onArgs && fn.arguments && slot.name) { onArgs(slot.id, slot.name, slot.args); }
+		}
 	}
 	return acc;
 }
@@ -216,10 +220,12 @@ function accumulateToolCalls(acc, deltaToolCalls, onNew) {
  * provider-agnostic. Truncated/invalid tool arguments → input:{} and the id is added to `malformed`
  * (the caller answers it with a "retry smaller" error instead of executing it). Empty args (a tool
  * with no inputs) → input:{} and is NOT malformed.
- * @returns {{content:any[], malformed:Set<string>}}
+ * `raw` carries the argument text of each malformed call by id — see anthropic.finalizeAgentBlocks.
+ * @returns {{content:any[], malformed:Set<string>, raw:Map<string,string>}}
  */
 function finalizeOpenAIBlocks(text, acc) {
 	const malformed = new Set();
+	const rawArgs = new Map();
 	const content = [];
 	if (text) { content.push({ type: 'text', text: text }); }
 	let n = 0;
@@ -240,12 +246,12 @@ function finalizeOpenAIBlocks(text, acc) {
 			try {
 				const parsed = JSON.parse(raw);
 				if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) { input = parsed; }
-				else { input = {}; malformed.add(id); }            // valid JSON but not an args object
-			} catch { input = {}; malformed.add(id); }             // truncated / corrupt partial JSON
+				else { input = {}; malformed.add(id); rawArgs.set(id, raw); }            // valid JSON but not an args object
+			} catch { input = {}; malformed.add(id); rawArgs.set(id, raw); }             // truncated / corrupt partial JSON
 		}
 		content.push({ type: 'tool_use', id: id, name: slot.name || '', input: input });
 	}
-	return { content, malformed };
+	return { content, malformed, raw: rawArgs };
 }
 
 module.exports = {

@@ -164,6 +164,26 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
 - `aiEdit.js` — **edit-with-diff**: select code → `Cmd+Alt+E` → instruction → side-by-side diff → ✓ Keep / ✗ Discard
   buttons on the diff toolbar (gated on `levelcode.ai.diffActive`).
 - `inlineReview.js` — **dead code** (an inline per-hunk Keep/Undo attempt that was reverted; nothing imports it).
+- `diagram/` — **rich diagrams, phase 1** (`docs/RICH-DIAGRAMS.md`). The agent calls a `render_diagram` tool with
+  STRUCTURE only (nodes, edges, groups, one accent — never coordinates or colours); the editor validates it, lays it
+  out in one house style and paints it in the chat, themed, with nodes that link to code. Graph JSON only — Mermaid,
+  Vega-Lite and raw SVG are later phases and are **not built**. Not yet run in the packaged editor or against a live
+  model; the eval (`scripts/diagram-eval.js`) exists and has not been run.
+  - Shared UMD modules (`theme` `schema` `validate` `repair` `layout` `scene` `text` `ascii`) run in Node AND are
+    inlined into `chat.html` by `diagram/bundle.js` under the page's existing nonce — the CSP is unchanged. Host-only:
+    `tool` (tool + prompt block + result text), `service` (ids, the one repair pass, records, stubs), `links`,
+    `exportCheck`, `stats`.
+  - Repair ladder: lossless auto-fix → every error back to the model ONCE → degrade with a banner, or source + Retry.
+    Never a blank card, never a second automatic repair. Records are stored in the session log and re-validated (not
+    re-repaired) on reopen, by the host and by the page.
+  - Layout is in-house (layered + orthogonal routing), **not ELK** (EPL-2.0, ~1.5 MB, no build step here);
+    `layout.layout()` is the one swap point. The validator is a small JSON-Schema-subset interpreter, not Ajv.
+  - Gated per run by `client.render` (`rich`|`ascii`): off via `levelcode.ai.diagrams.enabled`, or per model with
+    `diagrams: false` in `providers/catalog.js` `CAPS`. Costs ~970 tokens of tool + prompt per request while on.
+  - Checks: `test/diagram*.test.js` (in the gate), `scripts/diagram-browser-check.js` (real page in headless Chrome,
+    not in the gate), `scripts/diagram-editor-check.js` (the REAL editor: a throwaway instance of the dev build with
+    this checkout's extension and a stand-in provider), `scripts/diagram-eval.js --dry-run`. Local counters: command
+    `AI: Diagram Statistics`.
 
 ## Deferred / known limits (don't waste time re-hitting these)
 
@@ -189,4 +209,13 @@ big-file mode badge. Files: extension.js + fileOps/lineOps/columnOps/encodingEol
 - `// @ts-check` + JSDoc at top of JS files.
 - Test JS logic with `node --check` and small unit snippets before wiring into the editor.
 - After any change, `./scripts/run-dev.sh` to verify; package with `./scripts/build-macos.sh`.
+- `run-dev.sh` runs the extensions of the checkout that HAS `vscode/`. A git worktree has none, so work in a worktree
+  is not in the editor until you load it: `./scripts/run-dev.sh --extensionDevelopmentPath=<worktree>/extensions/levelcode-ai`
+  (from the main checkout; the dev extension replaces the built-in one). Uncommitted work is not "on the branch" —
+  checking the branch out somewhere else gets none of it. Run it in the editor before telling anyone to try it.
 - Commit `extensions/`, `patches/`, `branding/`, `scripts/`, `docs/`, `PLAN.md`, `CLAUDE.md`. Never commit `vscode/`.
+- `extensions/levelcode-ai/diagram/` modules listed in `bundle.FILES` are pasted INTO a script block in `chat.html`.
+  They must never contain the text of a script tag or an HTML comment opener — not even in a comment — or the block
+  ends early; `bundle.js` refuses to build if one does. Keep them dependency-free and free of `require('vscode')`/`fs`.
+- Host suites slice functions out of `extension.js` with a brace matcher (`extract()` in `test/*Host.test.js`). It
+  does not understand a backtick inside a regex literal: write `String.fromCharCode(96)` there instead.

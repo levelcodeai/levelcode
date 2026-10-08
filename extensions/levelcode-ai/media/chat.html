@@ -1402,6 +1402,83 @@
   .sesscard.pinned [data-act="pin"] { color: var(--cc-accent); border-color: color-mix(in srgb, var(--cc-accent) 45%, var(--cc-line)); }
   .sesscard .ci { width: 14px; height: 14px; }
   @media (prefers-reduced-motion: reduce) { .sesscard { transition: none; } .sesscard:hover, .sesscard:focus-visible, .sesscard:focus-within { transform: none; } }
+  /* ---- rich diagrams (docs/RICH-DIAGRAMS.md) ---------------------------------------------------
+     Two layers, kept apart on purpose.
+     INSIDE the picture: every rule comes from diagram/theme.js — the one module that owns the house
+     style — and is injected over the placeholder below when the page is built. Colours there are
+     editor theme tokens, so switching theme restyles a diagram already on screen; nothing is baked in.
+     AROUND the picture: the card chrome that follows (title, badge, banner, toolbar, placeholder,
+     full-size view). That part is ordinary chat UI and uses the same variables as everything else. */
+  /*__LCD_CSS__*/
+  .lcd { margin: 6px 0 2px; padding: 0; min-width: 0; }
+  .lcd-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; margin: 0 0 8px; }
+  /* "Title: rendered above the diagram, left-aligned" — and at the title size of the type scale. */
+  .lcd-title-text { font-size: 15px; font-weight: 600; line-height: 20px; color: var(--vscode-foreground); text-wrap: balance; }
+  .lcd-badge {
+    cursor: pointer; font: inherit; font-size: 10.5px; line-height: 1.5; padding: 0 7px; white-space: nowrap;
+    border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--muted);
+  }
+  .lcd-badge:hover, .lcd-badge[aria-expanded="true"] { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
+  .lcd-badge:focus-visible, .lcd-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .lcd-pop { margin: 0 0 8px; padding: 6px 9px; font-size: 11.5px; line-height: 1.5; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; }
+  .lcd-pop[hidden] { display: none; }
+  .lcd-pop div + div { margin-top: 3px; }
+  /* A degraded diagram says what it lost — in the same warning voice the composer uses. */
+  .lcd-banner {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 8px; padding: 5px 8px;
+    font-size: 11.5px; line-height: 1.45; border-radius: 6px;
+    color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+    background: var(--vscode-inputValidation-warningBackground, rgba(224,160,48,.14));
+    border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(224,160,48,.45));
+  }
+  .lcd-banner-text { flex: 1 1 12em; min-width: 0; }
+  /* A click on the picture opens it full size — a shortcut for the pointer only. The picture itself is
+     not a control (its linked nodes are, and a control inside a control is nobody's to announce); the
+     toolbar's "Full size" button is the way in for the keyboard and for a screen reader. */
+  .lcd-stage { cursor: zoom-in; border-radius: 8px; }
+  /* "Never wider than the chat column": the picture is laid out to fit, and scales down if the column narrows. */
+  .lcd-stage svg { display: block; max-width: 100%; height: auto; }
+  .lcd-btn {
+    cursor: pointer; font: inherit; font-size: 11px; line-height: 1.4; padding: 2px 8px;
+    border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--muted);
+    transition: color .12s, background .12s;
+  }
+  .lcd-btn:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); }
+  .lcd-btn.done { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); border-color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  .lcd-banner .lcd-btn { color: inherit; border-color: currentColor; opacity: .85; }
+  .lcd-banner .lcd-btn:hover { opacity: 1; }
+  /* The toolbar is revealed on hover or keyboard focus, like the Copy button under an answer. */
+  .lcd-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; opacity: 0; transition: opacity .12s; }
+  .lcd:hover .lcd-tools, .lcd:focus-within .lcd-tools { opacity: 1; }
+  @media (hover: none) { .lcd-tools { opacity: 1; } }
+  /* The placeholder that holds a diagram's place while its spec streams in. */
+  .lcd-pending .lcd-title-text { color: var(--muted); }
+  .lcd-skel {
+    display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 14px;
+    border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); font-size: 11.5px;
+  }
+  .lcd-skel-bar {
+    flex: 0 0 72px; height: 3px; border-radius: 2px;
+    background: linear-gradient(90deg, rgba(127,127,127,.14) 25%, rgba(127,127,127,.42) 37%, rgba(127,127,127,.14) 63%);
+    background-size: 300% 100%; animation: imgskel 1.1s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .lcd-skel-bar { animation: none; } .lcd-tools, .lcd-btn { transition: none; } }
+  /* The fallbacks: an ASCII drawing when the picture cannot be rendered, the source when nothing can. */
+  .lcd-ascii pre, .lcd-source pre { overflow-x: auto; white-space: pre; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 12px; line-height: 1.25; }
+  .lcd-errors { margin: 0 0 8px; padding-left: 18px; font-size: 11.5px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+  .lcd-source summary { cursor: pointer; font-size: 11.5px; color: var(--muted); margin-bottom: 6px; }
+  /* The text outline a screen reader gets. Out of sight, never out of the accessibility tree —
+     the same treatment, and the same reason, as `.msg .role`. */
+  .lcd-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  /* Full-size view: zoom, pan, fit. */
+  #lcdZoom { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: var(--vscode-editor-background, #1e1e1e); }
+  #lcdZoom[hidden] { display: none; }
+  .lcdz-bar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .lcdz-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .lcdz-sp { flex: 1; }
+  .lcdz-view { flex: 1; position: relative; overflow: hidden; cursor: grab; touch-action: none; }
+  .lcdz-view.dragging { cursor: grabbing; }
+  .lcdz-view svg { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
 </style>
 </head>
 <body>
@@ -1444,6 +1521,18 @@
   <div id="workbar" hidden role="status" aria-live="polite"><span class="wspin" aria-hidden="true"></span><span class="wtext shimmer">Working…</span></div>
 
   <div id="imgzoom" hidden role="dialog" aria-modal="true" aria-label="Attached image"><img alt=""></div>
+
+  <div id="lcdZoom" hidden role="dialog" aria-modal="true" aria-label="Diagram, full size">
+    <div class="lcdz-bar">
+      <span class="lcdz-title"></span><span class="lcdz-sp"></span>
+      <button class="lcd-btn" type="button" data-z="out" title="Zoom out (−)" aria-label="Zoom out">&minus;</button>
+      <button class="lcd-btn" type="button" data-z="in" title="Zoom in (+)" aria-label="Zoom in">+</button>
+      <button class="lcd-btn" type="button" data-z="fit" title="Fit to the window (0)">Fit</button>
+      <button class="lcd-btn" type="button" data-z="one" title="Actual size (1)">100%</button>
+      <button class="lcd-btn" type="button" data-z="close" title="Close (Esc)" aria-label="Close">&#10005;</button>
+    </div>
+    <div class="lcdz-view lcd"></div>
+  </div>
 
   <div id="composer">
     <div id="chips"></div>
@@ -1541,6 +1630,10 @@
     </div>
   </div>
 
+<!-- Rich diagrams: the host's own diagram modules (extensions/levelcode-ai/diagram/*.js), inlined when the
+     page is built. Same nonce, same CSP, nothing fetched. If this block is empty the chat shows a
+     diagram's source instead of a picture. -->
+<script nonce="__NONCE__">/*__LCD_JS__*/</script>
 <script nonce="__NONCE__">
   const vscode = acquireVsCodeApi();
   window.onerror = function(msg){
@@ -1841,14 +1934,35 @@
     s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
     return s;
   }
+  // The runs of backticks on one line: [{ at, len }], left to right.
+  function tickRuns(line){
+    const runs = []; let i = 0;
+    while (i < line.length){
+      if (line[i] !== TICK){ i++; continue; }
+      let j = i; while (j < line.length && line[j] === TICK){ j++; }
+      runs.push({ at: i, len: j - i }); i = j;
+    }
+    return runs;
+  }
   // Split text into inline-code spans (escaped, never formatted) and formatted text — no sentinels.
+  // A run of N backticks opens a span that the next run of exactly N closes, on the same line — which
+  // is how three backticks are quoted (inside four). A run with no partner is just backticks.
   function mdInline(text){
-    const re = new RegExp(TICK + '([^' + TICK + '\\n]+)' + TICK, 'g');
-    let out = '', last = 0, m;
-    while ((m = re.exec(text))){
-      const code = m[1], rel = resolveFile(code.trim());
-      out += mdFmt(text.slice(last, m.index)) + (rel ? fileLinkChip(rel, esc(code)) : '<code>' + esc(code) + '</code>');
-      last = m.index + m[0].length;
+    let out = '', last = 0, lineAt = 0;
+    for (const line of String(text).split('\n')){
+      const runs = tickRuns(line);
+      for (let a = 0; a < runs.length; a++){
+        let b = a + 1; while (b < runs.length && runs[b].len !== runs[a].len){ b++; }
+        if (b >= runs.length){ continue; }
+        const open = lineAt + runs[a].at, from = open + runs[a].len, to = lineAt + runs[b].at;
+        let code = text.slice(from, to);
+        // Padding that exists only to keep the content's own backticks off the delimiters is not content.
+        if (runs[a].len > 1 && code.length > 2 && code[0] === ' ' && code[code.length - 1] === ' ' && code.trim()){ code = code.slice(1, -1); }
+        const rel = resolveFile(code.trim());
+        out += mdFmt(text.slice(last, open)) + (rel ? fileLinkChip(rel, esc(code)) : '<code>' + esc(code) + '</code>');
+        last = to + runs[b].len; a = b;
+      }
+      lineAt += line.length + 1;
     }
     return out + mdFmt(text.slice(last));
   }
@@ -1899,28 +2013,72 @@
     }
     return html;
   }
-  function render(md){
-    const parts = String(md == null ? '' : md).split(FENCE);
-    let out = '';
-    for (let i = 0; i < parts.length; i++){
-      if (i % 2 === 1){
-        const body = parts[i].replace(/^[a-zA-Z0-9_+-]*\n/, '');
-        out += '<pre><code>' + highlight(body) + '</code></pre>';
+  // ---- Fenced code ----
+  // A fence is a LINE: indentation, three or more backticks, a language (or anything else without a
+  // backtick in it), and the end of the line. Three backticks in the middle of a sentence are text —
+  // usually one half of an inline span quoting a fence — and reading them as a fence used to turn the
+  // rest of the paragraph into a code block and, while it streamed, freeze it one fragment per line.
+  const FENCE_LINE = new RegExp('^[ \\t]*(' + TICK + '{3,})([^' + TICK + ']*)$');
+  // Tolerated, because models do it: a fence stuck to the END of a line of prose ("Run: ```bash").
+  // Only when nothing but a one-word language follows it, and it is not closing an inline span.
+  const FENCE_TAIL = new RegExp('^[ \\t]*[A-Za-z0-9_+.#-]*[ \\t]*$');
+  // The end of a block: a run at least as long as the one that opened it, with nothing after it.
+  const FENCE_END = new RegExp('(' + TICK + '{3,})[ \\t]*$');
+  /**
+   * Text as prose and code: [{ code: false, text } | { code: true, text, closed, end }]. `end` is the
+   * offset just past a closed block's last line, set only once that line has its newline — until
+   * then more could still arrive on it, so the block is not finished.
+   */
+  function mdSegments(src){
+    const text = String(src == null ? '' : src);
+    const out = []; let proseFrom = 0, pos = 0, open = null;
+    while (pos < text.length){
+      const nl = text.indexOf('\n', pos), lineEnd = nl < 0 ? text.length : nl, next = nl < 0 ? text.length : nl + 1;
+      const line = text.slice(pos, lineEnd);
+      if (!open){
+        let at = -1, ticks = 0;
+        const whole = FENCE_LINE.exec(line);
+        if (whole){ at = pos; ticks = whole[1].length; }
+        else if (line.indexOf(FENCE) >= 0){
+          const runs = tickRuns(line), last = runs[runs.length - 1];
+          // the last run on the line, if it pairs with nothing before it (a pair is an inline span)
+          let paired = false;
+          for (let a = 0; a < runs.length - 1 && !paired; a++){
+            let b = a + 1; while (b < runs.length && runs[b].len !== runs[a].len){ b++; }
+            if (b < runs.length){ if (b === runs.length - 1){ paired = true; } a = b; }
+          }
+          if (last.len >= 3 && !paired && FENCE_TAIL.test(line.slice(last.at + last.len))){ at = pos + last.at; ticks = last.len; }
+        }
+        if (at >= 0){
+          if (at > proseFrom){ out.push({ code: false, text: text.slice(proseFrom, at) }); }
+          open = { ticks: ticks, bodyFrom: next };
+        }
       } else {
-        out += mdBlocks(parts[i]);
+        const m = FENCE_END.exec(line);
+        if (m && m[1].length >= open.ticks){
+          out.push({ code: true, text: text.slice(open.bodyFrom, pos + m.index), closed: true, end: nl < 0 ? -1 : next });
+          open = null; proseFrom = next;
+        }
       }
+      pos = next;
+    }
+    if (open){ out.push({ code: true, text: text.slice(Math.min(open.bodyFrom, text.length)), closed: false, end: -1 }); }
+    else if (proseFrom < text.length){ out.push({ code: false, text: text.slice(proseFrom) }); }
+    return out;
+  }
+  function render(md){
+    let out = '';
+    for (const seg of mdSegments(md)){
+      out += seg.code ? '<pre><code>' + highlight(seg.text) + '</code></pre>' : mdBlocks(seg.text);
     }
     return out;
   }
-  // Index just past the last fully-closed code block. Everything before it is stable forever.
+  // Index just past the last FINISHED code block. Everything before it is stable forever — and
+  // nothing else is: text after a block stays live until the next block finishes.
   function lastStableIndex(text){
-    const pos = []; let p = text.indexOf(FENCE);
-    while (p >= 0){ pos.push(p); p = text.indexOf(FENCE, p + 3); }
-    const stableFences = pos.length - (pos.length % 2);
-    if (stableFences === 0) { return 0; }
-    const end = pos[stableFences - 1] + 3;
-    const nl = text.indexOf('\n', end);
-    return nl >= 0 ? nl + 1 : text.length;
+    let stable = 0;
+    for (const seg of mdSegments(text)){ if (seg.code && seg.closed && seg.end > stable){ stable = seg.end; } }
+    return stable;
   }
   // A streaming renderer: completed code/diff blocks are FROZEN into immutable child nodes
   // (never re-rendered), so later-streamed text can never truncate or corrupt them.
@@ -4112,6 +4270,8 @@
     log.appendChild(banner);
     turnLabeled = false;
     for (const t of (Array.isArray(m.turns) ? m.turns : [])){
+      // A diagram comes back as the record that was stored — drawn again, never repaired again.
+      if (t.role === 'diagram'){ lcdShow({ key: t.key, record: t.record }); continue; }
       add(t.role, t.role === 'user' ? esc(t.text) : render(t.text));
     }
     forceStick();
@@ -4135,6 +4295,415 @@
     }); }
     document.addEventListener('keydown', (e) => { const o = document.getElementById('sessOverlay'); if (e.key === 'Escape' && o && o.style.display !== 'none'){ e.preventDefault(); closeSessions(); } });
   })();
+
+
+  // ── Rich diagrams (docs/RICH-DIAGRAMS.md) ────────────────────────────────────────────────────────
+  // The host validates a spec and posts the record; this draws it. Layout and painting are the host's
+  // own modules (the files under diagram/, inlined above as LCDiagram) — the chat adds the two things only it
+  // has: the real font to measure text with, and the live theme to paint with.
+  //
+  // SAFETY, in one place: a label reaches the page through LCDiagram.scene.mount(), which creates
+  // SVG elements from a fixed allow-list and sets text with textContent. The card chrome below is
+  // built with createElement + textContent too. Nothing from a spec is ever assigned to innerHTML.
+  const LCD = window.LCDiagram || null;   // null if the modules did not load → the host's text version is shown instead
+  // tool-call key → the card that shows (or will show) that diagram. The key is whatever the provider
+  // called its tool call, so the table inherits nothing: `constructor` and `__proto__` are just keys.
+  const lcdCards = Object.create(null);
+  let lcdSeq = 0;
+  const lcdCtx = (function(){ try { return document.createElement('canvas').getContext('2d'); } catch (e) { return null; } })();
+  function lcdFont(){ try { return getComputedStyle(document.body).fontFamily || 'sans-serif'; } catch (e) { return 'sans-serif'; } }
+  /** Text width in the diagram's own type. "Width from the MEASURED longest line plus 24." */
+  function lcdMeasure(text, role){
+    const T = LCD.theme.TYPE[role] || LCD.theme.TYPE.sub;
+    if (lcdCtx){
+      lcdCtx.font = T.weight + ' ' + T.size + 'px ' + lcdFont();
+      // A font string the canvas cannot parse leaves it on its previous font — measuring with that
+      // would size every box for the wrong type. Only trust the canvas if it took the size we asked for.
+      if (String(lcdCtx.font).indexOf(T.size + 'px') >= 0){ return Math.ceil(lcdCtx.measureText(String(text)).width * 10) / 10 + 0.6; }
+    }
+    return LCD.theme.approxMeasure(text, role);
+  }
+  function lcdEl(tag, cls, text){ const e = document.createElement(tag); if (cls){ e.className = cls; } if (text != null){ e.textContent = text; } return e; }
+  function lcdBtn(label, title, fn){ const b = lcdEl('button', 'lcd-btn', label); b.type = 'button'; if (title){ b.title = title; } b.onclick = fn; return b; }
+  function lcdFlash(btn, label){ const was = btn.textContent; btn.textContent = label; btn.classList.add('done'); setTimeout(function(){ btn.textContent = was; btn.classList.remove('done'); }, 1200); }
+  function lcdAct(id, action, extra){ vscode.postMessage(Object.assign({ type: 'diagramAction', action: action, id: id }, extra || {})); }
+  /** How many characters of the fallback's monospaced block fit across the card (it is set in 12px). */
+  function lcdCols(card){
+    let cw = 7.3;
+    try {
+      if (lcdCtx){
+        lcdCtx.font = '12px ' + (getComputedStyle(document.body).getPropertyValue('--vscode-editor-font-family') || 'monospace');
+        const w = lcdCtx.measureText('0000000000').width / 10;
+        if (String(lcdCtx.font).indexOf('12px') >= 0 && w > 3 && w < 20){ cw = w; }
+      }
+    } catch (e) { /* keep the estimate */ }
+    return Math.max(40, Math.min(200, Math.floor((lcdAvail(card) - 30) / cw)));
+  }
+  /** How wide the picture may be: the card's own column. */
+  function lcdAvail(card){ const w = card.clientWidth || (log.clientWidth - 48); return w > 0 ? Math.max(240, Math.floor(w)) : 0; }
+  /** A new card, in the assistant's own column, at the point in the answer the model reached. */
+  function lcdHost(key){
+    finishAgentBubble();
+    const body = add('assistant', '');
+    const card = lcdEl('figure', 'lcd');
+    card.dataset.key = key;
+    body.appendChild(card);
+    lcdCards[key] = card;
+    return card;
+  }
+  /** The placeholder: holds the diagram's place from the moment the model starts writing its spec. */
+  function lcdPending(m){
+    if (!m || !m.key){ return; }
+    let card = lcdCards[m.key];
+    if (card && !card.isConnected){ card = null; }
+    if (!card){
+      // The model's repair call takes over the placeholder of the diagram it is repairing.
+      const waiting = Object.keys(lcdCards).map(function(k){ return lcdCards[k]; }).find(function(c){ return c.isConnected && c.dataset.state === 'repairing'; });
+      if (waiting){ card = waiting; lcdCards[m.key] = card; } else { card = lcdHost(m.key); }
+    }
+    if (card.dataset.id){ return; }   // already drawn: a late placeholder must never blank a picture
+    const repairing = m.state === 'repairing' || card.dataset.state === 'repairing';
+    const title = m.title || card.dataset.title || '';
+    card.className = 'lcd lcd-pending';
+    card.dataset.state = repairing ? 'repairing' : 'drawing';
+    card.dataset.title = title;
+    card.setAttribute('role', 'status'); card.setAttribute('aria-live', 'polite');
+    card.textContent = '';
+    const head = lcdEl('div', 'lcd-head'); head.appendChild(lcdEl('span', 'lcd-title-text', title || 'Diagram')); card.appendChild(head);
+    const skel = lcdEl('div', 'lcd-skel');
+    const bar = lcdEl('span', 'lcd-skel-bar'); bar.setAttribute('aria-hidden', 'true'); skel.appendChild(bar);
+    skel.appendChild(lcdEl('span', 'lcd-skel-text', repairing ? 'Fixing the diagram…' : 'Drawing…'));
+    card.appendChild(skel);
+    scrollIfStuck();
+  }
+  /** Take a card out of the transcript — and the bubble that held it, if nothing else is in it. */
+  function lcdDrop(card){
+    const body = card.parentElement, msg = body && body.parentElement;
+    card.remove();
+    Object.keys(lcdCards).forEach(function(k){ if (lcdCards[k] === card){ delete lcdCards[k]; } });
+    if (body && !body.childElementCount && !body.textContent.trim() && msg && msg.classList.contains('msg')){ msg.remove(); }
+  }
+  /**
+   * A finished record from the host: fill the placeholder that was waiting for it, or make a card.
+   * One diagram, one card — the same cards a reopened session shows (sessionEvents.toDisplayTurns).
+   * A record has a claim on a card that is still a placeholder, or that shows the drawing it replaces,
+   * and on no card that shows a different diagram.
+   */
+  function lcdShow(m){
+    const record = m && m.record; if (!record || !record.id){ return; }
+    const key = m.key || record.key || record.id;
+    const there = function(c){ return c && c.isConnected ? c : null; };
+    const takes = function(c){ return !!c && (!c.dataset.id || c.dataset.id === record.id || c.dataset.id === String(record.replaces || '')); };
+    let card = there(lcdCards[key]);
+    const old = m.replacesKey ? there(lcdCards[m.replacesKey]) : null;
+    // The placeholder this call took over when it began may have been filled since: the host settled
+    // the diagram it was holding a place for, and this is a different one. That one keeps its card.
+    if (!takes(card)){ card = null; }
+    // A repair is drawn where the failed attempt was waiting. A redraw stands where the model drew it
+    // again, and the earlier drawing goes — as it does when the chat is reopened.
+    if (!card && old && !old.dataset.id){ card = old; }
+    if (!card){ card = lcdHost(key); }
+    if (old && old !== card && takes(old)){ lcdDrop(old); }
+    lcdCards[key] = card;
+    lcdDraw(card, record, false);
+    scrollIfStuck();
+  }
+  /** A details list that a badge or a banner button opens. */
+  function lcdPop(lines){
+    const pop = lcdEl('div', 'lcd-pop'); pop.hidden = true;
+    lines.forEach(function(l){ pop.appendChild(lcdEl('div', '', l)); });
+    return pop;
+  }
+  function lcdToggle(btn, pop){ btn.setAttribute('aria-expanded', 'false'); btn.onclick = function(){ pop.hidden = !pop.hidden; btn.setAttribute('aria-expanded', String(!pop.hidden)); }; }
+  function lcdDraw(card, record, quiet){
+    card.className = 'lcd'; card.textContent = '';
+    card.dataset.id = record.id; card.dataset.status = record.status;
+    delete card.dataset.state; card.removeAttribute('aria-live'); card.setAttribute('role', 'group');
+    card._record = record; card._spec = null; card._geo = null;
+    let spec = null, late = [];
+    if (record.spec && LCD){
+      // The renderer's own last check: whatever sent this record, nothing reaches layout unvalidated.
+      try { const a = LCD.repair.accept(record.spec); if (a.ok){ spec = a.spec; late = a.notes || []; } } catch (e) { spec = null; }
+    }
+    const title = (spec && spec.title) || (record.spec && record.spec.title) || record.title || 'Diagram';
+    card.setAttribute('aria-label', 'Diagram: ' + title);
+    const head = lcdEl('figcaption', 'lcd-head');
+    const tt = lcdEl('span', 'lcd-title-text', title); if (spec && spec.tip){ tt.title = spec.tip; }
+    head.appendChild(tt); card.appendChild(head);
+    if (!spec){
+      if (record.spec && !LCD && !quiet){ vscode.postMessage({ type: 'diagramRendered', id: record.id, ok: false, message: 'the diagram renderer did not load' }); }
+      lcdFailed(card, record);
+      return;
+    }
+
+    const notes = (record.notes || []).concat(late), fixes = record.fixes || [];
+    if (record.status === 'degraded' || late.length){
+      // Degraded: say what was lost, where it cannot be missed, and offer another go.
+      const ban = lcdEl('div', 'lcd-banner'); ban.setAttribute('role', 'note');
+      ban.appendChild(lcdEl('span', 'lcd-banner-text', notes.join(' · ') || 'Drawn without the parts that were not valid.'));
+      const lines = (record.errors || []).concat(fixes);
+      const pop = lcdPop(lines);
+      if (lines.length){ const d = lcdBtn('Details', 'What was wrong with the spec', null); lcdToggle(d, pop); ban.appendChild(d); }
+      ban.appendChild(lcdBtn('Retry', 'Ask for this diagram again', function(){ lcdAct(record.id, 'retry'); }));
+      card.appendChild(ban); card.appendChild(pop);
+    } else if (fixes.length || record.repaired){
+      // Auto-fixed: quiet, and one click from the detail.
+      const badge = lcdEl('button', 'lcd-badge', 'auto-fixed' + (notes.length ? ' · ' + notes[0] : '')); badge.type = 'button';
+      badge.title = 'This diagram needed a fix before it could be drawn. Click for details.';
+      const pop = lcdPop(fixes.length ? fixes : ['The first attempt was not valid; the model corrected it.']);
+      lcdToggle(badge, pop);
+      head.appendChild(badge); card.appendChild(pop);
+    }
+
+    const stage = lcdEl('div', 'lcd-stage'); card.appendChild(stage);
+    const t0 = performance.now();
+    try {
+      const avail = lcdAvail(card);
+      const geo = LCD.layout.layout(spec, { measure: lcdMeasure, maxWidth: avail || undefined });
+      const svg = LCD.scene.mount(LCD.scene.build(spec, geo, {}), document);
+      const descId = 'lcd-desc-' + (++lcdSeq);
+      svg.setAttribute('aria-describedby', descId);
+      stage.appendChild(svg);
+      stage.title = 'Click to open full size';
+      const desc = lcdEl('p', 'lcd-sr', LCD.text.outline(spec).text); desc.id = descId; card.appendChild(desc);
+      card._spec = spec; card._geo = geo;
+      card.appendChild(lcdTools(card, record, false));
+      if (!quiet){ vscode.postMessage({ type: 'diagramRendered', id: record.id, ok: true, ms: Math.round((performance.now() - t0) * 10) / 10, flipped: !!geo.flipped }); }
+    } catch (e) {
+      // Rendering is unavailable. The fallback is an ASCII drawing generated from the same spec —
+      // by the editor, in a monospaced block — so the model never has to draw one itself.
+      stage.className = 'lcd-ascii'; stage.textContent = '';
+      // Say so: an unexplained character drawing looks like the model's doing, and it is not.
+      const why = lcdEl('div', 'lcd-banner'); why.setAttribute('role', 'note');
+      why.appendChild(lcdEl('span', 'lcd-banner-text', 'The picture could not be drawn, so a text version is shown instead.'));
+      card.insertBefore(why, stage);
+      const pre = lcdEl('pre');
+      try { pre.textContent = LCD.ascii.render(spec, { maxCols: lcdCols(card), title: false }); } catch (e2) { pre.textContent = LCD.text.toSource(spec); }
+      stage.appendChild(pre);
+      card._spec = spec;
+      card.appendChild(lcdTools(card, record, true));
+      if (!quiet){ vscode.postMessage({ type: 'diagramRendered', id: record.id, ok: false, message: String((e && e.message) || e) }); }
+    }
+  }
+  /** Nothing drawable: the errors, the source, and a way out. Never a blank space. */
+  function lcdFailed(card, record){
+    card.dataset.status = 'failed';
+    const ban = lcdEl('div', 'lcd-banner'); ban.setAttribute('role', 'note');
+    // No renderer on this side (the modules did not load): the spec is fine, the page is not. The
+    // fallback is the same diagram drawn with characters — by the host, from its own record.
+    const noRenderer = !!(record.spec && !LCD);
+    // A degraded diagram still says what it lost, whichever way it ends up being shown.
+    const lost = noRenderer && (record.notes || []).length ? ' ' + record.notes.join(' · ') : '';
+    ban.appendChild(lcdEl('span', 'lcd-banner-text', noRenderer ? 'The diagram renderer did not load, so a text version is shown instead.' + lost : 'This diagram could not be drawn.'));
+    if (!noRenderer){ ban.appendChild(lcdBtn('Retry', 'Ask for this diagram again', function(){ lcdAct(record.id, 'retry'); })); }
+    card.appendChild(ban);
+    if (noRenderer){
+      const stage = lcdEl('div', 'lcd-ascii'); stage.hidden = true;
+      card._asciiPre = lcdEl('pre'); stage.appendChild(card._asciiPre); card.appendChild(stage);
+      lcdAct(record.id, 'ascii', { cols: lcdCols(card) });
+    }
+    const errs = record.errors || [];
+    if (errs.length){ const ul = lcdEl('ul', 'lcd-errors'); errs.forEach(function(l){ ul.appendChild(lcdEl('li', '', l)); }); card.appendChild(ul); }
+    let source = record.source || '';
+    if (!source && record.spec){ try { source = JSON.stringify(record.spec, null, 2); } catch (e) { source = ''; } }
+    if (source){
+      const det = lcdEl('details', 'lcd-source'); det.open = !errs.length;
+      det.appendChild(lcdEl('summary', '', 'What was sent'));
+      det.appendChild(lcdEl('pre', '', source));
+      card.appendChild(det);
+      const bar = lcdEl('div', 'lcd-tools');
+      const copy = lcdBtn('Copy source', 'Copy what the model sent', function(){ vscode.postMessage({ type: 'copy', text: source }); lcdFlash(copy, 'Copied'); });
+      bar.appendChild(copy); card.appendChild(bar);
+    }
+  }
+  /** The colours on screen right now, as plain values — the only moment a colour is baked in. */
+  function lcdResolved(card){
+    const probe = lcdEl('span'); probe.style.display = 'none'; card.appendChild(probe);
+    const out = {};
+    LCD.theme.TOKEN_NAMES.forEach(function(name){
+      if (name === 'font'){ out.font = lcdFont(); return; }
+      probe.style.color = 'var(--lcd-' + name + ')';
+      let c = getComputedStyle(probe).color;
+      // A canvas normalises any CSS colour (color-mix results included) to #rrggbb or rgba().
+      if (lcdCtx){ lcdCtx.fillStyle = '#000000'; lcdCtx.fillStyle = c; c = lcdCtx.fillStyle; }
+      out[name] = c;
+    });
+    probe.remove();
+    return out;
+  }
+  /** The diagram as a standalone SVG file: same tree as on screen, plus its title, background and colours. */
+  function lcdSvg(card){
+    const vnode = LCD.scene.build(card._spec, card._geo, { title: true, background: true, standalone: true, measure: lcdMeasure, css: LCD.theme.css({ resolved: lcdResolved(card) }) });
+    return { text: LCD.scene.toSvg(vnode), width: vnode.width, height: vnode.height };
+  }
+  function lcdPng(card){
+    return new Promise(function(resolve, reject){
+      const svg = lcdSvg(card);
+      const img = new Image();
+      img.onload = function(){
+        try {
+          const scale = 2, c = document.createElement('canvas');
+          c.width = Math.ceil(svg.width * scale); c.height = Math.ceil(svg.height * scale);
+          const g = c.getContext('2d'); g.scale(scale, scale); g.drawImage(img, 0, 0, svg.width, svg.height);
+          resolve(c.toDataURL('image/png').replace(/^data:image\/png;base64,/, ''));
+        } catch (e) { reject(e); }
+      };
+      img.onerror = function(){ reject(new Error('the picture could not be turned into an image')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg.text);
+    });
+  }
+  /** Full size · Copy source · SVG · PNG · Open as Mermaid · Insert into Markdown. */
+  function lcdTools(card, record, textOnly){
+    const bar = lcdEl('div', 'lcd-tools');
+    const fail = function(e){ vscode.postMessage({ type: 'notice', text: 'The diagram could not be exported: ' + String((e && e.message) || e) }); };
+    if (!textOnly){ bar.appendChild(lcdBtn('Full size', 'Open the diagram full size, to zoom and pan', function(){ lcdZoomOpen(card); })); }
+    const copy = lcdBtn('Copy source', 'Copy the diagram’s spec', function(){ lcdAct(record.id, 'export', { format: 'source' }); lcdFlash(copy, 'Copied'); });
+    bar.appendChild(copy);
+    if (!textOnly){
+      bar.appendChild(lcdBtn('SVG', 'Save as an SVG image', function(){ try { lcdAct(record.id, 'export', { format: 'svg', data: lcdSvg(card).text }); } catch (e) { fail(e); } }));
+      bar.appendChild(lcdBtn('PNG', 'Save as a PNG image', function(){ lcdPng(card).then(function(b64){ lcdAct(record.id, 'export', { format: 'png', data: b64 }); }, fail); }));
+    }
+    bar.appendChild(lcdBtn('Open as Mermaid', 'Open the same diagram as Mermaid source', function(){ lcdAct(record.id, 'export', { format: 'mermaid' }); }));
+    bar.appendChild(lcdBtn('Insert into Markdown…', 'Insert it into a Markdown file in this workspace', function(){ lcdAct(record.id, 'export', { format: 'markdown' }); }));
+    return bar;
+  }
+  /** The host's answer when the renderer did not load here: the same spec, drawn with characters. */
+  function lcdAscii(m){
+    const text = String((m && m.text) || '');
+    if (!text){ return; }   // nothing to show: the source stays open
+    Object.keys(lcdCards).forEach(function(k){
+      const card = lcdCards[k];
+      if (!card._asciiPre || card.dataset.id !== String(m.id)){ return; }
+      card._asciiPre.textContent = text; card._asciiPre.parentElement.hidden = false;
+      const det = card.querySelector('details.lcd-source'); if (det){ det.open = false; }
+    });
+  }
+  /** A run ended: a placeholder that never got its picture goes (the host settles the ones it owes first). */
+  function lcdSweep(){
+    Object.keys(lcdCards).forEach(function(k){
+      const card = lcdCards[k];
+      if (card && !card.dataset.id){ lcdDrop(card); }
+    });
+  }
+  function lcdReset(){ Object.keys(lcdCards).forEach(function(k){ delete lcdCards[k]; }); lcdZoomClose(); }
+
+  // Full-size view: zoom about the pointer, drag to pan, fit and 100%. It says it is modal, so it is:
+  // while it is open the rest of the page is inert — not focusable, not clickable, not read out — and
+  // Tab goes round inside it. Closing gives the page back, and the focus to where it was.
+  const lcdZ = { el: document.getElementById('lcdZoom'), view: null, svg: null, card: null, k: 1, x: 0, y: 0, w: 0, h: 0, back: null, behind: [] };
+  lcdZ.view = lcdZ.el.querySelector('.lcdz-view');
+  function lcdZoomApply(){ if (lcdZ.svg){ lcdZ.svg.style.transform = 'translate(' + lcdZ.x + 'px,' + lcdZ.y + 'px) scale(' + lcdZ.k + ')'; } }
+  function lcdZoomFit(){
+    const r = lcdZ.view.getBoundingClientRect();
+    lcdZ.k = Math.max(0.1, Math.min((r.width - 32) / lcdZ.w, (r.height - 32) / lcdZ.h, 2));
+    lcdZ.x = (r.width - lcdZ.w * lcdZ.k) / 2; lcdZ.y = (r.height - lcdZ.h * lcdZ.k) / 2; lcdZoomApply();
+  }
+  function lcdZoomBy(f, cx, cy){
+    const k = Math.max(0.1, Math.min(8, lcdZ.k * f)), r = k / lcdZ.k;
+    lcdZ.x = cx - (cx - lcdZ.x) * r; lcdZ.y = cy - (cy - lcdZ.y) * r; lcdZ.k = k; lcdZoomApply();
+  }
+  function lcdZoomOpen(card){
+    const src = card.querySelector('.lcd-stage svg'); if (!src || !card._geo){ return; }
+    lcdZ.view.textContent = '';
+    const svg = src.cloneNode(true);
+    svg.removeAttribute('aria-describedby');
+    lcdZ.w = card._geo.width; lcdZ.h = card._geo.height; lcdZ.svg = svg; lcdZ.card = card;
+    if (lcdZ.el.hidden){
+      lcdZ.back = document.activeElement;
+      lcdZ.behind = Array.prototype.filter.call(document.body.children, function(n){ return n !== lcdZ.el && !n.inert && !/^(SCRIPT|STYLE|TEMPLATE)$/.test(n.tagName); });
+      lcdZ.behind.forEach(function(n){ n.inert = true; });
+    }
+    svg.style.width = lcdZ.w + 'px'; svg.style.height = lcdZ.h + 'px';
+    lcdZ.view.appendChild(svg);
+    lcdZ.el.querySelector('.lcdz-title').textContent = (card._spec && card._spec.title) || 'Diagram';
+    lcdZ.el.hidden = false;
+    lcdZoomFit();
+    const close = lcdZ.el.querySelector('[data-z="close"]'); if (close){ close.focus(); }
+  }
+  function lcdZoomClose(){
+    if (!lcdZ.el || lcdZ.el.hidden){ return; }
+    lcdZ.el.hidden = true; lcdZ.view.textContent = ''; lcdZ.svg = null; lcdZ.card = null;
+    lcdZ.behind.forEach(function(n){ n.inert = false; }); lcdZ.behind = [];   // before the focus goes back: an inert element cannot take it
+    try { if (lcdZ.back && lcdZ.back.focus){ lcdZ.back.focus(); } } catch (e) {}
+    lcdZ.back = null;
+  }
+  /** Where Tab stops in the full-size view: its buttons, then the picture's linked nodes. */
+  function lcdZoomStops(){ return Array.prototype.slice.call(lcdZ.el.querySelectorAll('button:not([disabled]), [data-lc-link]')); }
+  /**
+   * Tab in the full-size view. Returns where the focus has to be PUT: past the last stop is the first,
+   * before the first is the last, and from anywhere outside the view it is brought back in. Null when
+   * the browser's own next stop is already inside, and Tab can be left to it.
+   */
+  function lcdZoomTab(stops, active, back){
+    const at = stops.indexOf(active);
+    if (at >= 0 && at !== (back ? 0 : stops.length - 1)){ return null; }
+    return stops[back ? stops.length - 1 : 0] || active || null;
+  }
+  lcdZ.el.querySelector('.lcdz-bar').addEventListener('click', function(e){
+    const b = e.target.closest && e.target.closest('[data-z]'); if (!b){ return; }
+    const r = lcdZ.view.getBoundingClientRect(), z = b.getAttribute('data-z');
+    if (z === 'close'){ lcdZoomClose(); }
+    else if (z === 'fit'){ lcdZoomFit(); }
+    else if (z === 'one'){ lcdZoomBy(1 / lcdZ.k, r.width / 2, r.height / 2); }
+    else { lcdZoomBy(z === 'in' ? 1.25 : 0.8, r.width / 2, r.height / 2); }
+  });
+  lcdZ.view.addEventListener('wheel', function(e){
+    e.preventDefault();
+    const r = lcdZ.view.getBoundingClientRect();
+    lcdZoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+  (function(){
+    let drag = null;
+    lcdZ.view.addEventListener('pointerdown', function(e){ drag = { x: e.clientX, y: e.clientY, moved: 0, target: e.target }; lcdZ.view.setPointerCapture(e.pointerId); lcdZ.view.classList.add('dragging'); });
+    lcdZ.view.addEventListener('pointermove', function(e){ if (!drag){ return; } const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.moved += Math.abs(dx) + Math.abs(dy); drag.x = e.clientX; drag.y = e.clientY; lcdZ.x += dx; lcdZ.y += dy; lcdZoomApply(); });
+    lcdZ.view.addEventListener('pointerup', function(e){
+      const d = drag; drag = null; lcdZ.view.classList.remove('dragging');
+      // A press that did not travel is a click — and on a linked node, a click opens its file.
+      const link = d && d.moved < 4 && d.target && d.target.closest ? d.target.closest('[data-lc-link]') : null;
+      if (link && lcdZ.card){ lcdAct(lcdZ.card.dataset.id, 'openLink', { node: link.getAttribute('data-lc-link') }); }
+    });
+    lcdZ.view.addEventListener('pointercancel', function(){ drag = null; lcdZ.view.classList.remove('dragging'); });
+  })();
+  document.addEventListener('keydown', function(e){
+    if (lcdZ.el.hidden){ return; }
+    const r = lcdZ.view.getBoundingClientRect();
+    const link = e.target && e.target.closest && lcdZ.view.contains(e.target) ? e.target.closest('[data-lc-link]') : null;
+    if (e.key === 'Escape'){ e.stopPropagation(); e.preventDefault(); lcdZoomClose(); }
+    else if (e.key === 'Tab'){ const to = lcdZoomTab(lcdZoomStops(), document.activeElement, e.shiftKey); if (to){ e.preventDefault(); to.focus(); } }
+    else if ((e.key === 'Enter' || e.key === ' ') && link && lcdZ.card){ e.preventDefault(); lcdAct(lcdZ.card.dataset.id, 'openLink', { node: link.getAttribute('data-lc-link') }); }
+    else if (e.key === '+' || e.key === '='){ lcdZoomBy(1.25, r.width / 2, r.height / 2); }
+    else if (e.key === '-'){ lcdZoomBy(0.8, r.width / 2, r.height / 2); }
+    else if (e.key === '0'){ lcdZoomFit(); }
+    else if (e.key === '1'){ lcdZoomBy(1 / lcdZ.k, r.width / 2, r.height / 2); }
+  }, true);
+  // In the transcript: a linked node opens its file — by click, or by Enter/Space when it has the
+  // focus; a click anywhere else on the picture opens it full size.
+  // The webview only ever names the NODE — which file that means is the host's own record.
+  function lcdActivate(e){
+    const t = e.target; if (!t || !t.closest){ return false; }
+    const card = t.closest('.lcd'); if (!card || !card.dataset.id || !log.contains(card)){ return false; }
+    const link = t.closest('[data-lc-link]');
+    if (link){ lcdAct(card.dataset.id, 'openLink', { node: link.getAttribute('data-lc-link') }); return true; }
+    if (t.closest('.lcd-stage')){ lcdZoomOpen(card); return true; }
+    return false;
+  }
+  log.addEventListener('click', function(e){ if (lcdActivate(e)){ e.preventDefault(); } });
+  log.addEventListener('keydown', function(e){ if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.closest && e.target.closest('[data-lc-link]') && lcdActivate(e)){ e.preventDefault(); } });
+  // The column changed width: re-lay out any diagram that would now turn (or stop needing to).
+  let lcdResizeT = null;
+  window.addEventListener('resize', function(){
+    clearTimeout(lcdResizeT);
+    lcdResizeT = setTimeout(function(){
+      if (!LCD){ return; }
+      const seen = new Set();
+      Object.keys(lcdCards).forEach(function(k){
+        const c = lcdCards[k];
+        if (seen.has(c) || !c.isConnected || !c._spec || !c._geo){ return; }
+        seen.add(c);
+        try { const g = LCD.layout.layout(c._spec, { measure: lcdMeasure, maxWidth: lcdAvail(c) || undefined }); if (g.direction !== c._geo.direction){ lcdDraw(c, c._record, true); } } catch (e) {}
+      });
+    }, 250);
+  });
 
   window.addEventListener('message', ev => {
     const m = ev.data;
@@ -4191,6 +4760,9 @@
     else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
     else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
     else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text, m.label, m.kind, m.path); }
+    else if (m.type === 'diagramPending'){ lcdPending(m); }
+    else if (m.type === 'diagram'){ lcdShow(m); }
+    else if (m.type === 'diagramAscii'){ lcdAscii(m); }
     else if (m.type === 'agentApproval'){ addApproval(m); }
     else if (m.type === 'agentQuestions'){ addQuestions(m); }
     else if (m.type === 'termRun'){ addTermRun(m); }
@@ -4225,8 +4797,8 @@
       // then, so a card still asking them to sign in would be wrong.
       if (!m.expired && sessionCard && sessionCard.isConnected){ sessionCard.remove(); sessionCard = null; } renderAccount(m); if (m.open) openAccount(); }
     else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
-    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); closeGroup(); const cap = capReachedInfo(m.message); if (isSessionExpired(m)){ addSignInCard(m); } else if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
-    else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps, m.costMicros); setStreaming(false); }
+    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); closeGroup(); lcdSweep(); const cap = capReachedInfo(m.message); if (isSessionExpired(m)){ addSignInCard(m); } else if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
+    else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); lcdSweep(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps, m.costMicros); setStreaming(false); }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
@@ -4236,6 +4808,7 @@
       // otherwise groupAppend() appends into a disconnected .groupbody (nothing shows), and a stale
       // turnLabeled makes the first assistant line render as an unlabeled continuation.
       curGroup = null; turnLabeled = false;
+      lcdReset();      // the cards went with the log; drop the references to them
       selLabel = null; ctxFiles = []; renderChips();
       for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } for (const k in verifyCards) { delete verifyCards[k]; } for (const k in bgTasks) { delete bgTasks[k]; }
       for (const k in editSteps) { delete editSteps[k]; } for (const k in termSteps) { delete termSteps[k]; } for (const k in verifySteps) { delete verifySteps[k]; }   // step maps ride with their cards

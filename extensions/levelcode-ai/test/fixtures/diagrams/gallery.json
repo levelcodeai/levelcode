@@ -1,0 +1,569 @@
+[
+	{
+		"name": "jev",
+		"spec": {
+			"v": 1,
+			"title": "Jev classifies; your code decides the action",
+			"direction": "right",
+			"nodes": [
+				{
+					"id": "in",
+					"label": "Customer message",
+					"sub": "plus account details"
+				},
+				{
+					"id": "jev",
+					"label": "Jev",
+					"sub": "returns probabilities",
+					"accent": true
+				},
+				{
+					"id": "bill",
+					"label": "Route to billing"
+				},
+				{
+					"id": "rev",
+					"label": "Human review"
+				}
+			],
+			"edges": [
+				{
+					"from": "in",
+					"to": "jev"
+				},
+				{
+					"from": "jev",
+					"to": "bill",
+					"label": "0.90 or more"
+				},
+				{
+					"from": "jev",
+					"to": "rev",
+					"label": "under 0.90"
+				}
+			]
+		}
+	},
+	{
+		"name": "pipeline",
+		"spec": {
+			"title": "Every diagram travels one pipeline; a failing spec takes one trip through repair",
+			"direction": "right",
+			"nodes": [
+				{
+					"id": "model",
+					"label": "Model",
+					"sub": "emits a spec",
+					"shape": "actor"
+				},
+				{
+					"id": "val",
+					"label": "Validate",
+					"sub": "four layers",
+					"accent": true
+				},
+				{
+					"id": "lay",
+					"label": "Layout",
+					"sub": "house style"
+				},
+				{
+					"id": "san",
+					"label": "Sanitize"
+				},
+				{
+					"id": "chat",
+					"label": "Chat",
+					"shape": "actor"
+				},
+				{
+					"id": "rep",
+					"label": "Repair ladder",
+					"sub": "fix, one model pass, degrade",
+					"shape": "decision"
+				}
+			],
+			"edges": [
+				{
+					"from": "model",
+					"to": "val"
+				},
+				{
+					"from": "val",
+					"to": "lay",
+					"label": "valid"
+				},
+				{
+					"from": "lay",
+					"to": "san"
+				},
+				{
+					"from": "san",
+					"to": "chat"
+				},
+				{
+					"from": "val",
+					"to": "rep",
+					"label": "errors",
+					"style": "dashed"
+				},
+				{
+					"from": "rep",
+					"to": "val",
+					"label": "repaired",
+					"style": "dashed"
+				}
+			]
+		}
+	},
+	{
+		"name": "arch",
+		"spec": {
+			"title": "The agent talks to providers through one registry",
+			"direction": "right",
+			"groups": [
+				{
+					"id": "ext",
+					"label": "Extension host"
+				},
+				{
+					"id": "prov",
+					"label": "Providers"
+				}
+			],
+			"nodes": [
+				{
+					"id": "chat",
+					"label": "Chat webview",
+					"shape": "actor"
+				},
+				{
+					"id": "agent",
+					"label": "agent.js",
+					"sub": "tool loop",
+					"group": "ext",
+					"accent": true,
+					"link": {
+						"path": "agent.js",
+						"symbol": "runAgent"
+					}
+				},
+				{
+					"id": "reg",
+					"label": "providers/index.js",
+					"sub": "registry",
+					"group": "ext",
+					"link": {
+						"path": "providers/index.js"
+					}
+				},
+				{
+					"id": "store",
+					"label": "Sessions",
+					"sub": "append-only JSONL",
+					"shape": "store",
+					"group": "ext"
+				},
+				{
+					"id": "ant",
+					"label": "Anthropic",
+					"group": "prov"
+				},
+				{
+					"id": "oai",
+					"label": "OpenAI-compatible",
+					"sub": "one adapter, ten providers",
+					"group": "prov"
+				}
+			],
+			"edges": [
+				{
+					"from": "chat",
+					"to": "agent",
+					"label": "goal"
+				},
+				{
+					"from": "agent",
+					"to": "reg"
+				},
+				{
+					"from": "reg",
+					"to": "ant"
+				},
+				{
+					"from": "reg",
+					"to": "oai"
+				},
+				{
+					"from": "agent",
+					"to": "store",
+					"label": "each turn",
+					"style": "dashed"
+				}
+			]
+		}
+	},
+	{
+		"name": "decision",
+		"spec": {
+			"title": "A steer is applied at the next safe point, never mid-tool",
+			"direction": "down",
+			"nodes": [
+				{
+					"id": "s",
+					"label": "Steer arrives",
+					"shape": "actor"
+				},
+				{
+					"id": "q",
+					"label": "Tool running?",
+					"shape": "decision",
+					"accent": true
+				},
+				{
+					"id": "wait",
+					"label": "Queue it",
+					"sub": "until the tool returns"
+				},
+				{
+					"id": "now",
+					"label": "Inject now"
+				},
+				{
+					"id": "next",
+					"label": "Next model turn"
+				}
+			],
+			"edges": [
+				{
+					"from": "s",
+					"to": "q"
+				},
+				{
+					"from": "q",
+					"to": "wait",
+					"label": "yes"
+				},
+				{
+					"from": "q",
+					"to": "now",
+					"label": "no"
+				},
+				{
+					"from": "wait",
+					"to": "next"
+				},
+				{
+					"from": "now",
+					"to": "next"
+				}
+			]
+		}
+	},
+	{
+		"name": "state",
+		"spec": {
+			"title": "A session is only ever archived, never deleted",
+			"direction": "right",
+			"nodes": [
+				{
+					"id": "active",
+					"label": "Active",
+					"accent": true
+				},
+				{
+					"id": "arch",
+					"label": "Archived"
+				},
+				{
+					"id": "trash",
+					"label": "Trashed"
+				}
+			],
+			"edges": [
+				{
+					"from": "active",
+					"to": "arch",
+					"label": "Done"
+				},
+				{
+					"from": "arch",
+					"to": "active",
+					"label": "Undo"
+				},
+				{
+					"from": "active",
+					"to": "trash",
+					"label": "Delete"
+				},
+				{
+					"from": "trash",
+					"to": "active",
+					"label": "Restore"
+				},
+				{
+					"from": "active",
+					"to": "active",
+					"label": "new turn"
+				}
+			]
+		}
+	},
+	{
+		"name": "fan",
+		"spec": {
+			"title": "One router, five handlers",
+			"direction": "right",
+			"nodes": [
+				{
+					"id": "r",
+					"label": "Router",
+					"accent": true
+				},
+				{
+					"id": "a",
+					"label": "Auth"
+				},
+				{
+					"id": "b",
+					"label": "Billing"
+				},
+				{
+					"id": "c",
+					"label": "Search"
+				},
+				{
+					"id": "d",
+					"label": "Uploads"
+				},
+				{
+					"id": "e",
+					"label": "Webhooks"
+				},
+				{
+					"id": "db",
+					"label": "Postgres",
+					"shape": "store"
+				}
+			],
+			"edges": [
+				{
+					"from": "r",
+					"to": "a"
+				},
+				{
+					"from": "r",
+					"to": "b"
+				},
+				{
+					"from": "r",
+					"to": "c"
+				},
+				{
+					"from": "r",
+					"to": "d"
+				},
+				{
+					"from": "r",
+					"to": "e"
+				},
+				{
+					"from": "a",
+					"to": "db"
+				},
+				{
+					"from": "b",
+					"to": "db"
+				},
+				{
+					"from": "c",
+					"to": "db"
+				}
+			]
+		}
+	},
+	{
+		"name": "twelve",
+		"spec": {
+			"title": "A request crosses four layers before it reaches storage",
+			"direction": "right",
+			"groups": [
+				{
+					"id": "edge",
+					"label": "Edge"
+				},
+				{
+					"id": "app",
+					"label": "Application"
+				},
+				{
+					"id": "data",
+					"label": "Data"
+				},
+				{
+					"id": "w",
+					"label": "Workers",
+					"parent": "app"
+				}
+			],
+			"nodes": [
+				{
+					"id": "u",
+					"label": "Browser",
+					"shape": "actor"
+				},
+				{
+					"id": "cdn",
+					"label": "CDN",
+					"group": "edge"
+				},
+				{
+					"id": "lb",
+					"label": "Load balancer",
+					"group": "edge"
+				},
+				{
+					"id": "api",
+					"label": "API",
+					"sub": "Rails",
+					"group": "app",
+					"accent": true
+				},
+				{
+					"id": "auth",
+					"label": "Auth",
+					"group": "app"
+				},
+				{
+					"id": "q",
+					"label": "Queue",
+					"shape": "store",
+					"group": "w"
+				},
+				{
+					"id": "job",
+					"label": "Job runner",
+					"group": "w"
+				},
+				{
+					"id": "mail",
+					"label": "Mailer",
+					"group": "w"
+				},
+				{
+					"id": "pg",
+					"label": "Postgres",
+					"shape": "store",
+					"group": "data"
+				},
+				{
+					"id": "rd",
+					"label": "Redis",
+					"shape": "store",
+					"group": "data"
+				},
+				{
+					"id": "s3",
+					"label": "Object store",
+					"shape": "store",
+					"group": "data"
+				},
+				{
+					"id": "ext",
+					"label": "Stripe",
+					"shape": "actor"
+				}
+			],
+			"edges": [
+				{
+					"from": "u",
+					"to": "cdn"
+				},
+				{
+					"from": "cdn",
+					"to": "lb"
+				},
+				{
+					"from": "lb",
+					"to": "api"
+				},
+				{
+					"from": "api",
+					"to": "auth"
+				},
+				{
+					"from": "api",
+					"to": "q",
+					"label": "enqueue"
+				},
+				{
+					"from": "q",
+					"to": "job"
+				},
+				{
+					"from": "job",
+					"to": "mail"
+				},
+				{
+					"from": "api",
+					"to": "pg"
+				},
+				{
+					"from": "auth",
+					"to": "rd"
+				},
+				{
+					"from": "job",
+					"to": "s3"
+				},
+				{
+					"from": "api",
+					"to": "ext",
+					"label": "charge",
+					"style": "dashed"
+				},
+				{
+					"from": "job",
+					"to": "pg"
+				}
+			]
+		}
+	},
+	{
+		"name": "lonely",
+		"spec": {
+			"title": "Three stores, no flow between them",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "Journal",
+					"shape": "store"
+				},
+				{
+					"id": "b",
+					"label": "Facts",
+					"shape": "store"
+				},
+				{
+					"id": "c",
+					"label": "MEMORY.md"
+				}
+			],
+			"edges": []
+		}
+	},
+	{
+		"name": "single",
+		"spec": {
+			"title": "One box",
+			"nodes": [
+				{
+					"id": "a",
+					"label": "Only me",
+					"accent": true
+				}
+			],
+			"edges": []
+		}
+	}
+]
