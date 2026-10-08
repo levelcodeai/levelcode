@@ -740,6 +740,35 @@ async function setupMcp(ctx, wsFolders, dbg) {
 	}
 }
 
+/**
+ * Did the model say it is finished — a line starting with "Done:" (what SYSTEM_BASE asks for), or
+ * text that simply ends in "done"?
+ *
+ * The LINE is looked for with its markdown marks taken off. A model that writes it as `**Done:** …`,
+ * `## Done: …` or `- Done: …` has still said it; read literally, the marks sit between the line start
+ * and the word, so a finished run was taken for an unfinished one and — when the answer also read as
+ * a promise of more work, for which one "next " is enough — nudged until the model said Done a second
+ * time.
+ * @param {string} text the text of a turn that called no tool
+ * @returns {boolean}
+ */
+function saysDone(text) {
+	const plain = text
+		// Quote, heading and list marks at a line start — as many as are stacked there (`> ## Done:`).
+		.replace(/^[ \t]*(?:(?:[>#]+|[-*+]|\d+\.)[ \t]+)+/gm, '')
+		// Then the emphasis that opens the line, and only as a PAIR: `**Done:** …`, `_Done: shipped._`.
+		// A lone mark is part of a name. Deleting every `_` made a Done line of `_done: false` in a pasted
+		// file, and the turn that pasted it instead of writing it was no longer nudged.
+		.replace(/^[ \t]*[*_~`]+(?=\S)(.*?\S)[*_~`]+(?!\w)/gm, '$1');
+	// `[^\S\n]` is whitespace that stays on its line — the same test as `\s*` there, at a different cost.
+	// With `\s*` each line start read on through every blank line below it, and a line of nothing but
+	// marks is blank by now: the work grew with the square of their number, and 64,000 took seconds.
+	if (/(^|\n)[^\S\n]*done\s*:/i.test(plain)) { return true; }
+	// The last-word test reads the text AS WRITTEN, as it always has. The marks come off to find a line;
+	// taken off the last word too, a turn that ends by quoting a loop's `done` would pass for a finish.
+	return /\bdone\.?\s*$/i.test(text.trim());
+}
+
 async function runAgent(ctx) {
 	// No workspace is no longer a refusal. It used to fail the whole run here, which meant a question
 	// that never needed a folder — "what does this error mean?", anything through an MCP server, a
@@ -1091,7 +1120,7 @@ async function runAgent(ctx) {
 				}
 				reason = 'limit'; break;
 			}
-			if (/(^|\n)\s*done\s*:/i.test(text) || /\bdone\.?\s*$/i.test(text.trim())) {
+			if (saysDone(text)) {
 				if (await attemptVerify()) { continue; }   // verification failed → fix feedback pushed, keep going
 				reason = 'done'; break;
 			}
@@ -1145,4 +1174,4 @@ async function runAgent(ctx) {
 	}
 }
 
-module.exports = { resetContextAnnounce, runAgent, makeDiff, resolveWorkspacePath };
+module.exports = { resetContextAnnounce, runAgent, makeDiff, resolveWorkspacePath, saysDone };
