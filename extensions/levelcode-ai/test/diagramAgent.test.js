@@ -53,6 +53,10 @@ const jev = () => ({
 const broken = () => { const s = jev(); s.edges[1].to = 'billing'; s.nodes[2].accent = true; return s; };
 const call = (id, input) => ({ stop_reason: 'tool_use', content: [{ type: 'text', text: 'Here is the flow.' }, { type: 'tool_use', id, name: 'render_diagram', input }] });
 const say = (text) => ({ stop_reason: 'end_turn', content: [{ type: 'text', text }] });
+/** The same call when its arguments did not parse as JSON: the provider hands over the text it received. */
+const sloppyCall = (id, argsText) => ({ stop_reason: 'tool_use', content: [{ type: 'text', text: 'Here is the flow.' }, { type: 'tool_use', id, name: 'render_diagram', input: {} }], malformed: new Set([id]), raw: new Map([[id, argsText]]) });
+/** A spec as a model writes it on a bad day: every list and the object itself end in a comma. */
+const loose = (spec) => JSON.stringify(spec).replace(/\]/g, ',]').replace(/\}$/, ',}');
 
 /** Run one goal against a script of turns. Returns what was posted, what the model was sent, and the service. */
 async function run(turns, overrides) {
@@ -237,6 +241,60 @@ async function run(turns, overrides) {
 			assert.strictEqual(r.shown[r.shown.length - 1].replacesKey, 'toolu_1');
 		});
 
+		// The call that corrects a diagram is that diagram's repair in whatever FORM it arrives. Told apart
+		// by the raw arguments, a repair written as loose JSON (or wrapped in an envelope) had no title and
+		// no nodes: the first attempt was settled as a picture of its own, and the repair drew a second.
+		await testAsync('LADDER: a repair that arrives as loosely written JSON is still the repair — one picture, in the placeholder', async () => {
+			const r = await run([call('toolu_1', broken()), sloppyCall('toolu_2', loose(jev())), say('Done: drawn.')]);
+			assert.match(r.results[0].content, /^ERROR: the diagram was not drawn/);
+			assert.deepStrictEqual(r.shown.map((m) => m.type + ':' + (m.state || m.record.status)), ['diagramPending:repairing', 'diagram:ok'], 'the first attempt is not drawn on its own');
+			assert.strictEqual(r.shown[1].replacesKey, 'toolu_1', 'the corrected picture lands where the failed attempt was waiting');
+			assert.strictEqual(r.shown[1].record.repaired, true);
+			assert.strictEqual(r.shown[1].record.spec.edges.length, 3, 'and it is the corrected spec, whole');
+			assert.strictEqual(r.diagrams.list().length, 1, 'one diagram on file, so one card on replay too');
+			assert.deepStrictEqual(r.events.filter((e) => e.type === 'call').map((e) => e.outcome), ['bounced', 'repaired']);
+			assert.strictEqual(r.events.filter((e) => e.type === 'call')[1].fixClasses['lenient-json'], 1, 'and the loose JSON is still counted as the auto-fix it was');
+			// with the title reworded too, it is still told by its nodes — read out of the text, like the title
+			const reworded = jev(); reworded.title = 'Routing by confidence';
+			const byNodes = await run([call('toolu_1', broken()), sloppyCall('toolu_2', loose(reworded)), say('Done: drawn.')]);
+			assert.deepStrictEqual(byNodes.shown.map((m) => m.type + ':' + (m.state || m.record.status) + ':' + (m.replacesKey || '-')), ['diagramPending:repairing:-', 'diagram:ok:toolu_1']);
+			assert.strictEqual(byNodes.diagrams.list().length, 1);
+		});
+
+		await testAsync('LADDER: a FIRST attempt in loose JSON is remembered by what it says, so its repair finds it', async () => {
+			const r = await run([sloppyCall('toolu_1', loose(broken())), call('toolu_2', jev()), say('Done: drawn.')]);
+			assert.deepStrictEqual(r.shown.map((m) => m.type + ':' + (m.state || m.record.status)), ['diagramPending:repairing', 'diagram:ok']);
+			assert.strictEqual(r.shown[0].title, 'Jev classifies; your code decides the action', 'the placeholder is titled from the text, too');
+			assert.strictEqual(r.shown[1].replacesKey, 'toolu_1');
+			assert.strictEqual(r.shown[1].record.repaired, true);
+			assert.strictEqual(r.diagrams.list().length, 1);
+			// still broken on the second go: this is the one repair pass, so it degrades — it does not bounce again
+			const twice = await run([sloppyCall('toolu_1', loose(broken())), sloppyCall('toolu_2', loose(broken())), say('Done: as far as it goes.')]);
+			assert.deepStrictEqual(twice.results.map((b) => (/^ERROR/.test(b.content) ? 'bounced' : 'drawn')), ['bounced', 'drawn'], '"no automatic second repair", whatever the JSON looked like');
+			assert.deepStrictEqual(twice.shown.filter((m) => m.type === 'diagram').map((m) => m.record.status + ':' + m.replacesKey), ['degraded:toolu_1']);
+		});
+
+		await testAsync('LADDER: a spec inside an envelope, or with its fields renamed, is told by what the ladder reads in it', async () => {
+			const renamed = () => { const s = jev(); return { name: s.title, nodes: s.nodes.map((x) => ({ key: x.id, text: x.label })), edges: s.edges }; };
+			for (const [first, second] of [[{ diagram: broken() }, { spec: JSON.stringify(jev()) }], [broken(), { graph: jev() }], [{ input: broken() }, renamed()]]) {
+				const r = await run([call('toolu_1', first), call('toolu_2', second), say('Done: drawn.')]);
+				const shape = JSON.stringify([Object.keys(first), Object.keys(second)]);
+				assert.deepStrictEqual(r.shown.map((m) => m.type + ':' + (m.state || m.record.status)), ['diagramPending:repairing', 'diagram:ok'], shape);
+				assert.strictEqual(r.shown[0].title, 'Jev classifies; your code decides the action', shape);
+				assert.strictEqual(r.shown[1].replacesKey, 'toolu_1', shape);
+				assert.strictEqual(r.diagrams.list().length, 1, shape);
+			}
+		});
+
+		await testAsync('LADDER: reading the text does not make every call the same diagram — a different one in loose JSON is still a different one', async () => {
+			const other = { title: 'A second, unrelated picture', nodes: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }], edges: [{ from: 'x', to: 'y' }] };
+			const r = await run([sloppyCall('toolu_1', loose(broken())), sloppyCall('toolu_2', loose(other)), say('Done: two diagrams.')]);
+			const drawn = r.shown.filter((m) => m.type === 'diagram');
+			assert.deepStrictEqual(drawn.map((m) => m.key + ':' + m.record.status), ['toolu_1:degraded', 'toolu_2:ok']);
+			assert.strictEqual(drawn[1].replacesKey, undefined);
+			assert.strictEqual(drawn[1].record.repaired, undefined, 'a first attempt of its own, not somebody else\'s repair');
+		});
+
 		await testAsync('REDRAW: drawing the same diagram again in one run replaces the first instead of stacking a second', async () => {
 			const again = jev(); again.direction = 'down';
 			const r = await run([call('toolu_1', jev()), call('toolu_2', again), say('Done: redrawn top to bottom.')]);
@@ -245,6 +303,10 @@ async function run(turns, overrides) {
 			assert.strictEqual(drawn[1].record.replaces, 'd-1');
 			assert.strictEqual(drawn[1].record.id, 'd-2');
 			assert.strictEqual(drawn[1].record.spec.direction, 'down');
+			// …and it is the same diagram again when the second drawing arrives as loose JSON
+			const text = await run([call('toolu_1', jev()), sloppyCall('toolu_2', loose(again)), say('Done: redrawn.')]);
+			const shown = text.shown.filter((m) => m.type === 'diagram');
+			assert.deepStrictEqual(shown.map((m) => m.record.id + ':' + (m.record.replaces || '-') + ':' + (m.replacesKey || '-')), ['d-1:-:-', 'd-2:d-1:toolu_1']);
 		});
 
 		// ---- extraction: truncated vs merely sloppy -------------------------------------------------------

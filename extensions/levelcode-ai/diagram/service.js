@@ -35,6 +35,18 @@ const idsOf = (input) => {
 	return nodes.map((n) => norm(n && typeof n === 'object' ? (n.id != null ? n.id : n.label) : n)).filter(Boolean);
 };
 const titleOf = (input) => norm(input && typeof input === 'object' ? input.title : '');
+/**
+ * What a call is a drawing OF: its title and its node ids, as the ladder READS them — not as they
+ * happened to arrive. A spec is the same diagram whether it came as an object, as JSON text with a
+ * trailing comma, inside a `{"spec": …}` envelope or with `name` for `title`; told apart by the raw
+ * arguments, a repair in any of those forms has no title and no nodes, and is taken for a new diagram.
+ * `shown` is the title for the placeholder.
+ */
+function identityOf(input) {
+	let spec = null;
+	try { spec = repair.normalize(input).spec; } catch (e) { spec = null; }
+	return { title: titleOf(spec), ids: idsOf(spec), shown: titleFrom(spec) };
+}
 /** Is this call another go at the same diagram? Same title, or mostly the same nodes. */
 function sameDiagram(a, b) {
 	if (a.title && a.title === b.title) { return true; }
@@ -150,7 +162,7 @@ function createDiagrams(opts) {
 	 */
 	function render(input, meta) {
 		const m = meta || { key: '' };
-		const me = { title: titleOf(input), ids: idsOf(input) };
+		const me = identityOf(input);
 		const post = [];
 		let pending = run.pending;
 		// Something else was sent back for repair and the model has moved on to a different diagram:
@@ -172,7 +184,7 @@ function createDiagrams(opts) {
 			run.pending = { key: String(m.key), input, model: m.model, title: me.title, ids: me.ids };
 			run.bounces++;
 			stat(Object.assign({ type: 'call', model: m.model, format: 'graph', outcome: 'bounced', tokens }, classes));
-			post.push({ type: 'diagramPending', key: String(m.key), state: 'repairing', title: typeof (input && input.title) === 'string' ? repair.cleanText(input.title).slice(0, 120) : '' });
+			post.push({ type: 'diagramPending', key: String(m.key), state: 'repairing', title: me.shown });
 			return { result: tool.result(prepared), post };
 		}
 
@@ -230,30 +242,53 @@ function createDiagrams(opts) {
 	}
 	function reset() { records.clear(); byKey.clear(); fresh = []; seq = 0; beginRun(); }
 
+	/**
+	 * The drawings a later one took the place of: id → the id of the drawing that replaced it. The chat
+	 * shows the later one where the earlier one stood, and a reopened session leaves the earlier one out
+	 * (sessionEvents.toDisplayTurns) — so the model is not handed it back either: no stub at compaction,
+	 * and get_diagram answers with the one that is on screen.
+	 */
+	function replacedBy() {
+		const next = new Map();
+		for (const r of records.values()) { if (r.replaces && String(r.replaces) !== r.id) { next.set(String(r.replaces), r.id); } }
+		return next;
+	}
+	/** The end of the chain of redraws that began with `id` — what the chat shows now. */
+	function shownFor(id, next) {
+		const seen = new Set([id]);
+		let cur = id;
+		while (next.has(cur) && !seen.has(next.get(cur))) { cur = next.get(cur); seen.add(cur); }   // (a damaged file may loop)
+		return cur;
+	}
+
 	/** get_diagram: the spec as the model would write it, or a plain reason there is none. */
 	function fetch(id) {
 		const want = String(id == null ? '' : id).trim();
 		const r = get(want);
+		const gone = replacedBy();
 		if (!r) {
-			const known = list().filter((x) => x.spec).map((x) => x.id);
+			const known = list().filter((x) => x.spec && !gone.has(x.id)).map((x) => x.id);
 			return 'ERROR: no diagram with id "' + want.slice(0, 40) + '" in this session.' + (known.length ? ' Known ids: ' + validator.listIds(known) + '.' : ' None has been drawn yet.');
 		}
+		if (gone.has(r.id)) { const now = shownFor(r.id, gone); return 'ERROR: diagram ' + r.id + ' was replaced by ' + now + ' — the chat shows ' + now + '. Call get_diagram with "' + now + '".'; }
 		if (!r.spec) { return 'ERROR: diagram ' + r.id + ' was never drawn (its spec was invalid). Draw it again with render_diagram.'; }
 		return text.toSource(r.spec);
 	}
 
 	/**
 	 * The one-line stubs for every diagram whose spec is in `messages` — what replaces those specs
-	 * when that stretch of the conversation is compacted. Nothing here runs turn by turn.
+	 * when that stretch of the conversation is compacted. Nothing here runs turn by turn. A drawing
+	 * that a later one replaced gets none: the user no longer sees it, wherever its replacement is.
 	 */
 	function stubsFor(messages) {
 		const out = [];
+		const gone = replacedBy();
 		for (const msg of (Array.isArray(messages) ? messages : [])) {
 			if (!msg || msg.role !== 'assistant' || !Array.isArray(msg.content)) { continue; }
 			for (const b of msg.content) {
 				if (!b || b.type !== 'tool_use' || b.name !== tool.RENDER_DIAGRAM.name) { continue; }
 				const r = byToolUse(b.id);
-				if (r && r.spec) { out.push(text.stub(r)); }
+				if (r && r.spec && !gone.has(r.id)) { out.push(text.stub(r)); }
 			}
 		}
 		return out;

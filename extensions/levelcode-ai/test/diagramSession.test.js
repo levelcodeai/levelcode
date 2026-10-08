@@ -200,6 +200,80 @@ test('STUBS: at compaction a spec is replaced by one line — and only for diagr
 	assert.deepStrictEqual(service.stubsFor(null), []);
 });
 
+test('STUBS: a drawing that a later one replaced is not handed back to the model — it sees what the user sees', () => {
+	const { m } = fresh();
+	const service = createDiagrams();
+	const down = jev(); down.direction = 'down';
+	const again = jev(); again.nodes.push({ id: 'rev', label: 'Human review' });
+	const msgs = turnWith(draw(service, [jev(), down, again]));
+	assert.deepStrictEqual(service.list().map((r) => r.id + ':' + (r.replaces || '-')), ['d-1:-', 'd-2:d-1', 'd-3:d-2']);
+	// compaction: one line, for the drawing that is on screen
+	assert.deepStrictEqual(service.stubsFor(msgs), ['diagram: Jev classifies; your code decides the action, 4 nodes, id d-3']);
+	// the cut can fall between a drawing and the one that replaced it: the replaced one still leaves no stub
+	assert.deepStrictEqual(service.stubsFor(msgs.slice(0, 3)), [], 'd-1 is gone from the chat even though d-2 is not in this stretch');
+	// an id the model remembers from before the redraw leads to the drawing that took its place
+	assert.strictEqual(service.fetch('d-1'), 'ERROR: diagram d-1 was replaced by d-3 — the chat shows d-3. Call get_diagram with "d-3".');
+	assert.strictEqual(service.fetch('d-2'), 'ERROR: diagram d-2 was replaced by d-3 — the chat shows d-3. Call get_diagram with "d-3".');
+	assert.strictEqual(JSON.parse(service.fetch('d-3')).nodes.length, 4);
+	assert.strictEqual(service.fetch('d-9'), 'ERROR: no diagram with id "d-9" in this session. Known ids: d-3.', 'and it is not offered as one to ask for');
+	// the same after the session is reopened: the records come back, replaced ones included
+	m.recordTurn(msgs, 'm', { diagrams: service.takeNew() });
+	const id = m.liveId(); m.seal('done');
+	const second = createDiagrams();
+	second.load(m.resume(id).diagrams);
+	assert.deepStrictEqual(second.list().map((r) => r.id), ['d-1', 'd-2', 'd-3'], 'the store is append-only: all three are on file');
+	assert.deepStrictEqual(second.stubsFor(msgs), ['diagram: Jev classifies; your code decides the action, 4 nodes, id d-3']);
+	assert.match(second.fetch('d-1'), /^ERROR: diagram d-1 was replaced by d-3/);
+	// a record that says it replaces ITSELF, or two that name each other, is a damaged file — not a reason to hang
+	second.load([{ id: 'd-1', key: 'a', spec: jev(), status: 'ok', replaces: 'd-2' }, { id: 'd-2', key: 'b', spec: jev(), status: 'ok', replaces: 'd-1' }, { id: 'd-3', key: 'c', spec: jev(), status: 'ok', replaces: 'd-3' }]);
+	assert.match(second.fetch('d-1'), /^ERROR: diagram d-1 was replaced by d-2 /);
+	assert.match(second.fetch('d-2'), /^ERROR: diagram d-2 was replaced by d-1 /);
+	assert.deepStrictEqual(second.stubsFor([{ role: 'assistant', content: ['a', 'b', 'c'].map((id) => ({ type: 'tool_use', id, name: 'render_diagram', input: {} })) }]), ['diagram: Jev classifies; your code decides the action, 3 nodes, id d-3']);
+	assert.strictEqual(JSON.parse(second.fetch('d-3')).nodes.length, 3, 'a drawing cannot replace itself');
+});
+
+test('REPLAY: a picture drawn between two pieces of prose in ONE message comes back between them', () => {
+	const { m } = fresh();
+	const service = createDiagrams();
+	service.beginRun();
+	const out = service.render(jev(), { key: 'toolu_1', model: 'm' });
+	const other = service.render({ title: 'A second picture', nodes: [{ id: 'x', label: 'X' }], edges: [] }, { key: 'toolu_2', model: 'm' });
+	service.endRun();
+	const msgs = [{ role: 'user', content: 'how is a message routed?' },
+		{ role: 'assistant', content: [{ type: 'text', text: 'First, the route.' }, { type: 'text', text: 'It has three stops.' }, { type: 'tool_use', id: 'toolu_1', name: 'render_diagram', input: jev() },
+			{ type: 'text', text: 'Now the same thing as a list.' }, { type: 'tool_use', id: 'toolu_7', name: 'read_file', input: { path: 'a.js' } }, { type: 'text', text: 'And one more picture.' },
+			{ type: 'tool_use', id: 'toolu_2', name: 'render_diagram', input: {} }] },
+		{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: out.result }, { type: 'tool_result', tool_use_id: 'toolu_7', content: 'x' }, { type: 'tool_result', tool_use_id: 'toolu_2', content: other.result }] },
+		{ role: 'assistant', content: [{ type: 'text', text: 'Done: that is the whole route.' }] }];
+	m.recordTurn(msgs, 'm', { diagrams: service.takeNew() });
+	const id = m.liveId(); m.seal('done');
+	const r = m.resume(id);
+	assert.deepStrictEqual(r.turns.map((t) => t.role + (t.cont ? '+' : '') + ':' + (t.text !== undefined ? t.text : t.record.id)), [
+		'user:how is a message routed?',
+		'assistant:First, the route.\n\nIt has three stops.',
+		'diagram+:d-1',
+		'assistant+:Now the same thing as a list.\n\nAnd one more picture.',   // another tool's call is plumbing: it splits nothing
+		'diagram+:d-2',
+		'assistant:Done: that is the whole route.'
+	], 'prose, picture, prose, picture — the order the model wrote them in; "+" is the same message going on');
+	// the words are the same words: only where the pictures stand has changed
+	const prose = (turns) => turns.filter((t) => t.role === 'assistant').map((t) => t.text).join('\n\n');
+	assert.strictEqual(prose(r.turns), prose(E.toDisplayTurns(r.full)));
+	assert.deepStrictEqual(E.toDisplayTurns(r.full).map((t) => t.role), ['user', 'assistant', 'assistant'], 'and without the records it is the prose it always was, one turn per message');
+	// a call that drew nothing (sent back, replaced, somebody else's) does not cut the prose around it
+	const quiet = [{ role: 'assistant', content: [{ type: 'text', text: 'one' }, { type: 'tool_use', id: 'toolu_404', name: 'render_diagram', input: {} }, { type: 'text', text: 'two' }] }];
+	assert.deepStrictEqual(E.toDisplayTurns(quiet, service.list()), [{ role: 'assistant', text: 'one\n\ntwo' }]);
+	const redrawn = [{ id: 'd-1', key: 'toolu_404', spec: jev(), status: 'ok' }, { id: 'd-2', key: 'toolu_405', spec: jev(), status: 'ok', replaces: 'd-1' }];
+	assert.deepStrictEqual(E.toDisplayTurns(quiet, redrawn), [{ role: 'assistant', text: 'one\n\ntwo' }], 'a replaced drawing is not on screen, so it is not a place in the answer either');
+	// a record that names ITSELF as what it replaces is a damaged file, not a reason to hide the picture
+	const itself = [{ id: 'd-1', key: 'toolu_404', spec: jev(), status: 'ok', replaces: 'd-1' }];
+	assert.deepStrictEqual(E.toDisplayTurns(quiet, itself).map((t) => t.role), ['assistant', 'diagram', 'assistant']);
+	// a picture that opens the message, and one that closes it
+	const edges = E.toDisplayTurns([{ role: 'assistant', content: [{ type: 'text', text: '   ' }, { type: 'tool_use', id: 'toolu_1', name: 'render_diagram', input: {} }, { type: 'text', text: 'after' },
+		{ type: 'tool_use', id: 'toolu_2', name: 'render_diagram', input: {} }, { type: 'text', text: '\n' }] }], service.list());
+	assert.deepStrictEqual(edges.map((t) => t.role + (t.cont ? '+' : '') + ':' + (t.text || t.record.id)), ['diagram:d-1', 'assistant+:after', 'diagram+:d-2'], 'blank text is still no turn, before a picture or after one');
+});
+
 test('EXPORT: a session copied as Markdown carries each diagram as a Mermaid block, where it stood — and scrubbed', () => {
 	const service = createDiagrams();
 	const secret = jev(); secret.nodes[0].label = 'key sk-live-1234567890';
@@ -220,6 +294,65 @@ test('EXPORT: a session copied as Markdown carries each diagram as a Mermaid blo
 	assert.match(E.toMarkdown({ title: 'R' }, msgs, { diagrams: service.list() }), /\n_\[diagram: Jev classifies; your code decides the action\]_\n/);
 	// and without the records at all, the export is the prose it always was
 	assert.ok(!/mermaid|diagram:/.test(E.toMarkdown({ title: 'R' }, msgs)));
+});
+
+test('EXPORT: prose, picture and more prose from one message are exported in that order, under one speaker', () => {
+	const service = createDiagrams();
+	service.beginRun();
+	const out = service.render(jev(), { key: 'toolu_1', model: 'm' });
+	service.endRun();
+	const msgs = [{ role: 'user', content: 'how is a message routed?' },
+		{ role: 'assistant', content: [{ type: 'text', text: 'First, the route.' }, { type: 'tool_use', id: 'toolu_1', name: 'render_diagram', input: jev() }, { type: 'text', text: 'Now the same thing as a list.' }] },
+		{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: out.result }] },
+		{ role: 'assistant', content: [{ type: 'text', text: 'Done: that is the whole route.' }] }];
+	const opts = { diagrams: service.list(), diagram: () => ({ lang: 'mermaid', body: 'flowchart LR' }) };
+	const md = E.toMarkdown({ title: 'Routing', updatedAt: '2026-10-04T10:00:00Z' }, msgs, opts);
+	assert.strictEqual(md, [
+		'# Routing', '', '_LevelCode session · 2026-10-04 · 3 turns_', '',
+		'---', '', '**You**', '', 'how is a message routed?', '',
+		'---', '', '**LevelCode**', '', 'First, the route.', '',
+		'```mermaid', 'flowchart LR', '```', '',
+		'Now the same thing as a list.', '',
+		'---', '', '**LevelCode**', '', 'Done: that is the whole route.', ''
+	].join('\n'), 'the picture stands where it stood; the prose after it is the same answer, not a new speaker or a fourth turn');
+	// A picture with no prose before it opens the ANSWER — it is not the tail of the question.
+	const bare = [msgs[0], { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'render_diagram', input: jev() }] }, msgs[2], msgs[3]];
+	assert.strictEqual(E.toMarkdown({ title: 'Routing' }, bare, opts), [
+		'# Routing', '', '_LevelCode session · 2 turns_', '',
+		'---', '', '**You**', '', 'how is a message routed?', '',
+		'---', '', '**LevelCode**', '',
+		'```mermaid', 'flowchart LR', '```', '',
+		'---', '', '**LevelCode**', '', 'Done: that is the whole route.', ''
+	].join('\n'), 'under the speaker who drew it');
+	// …while a message that is only a picture, after one that spoke, still stands under that answer.
+	const after = [msgs[0], { role: 'assistant', content: [{ type: 'text', text: 'Let me draw it.' }, { type: 'tool_use', id: 'toolu_9', name: 'read_file', input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_9', content: 'x' }] },
+		{ role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'render_diagram', input: jev() }] }, msgs[2], msgs[3]];
+	assert.ok(E.toMarkdown({ title: 'Routing' }, after, opts).includes(['**LevelCode**', '', 'Let me draw it.', '', '```mermaid', 'flowchart LR', '```', '', '---', '', '**LevelCode**', '', 'Done: that is the whole route.'].join('\n')));
+	// A picture that opens a message which then SPEAKS: the message is one answer — label, picture, prose.
+	const lead = [msgs[0], { role: 'assistant', content: [{ type: 'text', text: 'Looking.' }] },
+		{ role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'render_diagram', input: jev() }, { type: 'text', text: 'That is the route.' }] }, msgs[2]];
+	assert.strictEqual(E.toMarkdown({ title: 'Routing' }, lead, opts), [
+		'# Routing', '', '_LevelCode session · 3 turns_', '',
+		'---', '', '**You**', '', 'how is a message routed?', '',
+		'---', '', '**LevelCode**', '', 'Looking.', '',
+		'---', '', '**LevelCode**', '',
+		'```mermaid', 'flowchart LR', '```', '',
+		'That is the route.', ''
+	].join('\n'), 'two messages spoke, so two answers — the picture is not pulled up under the first');
+	// A diagram that was never drawn exports nothing — and the prose after it is still its own message.
+	const failed = createDiagrams();
+	failed.beginRun();
+	failed.render({ title: 'Nothing', nodes: [], edges: [] }, { key: 'toolu_1', model: 'm' }); failed.render({ title: 'Nothing', nodes: [], edges: [] }, { key: 'toolu_2', model: 'm' });
+	failed.endRun();
+	assert.deepStrictEqual(failed.list().map((r) => [r.key, r.status, r.spec]), [['toolu_2', 'failed', null]]);
+	const none = [msgs[0], { role: 'assistant', content: [{ type: 'text', text: 'Looking.' }] },
+		{ role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_2', name: 'render_diagram', input: {} }, { type: 'text', text: 'It could not be drawn.' }] }];
+	assert.strictEqual(E.toMarkdown({ title: 'Routing' }, none, { diagrams: failed.list(), diagram: opts.diagram }), [
+		'# Routing', '', '_LevelCode session · 3 turns_', '',
+		'---', '', '**You**', '', 'how is a message routed?', '',
+		'---', '', '**LevelCode**', '', 'Looking.', '',
+		'---', '', '**LevelCode**', '', 'It could not be drawn.', ''
+	].join('\n'));
 });
 
 test('EXPORT: nothing in a label can close the fence early', () => {

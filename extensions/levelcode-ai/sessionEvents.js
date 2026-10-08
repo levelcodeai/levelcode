@@ -127,27 +127,42 @@ function messageText(content) {
  * chat did, not like the raw transcript. Pure, so the webview never has to know provider message shapes.
  *
  * With `diagrams` (the session's stored records), each diagram comes back as a turn of its own —
- * `{ role: 'diagram', key, record }` — at the place in the answer where the model drew it. A drawing
- * that a later one replaced is left out, as it was on screen. Without `diagrams` the result is exactly
- * what it always was: prose only.
+ * `{ role: 'diagram', key, record }` — at the place in the answer where the model drew it: a message
+ * that says something, draws, and says more comes back as prose, picture, prose, the way it was on
+ * screen. Every piece of such a message after its first is marked `cont: true` — the same message
+ * going on, not the next one — so a reader of the turns can still tell where a message ends. A
+ * drawing that a later one replaced is left out, as it was on screen. Without `diagrams` the result
+ * is exactly what it always was: prose only, one turn per message.
  */
 function toDisplayTurns(messages, diagrams) {
 	const out = [];
 	const records = Array.isArray(diagrams) ? diagrams : [];
 	const byKey = new Map(records.filter((r) => r && r.key).map((r) => [String(r.key), r]));
-	const replaced = new Set(records.filter((r) => r && r.replaces).map((r) => String(r.replaces)));
+	const replaced = new Set(records.filter((r) => r && r.replaces && String(r.replaces) !== String(r.id)).map((r) => String(r.replaces)));
+	/** The diagram this block drew — if it drew one, and that one is still what the chat shows. */
+	const drawnBy = (b) => {
+		const r = b && b.type === 'tool_use' && b.name === DIAGRAM_TOOL ? byKey.get(String(b.id)) : null;
+		return r && !replaced.has(String(r.id)) ? r : null;
+	};
 	for (const m of (Array.isArray(messages) ? messages : [])) {
 		if (!m || (m.role !== 'user' && m.role !== 'assistant')) { continue; }
 		// a user message whose content is purely tool_result blocks is plumbing, not something the user typed
 		if (m.role === 'user' && Array.isArray(m.content) && m.content.length && m.content.every((b) => b && b.type === 'tool_result')) { continue; }
+		if (m.role === 'assistant' && Array.isArray(m.content)) {
+			// An answer, block by block: the prose so far, then a picture, then the rest. With no picture
+			// in it — the usual case — that is one piece: all of its text, as it always was.
+			let prose = [], pieces = 0;
+			const piece = (turn) => { out.push(pieces++ ? Object.assign(turn, { cont: true }) : turn); };
+			const flush = () => { const text = messageText(prose); prose = []; if (text.trim()) { piece({ role: 'assistant', text }); } };
+			for (const b of m.content) {
+				const r = drawnBy(b);
+				if (r) { flush(); piece({ role: 'diagram', key: String(r.key), record: r }); } else { prose.push(b); }
+			}
+			flush();
+			continue;
+		}
 		const text = messageText(m.content);
 		if (text.trim()) { out.push({ role: m.role, text }); }   // (an assistant turn that was only tool calls has none)
-		if (m.role === 'assistant' && byKey.size && Array.isArray(m.content)) {
-			for (const b of m.content) {
-				const r = b && b.type === 'tool_use' && b.name === DIAGRAM_TOOL ? byKey.get(String(b.id)) : null;
-				if (r && !replaced.has(String(r.id))) { out.push({ role: 'diagram', key: String(r.key), record: r }); }
-			}
-		}
 	}
 	return out;
 }
@@ -190,7 +205,14 @@ function toMarkdown(meta, messages, opts) {
 	const m = meta || {};
 	const o = opts || {};
 	const scrub = typeof o.redact === 'function' ? o.redact : (s) => s;
-	const turns = toDisplayTurns(messages, o.diagrams).filter((t) => t.role !== 'diagram' || (t.record && t.record.spec));
+	// Message by message: the pieces of one message (prose, pictures, more prose) stay together. A
+	// diagram that was never drawn has nothing to export, and is dropped only AFTER the pieces are
+	// grouped — it may be the first piece of its message, and the prose after it is not the tail of
+	// the message before.
+	const answers = [];
+	for (const t of toDisplayTurns(messages, o.diagrams)) { if (t.cont && answers.length) { answers[answers.length - 1].push(t); } else { answers.push([t]); } }
+	const said = (pieces) => pieces.some((t) => t.role !== 'diagram');
+	const shown = answers.map((pieces) => pieces.filter((t) => t.role !== 'diagram' || (t.record && t.record.spec))).filter((pieces) => pieces.length);
 
 	const title = scrub(String(m.title || 'Untitled session')).trim() || 'Untitled session';
 	const when = String(m.updatedAt || m.createdAt || '').slice(0, 10);
@@ -200,7 +222,7 @@ function toMarkdown(meta, messages, opts) {
 	// never named a model or touched a file should read as a transcript, not as a form with blanks.
 	const bits = [];
 	if (when) { bits.push(when); }
-	const spoken = turns.filter((t) => t.role !== 'diagram').length;   // a diagram is part of an answer, not a turn of its own
+	const spoken = shown.filter(said).length;   // a turn is a message that says something: a diagram is part of an answer, not a turn of its own
 	bits.push(spoken + ' turn' + (spoken === 1 ? '' : 's'));
 	if (m.model) { bits.push('`' + scrub(String(m.model)) + '`'); }
 	if (files.length) { bits.push(files.slice(0, 6).map((f) => '`' + f + '`').join(', ')); }
@@ -208,9 +230,12 @@ function toMarkdown(meta, messages, opts) {
 	let md = '# ' + title + '\n\n';
 	md += '_LevelCode session · ' + bits.join(' · ') + '_\n';
 
-	for (const t of turns) {
+	// One rule and one speaker label per message that says something; its pictures stand in it where
+	// they stood. A message that is ONLY a picture joins the answer above it — no rule, no second
+	// label — unless there is none: under the question, it would read as part of the question.
+	let speaker = '';
+	const piece = (t) => {
 		if (t.role === 'diagram') {
-			// Under the answer it belongs to — no rule, no second speaker label.
 			const title = scrub(String((t.record.spec && t.record.spec.title) || 'Diagram')).replace(/\s+/g, ' ').trim();
 			let block = null;
 			try { block = typeof o.diagram === 'function' ? o.diagram(t.record) : null; } catch (e) { block = null; }
@@ -223,13 +248,17 @@ function toMarkdown(meta, messages, opts) {
 			} else {
 				md += '\n_[diagram: ' + title + ']_\n';
 			}
-			continue;
+			return;
 		}
-		md += '\n---\n\n**' + (t.role === 'user' ? 'You' : 'LevelCode') + '**\n\n';
 		// Verbatim aside from redaction — NOT trimmed. Trimming changes Markdown semantics: it de-indents a
-		// leading 4-space (indented code block) and eats trailing "  " (a hard line break). The `**role**\n\n`
-		// above already supplies the blank line an indented block needs after it.
-		md += scrub(String(t.text)) + '\n';
+		// leading 4-space (indented code block) and eats trailing "  " (a hard line break). The blank line
+		// before it — after the `**role**` label, or after a picture — is the one an indented block needs.
+		md += '\n' + scrub(String(t.text)) + '\n';
+	};
+	for (const pieces of shown) {
+		const role = pieces[0].role === 'user' ? 'user' : 'assistant';
+		if (said(pieces) || speaker !== 'assistant') { md += '\n---\n\n**' + (role === 'user' ? 'You' : 'LevelCode') + '**\n'; speaker = role; }
+		pieces.forEach(piece);
 	}
 	// An empty session still exports — a file with a header and no turns is a truthful answer, and
 	// silently producing nothing would read as a broken button.
