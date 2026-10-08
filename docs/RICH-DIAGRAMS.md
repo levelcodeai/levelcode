@@ -217,9 +217,23 @@ per run (three bounces across all diagrams, after which every call is final). A 
 waiting on its repair when the run ends — the model gave up, hit its step limit, or was stopped — is
 settled from its last attempt before `agentDone`, so no placeholder is left spinning.
 
+**Which call repairs which diagram.** The next call is the waiting diagram's repair when it has the
+same title, or at least half the same node ids — as the ladder *reads* them, not as they arrived.
+A corrected spec is the same diagram whether it comes as an object, as JSON text with a trailing
+comma, inside a `{"spec": …}` envelope or with `name` for `title`. A call for a different diagram
+settles the one that was waiting, from its last attempt, and is a first attempt of its own. Drawing
+the same title again later in a run is a redraw: the new drawing replaces the earlier one.
+
 **Storage.** The final record — spec, status, fixes, notes — is written to the session's event log
 after the turn. Reopening a chat replays records; no model is asked anything, and a valid record
 comes back exactly as it was stored.
+
+A reopened chat shows what the live one showed. A message that says something, draws, and says more
+is replayed — and exported as Markdown — in that order: prose, picture, prose, under one speaker
+label. A drawing that a later one replaced stays on file (the log is append-only) but is not
+replayed; the live chat removes its card when the redraw arrives. One diagram is one card either
+way: a repair fills the placeholder its first attempt left, a redraw stands where the model drew it
+again, and a different diagram never takes over a card that shows another.
 
 A session file is input too — it can be edited, cut short, or written by an older build — so a
 stored spec is checked like a model's: by the host when the session is loaded (before a link can be
@@ -248,6 +262,13 @@ zero-width and bidirectional-override characters before it is stored.
   if one does, and a suite checks it.
 - A linked node carries `data-lc-link` = its node id. A click sends that id; the host looks the
   path up in its own record and resolves it again. A path is never taken from the page.
+- A name that arrives from outside is never used to index a plain object on its own. A model id, a
+  tool call's id, a schema version and a word written for `shape` are all text somebody else chose,
+  and `constructor` and `__proto__` are on every object: looked up carelessly, a version called
+  `toString` "was" a schema and a model called `__proto__` wrote to the prototype all objects share.
+  The counters read and write own entries only, a version must be one of the numbers this editor
+  reads, the synonym tables are asked for their own words, and the page's table of cards has no
+  prototype. A test feeds those names through each.
 
 **The host accepts four actions, not two.** The spec lists `openLink` and `export`. Its own UX
 section also puts a Retry button on degraded diagrams and promises a text fallback when rendering
@@ -271,11 +292,11 @@ title after secret redaction.
 | --- | --- |
 | While streaming | A placeholder card appears when the call starts; the title fills in as soon as it has streamed; the picture replaces it |
 | Code links | A small file icon; click or Enter opens the file at the symbol (document symbols, then a text search, then the line); hover shows the path |
-| Zoom and pan | Diagrams larger than the column are scaled to fit; click opens a full-panel view with zoom, pan, fit and Esc |
-| Toolbar | Copy source, save SVG, save PNG, open as Mermaid, insert into a Markdown file |
+| Zoom and pan | Diagrams larger than the column are scaled to fit. The toolbar's Full size button — or a click on the picture — opens a full-panel view with zoom, pan, fit and Esc. That view is modal: the page behind it is inert, Tab stays inside it, and closing it returns the focus to where it was |
+| Toolbar | Full size, copy source, save SVG, save PNG, open as Mermaid, insert into a Markdown file |
 | Repair states | "auto-fixed" badge with a details popover; degraded banner listing each loss, plus Retry |
 | Theme switch | Instant — colours are CSS variables |
-| Accessibility | The title is the accessible name; a text outline (nodes, then edges, in reading order) is attached for screen readers; linked nodes are focusable |
+| Accessibility | The title is the accessible name; a text outline (nodes, then edges, in reading order) is attached for screen readers; linked nodes are focusable and open with Enter or Space, in the chat and in the full-size view. The picture itself is not a control — Full size is a button of its own — so a linked node is never a control inside another. In a saved SVG a linked node keeps its file icon and tooltip but is not a link: a file has nothing to open it with |
 | Fallback | Two ways rendering can be unavailable, one answer. If painting throws, the page draws the spec with characters itself. If the diagram modules never loaded, the page asks the host, which draws it from its own record. Either way it is the same layout on a character grid, fitted to the card's width, in a monospaced block, under a line saying that a text version is being shown. Source stays one click away |
 
 The text fallback is made of plain ASCII — a shortened label ends in three dots there, not an
@@ -310,7 +331,9 @@ answers in prose.
   summarized range becomes `[draws a diagram: <title>]` in the summary input, and the summary is
   followed by one stub line per diagram (`diagram: <title>, 4 nodes, id d-17`). From then on the
   model is also offered `get_diagram`, which returns the full spec by id. Resuming a session whose
-  history was shortened does the same.
+  history was shortened does the same. A drawing that a later one replaced gets no stub — the model
+  is handed back what the user can see — and asked for by its old id, `get_diagram` answers with
+  the id of the drawing that took its place.
 - **Retention** (an open question). A spec is kept as long as its session file is. There is no
   separate expiry.
 - **Repair tokens.** The repair pass is an ordinary agent turn, so it is counted, metered and
@@ -378,6 +401,10 @@ on the default models, then use it for a week and read the counters.
   narrow frames. None has a line *through* an unbacked name, and none of the gallery diagrams needs
   a backing at any width from 320 px up. Making room instead costs width: grouped top-to-bottom
   random specs are 0.6% wider on average and at most 121 px. The suite fails above 10% backed.
+- **Where a repaired diagram stands.** While the run is live, a repaired diagram is drawn where its
+  first attempt was waiting. A reopened session shows it at the call that got it right — below
+  anything the model wrote between the two. The cards are the same; the place can differ by that
+  much.
 - **Text fallback width.** Character widths follow the common Unicode ranges, not the whole
   standard; an unusual script or a font with its own ideas can still put a box edge one cell out.
 - **Time to picture is unmeasured in a real editor.** Layout is fast; font loading, DOM work and
@@ -391,28 +418,38 @@ on the default models, then use it for a week and read the counters.
 
 Verified:
 
-- 12 suites, 252 tests (`test/diagram*.test.js`), including a 1,500-spec layout fuzz, the corpus,
+- 12 suites, 270 tests (`test/diagram*.test.js`), including a 1,500-spec layout fuzz, the corpus,
   SVG snapshots in both palettes, the gallery at chat-panel widths, the real `runAgent` loop with a
-  scripted provider, and the host functions sliced out of `extension.js` against a `vscode`
-  stand-in.
-- The whole gate (`./scripts/test-extensions.sh`, 62 suite files) on macOS arm64 with Node 24, and
-  on Linux (Ubuntu 22.04 arm64, Node 18) in a container with no network and a read-only checkout.
-  The diagram suites also pass with every timer delayed by 15 ms.
+  scripted provider, the host functions sliced out of `extension.js` against a `vscode` stand-in,
+  and the page's own card bookkeeping run against a stand-in for the few DOM calls it makes.
+- The whole gate (`./scripts/test-extensions.sh`) on macOS arm64 with Node 24, and on Linux (Ubuntu
+  22.04 arm64, Node 18) in a container with no network and a read-only checkout. The diagram suites
+  also pass with every timer delayed by 15 ms.
 - `scripts/diagram-browser-check.js`: the real `chat.html` in headless Chrome under the real CSP —
-  light and dark, hostile labels, links, exports, a painter that throws, and the page with no
-  diagram modules at all — 155 checks, with no CSP violation and no resource request. Each step
-  waits for its result rather than for a length of time.
+  light and dark, hostile labels, links, exports, a painter that throws, the full-size view's
+  focus, and the page with no diagram modules at all — 186 checks, with no CSP violation and no
+  resource request. Each step waits for its result rather than for a length of time. One of its
+  pages plays runs in the order a real run sends them — a placeholder at the start of every call —
+  then replays the same conversation as a reopened session, and compares the two: a repair, a
+  repair written as loose JSON, a redraw, a change of subject mid-repair, tool calls named
+  `__proto__` and `constructor`, and a picture between two pieces of prose.
 - Mutation testing: 147 single-edit defects seeded across the modules, the host glue, the page and
   the eval harness, each run against the suite that should notice (and only after that suite
   passed on the unmutated copy). Ten survived at first: three were redundant code (removed or
-  simplified), seven were gaps in the suites (closed). All 144 that still apply are caught.
+  simplified), seven were gaps in the suites (closed). All 144 that still apply were caught. The
+  review round after the pull request was opened seeded 69 more against what it changed — 57
+  against the plain-Node suites, 12 against the browser check. Two survived at first, both gaps in
+  the page's card tests (nothing looked at *where* a redraw stands, or at a card that went with a
+  wiped transcript); both are closed and all 69 are caught. (The first set was not run again after
+  that round.)
 
 - `scripts/diagram-editor-check.js`: the real editor. A second, throwaway instance of the dev build
   loads this checkout's extension, talks to a stand-in provider on localhost, and is driven through
-  the DevTools protocol — 17 checks: the tool and its rules reach the model, the diagram is painted
-  in the real webview in the editor's theme, a linked node opens its file at the symbol, the session
-  on disk holds the diagram, a wider column re-lays it out, and the answer around it renders as
-  Markdown. (Added after the feature was first called done without ever having run in the editor.)
+  the DevTools protocol — 19 checks: the tool and its rules reach the model, the diagram is painted
+  in the real webview in the editor's theme, the full-size view opens from its button and is modal
+  there, a linked node opens its file at the symbol, the session on disk holds the diagram, a wider
+  column re-lays it out, and the answer around it renders as Markdown. (Added after the feature was
+  first called done without ever having run in the editor.)
 
 Not verified:
 
