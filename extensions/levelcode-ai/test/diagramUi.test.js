@@ -6,6 +6,10 @@
  *  exactly the actions the spec allows, validates before it lays out, and falls back instead of
  *  going blank. `scripts/diagram-browser-check.js` is the other half — it loads this same page in
  *  headless Chrome and checks what actually happens.
+ *
+ *  Two parts ARE run here, sliced out of the page: which card a diagram lands in (bookkeeping over a
+ *  handful of DOM calls, against a stand-in for them — CARDS), and where Tab goes in the full-size
+ *  view (a pure function — MODAL). Both went wrong once with every source pin in this file green.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -36,6 +40,24 @@ const fn = (name) => {
 	assert.ok(at >= 0, name + '() is gone');
 	const next = code.indexOf('\n  function ', at + 10);
 	return code.slice(at, next > at ? next : code.length);
+};
+
+/**
+ * One function and nothing after it — for code that is RUN, where `fn()`'s "up to the next function"
+ * would bring along whatever statements follow. Braces are counted outside string literals.
+ */
+const exact = (name) => {
+	const at = code.indexOf('function ' + name + '(');
+	assert.ok(at >= 0, name + '() is gone');
+	let depth = 0, quote = '';
+	for (let i = code.indexOf('{', at); i < code.length; i++) {
+		const c = code[i];
+		if (quote) { if (c === '\\') { i++; } else if (c === quote) { quote = ''; } continue; }
+		if (c === "'" || c === '"' || c === '`') { quote = c; }
+		else if (c === '{') { depth++; }
+		else if (c === '}' && --depth === 0) { return code.slice(at, i + 1); }
+	}
+	throw new Error('no end found for ' + name + '()');
 };
 
 test('SAFE: nothing in the diagram code can turn text into markup, or run it', () => {
@@ -144,10 +166,188 @@ test('ACCESSIBLE: the outline is hidden from sight but NOT from a screen reader;
 	assert.match(draw, /svg\.setAttribute\('aria-describedby', descId\)/);
 	assert.match(draw, /lcdEl\('p', 'lcd-sr', LCD\.text\.outline\(spec\)\.text\)/);
 	assert.match(draw, /card\.setAttribute\('aria-label', 'Diagram: ' \+ title\)/);
-	assert.match(draw, /stage\.tabIndex = 0; stage\.setAttribute\('role', 'button'\)/, 'the picture can be opened from the keyboard');
-	assert.match(code, /e\.key === 'Enter' \|\| e\.key === ' '/, 'and so can a linked node');
+	// The picture is not itself a control: its linked nodes are, and a control inside a control has
+	// no single thing to be announced as. Full size is a button of its own, in the toolbar.
+	assert.ok(!/stage\.(tabIndex|setAttribute\('(role|tabindex|aria-label)')/.test(draw), 'the stage is given a role, a tab stop or a name again');
+	assert.ok(!/\.lcd-stage:focus/.test(css), 'and it has no focus style, because it cannot have the focus');
+	assert.match(fn('lcdTools'), /if \(!textOnly\)\{ bar\.appendChild\(lcdBtn\('Full size', '[^']+', function\(\)\{ lcdZoomOpen\(card\); \}\)\); \}\s*const copy = /, 'the picture is opened from the keyboard with a real button, first in the toolbar — and only when there is a picture');
+	assert.match(code, /log\.addEventListener\('keydown', function\(e\)\{ if \(\(e\.key === 'Enter' \|\| e\.key === ' '\) && e\.target && e\.target\.closest && e\.target\.closest\('\[data-lc-link\]'\) && lcdActivate\(e\)\)/, 'and a linked node is opened with Enter or Space');
 	assert.match(fn('lcdPending'), /card\.setAttribute\('role', 'status'\); card\.setAttribute\('aria-live', 'polite'\)/);
 	assert.match(code, /e\.key === 'Escape'\)\{ e\.stopPropagation\(\); e\.preventDefault\(\); lcdZoomClose\(\); \}/);
+});
+
+test('MODAL: the full-size view says it is modal, and is — the page behind it is inert and Tab goes round inside', () => {
+	const open = fn('lcdZoomOpen'), close = fn('lcdZoomClose');
+	// opening: remember where the focus was, put everything else on the page out of reach, focus the dialog
+	assert.match(open, /if \(lcdZ\.el\.hidden\)\{\s*lcdZ\.back = document\.activeElement;\s*lcdZ\.behind = Array\.prototype\.filter\.call\(document\.body\.children, function\(n\)\{ return n !== lcdZ\.el && !n\.inert && /, 'every other child of the body, except what was inert already');
+	assert.match(open, /lcdZ\.behind\.forEach\(function\(n\)\{ n\.inert = true; \}\);/);
+	assert.match(open, /lcdZ\.el\.hidden = false;[\s\S]*close\.focus\(\);/);
+	// closing: the page comes back BEFORE the focus does — an inert element cannot take it
+	const back = close.indexOf('n.inert = false'), focus = close.indexOf('lcdZ.back.focus()');
+	assert.ok(back > 0 && focus > back, 'the focus is handed back while its target is still inert');
+	assert.match(close, /lcdZ\.behind = \[\];/, 'and only what THIS opening made inert is released');
+	assert.match(fn('lcdZoomStops'), /querySelectorAll\('button:not\(\[disabled\]\), \[data-lc-link\]'\)/);
+	assert.match(code, /else if \(e\.key === 'Tab'\)\{ const to = lcdZoomTab\(lcdZoomStops\(\), document\.activeElement, e\.shiftKey\); if \(to\)\{ e\.preventDefault\(\); to\.focus\(\); \} \}/);
+	assert.match(code, /else if \(\(e\.key === 'Enter' \|\| e\.key === ' '\) && link && lcdZ\.card\)\{ e\.preventDefault\(\); lcdAct\(lcdZ\.card\.dataset\.id, 'openLink', \{ node: link\.getAttribute\('data-lc-link'\) \}\); \}/, 'a linked node works from the keyboard in here too');
+
+	// …and where Tab goes, run: the page's own function
+	// eslint-disable-next-line no-new-func
+	const tab = new Function(exact('lcdZoomTab') + '\nreturn lcdZoomTab;')();
+	const [out, zin, fit, one, x, node] = ['out', 'in', 'fit', 'one', 'close', 'node'].map((name) => ({ name }));
+	const stops = [out, zin, fit, one, x, node], body = { name: 'body' };
+	assert.strictEqual(tab(stops, node, false), out, 'Tab on the last stop goes round to the first');
+	assert.strictEqual(tab(stops, out, true), node, 'Shift+Tab on the first goes round to the last');
+	for (const mid of [zin, fit, one, x]) { assert.strictEqual(tab(stops, mid, false), null); assert.strictEqual(tab(stops, mid, true), null); }
+	assert.strictEqual(tab(stops, out, false), null, 'in the middle, the browser moves the focus — its next stop is inside');
+	assert.strictEqual(tab(stops, node, true), null);
+	assert.strictEqual(tab(stops, body, false), out, 'a focus that got outside is brought back in');
+	assert.strictEqual(tab(stops, body, true), node);
+	assert.strictEqual(tab([x], x, false), x, 'one stop: Tab stays on it');
+	assert.strictEqual(tab([x], x, true), x);
+	assert.strictEqual(tab([], body, false), body, 'nothing to stop at: Tab still goes nowhere else');
+});
+
+// ---- which card a diagram lands in, RUN ---------------------------------------------------------------
+// The page's own lcdHost / lcdPending / lcdShow / lcdDrop / lcdSweep, over just enough of a DOM for them:
+// a tree, `dataset`, `isConnected`. What is under test is the bookkeeping — one diagram, one card, the
+// same cards a reopened session shows — not the drawing, which is a stub that marks the card as drawn.
+function cardsPage() {
+	class El {
+		constructor(tag) { this.tagName = String(tag).toUpperCase(); this.children = []; this.parentElement = null; this.dataset = {}; this.className = ''; this.own = ''; this.attrs = {}; }
+		get isConnected() { let e = this; while (e.parentElement) { e = e.parentElement; } return e === log; }
+		appendChild(c) { c.remove(); c.parentElement = this; this.children.push(c); return c; }
+		remove() { const p = this.parentElement; if (p) { p.children.splice(p.children.indexOf(this), 1); this.parentElement = null; } }
+		get childElementCount() { return this.children.length; }
+		get textContent() { return this.own + this.children.map((c) => c.textContent).join(''); }
+		set textContent(v) { for (const c of this.children.slice()) { c.remove(); } this.own = String(v); }
+		setAttribute(k, v) { this.attrs[k] = String(v); }
+		removeAttribute(k) { delete this.attrs[k]; }
+		get classList() { return { contains: (c) => this.className.split(/\s+/).includes(c) }; }
+	}
+	const log = new El('div');
+	const add = (role) => { const msg = new El('div'); msg.className = 'msg ' + role; const body = new El('div'); body.className = 'body'; msg.appendChild(body); log.appendChild(msg); return body; };
+	const lcdDraw = (card, record) => { card.className = 'lcd'; card.textContent = ''; card.dataset.id = record.id; delete card.dataset.state; card.drawn = (card.drawn || 0) + 1; };
+	const decl = /const lcdCards = [^;\n]+;/.exec(code);
+	assert.ok(decl, 'the table of cards is gone');
+	// eslint-disable-next-line no-new-func
+	const page = new Function('document', 'add', 'finishAgentBubble', 'lcdDraw', 'scrollIfStuck',
+		[decl[0]].concat(['lcdEl', 'lcdHost', 'lcdPending', 'lcdDrop', 'lcdShow', 'lcdSweep'].map(exact), ['return { lcdPending, lcdShow, lcdSweep, lcdCards };']).join('\n')
+	)({ createElement: (tag) => new El(tag) }, add, () => {}, lcdDraw, () => {});
+	const cards = () => { const out = []; const walk = (e) => { if (/(^| )lcd( |$)/.test(e.className)) { out.push(e); } e.children.forEach(walk); }; walk(log); return out; };
+	return Object.assign(page, {
+		log,
+		/** What is on screen: one entry per card — the id of the diagram it shows, or the state of its placeholder. */
+		shown: () => cards().map((c) => c.dataset.id || '(' + c.dataset.state + ')'),
+		/** The transcript, bubble by bubble: a card by what it shows, prose by its words. */
+		layout: () => log.children.map((msg) => { const c = cards().find((x) => x.parentElement && x.parentElement.parentElement === msg); return c ? (c.dataset.id || '(' + c.dataset.state + ')') : msg.textContent; }),
+		bubbles: () => log.children.length,
+		say: (text) => { add('assistant').own = text; },
+		pending: (key, state) => page.lcdPending({ key, state: state || 'drawing', title: '' }),
+		record: (key, id, extra) => page.lcdShow(Object.assign({ key, record: Object.assign({ id, key, status: 'ok' }, (extra && extra.record) || {}) }, extra && extra.replacesKey ? { replacesKey: extra.replacesKey } : {}))
+	});
+}
+
+test('CARDS: a diagram is drawn in the placeholder that was holding its place', () => {
+	const p = cardsPage();
+	p.pending('toolu_1'); p.pending('toolu_1');
+	assert.deepStrictEqual(p.shown(), ['(drawing)'], 'one placeholder, however many times it is announced');
+	p.record('toolu_1', 'd-1');
+	assert.deepStrictEqual(p.shown(), ['d-1']);
+	p.pending('toolu_1');
+	assert.deepStrictEqual(p.shown(), ['d-1'], 'a late placeholder never blanks a picture');
+	// with no placeholder at all (a replayed session), a record makes its own card
+	p.record('toolu_2', 'd-2');
+	assert.deepStrictEqual(p.shown(), ['d-1', 'd-2']);
+	// a card that went with a wiped transcript is not drawn into: nobody would see it
+	const gone = cardsPage();
+	gone.pending('toolu_1'); gone.log.children[0].remove();
+	assert.deepStrictEqual(gone.shown(), []);
+	gone.record('toolu_1', 'd-1');
+	assert.deepStrictEqual(gone.shown(), ['d-1']);
+});
+
+test('CARDS: a repair is drawn where the failed attempt was waiting — one card', () => {
+	const p = cardsPage();
+	p.pending('toolu_1'); p.pending('toolu_1', 'repairing');
+	p.pending('toolu_2');   // the model starts its second go: no new card
+	assert.deepStrictEqual(p.shown(), ['(repairing)']);
+	p.record('toolu_2', 'd-1', { replacesKey: 'toolu_1', record: { repaired: true } });
+	assert.deepStrictEqual(p.shown(), ['d-1']);
+	// …and it is drawn IN that place, whether or not the second call announced itself first
+	for (const announced of [true, false]) {
+		const r = cardsPage();
+		r.say('Here is the flow.'); r.pending('toolu_1'); r.pending('toolu_1', 'repairing'); r.say('One edge was wrong.');
+		if (announced) { r.pending('toolu_2'); }
+		r.record('toolu_2', 'd-1', { replacesKey: 'toolu_1' });
+		assert.deepStrictEqual(r.layout(), ['Here is the flow.', 'd-1', 'One edge was wrong.'], 'announced: ' + announced);
+	}
+	// two calls in ONE turn, the second repairing the first: each had a placeholder, one picture is left
+	const q = cardsPage();
+	q.pending('toolu_1'); q.pending('toolu_2'); q.pending('toolu_1', 'repairing');
+	assert.deepStrictEqual(q.shown(), ['(repairing)', '(drawing)']);
+	q.record('toolu_2', 'd-1', { replacesKey: 'toolu_1' });
+	assert.deepStrictEqual(q.shown(), ['d-1']);
+	assert.strictEqual(q.bubbles(), 1, 'and the bubble that only held the other placeholder went with it');
+});
+
+test('CARDS: a redraw leaves ONE picture on screen — what a reopened session shows', () => {
+	// as a real run sends it: every call announces itself before its record arrives
+	const p = cardsPage();
+	p.say('Here is the flow.'); p.pending('toolu_1'); p.record('toolu_1', 'd-1');
+	p.say('Top to bottom reads better.'); p.pending('toolu_2');
+	assert.deepStrictEqual(p.shown(), ['d-1', '(drawing)']);
+	p.record('toolu_2', 'd-2', { replacesKey: 'toolu_1', record: { replaces: 'd-1' } });
+	assert.deepStrictEqual(p.shown(), ['d-2'], 'the earlier drawing is gone, as sessionEvents.toDisplayTurns leaves it out');
+	assert.strictEqual(p.bubbles(), 3, 'its empty bubble went too; the prose stayed');
+	assert.deepStrictEqual(Object.keys(p.lcdCards), ['toolu_2'], 'and nothing still points at the card that was removed');
+	assert.deepStrictEqual(p.layout(), ['Here is the flow.', 'Top to bottom reads better.', 'd-2'], 'it stands where the model drew it again');
+	// …and in the same place when the second call never announced itself
+	const q = cardsPage();
+	q.say('Here is the flow.'); q.record('toolu_1', 'd-1'); q.say('Top to bottom reads better.');
+	q.record('toolu_2', 'd-2', { replacesKey: 'toolu_1', record: { replaces: 'd-1' } });
+	assert.deepStrictEqual(q.layout(), ['Here is the flow.', 'Top to bottom reads better.', 'd-2']);
+});
+
+test('CARDS: a DIFFERENT diagram never takes over a card that shows another one', () => {
+	// One was sent back; the model moved on. Its next call took the placeholder over when it began —
+	// then the host settled the first diagram into that card. The second needs a card of its own.
+	const p = cardsPage();
+	p.pending('toolu_1'); p.pending('toolu_1', 'repairing'); p.pending('toolu_2');
+	p.record('toolu_1', 'd-1', { record: { status: 'degraded' } });
+	p.record('toolu_2', 'd-2');
+	assert.deepStrictEqual(p.shown(), ['d-1', 'd-2'], 'two diagrams on file, two cards — the settled one is not painted over');
+	// a record that points at a card it has no claim on: neither painted over nor removed
+	const q = cardsPage();
+	q.record('toolu_1', 'd-1');
+	q.record('toolu_2', 'd-2', { replacesKey: 'toolu_1' });
+	assert.deepStrictEqual(q.shown(), ['d-1', 'd-2']);
+	q.pending('toolu_3'); q.record('toolu_3', 'd-3', { replacesKey: 'toolu_1', record: { replaces: 'd-9' } });
+	assert.deepStrictEqual(q.shown(), ['d-1', 'd-2', 'd-3']);
+	// the same record again (the column changed width, the chat moved) is drawn in its own card
+	q.record('toolu_3', 'd-3');
+	assert.deepStrictEqual(q.shown(), ['d-1', 'd-2', 'd-3']);
+});
+
+test('CARDS: a tool call may be called anything — names every object answers to are just keys', () => {
+	const p = cardsPage();
+	const keys = ['__proto__', 'constructor', 'parentNode', 'toString', 'hasOwnProperty', 'isConnected', 'dataset'];
+	keys.forEach((key, i) => { p.pending(key); p.record(key, 'd-' + (i + 1)); });
+	assert.deepStrictEqual(p.shown(), keys.map((_, i) => 'd-' + (i + 1)), 'one card each, in order — none lost, none drawn over another');
+	assert.deepStrictEqual(Object.keys(p.lcdCards), keys);
+	assert.strictEqual(Object.getPrototypeOf(p.lcdCards), null, 'the table inherits nothing to collide with');
+	assert.strictEqual(({}).drawn, undefined, 'and nothing was written through to every object');
+});
+
+test('CARDS: when the run ends, a placeholder that never got its picture goes — and only that', () => {
+	const p = cardsPage();
+	p.say('Here.'); p.pending('toolu_1'); p.record('toolu_1', 'd-1');
+	p.pending('orphan'); p.pending('second'); p.pending('second', 'repairing');
+	assert.deepStrictEqual(p.shown(), ['d-1', '(drawing)', '(repairing)']);
+	p.lcdSweep();
+	assert.deepStrictEqual(p.shown(), ['d-1']);
+	assert.strictEqual(p.bubbles(), 2, 'the prose and the picture; the two empty bubbles are gone');
+	p.lcdSweep();
+	assert.deepStrictEqual(p.shown(), ['d-1']);
 });
 
 test('THEME: export is the only moment a colour is baked in — the live picture keeps its tokens', () => {

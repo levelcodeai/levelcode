@@ -254,6 +254,29 @@ async function main() {
 		const shot = async (name) => { const s = await wb.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(OUT, name), Buffer.from(s.data, 'base64')); };
 		await shot('editor-chat.png');
 
+		// The toolbar's Full size button — the way in for the keyboard. The view says it is modal, and in
+		// THIS webview it has to be: `inert` is the browser's doing, so it is checked in the real one.
+		const zoomed = await evalIn(wv, `(() => {
+			const d = ${D}; const c = d.querySelector('figure.lcd'); const z = d.getElementById('lcdZoom');
+			const btn = Array.from(c.querySelectorAll('.lcd-tools .lcd-btn')).find((b) => b.textContent === 'Full size');
+			if (!btn) { return null; }
+			btn.focus(); btn.click();
+			const behind = Array.from(d.body.children).filter((n) => n !== z && !/^(SCRIPT|STYLE|TEMPLATE)$/.test(n.tagName));
+			const out = { open: !z.hidden, picture: !!z.querySelector('.lcdz-view svg'), focusInside: z.contains(d.activeElement), behind: behind.length, inert: behind.every((n) => n.inert === true), stage: c.querySelector('.lcd-stage').getAttribute('role') };
+			d.getElementById('input').focus(); out.composerTookFocus = d.activeElement === d.getElementById('input');
+			return out;
+		})()`);
+		await sleep(400);
+		await shot('editor-fullsize.png');
+		const closed = await evalIn(wv, `(() => {
+			const d = ${D}; const z = d.getElementById('lcdZoom');
+			(d.activeElement || d.body).dispatchEvent(new d.defaultView.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+			const behind = Array.from(d.body.children).filter((n) => n !== z && !/^(SCRIPT|STYLE|TEMPLATE)$/.test(n.tagName));
+			return { closed: z.hidden, released: behind.every((n) => n.inert === false), focus: d.activeElement ? d.activeElement.textContent : null };
+		})()`);
+		check('Full size opens from its toolbar button and is modal here: the page behind is inert and cannot take the focus', !!zoomed && zoomed.open && zoomed.picture && zoomed.focusInside && zoomed.behind > 5 && zoomed.inert && zoomed.composerTookFocus === false && zoomed.stage === null, JSON.stringify(zoomed));
+		check('…and Escape closes it, gives the page back and returns the focus to the button', closed.closed && closed.released && closed.focus === 'Full size', JSON.stringify(closed));
+
 		// a click on the linked node: the editor opens the file at the symbol
 		await evalIn(wv, `(() => { const d = ${D}; const n = d.querySelector('figure.lcd [data-lc-link]'); if (!n) { return false; } n.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: d.defaultView })); return true; })()`);
 		const opened = await until('router.js to open', () => evalIn(wb, '(() => { const t = Array.from(document.querySelectorAll(".tabs-container .tab")).map((e) => (e.getAttribute("aria-label") || e.textContent || "").trim()); if (!t.some((x) => /router\\.js/.test(x))) { return null; } const s = document.querySelector(".statusbar [id=\\"status.editor.selection\\"]"); return { tabs: t, cursor: s ? s.textContent.trim() : "" }; })()'), 20000).catch(() => null);

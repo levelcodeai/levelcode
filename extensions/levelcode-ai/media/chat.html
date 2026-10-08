@@ -1432,8 +1432,10 @@
     border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(224,160,48,.45));
   }
   .lcd-banner-text { flex: 1 1 12em; min-width: 0; }
-  .lcd-stage { cursor: zoom-in; border-radius: 8px; outline-offset: 3px; }
-  .lcd-stage:focus-visible { outline: 1px solid var(--accent); }
+  /* A click on the picture opens it full size — a shortcut for the pointer only. The picture itself is
+     not a control (its linked nodes are, and a control inside a control is nobody's to announce); the
+     toolbar's "Full size" button is the way in for the keyboard and for a screen reader. */
+  .lcd-stage { cursor: zoom-in; border-radius: 8px; }
   /* "Never wider than the chat column": the picture is laid out to fit, and scales down if the column narrows. */
   .lcd-stage svg { display: block; max-width: 100%; height: auto; }
   .lcd-btn {
@@ -4304,7 +4306,9 @@
   // SVG elements from a fixed allow-list and sets text with textContent. The card chrome below is
   // built with createElement + textContent too. Nothing from a spec is ever assigned to innerHTML.
   const LCD = window.LCDiagram || null;   // null if the modules did not load → the host's text version is shown instead
-  const lcdCards = {};                    // tool-call key → the card that shows (or will show) that diagram
+  // tool-call key → the card that shows (or will show) that diagram. The key is whatever the provider
+  // called its tool call, so the table inherits nothing: `constructor` and `__proto__` are just keys.
+  const lcdCards = Object.create(null);
   let lcdSeq = 0;
   const lcdCtx = (function(){ try { return document.createElement('canvas').getContext('2d'); } catch (e) { return null; } })();
   function lcdFont(){ try { return getComputedStyle(document.body).fontFamily || 'sans-serif'; } catch (e) { return 'sans-serif'; } }
@@ -4372,13 +4376,34 @@
     card.appendChild(skel);
     scrollIfStuck();
   }
-  /** A finished record from the host: fill the placeholder that was waiting for it, or make a card. */
+  /** Take a card out of the transcript — and the bubble that held it, if nothing else is in it. */
+  function lcdDrop(card){
+    const body = card.parentElement, msg = body && body.parentElement;
+    card.remove();
+    Object.keys(lcdCards).forEach(function(k){ if (lcdCards[k] === card){ delete lcdCards[k]; } });
+    if (body && !body.childElementCount && !body.textContent.trim() && msg && msg.classList.contains('msg')){ msg.remove(); }
+  }
+  /**
+   * A finished record from the host: fill the placeholder that was waiting for it, or make a card.
+   * One diagram, one card — the same cards a reopened session shows (sessionEvents.toDisplayTurns).
+   * A record has a claim on a card that is still a placeholder, or that shows the drawing it replaces,
+   * and on no card that shows a different diagram.
+   */
   function lcdShow(m){
     const record = m && m.record; if (!record || !record.id){ return; }
     const key = m.key || record.key || record.id;
-    let card = lcdCards[key] || (m.replacesKey ? lcdCards[m.replacesKey] : null);
-    if (card && !card.isConnected){ card = null; }
+    const there = function(c){ return c && c.isConnected ? c : null; };
+    const takes = function(c){ return !!c && (!c.dataset.id || c.dataset.id === record.id || c.dataset.id === String(record.replaces || '')); };
+    let card = there(lcdCards[key]);
+    const old = m.replacesKey ? there(lcdCards[m.replacesKey]) : null;
+    // The placeholder this call took over when it began may have been filled since: the host settled
+    // the diagram it was holding a place for, and this is a different one. That one keeps its card.
+    if (!takes(card)){ card = null; }
+    // A repair is drawn where the failed attempt was waiting. A redraw stands where the model drew it
+    // again, and the earlier drawing goes — as it does when the chat is reopened.
+    if (!card && old && !old.dataset.id){ card = old; }
     if (!card){ card = lcdHost(key); }
+    if (old && old !== card && takes(old)){ lcdDrop(old); }
     lcdCards[key] = card;
     lcdDraw(card, record, false);
     scrollIfStuck();
@@ -4439,7 +4464,7 @@
       const descId = 'lcd-desc-' + (++lcdSeq);
       svg.setAttribute('aria-describedby', descId);
       stage.appendChild(svg);
-      stage.tabIndex = 0; stage.setAttribute('role', 'button'); stage.setAttribute('aria-label', 'Open the diagram full size'); stage.title = 'Click to open full size';
+      stage.title = 'Click to open full size';
       const desc = lcdEl('p', 'lcd-sr', LCD.text.outline(spec).text); desc.id = descId; card.appendChild(desc);
       card._spec = spec; card._geo = geo;
       card.appendChild(lcdTools(card, record, false));
@@ -4527,10 +4552,11 @@
       img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg.text);
     });
   }
-  /** Copy source · SVG · PNG · Open as Mermaid · Insert into Markdown. */
+  /** Full size · Copy source · SVG · PNG · Open as Mermaid · Insert into Markdown. */
   function lcdTools(card, record, textOnly){
     const bar = lcdEl('div', 'lcd-tools');
     const fail = function(e){ vscode.postMessage({ type: 'notice', text: 'The diagram could not be exported: ' + String((e && e.message) || e) }); };
+    if (!textOnly){ bar.appendChild(lcdBtn('Full size', 'Open the diagram full size, to zoom and pan', function(){ lcdZoomOpen(card); })); }
     const copy = lcdBtn('Copy source', 'Copy the diagram’s spec', function(){ lcdAct(record.id, 'export', { format: 'source' }); lcdFlash(copy, 'Copied'); });
     bar.appendChild(copy);
     if (!textOnly){
@@ -4556,16 +4582,15 @@
   function lcdSweep(){
     Object.keys(lcdCards).forEach(function(k){
       const card = lcdCards[k];
-      if (card.dataset.id){ return; }
-      const body = card.parentElement, msg = body && body.parentElement;
-      card.remove(); delete lcdCards[k];
-      if (body && !body.childElementCount && !body.textContent.trim() && msg && msg.classList.contains('msg')){ msg.remove(); }
+      if (card && !card.dataset.id){ lcdDrop(card); }
     });
   }
   function lcdReset(){ Object.keys(lcdCards).forEach(function(k){ delete lcdCards[k]; }); lcdZoomClose(); }
 
-  // Full-size view: zoom about the pointer, drag to pan, fit and 100%.
-  const lcdZ = { el: document.getElementById('lcdZoom'), view: null, svg: null, card: null, k: 1, x: 0, y: 0, w: 0, h: 0, back: null };
+  // Full-size view: zoom about the pointer, drag to pan, fit and 100%. It says it is modal, so it is:
+  // while it is open the rest of the page is inert — not focusable, not clickable, not read out — and
+  // Tab goes round inside it. Closing gives the page back, and the focus to where it was.
+  const lcdZ = { el: document.getElementById('lcdZoom'), view: null, svg: null, card: null, k: 1, x: 0, y: 0, w: 0, h: 0, back: null, behind: [] };
   lcdZ.view = lcdZ.el.querySelector('.lcdz-view');
   function lcdZoomApply(){ if (lcdZ.svg){ lcdZ.svg.style.transform = 'translate(' + lcdZ.x + 'px,' + lcdZ.y + 'px) scale(' + lcdZ.k + ')'; } }
   function lcdZoomFit(){
@@ -4582,7 +4607,12 @@
     lcdZ.view.textContent = '';
     const svg = src.cloneNode(true);
     svg.removeAttribute('aria-describedby');
-    lcdZ.w = card._geo.width; lcdZ.h = card._geo.height; lcdZ.svg = svg; lcdZ.card = card; lcdZ.back = document.activeElement;
+    lcdZ.w = card._geo.width; lcdZ.h = card._geo.height; lcdZ.svg = svg; lcdZ.card = card;
+    if (lcdZ.el.hidden){
+      lcdZ.back = document.activeElement;
+      lcdZ.behind = Array.prototype.filter.call(document.body.children, function(n){ return n !== lcdZ.el && !n.inert && !/^(SCRIPT|STYLE|TEMPLATE)$/.test(n.tagName); });
+      lcdZ.behind.forEach(function(n){ n.inert = true; });
+    }
     svg.style.width = lcdZ.w + 'px'; svg.style.height = lcdZ.h + 'px';
     lcdZ.view.appendChild(svg);
     lcdZ.el.querySelector('.lcdz-title').textContent = (card._spec && card._spec.title) || 'Diagram';
@@ -4593,7 +4623,21 @@
   function lcdZoomClose(){
     if (!lcdZ.el || lcdZ.el.hidden){ return; }
     lcdZ.el.hidden = true; lcdZ.view.textContent = ''; lcdZ.svg = null; lcdZ.card = null;
+    lcdZ.behind.forEach(function(n){ n.inert = false; }); lcdZ.behind = [];   // before the focus goes back: an inert element cannot take it
     try { if (lcdZ.back && lcdZ.back.focus){ lcdZ.back.focus(); } } catch (e) {}
+    lcdZ.back = null;
+  }
+  /** Where Tab stops in the full-size view: its buttons, then the picture's linked nodes. */
+  function lcdZoomStops(){ return Array.prototype.slice.call(lcdZ.el.querySelectorAll('button:not([disabled]), [data-lc-link]')); }
+  /**
+   * Tab in the full-size view. Returns where the focus has to be PUT: past the last stop is the first,
+   * before the first is the last, and from anywhere outside the view it is brought back in. Null when
+   * the browser's own next stop is already inside, and Tab can be left to it.
+   */
+  function lcdZoomTab(stops, active, back){
+    const at = stops.indexOf(active);
+    if (at >= 0 && at !== (back ? 0 : stops.length - 1)){ return null; }
+    return stops[back ? stops.length - 1 : 0] || active || null;
   }
   lcdZ.el.querySelector('.lcdz-bar').addEventListener('click', function(e){
     const b = e.target.closest && e.target.closest('[data-z]'); if (!b){ return; }
@@ -4623,13 +4667,17 @@
   document.addEventListener('keydown', function(e){
     if (lcdZ.el.hidden){ return; }
     const r = lcdZ.view.getBoundingClientRect();
+    const link = e.target && e.target.closest && lcdZ.view.contains(e.target) ? e.target.closest('[data-lc-link]') : null;
     if (e.key === 'Escape'){ e.stopPropagation(); e.preventDefault(); lcdZoomClose(); }
+    else if (e.key === 'Tab'){ const to = lcdZoomTab(lcdZoomStops(), document.activeElement, e.shiftKey); if (to){ e.preventDefault(); to.focus(); } }
+    else if ((e.key === 'Enter' || e.key === ' ') && link && lcdZ.card){ e.preventDefault(); lcdAct(lcdZ.card.dataset.id, 'openLink', { node: link.getAttribute('data-lc-link') }); }
     else if (e.key === '+' || e.key === '='){ lcdZoomBy(1.25, r.width / 2, r.height / 2); }
     else if (e.key === '-'){ lcdZoomBy(0.8, r.width / 2, r.height / 2); }
     else if (e.key === '0'){ lcdZoomFit(); }
     else if (e.key === '1'){ lcdZoomBy(1 / lcdZ.k, r.width / 2, r.height / 2); }
   }, true);
-  // In the transcript: a linked node opens its file; anywhere else on the picture opens it full size.
+  // In the transcript: a linked node opens its file — by click, or by Enter/Space when it has the
+  // focus; a click anywhere else on the picture opens it full size.
   // The webview only ever names the NODE — which file that means is the host's own record.
   function lcdActivate(e){
     const t = e.target; if (!t || !t.closest){ return false; }
@@ -4640,7 +4688,7 @@
     return false;
   }
   log.addEventListener('click', function(e){ if (lcdActivate(e)){ e.preventDefault(); } });
-  log.addEventListener('keydown', function(e){ if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.closest && e.target.closest('[data-lc-link], .lcd-stage') && lcdActivate(e)){ e.preventDefault(); } });
+  log.addEventListener('keydown', function(e){ if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.closest && e.target.closest('[data-lc-link]') && lcdActivate(e)){ e.preventDefault(); } });
   // The column changed width: re-lay out any diagram that would now turn (or stop needing to).
   let lcdResizeT = null;
   window.addEventListener('resize', function(){

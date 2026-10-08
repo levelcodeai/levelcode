@@ -20,6 +20,10 @@
  *    • SVG and PNG export produce data the host's own structural check accepts
  *    • with the diagram modules MISSING from the page, each diagram is shown as the host's text
  *      version of the same spec — the spec's fallback — and still nothing runs
+ *    • the full-size view is modal: the page behind it is inert, Tab stays inside, Escape gives the
+ *      focus back — and the picture itself is not a button with links inside it
+ *    • played in the order a REAL run sends them (a placeholder at the start of every call), a repair,
+ *      a redraw and a change of subject each leave exactly the cards a reopened session shows
  *
  *  …and it writes a screenshot per theme, because "house style in light and dark" is finally a thing
  *  someone has to look at.
@@ -43,6 +47,7 @@ const { createDiagrams } = require(path.join(EXT, 'diagram', 'service'));
 const exportCheck = require(path.join(EXT, 'diagram', 'exportCheck'));
 const repair = require(path.join(EXT, 'diagram', 'repair'));
 const ascii = require(path.join(EXT, 'diagram', 'ascii'));
+const sessionEvents = require(path.join(EXT, 'sessionEvents'));
 
 function findChrome() {
 	const candidates = [process.env.CHROME,
@@ -91,6 +96,58 @@ function makeRecords() {
 	draw('hostile', HOSTILE);
 	draw('unpaintable', specOf('pipeline'));   // sent only after the painter has been made to fail
 	return out;
+}
+
+/**
+ * Runs as the agent loop runs them: what the host POSTS for each, in order, and what a reopened
+ * session would replay for the same conversation. agent.js announces every render_diagram call when
+ * it starts streaming — before anyone knows whether it is a new diagram, a repair or a redraw — so
+ * each call begins with a placeholder of its own.
+ */
+function makeRuns() {
+	const jev = specOf('jev');
+	const broken = () => { const b = specOf('jev'); b.edges[1].to = 'billing'; return b; };
+	const down = specOf('jev'); down.direction = 'down';
+	const other = { title: 'A second, unrelated picture', nodes: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }], edges: [{ from: 'x', to: 'y' }] };
+	const loose = (spec) => JSON.stringify(spec).replace(/\]/g, ',]').replace(/\}$/, ',}');
+	const named = (i) => ({ title: 'Picture ' + i, nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], edges: [{ from: 'a', to: 'b' }] });
+	/** @param {Array<Array<{key?:string, input:any}>>} turns  the calls of each model turn */
+	const run = (turns, want, texts) => {
+		const service = createDiagrams();
+		service.beginRun();
+		const live = [{ type: 'agentStart' }], messages = [{ role: 'user', content: 'draw it' }];
+		let k = 0;
+		turns.forEach((calls, t) => {
+			const said = (texts && texts[t]) || ['Turn ' + (t + 1) + '.'];
+			const keyed = calls.map((c) => Object.assign({ key: c.key || 'toolu_' + (++k) }, c));
+			const content = [{ type: 'text', text: said[0] }];
+			live.push({ type: 'agentDelta', text: said[0] });
+			for (const c of keyed) { live.push({ type: 'diagramPending', key: c.key, state: 'drawing', title: '' }); }   // onToolStart
+			if (said[1]) { live.push({ type: 'agentDelta', text: said[1] }); }
+			const results = [];
+			for (const c of keyed) {
+				const out = service.render(c.input, { key: c.key, model: 'check' });
+				for (const m of out.post) { live.push(m); }
+				content.push({ type: 'tool_use', id: c.key, name: 'render_diagram', input: typeof c.input === 'string' ? {} : c.input });
+				results.push({ type: 'tool_result', tool_use_id: c.key, content: out.result });
+			}
+			if (said[1]) { content.push({ type: 'text', text: said[1] }); }
+			live.push({ type: 'agentTurnEnd' });
+			messages.push({ role: 'assistant', content }, { role: 'user', content: results });
+		});
+		for (const m of service.endRun()) { live.push(m); }
+		live.push({ type: 'agentDone', reason: 'done', edits: 0 });
+		return { live, want, turns: sessionEvents.toDisplayTurns(messages, service.list()), onFile: service.list().map((r) => r.id) };
+	};
+	return {
+		'a repair': run([[{ input: broken() }], [{ input: jev }]], ['d-1']),
+		'a repair written as loose JSON': run([[{ input: broken() }], [{ input: loose(jev) }]], ['d-1']),
+		'two calls in one turn, the second repairing the first': run([[{ input: broken() }, { input: jev }]], ['d-1']),
+		'a redraw': run([[{ input: jev }], [{ input: down }]], ['d-2']),
+		'a different diagram while one was being repaired': run([[{ input: broken() }], [{ input: other }]], ['d-1', 'd-2']),
+		'tool calls named after things every object answers to': run([['__proto__', 'constructor', 'parentNode', 'toString'].map((key, i) => ({ key, input: named(i + 1) }))], ['d-1', 'd-2', 'd-3', 'd-4']),
+		'prose, a picture, more prose — in one message': run([[{ input: jev }]], ['First, the route.', 'd-1', 'Now the same thing as a list.'], [['First, the route.', 'Now the same thing as a list.']])
+	};
 }
 
 // ---- the page -------------------------------------------------------------------------------------
@@ -186,6 +243,47 @@ function driveBare(R) {
 	})();
 }
 
+/** Runs IN THE PAGE. Plays each run live, then as a reopened session, and reports the cards of both. */
+function driveRuns(RUNS) {
+	const say = (m) => window.postMessage(m, '*');
+	const report = window.__report;
+	// Every message before this one has been handled when it arrives: they are delivered in order.
+	let marks = 0;
+	const settled = () => new Promise((resolve) => {
+		const id = '__mark' + (++marks);
+		const on = (e) => { if (e.data && e.data.type === id) { window.removeEventListener('message', on); resolve(); } };
+		window.addEventListener('message', on);
+		say({ type: id });
+	});
+	/** The transcript, top to bottom: a diagram by its id (or its placeholder's state), prose by its words. */
+	const seen = () => Array.from(document.querySelectorAll('#log .msg.assistant .body')).map((b) => {
+		const c = b.querySelector('figure.lcd');
+		return c ? (c.dataset.id || '(' + c.dataset.state + ')') : b.textContent.trim();
+	}).filter(Boolean);
+	(async function () {
+		try {
+			say({ type: 'config', provider: 'claude', model: 'claude-opus-4-8', providerLabel: 'Claude', contextLimit: 200000, groupActivity: true });
+			report.runs = {};
+			for (const name of Object.keys(RUNS)) {
+				say({ type: 'reset' });
+				for (const m of RUNS[name].live) { say(m); }
+				await settled();
+				const live = seen();
+				say({ type: 'reset' });
+				say({ type: 'sessionResumed', id: 's', title: name, note: '', turns: RUNS[name].turns });
+				await settled();
+				report.runs[name] = { live, replayed: seen() };
+			}
+			report.pwned = window.__pwned === undefined ? null : window.__pwned;
+			report.resources = performance.getEntriesByType('resource').map((e) => e.name);
+		} catch (e) {
+			report.errors.push('driver: ' + (e && e.stack ? e.stack : e));
+		}
+		const pre = document.createElement('pre'); pre.id = 'lcd-report'; pre.hidden = true; pre.textContent = JSON.stringify(report);
+		document.body.appendChild(pre);
+	})();
+}
+
 /** Runs IN THE PAGE. Plays host messages, then reports what the page did. */
 function drive(R) {
 	const say = (m) => window.postMessage(m, '*');
@@ -268,16 +366,39 @@ function drive(R) {
 			report.hostileLinks = Array.from(hostile.querySelectorAll('[data-lc-link]')).map((el) => el.getAttribute('data-lc-link'));
 
 			// Full-size view opens on a click on the picture, and closes on Escape.
-			arch.querySelector('.lcd-stage').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+			const stage = arch.querySelector('.lcd-stage');
+			stage.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 			const z = document.getElementById('lcdZoom');
 			report.zoomOpen = !z.hidden && !!z.querySelector('.lcdz-view svg');
 			report.zoomTitle = z.querySelector('.lcdz-title').textContent;
 			document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 			report.zoomClosed = z.hidden;
 
+			// The picture is not a control with controls inside it: the way in from the keyboard is a button.
+			const btn = (card, label) => Array.from(card.querySelectorAll('.lcd-tools .lcd-btn')).find((b) => b.textContent === label);
+			report.stage = { role: stage.getAttribute('role'), tabindex: stage.getAttribute('tabindex'), label: stage.getAttribute('aria-label'), buttonsInside: stage.querySelectorAll('button').length };
+			// …and while the view is open it is MODAL: nothing behind it can be reached, and Tab stays inside.
+			const where = () => { const a = document.activeElement; return !a ? null : a.getAttribute('data-z') || (a.getAttribute('data-lc-link') ? 'node:' + a.getAttribute('data-lc-link') : '') || a.id || (a.textContent || '').trim() || a.tagName; };
+			const key = (k, shift) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: k, shiftKey: !!shift, bubbles: true, cancelable: true }));
+			const behind = Array.from(document.body.children).filter((n) => n !== z && !/^(SCRIPT|STYLE|TEMPLATE)$/.test(n.tagName));
+			const full = btn(arch, 'Full size');
+			full.focus(); full.click();
+			const modal = report.modal = { open: !z.hidden, focus: where(), inert: behind.length > 5 && behind.every((n) => n.inert === true) };
+			document.getElementById('input').focus(); modal.composer = where();          // the composer cannot take the focus
+			behind.find((n) => n.id === 'log').querySelector('.lcd-btn').focus(); modal.transcript = where();
+			const stops = Array.from(z.querySelectorAll('button, [data-lc-link]'));
+			modal.stops = stops.length;
+			stops[stops.length - 1].focus(); modal.last = where(); key('Tab'); modal.afterTab = where();
+			key('Tab', true); modal.afterShiftTab = where();
+			window.__posted.length = 0;
+			z.querySelector('[data-lc-link]').focus(); key('Enter');
+			modal.linkByKey = window.__posted.filter((m) => m.type === 'diagramAction');
+			key('Escape');
+			modal.closed = z.hidden; modal.released = behind.every((n) => n.inert === false); modal.focusBack = document.activeElement === full;
+			document.getElementById('input').focus(); modal.composerAfter = where();
+
 			// Export: SVG text, and a PNG rasterised from it.
 			const jev = cards.find((c) => c.dataset.id === R.jev.record.id);
-			const btn = (card, label) => Array.from(card.querySelectorAll('.lcd-tools .lcd-btn')).find((b) => b.textContent === label);
 			window.__posted.length = 0;
 			btn(jev, 'SVG').click(); btn(jev, 'PNG').click(); btn(jev, 'Copy source').click(); btn(jev, 'Open as Mermaid').click();
 			// (the PNG is rasterised asynchronously; a failure reports itself as a notice)
@@ -372,7 +493,7 @@ function main() {
 			check(theme, name + ': drawn as an SVG image with a description', c.svg && c.role === 'img' && c.described, JSON.stringify({ svg: c.svg, role: c.role, described: c.described }));
 			check(theme, name + ': made only of the painter\'s elements', c.tags && Object.keys(c.tags).every((t) => ['g', 'rect', 'path', 'text', 'title'].includes(t)), JSON.stringify(c.tags));
 			check(theme, name + ': never wider than the chat column', c.fits === true, 'width ' + c.width);
-			check(theme, name + ': has its toolbar', JSON.stringify(c.tools) === JSON.stringify(['Copy source', 'SVG', 'PNG', 'Open as Mermaid', 'Insert into Markdown…']), JSON.stringify(c.tools));
+			check(theme, name + ': has its toolbar', JSON.stringify(c.tools) === JSON.stringify(['Full size', 'Copy source', 'SVG', 'PNG', 'Open as Mermaid', 'Insert into Markdown…']), JSON.stringify(c.tools));
 		}
 		check(theme, 'the title is HTML above the picture', card('jev').title === 'Jev classifies; your code decides the action');
 		check(theme, 'a clean diagram has no badge and no banner', card('jev').badge === null && card('jev').banner === null);
@@ -384,6 +505,14 @@ function main() {
 		check(theme, 'a click on a node names the NODE, never a path', JSON.stringify(r.linkClick) === JSON.stringify([{ type: 'diagramAction', action: 'openLink', id: records.arch.record.id, node: 'agent' }]), JSON.stringify(r.linkClick));
 		check(theme, 'the hostile diagram\'s one link also only names its node', JSON.stringify(r.hostileLinkClick) === JSON.stringify([{ type: 'diagramAction', action: 'openLink', id: records.hostile.record.id, node: 'c' }]), JSON.stringify(r.hostileLinkClick));
 		check(theme, 'full-size view opens on click with the title, and closes on Escape', r.zoomOpen && r.zoomClosed && r.zoomTitle === 'The agent talks to providers through one registry', JSON.stringify([r.zoomOpen, r.zoomClosed, r.zoomTitle]));
+		const st = r.stage || {}, mo = r.modal || {};
+		check(theme, 'the picture is not a button around its linked nodes', st.role === null && st.tabindex === null && st.label === null && st.buttonsInside === 0, JSON.stringify(st));
+		check(theme, 'the toolbar\'s Full size button opens the view and puts the focus in it', mo.open === true && mo.focus === 'close', JSON.stringify([mo.open, mo.focus]));
+		check(theme, 'modal: everything else on the page is inert while it is open', mo.inert === true, JSON.stringify(mo.inert));
+		check(theme, 'modal: neither the composer nor the transcript can take the focus', mo.composer === 'close' && mo.transcript === 'close', JSON.stringify([mo.composer, mo.transcript]));
+		check(theme, 'modal: Tab on the last stop goes round to the first, and Shift+Tab back to the last', mo.stops === 7 && /^node:/.test(mo.last || '') && mo.afterTab === 'out' && mo.afterShiftTab === mo.last, JSON.stringify([mo.stops, mo.last, mo.afterTab, mo.afterShiftTab]));
+		check(theme, 'modal: Enter on a linked node opens it, by node id', JSON.stringify(mo.linkByKey) === JSON.stringify([{ type: 'diagramAction', action: 'openLink', id: records.arch.record.id, node: 'agent' }]), JSON.stringify(mo.linkByKey));
+		check(theme, 'modal: Escape closes it, gives the page back and returns the focus to the button', mo.closed === true && mo.released === true && mo.focusBack === true && mo.composerAfter === 'input', JSON.stringify([mo.closed, mo.released, mo.focusBack, mo.composerAfter]));
 		const reports = r.renderReports || [];
 		check(theme, 'each of the seven pictures reported its render once, as a success', reports.length === 7 && reports.every((x) => x.ok === true && typeof x.ms === 'number'), JSON.stringify(reports));
 		// (Render TIME is not checked here: under --virtual-time-budget the page's clock does not advance
@@ -403,7 +532,7 @@ function main() {
 		check(theme, 'a picture that cannot be painted becomes a text drawing of the same spec — no SVG, every label present', un.svg === false && typeof un.text === 'string' && unSpec.nodes.every((n) => un.text.includes(n.label)) && /\+-+\+/.test(un.text), JSON.stringify(un).slice(0, 300));
 		check(theme, 'the text drawing fits the card without scrolling sideways', un.fits === true && un.widest > 20, 'widest line ' + un.widest);
 		check(theme, 'and the card says why it is text, above the drawing', un.banner === 'The picture could not be drawn, so a text version is shown instead.' && un.bannerFirst === true, JSON.stringify([un.banner, un.bannerFirst]));
-		check(theme, 'its toolbar offers what still works — no image export', JSON.stringify(un.tools) === JSON.stringify(['Copy source', 'Open as Mermaid', 'Insert into Markdown…']), JSON.stringify(un.tools));
+		check(theme, 'its toolbar offers what still works — no image export, and no full size of a picture that is not there', JSON.stringify(un.tools) === JSON.stringify(['Copy source', 'Open as Mermaid', 'Insert into Markdown…']), JSON.stringify(un.tools));
 		check(theme, 'it is counted as a render that failed, and the host is asked for nothing', (un.reports || []).length === 1 && un.reports[0].ok === false && /painter unavailable/.test(un.reports[0].message) && un.asked === 0, JSON.stringify([un.reports, un.asked]));
 		if (svgCheck.ok) { fs.writeFileSync(path.join(out, 'export-' + theme + '.svg'), ex('svg').data); }
 		if (pngCheck.ok) { fs.writeFileSync(path.join(out, 'export-' + theme + '.png'), pngCheck.bytes); }
@@ -447,6 +576,27 @@ function main() {
 			check(theme, 'the column count is what fits the card', (r.askedCols || []).length === 3 && r.askedCols.every((c) => Number.isInteger(c) && c >= 90 && c <= 130), JSON.stringify(r.askedCols));
 			check(theme, 'the card does not repeat its own title inside the text', !(card('jev').ascii || '').includes('Jev classifies; your code decides the action'));
 			check(theme, 'each is counted as a render that failed', (r.renderReports || []).length === 3 && r.renderReports.every((x) => x.ok === false && /did not load/.test(x.message)), JSON.stringify(r.renderReports));
+		}
+	}
+
+	// ---- the order a real run sends things in: one diagram, one card — live, and when the chat is reopened ----
+	{
+		const theme = 'real order';
+		const runs = makeRuns();
+		const r = visit('chat-real-order', buildPage('light', runs, { driver: driveRuns }), '900,1500');
+		if (!r) { failures.push(theme + ' · the page never reported (did the script run?)'); }
+		else {
+			check(theme, 'no uncaught error in the page', r.errors.length === 0, r.errors.join(' | '));
+			check(theme, 'zero CSP violations', r.csp.length === 0, r.csp.join(' | '));
+			check(theme, 'zero resource requests', (r.resources || []).length === 0, (r.resources || []).join(' | '));
+			for (const name of Object.keys(runs)) {
+				const got = (r.runs || {})[name] || {};
+				const want = runs[name].want;
+				const cardsOf = (list) => (list || []).filter((x) => /^d-\d+$|^\(/.test(x));
+				const picked = want.every((w) => /^d-\d+$/.test(w)) ? cardsOf : (list) => list || [];
+				check(theme, name + ': live, the chat shows ' + JSON.stringify(want), JSON.stringify(picked(got.live)) === JSON.stringify(want), JSON.stringify(got.live));
+				check(theme, name + ': reopened, it shows the same', JSON.stringify(picked(got.replayed)) === JSON.stringify(want), JSON.stringify(got.replayed));
+			}
 		}
 	}
 
