@@ -23,6 +23,13 @@ const staticBase = trimSlash(new URL(config.staticBase || '/static', origin).hre
 // The workbench resolves every asset (css, nls, workers, codicon font) against this root.
 globalThis._VSCODE_FILE_ROOT = staticBase + '/out/';
 
+// Declared up here, not beside the sign-in code: the block below awaits, and a const further down the module
+// is not initialised until it finishes.
+/** sessionStorage: this tab went to the account site's sign-in and is expected back (callback.js reads it). */
+const RETURN_KEY = 'levelcode-web.return';
+/** How long a sign-in result left in localStorage stays deliverable. The one-time code behind it lives for a minute. */
+const FRESH_MS = 2 * 60 * 1000;
+
 const boot = createBootScreen();
 
 try {
@@ -32,11 +39,18 @@ try {
 
 	const secrets = await createSecretStorage();
 	const workspaceProvider = createWorkspaceProvider(URI, config);
+	const callbacks = createUrlCallbackProvider(URI, config.callbackRoute || '/callback.html');
 
 	const workbench = create(document.body, {
 		windowIndicator: { label: '$(globe) LevelCode Web', tooltip: 'LevelCode in your browser' },
 		workspaceProvider,
-		urlCallbackProvider: createUrlCallbackProvider(URI, config.callbackRoute || '/callback.html'),
+		urlCallbackProvider: callbacks,
+		commands: [{
+			// The extension asks the page to take the tab to the account site's sign-in. A page opened by
+			// script is what a strict browser blocks; leaving the tab and coming back (callback.js) is not.
+			id: 'levelcode.web.openAuthUrl',
+			handler: (url) => leaveForSignIn(url, config),
+		}],
 		secretStorageProvider: secrets,
 		additionalBuiltinExtensions: (config.extensions || []).map((name) => ({
 			scheme: location.protocol.slice(0, -1),
@@ -54,6 +68,7 @@ try {
 	// create() resolves once the workbench has been constructed. The splash goes when its DOM exists.
 	void workbench;
 	boot.whenWorkbenchReady();
+	startReturnFromSignIn(callbacks, URI);
 } catch (err) {
 	console.error('[levelcode-web] failed to start', err);
 	boot.fail(err);
@@ -69,6 +84,54 @@ function readConfig() {
 
 function trimSlash(s) { return s.replace(/\/+$/, ''); }
 
+/* ----- signing in ------------------------------------------------------------------------- */
+
+/**
+ * Take this tab to the account site's sign-in page. Only that site's /ai/ pages: this is a command any
+ * extension in the page could call, and it must not be a way to send the tab anywhere else.
+ */
+function leaveForSignIn(url, cfg) {
+	let target;
+	try { target = new URL(String(url)); } catch { return; }
+	let account;
+	try { account = new URL(cfg.account); } catch { return; }
+	if (target.origin !== account.origin || !target.pathname.startsWith('/ai/')) {
+		console.warn('[levelcode-web] refused to navigate to', target.origin + target.pathname);
+		return;
+	}
+	// callback.html is a page of this tab when this is set: it comes straight back instead of closing.
+	try { sessionStorage.setItem(RETURN_KEY, '1'); } catch { /* the pop-up path still works without it */ }
+	location.assign(target.href);
+}
+
+/**
+ * Two things can be waiting when the page starts, and both reach the extension as the "URL" the operating
+ * system would have given it on the desktop:
+ *   - a sign-in that took this tab away and brought it back (callback.html) left its result in
+ *     localStorage; it is delivered now. Only a result written in the last two minutes is: an older one is
+ *     a code that cannot be exchanged any more, and is dropped;
+ *   - ?signin=1 (the account site's "Open in browser") asks for the sign-in itself, once. The parameter is
+ *     removed first, so a reload does not start it again.
+ */
+function startReturnFromSignIn(callbacks, URI) {
+	const here = new URL(location.href);
+	const launch = here.searchParams.get('signin') === '1';
+	if (launch) {
+		here.searchParams.delete('signin');
+		try { history.replaceState(null, '', here.pathname + here.search + here.hash); } catch { /* cosmetic */ }
+	}
+	try { sessionStorage.removeItem(RETURN_KEY); } catch { /* nothing to clear */ }
+	void callbacks.whenListening().then((listening) => {
+		// With nobody listening a result would be taken out of storage and dropped; it stays for the next start.
+		if (!listening) { return; }
+		// Deliveries made before the extension has registered its handler are held by the workbench and
+		// replayed to it (ExtensionUrlBootstrapHandler / uriBuffer), so there is nothing to wait for.
+		const delivered = callbacks.drain(FRESH_MS);
+		if (launch && delivered === 0) {
+			callbacks.fire(URI.from({ scheme: 'levelcode', authority: 'levelcode.levelcode-ai', path: '/launch' }));
+		}
+	});
+}
 /** The URL decides the workspace, exactly as Code-OSS's web client does: ?folder= / ?workspace= / ?ew=true. */
 function createWorkspaceProvider(URI, cfg) {
 	const params = new URL(location.href).searchParams;
@@ -139,6 +202,44 @@ function createUrlCallbackProvider(URI, callbackRoute) {
 
 	return {
 		onCallback: (listener) => { listeners.add(listener); return { dispose: () => listeners.delete(listener) }; },
+		/** Resolves true once the workbench's URL service is listening (it subscribes while it starts); false if it never did. */
+		whenListening() {
+			return new Promise((resolve) => {
+				const t0 = Date.now();
+				const tick = () => {
+					if (listeners.size > 0) { resolve(true); }
+					else if (Date.now() - t0 > 30000) { resolve(false); }
+					else { setTimeout(tick, 100); }
+				};
+				tick();
+			});
+		},
+		/**
+		 * Deliver results a sign-in left in localStorage that this page was not waiting for (it left and came
+		 * back). One not written within `maxAgeMs` is removed and not delivered. Returns how many were.
+		 */
+		drain(maxAgeMs) {
+			const keys = [];
+			for (let i = 0; i < localStorage.length; i++) {
+				const k = localStorage.key(i);
+				if (k && k.startsWith('vscode-web.url-callbacks[')) { keys.push(k); }
+			}
+			let n = 0;
+			for (const k of keys) {
+				const raw = localStorage.getItem(k);
+				localStorage.removeItem(k);
+				try {
+					const data = JSON.parse(raw);
+					if (typeof data.at === 'number' && Date.now() - data.at > maxAgeMs) { continue; }
+					const uri = URI.revive(data);
+					listeners.forEach((l) => l(uri));
+					n++;
+				} catch (e) { console.error(e); }
+			}
+			return n;
+		},
+		/** Hand the workbench a URL as if the OS had opened it. */
+		fire(uri) { listeners.forEach((l) => l(uri)); },
 		create(options = {}) {
 			const id = ++nextId;
 			const query = [`vscode-reqid=${id}`];

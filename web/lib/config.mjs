@@ -21,6 +21,7 @@ export function webConfig(o = {}) {
 		// Where the page's own scripts and styles, the Code-OSS web build, and the extensions are mounted.
 		// A release puts all three under one build-addressed prefix (/_/<id>) so they can be cached for
 		// a year; the development server mounts them at the root, /static and /extensions.
+		account,
 		base: o.base || '',
 		staticBase: o.staticBase || '/static',
 		extensionsBase: o.extensionsBase || '/extensions',

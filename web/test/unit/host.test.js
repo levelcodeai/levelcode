@@ -17,11 +17,14 @@ const Module = require('module');
 
 // ---- a vscode stand-in with just what host.js touches ---------------------------------------
 class Uri {
-	constructor(scheme, p) { this.scheme = scheme; this.path = p; this.fsPath = p; }
+	constructor(scheme, p, query = '') { this.scheme = scheme; this.path = p; this.fsPath = p; this.query = query; }
 	static file(p) { return new Uri('file', p); }
-	with(o) { return new Uri(o.scheme || this.scheme, o.path != null ? o.path : this.path); }
-	toString() { return this.scheme + '://' + this.path; }
+	with(o) { return new Uri(o.scheme || this.scheme, o.path != null ? o.path : this.path, o.query != null ? o.query : this.query); }
+	// Enough of vscode.Uri for the sign-in address: toString(true) keeps `=` and `&` and encodes only `?` and `#`.
+	toString(skipEncoding) { return this.scheme + '://' + this.path + (this.query ? '?' + (skipEncoding ? this.query.replace(/[?#]/g, (c) => (c === '?' ? '%3F' : '%23')) : encodeURIComponent(this.query)) : ''); }
 }
+/** What the sign-in tests watch: commands run, and what was handed to the system browser. */
+const signIn = { commands: /** @type {string[]} */ ([]), executed: /** @type {any[][]} */ ([]), external: /** @type {any[]} */ ([]), getCommandsThrows: false };
 const vsFiles = new Map();           // path -> Uint8Array, for the browser-side `workspace.fs`
 const reads = [];
 const vscodeMock = {
@@ -39,6 +42,11 @@ const vscodeMock = {
 		},
 		findFiles: (...a) => ['findFiles', ...a],
 	},
+	commands: {
+		async getCommands() { if (signIn.getCommandsThrows) { throw new Error('no ext host'); } return signIn.commands; },
+		async executeCommand(...a) { signIn.executed.push(a); },
+	},
+	env: { async openExternal(u) { signIn.external.push(u); return true; } },
 };
 const origLoad = Module._load;
 // @ts-ignore
@@ -88,6 +96,15 @@ const enc = (s) => new TextEncoder().encode(s);
 		const out = await host.withReads((read) => { runs++; return [read(path.join(tmp, 'a.txt')), read(path.join(tmp, 'none'))]; });
 		assert.strictEqual(runs, 1);
 		assert.deepStrictEqual(out, ['﻿hello', null]);
+	});
+
+	await test('desktop: openAuth hands the address to the system browser and runs no command', async () => {
+		signIn.commands = ['levelcode.web.openAuthUrl'];   // even if one were registered
+		signIn.executed.length = 0; signIn.external.length = 0;
+		const uri = new Uri('https', '/ai/login', 'redirect_uri=a&code_challenge=b');
+		await host.openAuth(uri);
+		assert.deepStrictEqual(signIn.external, [uri]);
+		assert.deepStrictEqual(signIn.executed, []);
 	});
 
 	/* ---- the browser ---- */
@@ -152,6 +169,27 @@ const enc = (s) => new TextEncoder().encode(s);
 	});
 	await test('browser: findFiles is the editor\'s own search', () => {
 		assert.deepStrictEqual(host.findFiles('**/*', 'x', 5), ['findFiles', '**/*', 'x', 5]);
+	});
+	await test('browser: openAuth takes the tab there, with the address the editor\'s own opener would have used', async () => {
+		signIn.commands = ['workbench.action.files.save', 'levelcode.web.openAuthUrl']; signIn.getCommandsThrows = false;
+		signIn.executed.length = 0; signIn.external.length = 0;
+		const uri = new Uri('https', '/ai/login', 'redirect_uri=https://e.example/callback.html?x=1&code_challenge=b');
+		await host.openAuth(uri);
+		assert.strictEqual(signIn.external.length, 0, 'no pop-up');
+		assert.deepStrictEqual(signIn.executed, [['levelcode.web.openAuthUrl', encodeURI(uri.toString(true))]]);
+		const sent = signIn.executed[0][1];
+		assert.ok(/[?]redirect_uri=https:\/\/e\.example\/callback\.html%253Fx=1&code_challenge=b$/.test(sent), 'a query a server can split: ' + sent);
+	});
+	await test('browser: without the page\'s command, or when the command list cannot be had, it opens as before', async () => {
+		const uri = new Uri('https', '/ai/login', 'a=b');
+		signIn.commands = ['workbench.action.files.save']; signIn.executed.length = 0; signIn.external.length = 0;
+		await host.openAuth(uri);
+		assert.deepStrictEqual(signIn.executed, []);
+		assert.deepStrictEqual(signIn.external, [uri]);
+		signIn.commands = ['levelcode.web.openAuthUrl']; signIn.getCommandsThrows = true; signIn.external.length = 0;
+		await host.openAuth(uri);
+		assert.deepStrictEqual(signIn.external, [uri]);
+		signIn.getCommandsThrows = false;
 	});
 
 	console.log(`\n${n} tests passed`);

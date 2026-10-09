@@ -1,4 +1,4 @@
-// Words that are true on the desktop and false in a tab, and what the browser build says instead.
+// What the desktop extension says or does that is not true in a tab, and what the browser build uses instead.
 //
 // The desktop extension's text is written for a Mac: keys in the OS keychain, nothing leaves "your
 // machine". In a browser the same facts read differently (keys are sealed in this browser's
@@ -15,6 +15,10 @@ const REPLACEMENTS = [
 	['extension.js',
 		'Stored encrypted in your OS keychain — it never leaves your machine except to ',
 		'Stored encrypted in this browser — it never leaves this browser except to '],
+	// Sign-in leaves the tab for the account page and returns to it (host.openAuth); the desktop opens its browser.
+	['extension.js',
+		"\tdbg('account.signin', { provider: provider || 'browser', create: !!create });\n\tawait vscode.env.openExternal(vscode.Uri.parse(url));",
+		"\tdbg('account.signin', { provider: provider || 'browser', create: !!create });\n\tawait host.openAuth(vscode.Uri.parse(url));"],
 	['media/chat.html',
 		'Bring your own API key, stored in your OS keychain.',
 		'Bring your own API key, stored encrypted in this browser.'],

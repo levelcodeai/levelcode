@@ -22,11 +22,25 @@
 		var rest = params.toString();
 		if (rest) { uri.query = rest; }
 		if (fragment) { uri.fragment = fragment; }
+		// `at` lets the editor tell this result from one left behind long ago; the URL it is revived from ignores it.
+		uri.at = Date.now();
 		localStorage.setItem('vscode-web.url-callbacks[' + id + ']', JSON.stringify(uri));
-		say('You are signed in', 'You can close this tab and go back to LevelCode.');
-		// Take the one-time code out of the address bar and history, then try to close the tab.
+		// Take the one-time code out of the address bar and history.
 		history.replaceState(null, '', location.pathname);
-		setTimeout(function () { try { window.close(); } catch (e) { /* the text above still tells the user */ } }, 600);
+		var home = new URL('./', location.href).href;
+		var back = false;
+		// Set by the editor when it took THIS tab to the sign-in (web/main.js); the editor clears it at start-up.
+		try { back = sessionStorage.getItem('levelcode-web.return') === '1'; } catch (e) { /* no storage: the pop-up path */ }
+		if (back) {
+			// This tab left the editor for the sign-in: go back. The editor finds the result at start-up.
+			say('You are signed in', 'Back to LevelCode.');
+			location.replace(home);
+		} else {
+			say('You are signed in', 'You can close this tab and go back to LevelCode.');
+			var more = document.getElementById('more');
+			if (more) { more.hidden = false; more.querySelector('a').href = home; }
+			setTimeout(function () { try { window.close(); } catch (e) { /* the text above still tells the user */ } }, 600);
+		}
 	} catch (e) {
 		say('This link does not look right', String((e && e.message) || e));
 	}

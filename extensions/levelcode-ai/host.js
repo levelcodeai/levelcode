@@ -141,6 +141,35 @@ async function withReads(run) {
 	return result;
 }
 
+/* ----- sending the user to sign in ------------------------------------------------------------- */
+
+/** Registered by the page (web/main.js); it takes the tab to the account site and the sign-in comes back to it. */
+const OPEN_AUTH_COMMAND = 'levelcode.web.openAuthUrl';
+
+/**
+ * Open the account site's sign-in page. The desktop hands it to the system browser, as ever. A browser
+ * tab leaves the page for it: a pop-up opened from a chain that began in a webview is the first thing a
+ * strict browser (Safari, a phone) refuses, and the sign-in returns to the editor in the same tab. The
+ * page's entry script supplies the command that navigates; without it this falls back to openExternal.
+ *
+ * The string handed over is the one the editor's own opener would have opened — `encodeURI(uri.toString(true))`
+ * (src/vs/editor/browser/services/openerService.ts) — so the server sees the same address whichever way
+ * the sign-in was started, as it has from the desktop app all along.
+ * @param {vscode.Uri} uri
+ */
+async function openAuth(uri) {
+	if (isBrowser) {
+		try {
+			const known = await vscode.commands.getCommands(true);
+			if (known.includes(OPEN_AUTH_COMMAND)) {
+				await vscode.commands.executeCommand(OPEN_AUTH_COMMAND, encodeURI(uri.toString(true)));
+				return;
+			}
+		} catch { /* fall through to the pop-up */ }
+	}
+	await vscode.env.openExternal(uri);
+}
+
 /* ----- finding files ------------------------------------------------------------------------- */
 
 /**
@@ -156,7 +185,7 @@ function findFiles(glob, exclude, max) {
 
 module.exports = {
 	isBrowser, caps,
-	uriFor, readBytes, readText, readTextOrNull, stat, exists, isBinary, withReads, findFiles,
+	uriFor, readBytes, readText, readTextOrNull, stat, exists, isBinary, withReads, findFiles, openAuth,
 	// For tests.
 	_path: path,
 };
