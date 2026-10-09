@@ -8,7 +8,9 @@
 	<meta name="theme-color" content="#0b0d14">
 	<meta name="description" content="LevelCode, the AI code editor, in your browser tab. Sign in with your LevelCode account and start.">
 	<link rel="icon" type="image/svg+xml" href="/icon.svg">
-	<link rel="stylesheet" href="/boot.css">
+	<link rel="apple-touch-icon" href="/icon-192.png">
+	<link rel="manifest" href="/manifest.webmanifest">
+	<link rel="stylesheet" href="{{BASE}}/boot.css">
 	<link rel="stylesheet" href="{{STATIC}}/out/vs/workbench/workbench.web.main.internal.css">
 	<script type="application/json" id="levelcode-web-config">{{CONFIG}}</script>
 </head>
@@ -32,6 +34,6 @@
 		</div>
 		<noscript><p class="lc-msg">LevelCode needs JavaScript.</p></noscript>
 	</div>
-	<script type="module" src="/main.js"></script>
+	<script type="module" src="{{BASE}}/main.js"></script>
 </body>
 </html>

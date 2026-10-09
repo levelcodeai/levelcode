@@ -18,14 +18,30 @@ export const WEB_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url))
 export function webConfig(o = {}) {
 	const account = trimSlash(o.account || 'https://levelcode.ai');
 	return {
+		// Where the page's own scripts and styles, the Code-OSS web build, and the extensions are mounted.
+		// A release puts all three under one build-addressed prefix (/_/<id>) so they can be cached for
+		// a year; the development server mounts them at the root, /static and /extensions.
+		base: o.base || '',
 		staticBase: o.staticBase || '/static',
+		extensionsBase: o.extensionsBase || '/extensions',
 		callbackRoute: '/callback.html',
 		extensions: o.extensions || ['levelcode-ai'],
-		scratch: { scheme: 'levelcode-scratch', path: '/' },
+		// The folder is /scratch, not the provider's root: a root named "/" is what the title bar and the
+		// Explorer would show, and "scratch" is what it is.
+		scratch: { scheme: 'levelcode-scratch', path: '/scratch' },
 		trustedDomains: [account],
-		productConfiguration: Object.assign({}, o.productConfiguration),
+		productConfiguration: Object.assign({
+			// The scratch workspace implements file and text search for its own scheme. Spelling the grant
+			// out here (rather than relying on "built-in extensions may declare proposals") is the
+			// sanctioned route and keeps the workbench from logging an error about it at start.
+			extensionEnabledApiProposals: { 'levelcode.levelcode-web': ['fileSearchProvider', 'textSearchProvider'] },
+		}, o.productConfiguration),
 		configurationDefaults: Object.assign({
 			'levelcode.cloud.endpoint': account,
+			// LevelCode is the assistant here; the stock Copilot surfaces (status item, chat view, command
+			// center) are for an account this editor does not use. The desktop app sets the same.
+			'chat.disableAIFeatures': true,
+			'chat.commandCenter.enabled': false,
 			'workbench.startupEditor': 'none',
 			'telemetry.telemetryLevel': 'off',
 			'update.mode': 'none',
@@ -40,6 +56,7 @@ export function webConfig(o = {}) {
 export function renderIndex(config, htmlPath = path.join(WEB_DIR, 'index.html')) {
 	const json = JSON.stringify(config).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
 	return fs.readFileSync(htmlPath, 'utf8')
+		.replaceAll('{{BASE}}', config.base)
 		.replaceAll('{{STATIC}}', config.staticBase)
 		.replace('{{CONFIG}}', () => json);
 }

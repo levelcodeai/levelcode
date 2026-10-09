@@ -41,7 +41,7 @@ try {
 		additionalBuiltinExtensions: (config.extensions || []).map((name) => ({
 			scheme: location.protocol.slice(0, -1),
 			authority: location.host,
-			path: '/extensions/' + name,
+			path: trimSlash(config.extensionsBase || '/extensions') + '/' + name,
 		})),
 		productConfiguration: config.productConfiguration || {},
 		configurationDefaults: config.configurationDefaults || {},
@@ -82,7 +82,7 @@ function createWorkspaceProvider(URI, cfg) {
 		else if (key === 'payload') { try { payload = JSON.parse(value); } catch (e) { /* ignore a bad payload */ } }
 	});
 	if (!found && cfg.scratch && cfg.scratch.scheme) {
-		workspace = { folderUri: URI.from({ scheme: cfg.scratch.scheme, path: cfg.scratch.path || '/' }) };
+		workspace = { folderUri: URI.from({ scheme: cfg.scratch.scheme, path: cfg.scratch.path || '/scratch' }) };
 	}
 	const query = (w) => {
 		if (!w) { return 'ew=true'; }

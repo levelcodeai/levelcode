@@ -17,23 +17,29 @@ import { Chrome, sleep } from './cdp.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, v, i, all) => { if (v.startsWith('--')) { a.push([v.slice(2), all[i + 1] && !all[i + 1].startsWith('--') ? all[i + 1] : 'true']); } return a; }, []));
+const DIST = args.dist ? path.resolve(args.dist) : null;   // a release from scripts/build-web.mjs, served with its own _headers
 const STATIC = path.resolve(args.static || process.env.LEVELCODE_WEB_STATIC || '');
 const EXTS = path.resolve(args.extensions || process.env.LEVELCODE_WEB_EXTENSIONS || '');
 const SHOTS = args.shots ? path.resolve(args.shots) : null;
 const EDITOR_PORT = Number(args.port || 8801);
 // `localhost`, not 127.0.0.1: the extension host's own iframe policy admits https: and http://localhost:*.
 const editorOrigin = `http://localhost:${EDITOR_PORT}`;
-if (!fs.existsSync(STATIC) || !fs.existsSync(EXTS)) { console.error('usage: e2e.mjs --static <vscode-web dir> --extensions <dir>'); process.exit(2); }
+if (DIST ? !fs.existsSync(DIST) : (!fs.existsSync(STATIC) || !fs.existsSync(EXTS))) {
+	console.error('usage: e2e.mjs --dist <release dir>   |   e2e.mjs --static <vscode-web dir> --extensions <dir>   [--stub-port N] [--shots dir]');
+	process.exit(2);
+}
 if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); }
 
 const results = [];
 const check = (name, ok, detail = '') => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); return ok; };
 const shot = async (page, name) => { if (SHOTS) { await page.screenshot(path.join(SHOTS, name + '.png')); } };
 
-const stub = await startStub({ editorOrigin });
-const server = spawn(process.execPath, [path.join(HERE, '..', 'serve.mjs'), '--static', STATIC, '--extensions', EXTS,
-	'--extension-names', args['extension-names'] || 'levelcode-ai,levelcode-web', '--account', stub.origin, '--port', String(EDITOR_PORT),
-	...(args.product ? ['--product', args.product] : [])], { stdio: 'inherit' });
+// A release has its account origin baked into index.html, so the stand-in has to be where it was built to look.
+const stub = await startStub({ editorOrigin, port: args['stub-port'] ? Number(args['stub-port']) : 0 });
+const server = spawn(process.execPath, [path.join(HERE, '..', 'serve.mjs'), '--port', String(EDITOR_PORT), ...(DIST
+	? ['--dist', DIST]
+	: ['--static', STATIC, '--extensions', EXTS, '--extension-names', args['extension-names'] || 'levelcode-ai,levelcode-web', '--account', stub.origin,
+		...(args.product ? ['--product', args.product] : [])])], { stdio: 'inherit' });
 let chrome;
 const finish = async (code) => { try { chrome && chrome.close(); } catch {} try { server.kill(); } catch {} try { await stub.close(); } catch {} process.exit(code); };
 process.on('SIGINT', () => finish(130));
@@ -94,7 +100,8 @@ try {
 	};
 	// With the extension host isolated on its own origin (--product with webEndpointUrlTemplate) the scratch
 	// workspace's IndexedDB belongs to THAT origin and the page cannot open it; the agent's read_file can.
-	const hardened = /webEndpointUrlTemplate/.test(args.product || '');
+	let hardened = /webEndpointUrlTemplate/.test(args.product || '');
+	if (DIST) { try { hardened = /\(same origin/.test(fs.readFileSync(path.join(DIST, 'build.json'), 'utf8')) ? false : true; } catch { /* keep */ } }
 	const scratchFile = hardened ? (async (p) => {
 		await ask('Please read the greeting');
 		const t = lastToolResult();
@@ -114,6 +121,8 @@ try {
 		return r.length ? r : null;
 	}, { ms: 30000, label: 'explorer rows' }).catch(() => null);
 	check('the scratch workspace is open and has its README', !!rows && rows.includes('README.md'), JSON.stringify(rows));
+	const title = await page.waitFor(async () => { const t = await page.eval('document.title'); return /scratch/i.test(t) ? t : null; }, { ms: 10000, label: 'window title' }).catch(() => page.eval('document.title'));
+	check('the workspace is called "scratch" (the window title), not "/"', /scratch/i.test(String(title)), JSON.stringify(title));
 	await shot(page, '1-boot');
 
 	/* 2. sign in: the user icon in the chat footer opens the account card, which has "Sign in with browser" */
@@ -160,7 +169,7 @@ try {
 
 	const turns = await ask('Please create a hello file');
 	check('the agent called the model through the gateway and got the tool result back', turns >= 2, 'turns: ' + turns);
-	check('write_file created hello.txt in the scratch workspace', (await scratchFile('/hello.txt')) === 'hello from the browser\n', JSON.stringify(await scratchFile('/hello.txt')));
+	check('write_file created hello.txt in the scratch workspace', (await scratchFile('/scratch/hello.txt')) === 'hello from the browser\n', JSON.stringify(await scratchFile('/scratch/hello.txt')));
 	const tools = (stub.state.lastChatBody && stub.state.lastChatBody.tools || []).map((t) => t.function && t.function.name);
 	check('the agent was not offered a shell', tools.length > 0 && !tools.includes('run_command') && !tools.includes('read_command_output') && tools.includes('write_file'), tools.join(','));
 	await shot(page, '3-agent');
@@ -175,7 +184,7 @@ try {
 	await ask('Please read the greeting');
 	check('read_file returns the file', /hello from the browser/.test(lastToolResult()), JSON.stringify(lastToolResult().slice(0, 80)));
 	await ask('Please change the greeting');
-	check('edit_file edits it in place', (await scratchFile('/hello.txt')) === 'hello again\n', JSON.stringify(await scratchFile('/hello.txt')));
+	check('edit_file edits it in place', (await scratchFile('/scratch/hello.txt')) === 'hello again\n', JSON.stringify(await scratchFile('/scratch/hello.txt')));
 	await shot(page, '3b-edited');
 
 	// Quick Open is answered by the same provider.
@@ -197,7 +206,7 @@ try {
 	await page.waitFor(() => stub.state.log.filter((e) => e.path === '/api/levelcode/v1/account/models' || e.path === '/api/levelcode/v1/account/profile').length > before, { ms: 30000, label: 'account call after reload' }).catch(() => null);
 	const after = stub.state.log.filter((e) => e.path === '/api/levelcode/v1/account/models' || e.path === '/api/levelcode/v1/account/profile').length;
 	check('after a reload the editor is still signed in', after > before, `${before} -> ${after}`);
-	check('after a reload the scratch file is still there', (await scratchFile('/hello.txt')) === 'hello again\n');
+	check('after a reload the scratch file is still there', (await scratchFile('/scratch/hello.txt')) === 'hello again\n');
 	await shot(page, '4-reload');
 } catch (e) {
 	check('the run completed', false, String((e && e.stack) || e));

@@ -339,12 +339,18 @@ class ScratchSearch {
 
 /* ----- activation ------------------------------------------------------------------------- */
 
+const HOME = '/scratch';
+
 async function seedWelcome(fsp) {
-	// A brand-new, empty scratch workspace gets one file so the Explorer is not a blank panel.
+	// The workspace folder is /scratch. A brand-new one is created, with one file so the Explorer is not a
+	// blank panel. An existing one is left exactly as it is.
 	try {
-		const kids = await fsp.readDirectory(vscode.Uri.from({ scheme: SCHEME, path: '/' }));
-		if (kids.length === 0) {
-			await fsp.writeFile(vscode.Uri.from({ scheme: SCHEME, path: '/README.md' }), new TextEncoder().encode(WELCOME), { create: true, overwrite: false });
+		const dir = vscode.Uri.from({ scheme: SCHEME, path: HOME });
+		let exists = true;
+		try { await fsp.stat(dir); } catch { exists = false; }
+		if (!exists) {
+			await fsp.createDirectory(dir);
+			await fsp.writeFile(vscode.Uri.from({ scheme: SCHEME, path: HOME + '/README.md' }), new TextEncoder().encode(WELCOME), { create: true, overwrite: false });
 			return true;
 		}
 	} catch (e) { /* seeding is a courtesy */ }
@@ -386,7 +392,7 @@ async function activate(context) {
 		// and tells the user itself when the browser has no support for it.
 		vscode.commands.registerCommand('levelcode.web.openLocalFolder', () => vscode.commands.executeCommand('workbench.action.files.openFolder')),
 		vscode.commands.registerCommand('levelcode.web.openScratch', () => vscode.commands.executeCommand(
-			'vscode.openFolder', vscode.Uri.from({ scheme: SCHEME, path: '/' }), { forceReuseWindow: true })),
+			'vscode.openFolder', vscode.Uri.from({ scheme: SCHEME, path: HOME }), { forceReuseWindow: true })),
 		vscode.commands.registerCommand('levelcode.web.aboutScratch', async () => {
 			const open = 'Open folder from your computer';
 			const pick = await vscode.window.showInformationMessage(

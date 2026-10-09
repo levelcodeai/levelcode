@@ -24,3 +24,8 @@ body { background: #0b0d14; }
 .lc-boot-failed .lc-msg { opacity: 1; }
 @keyframes lc-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(260%); } }
 @media (prefers-reduced-motion: reduce) { .lc-bar i { animation: none; width: 100%; opacity: .6; } }
+
+/* LevelCode is the assistant here. Code-OSS still adds a Copilot status item to the status bar on the web
+   (its own "hidden on the web" rule runs after the item is created); it opens a Copilot dashboard that
+   is of no use without a Copilot account, so it is not shown. */
+#chat\.statusBarEntry { display: none !important; }
