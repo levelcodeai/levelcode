@@ -115,9 +115,12 @@ try {
 	await sleep(1500);
 	check('an editor that is not waiting for it leaves it alone', (await orphan.eval(`localStorage.getItem('vscode-web.url-callbacks[7]') !== null`)) === true);
 	const before = exchanges();
+	const callsBefore = accountCalls();
 	await orphan.goto(editorOrigin + '/');
 	await workbenchReady(orphan);
 	await orphan.waitFor(() => exchanges() > before, { ms: 60000, label: 'delivery at start-up' }).catch(() => null);
+	await orphan.waitFor(() => accountCalls() > callsBefore, { ms: 30000, label: 'the second tab\'s account calls' }).catch(() => null);
+	check('a second tab of the editor is signed in from the store the first one wrote, with no sign-in of its own', accountCalls() > callsBefore && stub.state.signIns === 1, `account calls ${callsBefore} -> ${accountCalls()}, sign-ins ${stub.state.signIns}`);
 	check('the next start delivers it to the extension (the stand-in refuses the made-up code; the attempt is the proof)', exchanges() === before + 1, `${before} -> ${exchanges()}`);
 	check('and it is gone from storage', (await orphan.eval(`localStorage.getItem('vscode-web.url-callbacks[7]')`)) === null);
 

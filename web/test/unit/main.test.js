@@ -8,6 +8,7 @@
  *    leaveForSignIn           the one command the page offers an extension: it must take the tab to the
  *                             account site's /ai/ pages and nowhere else
  *    createUrlCallbackProvider  .drain / .whenListening: what is delivered when the page starts
+ *    createSecretStorage      the session store, shared by every tab of the origin
  *    startReturnFromSignIn    ?signin=1 and the return from a sign-in
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
@@ -19,10 +20,19 @@ const path = require('path');
 
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', '..', 'main.js'), 'utf8');
 
-/** The text of a top-level `function name(...) { ... }` — it ends at the first `}` in column 0. */
+/**
+ * The text of a top-level `function name(...) { ... }` (or `async function`): a one-line function is its
+ * line, any other ends at the first `}` in column 0.
+ */
 function extract(name) {
-	const start = SOURCE.indexOf('\nfunction ' + name + '(');
+	let start = SOURCE.indexOf('\nfunction ' + name + '(');
+	if (start < 0) { start = SOURCE.indexOf('\nasync function ' + name + '('); }
 	assert.ok(start >= 0, 'main.js has no top-level function ' + name);
+	const eol = SOURCE.indexOf('\n', start + 1);
+	const line = SOURCE.slice(start + 1, eol);
+	const opens = (line.match(/\{/g) || []).length;
+	const closes = (line.match(/\}/g) || []).length;
+	if (opens > 0 && opens === closes && line.endsWith('}')) { return line + '\n'; }
 	const end = SOURCE.indexOf('\n}\n', start);
 	assert.ok(end > start, 'could not find the end of ' + name);
 	return SOURCE.slice(start + 1, end + 2);
@@ -195,6 +205,162 @@ const ACCOUNT = 'https://levelcode.example';
 			t.provider.onCallback(() => {});
 			assert.strictEqual(await p, true);
 		} finally { t.restore(); }
+	});
+
+	/* ---- the secret store --------------------------------------------------------------------------- */
+	const nodeCrypto = require('crypto');
+	const STORE_KEY = 'levelcode-web.secrets.v1';
+	const SECRET_SOURCE = ['b64', 'unb64', 'seal', 'unseal', 'createSecretStorage'].map(extract).join('\n');
+	const memoryStorage = () => {
+		const m = new Map();
+		return {
+			m,
+			getItem: (k) => (m.has(k) ? m.get(k) : null),
+			setItem: (k, v) => { m.set(k, String(v)); },
+			removeItem: (k) => { m.delete(k); },
+		};
+	};
+	/** A mutex shared by every "tab" that is handed the same one, as Web Locks is. */
+	const sharedLocks = () => {
+		let tail = Promise.resolve();
+		const held = { max: 0, now: 0 };
+		return {
+			held,
+			request: (_name, fn) => {
+				const run = async () => { held.now++; held.max = Math.max(held.max, held.now); try { return await fn(); } finally { held.now--; } };
+				const p = tail.then(run, run);
+				tail = p.then(() => undefined, () => undefined);
+				return p;
+			},
+		};
+	};
+	/** One tab of the editor: its own storage object over the shared localStorage, the shared origin key. */
+	const tab = async ({ storage, key, locks, failKey = false, noKey = false }) => {
+		const logs = { error: [], warn: [] };
+		const factory = new Function('localStorage', 'navigator', 'console', 'loadOrCreateKey', 'crypto', 'TextEncoder', 'TextDecoder', 'btoa', 'atob', 'Uint8Array',
+			SECRET_SOURCE + '\nreturn createSecretStorage;');
+		const create = factory(storage, locks ? { locks } : {}, { warn: (...a) => logs.warn.push(a), error: (...a) => logs.error.push(a) },
+			async () => { if (noKey) { throw new Error('no indexedDB'); } return key; }, nodeCrypto.webcrypto, TextEncoder, TextDecoder, btoa, atob, Uint8Array);
+		return { store: await create(), logs };
+	};
+	const newKey = () => nodeCrypto.webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+
+	await test('secrets: set, get, keys and delete, and they are there after a reload', async () => {
+		const storage = memoryStorage();
+		const key = await newKey();
+		const a = await tab({ storage, key });
+		assert.strictEqual(a.store.type, 'persisted');
+		await a.store.set('access', 'token-AAA');
+		await a.store.set('refresh', 'token-RRR');
+		assert.strictEqual(await a.store.get('access'), 'token-AAA');
+		assert.deepStrictEqual((await a.store.keys()).sort(), ['access', 'refresh']);
+		await a.store.delete('access');
+		assert.strictEqual(await a.store.get('access'), undefined);
+		const reloaded = await tab({ storage, key });
+		assert.strictEqual(await reloaded.store.get('refresh'), 'token-RRR');
+		assert.deepStrictEqual(await reloaded.store.keys(), ['refresh']);
+	});
+	await test('secrets: what is stored is sealed — neither the value nor its base64 is in it', async () => {
+		const storage = memoryStorage();
+		const a = await tab({ storage, key: await newKey() });
+		await a.store.set('refresh', 'a-very-recognisable-secret-value');
+		const blob = storage.getItem(STORE_KEY);
+		assert.ok(blob && blob.length > 20);
+		assert.ok(!blob.includes('recognisable') && !blob.includes(Buffer.from('a-very-recognisable-secret-value').toString('base64')));
+	});
+	await test('secrets: another tab\'s change is seen at once — the rotated refresh token is the one a second tab uses', async () => {
+		const storage = memoryStorage();
+		const key = await newKey();
+		const locks = sharedLocks();
+		const first = await tab({ storage, key, locks });
+		await first.store.set('refresh', 'R1');
+		await first.store.set('access', 'A1');
+		const second = await tab({ storage, key, locks });                 // started while R1 was current
+		assert.strictEqual(await second.store.get('refresh'), 'R1');
+		await first.store.set('refresh', 'R2');                            // the first tab renews the session
+		await first.store.set('access', 'A2');
+		assert.strictEqual(await second.store.get('refresh'), 'R2', 'a second tab must not present the refresh token that was rotated away');
+		assert.strictEqual(await second.store.get('access'), 'A2');
+	});
+	await test('secrets: a change is one key — a tab does not write back what it saw at start-up', async () => {
+		const storage = memoryStorage();
+		const key = await newKey();
+		const locks = sharedLocks();
+		const first = await tab({ storage, key, locks });
+		await first.store.set('access', 'A1');
+		const second = await tab({ storage, key, locks });
+		await first.store.set('refresh', 'R2');                            // after the second tab started
+		await second.store.set('verifier', 'V');                           // an unrelated change in the second tab
+		assert.strictEqual(await first.store.get('refresh'), 'R2', 'the second tab\'s write did not undo the first\'s');
+		assert.strictEqual(await first.store.get('verifier'), 'V');
+		await second.store.delete('access');                               // the second tab signs out of the access token
+		assert.strictEqual(await first.store.get('refresh'), 'R2');
+		assert.strictEqual(await first.store.get('access'), undefined);
+	});
+	await test('secrets: changes made at the same moment in two tabs all land, one at a time', async () => {
+		const storage = memoryStorage();
+		const key = await newKey();
+		const locks = sharedLocks();
+		const a = await tab({ storage, key, locks });
+		const b = await tab({ storage, key, locks });
+		const work = [];
+		for (let i = 0; i < 12; i++) {
+			work.push(a.store.set('a' + i, 'x' + i));
+			work.push(b.store.set('b' + i, 'y' + i));
+		}
+		await Promise.all(work);
+		const keys = await a.store.keys();
+		assert.strictEqual(keys.length, 24, 'lost: ' + [...Array(12).keys()].flatMap((i) => ['a' + i, 'b' + i]).filter((k) => !keys.includes(k)).join(','));
+		assert.strictEqual(locks.held.max, 1, 'never two changes inside the lock at once');
+	});
+	await test('secrets: with no Web Locks a tab still applies its own changes one at a time', async () => {
+		const storage = memoryStorage();
+		const a = await tab({ storage, key: await newKey() });
+		await Promise.all([...Array(10).keys()].map((i) => a.store.set('k' + i, 'v' + i)));
+		assert.strictEqual((await a.store.keys()).length, 10);
+	});
+	await test('secrets: a store that cannot be read is dropped, with a warning, and the tab carries on', async () => {
+		const storage = memoryStorage();
+		storage.setItem(STORE_KEY, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+		const a = await tab({ storage, key: await newKey() });
+		assert.strictEqual(await a.store.get('refresh'), undefined);
+		assert.strictEqual(storage.getItem(STORE_KEY), null);
+		assert.strictEqual(a.logs.warn.length >= 1, true);
+		await a.store.set('refresh', 'R');
+		assert.strictEqual(await a.store.get('refresh'), 'R');
+	});
+	await test('secrets: a key from another browser profile cannot read it — that is a sign-in again, not an error', async () => {
+		const storage = memoryStorage();
+		const mine = await tab({ storage, key: await newKey() });
+		await mine.store.set('refresh', 'R');
+		const other = await tab({ storage, key: await newKey() });
+		assert.strictEqual(await other.store.get('refresh'), undefined);
+	});
+	await test('secrets: where there is no key the store is in memory, writes nothing, and works for the session', async () => {
+		const storage = memoryStorage();
+		const a = await tab({ storage, key: null, noKey: true });
+		assert.strictEqual(a.store.type, 'in-memory');
+		await a.store.set('access', 'A');
+		assert.strictEqual(await a.store.get('access'), 'A');
+		assert.deepStrictEqual(await a.store.keys(), ['access']);
+		await a.store.delete('access');
+		assert.strictEqual(await a.store.get('access'), undefined);
+		assert.strictEqual(storage.m.size, 0, 'nothing was written to localStorage');
+	});
+	await test('secrets: when the browser refuses the write the session is kept for this tab, not lost', async () => {
+		const storage = memoryStorage();
+		const key = await newKey();
+		const a = await tab({ storage, key });
+		await a.store.set('refresh', 'R1');
+		const realSet = storage.setItem;
+		storage.setItem = () => { throw new Error('QuotaExceededError'); };
+		await a.store.set('access', 'A1');                                 // refused: kept in memory, with R1 carried over
+		storage.setItem = realSet;
+		assert.strictEqual(await a.store.get('access'), 'A1');
+		assert.strictEqual(await a.store.get('refresh'), 'R1');
+		await a.store.set('refresh', 'R2');
+		assert.strictEqual(await a.store.get('refresh'), 'R2');
+		assert.ok(a.logs.error.length >= 1, 'said so');
 	});
 
 	/* ---- startReturnFromSignIn --------------------------------------------------------------------- */

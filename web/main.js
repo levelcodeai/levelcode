@@ -266,42 +266,82 @@ function createUrlCallbackProvider(URI, callbackRoute) {
  * running on this origin, which can call the same key: the editor therefore loads no third-party
  * extensions (see docs/WEB.md). Where IndexedDB or WebCrypto is unavailable (some private
  * windows), secrets live in memory for the session and the user signs in again after a reload.
+ *
+ * The store belongs to every tab of this origin, as the desktop's keychain belongs to every window,
+ * and the extension relies on that: the refresh token is rotated on use, so a tab that renewed the
+ * session has to be seen by the next tab that does, or that one presents a token that is no longer
+ * good and ends a session the first just renewed. So nothing is cached here: a read is a read of
+ * what is stored now, and a change is read-modify-write of ONE key under a lock shared by the tabs
+ * (the Web Locks API; without it, changes from one tab are still applied one at a time).
  */
 async function createSecretStorage() {
 	const STORE_KEY = 'levelcode-web.secrets.v1';
+	const LOCK = 'levelcode-web.secrets';
 	let key;
 	try { key = await loadOrCreateKey(); } catch (e) { key = undefined; }
 
-	let cache = {};
-	const fromMemoryOnly = !key;
-	if (key) {
-		try {
-			const sealed = localStorage.getItem(STORE_KEY);
-			if (sealed) { cache = JSON.parse(await unseal(key, sealed)); }
-		} catch (e) {
-			// An unreadable store (key lost, tampered) is dropped; the user signs in again.
-			console.warn('[levelcode-web] the saved session could not be read and was cleared', e);
-			try { localStorage.removeItem(STORE_KEY); } catch (e2) { /* ignore */ }
-			cache = {};
-		}
+	if (!key) {
+		const memory = new Map();
+		return {
+			type: 'in-memory',
+			async get(k) { return memory.get(k); },
+			async set(k, v) { memory.set(k, v); },
+			async delete(k) { memory.delete(k); },
+			async keys() { return [...memory.keys()]; },
+		};
 	}
 
-	let writing = Promise.resolve();
-	const persist = () => {
-		if (!key) { return writing; }
-		writing = writing.then(async () => {
-			try { localStorage.setItem(STORE_KEY, await seal(key, JSON.stringify(cache))); }
-			catch (e) { console.error('[levelcode-web] could not persist secrets', e); }
-		});
-		return writing;
+	/** Everything stored now. Unreadable (key lost, tampered) is dropped: the user signs in again. */
+	const read = async () => {
+		let sealed = null;
+		try { sealed = localStorage.getItem(STORE_KEY); } catch (e) { return {}; }
+		if (!sealed) { return {}; }
+		try {
+			const all = JSON.parse(await unseal(key, sealed));
+			return all && typeof all === 'object' ? all : {};
+		} catch (e) {
+			console.warn('[levelcode-web] the saved session could not be read and was cleared', e);
+			try { localStorage.removeItem(STORE_KEY); } catch (e2) { /* ignore */ }
+			return {};
+		}
 	};
 
+	// One change at a time within this tab, and — where the browser has Web Locks — across tabs.
+	let queue = Promise.resolve();
+	const exclusive = (fn) => {
+		const run = () => (globalThis.navigator && navigator.locks && navigator.locks.request
+			? navigator.locks.request(LOCK, fn)
+			: fn());
+		const next = queue.then(run, run);
+		queue = next.then(() => undefined, () => undefined);
+		return next;
+	};
+	// When the browser refuses the write (storage disabled or full) this tab keeps the session in memory and
+	// the user signs in again after a reload: better than a sign-in that completes and is not there.
+	/** @type {Map<string, string> | null} */
+	let inMemory = null;
+	const change = (mutate) => exclusive(async () => {
+		if (inMemory) {
+			const all = Object.fromEntries(inMemory);
+			mutate(all);
+			inMemory = new Map(Object.entries(all));
+			return;
+		}
+		const all = await read();
+		mutate(all);
+		try { localStorage.setItem(STORE_KEY, await seal(key, JSON.stringify(all))); }
+		catch (e) {
+			console.error('[levelcode-web] could not persist secrets; keeping them for this tab only', e);
+			inMemory = new Map(Object.entries(all));
+		}
+	});
+
 	return {
-		type: fromMemoryOnly ? 'in-memory' : 'persisted',
-		async get(k) { return cache[k]; },
-		async set(k, v) { cache[k] = v; await persist(); },
-		async delete(k) { delete cache[k]; await persist(); },
-		async keys() { return Object.keys(cache); },
+		type: 'persisted',
+		async get(k) { return inMemory ? inMemory.get(k) : (await read())[k]; },
+		async set(k, v) { await change((all) => { all[k] = v; }); },
+		async delete(k) { await change((all) => { delete all[k]; }); },
+		async keys() { return inMemory ? [...inMemory.keys()] : Object.keys(await read()); },
 	};
 }
 
