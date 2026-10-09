@@ -309,7 +309,7 @@ async function createSecretStorage() {
 	// One change at a time within this tab, and — where the browser has Web Locks — across tabs.
 	let queue = Promise.resolve();
 	const exclusive = (fn) => {
-		const run = () => (globalThis.navigator && navigator.locks && navigator.locks.request
+		const run = () => (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request
 			? navigator.locks.request(LOCK, fn)
 			: fn());
 		const next = queue.then(run, run);
