@@ -129,15 +129,57 @@ try {
 	await activateTab(/LevelCode AI/);
 	await page.waitFor(async () => (await inChat('!!d.getElementById("send")')) === true, { ms: 30000, label: 'chat webview' });
 	check('the chat webview renders from the editor', true);
-	await inChat(`(() => { const i = d.getElementById('input'); i.focus(); if ('value' in i) { i.value = 'Please create a hello file'; } else { i.textContent = 'Please create a hello file'; } i.dispatchEvent(new Event('input', { bubbles: true })); d.getElementById('send').click(); return true; })()`);
-	await page.waitFor(() => stub.state.chats >= 2, { ms: 60000, label: 'two model turns' }).catch(() => null);
-	check('the agent called the model through the gateway and got the tool result back', stub.state.chats >= 2, 'turns: ' + stub.state.chats);
-	const body = await scratchFile('/hello.txt');
-	check('write_file created hello.txt in the scratch workspace', body === 'hello from the browser\n', JSON.stringify(body));
+	/** Send a prompt and wait for the agent to finish its turns (a tool call, then its answer). */
+	const idle = () => inChat(`!d.getElementById('send').classList.contains('stop')`);
+	const ask = async (prompt, turns = 2) => {
+		await page.waitFor(async () => (await idle()) === true, { ms: 90000, label: 'the agent to be idle' }).catch(() => null);
+		const start = stub.state.chats;
+		await inChat(`(() => { const i = d.getElementById('input'); i.focus(); if ('value' in i) { i.value = ${JSON.stringify(prompt)}; } else { i.textContent = ${JSON.stringify(prompt)}; } i.dispatchEvent(new Event('input', { bubbles: true })); d.getElementById('send').click(); return true; })()`);
+		await page.waitFor(() => stub.state.chats >= start + turns, { ms: 60000, label: 'model turns for ' + prompt }).catch(() => null);
+		const t0 = Date.now();
+		await page.waitFor(async () => (await idle()) === true, { ms: 90000, label: 'the run to finish' }).catch(() => null);
+		if (process.env.E2E_DEBUG) { console.log('  run finished ' + (Date.now() - t0) + ' ms after its last model turn'); }
+		await sleep(300);
+		return stub.state.chats - start;
+	};
+	/** The tool result the model was handed on its most recent request. */
+	const lastToolResult = () => {
+		const msgs = (stub.state.lastChatBody && stub.state.lastChatBody.messages) || [];
+		const t = [...msgs].reverse().find((m) => m.role === 'tool');
+		return t ? (typeof t.content === 'string' ? t.content : JSON.stringify(t.content)) : '';
+	};
+
+	const turns = await ask('Please create a hello file');
+	check('the agent called the model through the gateway and got the tool result back', turns >= 2, 'turns: ' + turns);
+	check('write_file created hello.txt in the scratch workspace', (await scratchFile('/hello.txt')) === 'hello from the browser\n', JSON.stringify(await scratchFile('/hello.txt')));
 	const tools = (stub.state.lastChatBody && stub.state.lastChatBody.tools || []).map((t) => t.function && t.function.name);
-	check('the agent was not offered a shell', tools.length > 0 && !tools.includes('run_command') && tools.includes('write_file'), tools.join(','));
-	await sleep(1500);
+	check('the agent was not offered a shell', tools.length > 0 && !tools.includes('run_command') && !tools.includes('read_command_output') && tools.includes('write_file'), tools.join(','));
 	await shot(page, '3-agent');
+
+	await ask('Please list the files');
+	const listed = lastToolResult();
+	if (process.env.E2E_DEBUG) { console.log('  chat log:', JSON.stringify(((await inChat(`(d.getElementById('log') || {}).innerText`)) || '').slice(-700))); console.log('  turns so far:', stub.state.chats, 'last request tools:', (stub.state.lastChatBody.messages || []).slice(-3).map((m) => m.role + ':' + String(typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).slice(0, 80)).join(' | ')); }
+	check('list_files sees the scratch workspace (findFiles is answered by the scratch search provider)', /README\.md/.test(listed) && /hello\.txt/.test(listed), JSON.stringify(listed.slice(0, 120)));
+	await ask('Please search the project');
+	const found = lastToolResult();
+	check('search finds text without ripgrep', /hello\.txt:1:hello from the browser/.test(found), JSON.stringify(found.slice(0, 160)));
+	await ask('Please read the greeting');
+	check('read_file returns the file', /hello from the browser/.test(lastToolResult()), JSON.stringify(lastToolResult().slice(0, 80)));
+	await ask('Please change the greeting');
+	check('edit_file edits it in place', (await scratchFile('/hello.txt')) === 'hello again\n', JSON.stringify(await scratchFile('/hello.txt')));
+	await shot(page, '3b-edited');
+
+	// Quick Open is answered by the same provider.
+	await page.key('p', 'KeyP', 4);
+	let quick = await page.waitFor(() => page.eval(`!!document.querySelector('.quick-input-widget:not([style*="display: none"]) .quick-input-box')`), { ms: 4000, label: 'quick open' }).catch(() => null);
+	if (!quick) { await page.key('p', 'KeyP', 2); quick = await page.waitFor(() => page.eval(`!!document.querySelector('.quick-input-widget:not([style*="display: none"]) .quick-input-box')`), { ms: 4000, label: 'quick open' }).catch(() => null); }
+	if (quick) {
+		await page.type('hello');
+		await sleep(1500);
+		const entries = await page.eval(`[...document.querySelectorAll('.quick-input-list .monaco-list-row')].map((e) => e.getAttribute('aria-label') || e.textContent)`);
+		check('Quick Open finds files in the scratch workspace', entries.some((t) => /hello\.txt/.test(t)), JSON.stringify(entries.slice(0, 4)));
+		await page.key('Escape', 'Escape');
+	} else { check('Quick Open finds files in the scratch workspace', false, 'the quick open widget did not appear'); }
 
 	/* 4. a reload keeps the session and the files */
 	const before = stub.state.log.filter((e) => e.path === '/api/levelcode/v1/account/models' || e.path === '/api/levelcode/v1/account/profile').length;
@@ -146,7 +188,7 @@ try {
 	await page.waitFor(() => stub.state.log.filter((e) => e.path === '/api/levelcode/v1/account/models' || e.path === '/api/levelcode/v1/account/profile').length > before, { ms: 30000, label: 'account call after reload' }).catch(() => null);
 	const after = stub.state.log.filter((e) => e.path === '/api/levelcode/v1/account/models' || e.path === '/api/levelcode/v1/account/profile').length;
 	check('after a reload the editor is still signed in', after > before, `${before} -> ${after}`);
-	check('after a reload the scratch file is still there', (await scratchFile('/hello.txt')) === 'hello from the browser\n');
+	check('after a reload the scratch file is still there', (await scratchFile('/hello.txt')) === 'hello again\n');
 	await shot(page, '4-reload');
 } catch (e) {
 	check('the run completed', false, String((e && e.stack) || e));

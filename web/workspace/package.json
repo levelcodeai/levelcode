@@ -8,6 +8,7 @@
 	"engines": { "vscode": "^1.126.0" },
 	"categories": ["Other"],
 	"browser": "./extension.js",
+	"enabledApiProposals": ["fileSearchProvider", "textSearchProvider"],
 	"activationEvents": ["onFileSystem:levelcode-scratch", "onStartupFinished"],
 	"capabilities": {
 		"virtualWorkspaces": true,

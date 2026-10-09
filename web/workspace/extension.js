@@ -212,6 +212,131 @@ class ScratchFileSystem {
 	}
 }
 
+/* ----- search ----------------------------------------------------------------------------- */
+
+// Quick Open, the Search view and workspace.findFiles (which the agent's list_files uses) ask the
+// provider registered for the folder's scheme. Without one they wait forever, so the scratch
+// workspace answers its own questions. Everything is in IndexedDB; a scan is cheap at this size.
+
+/** A VS Code glob as a RegExp over a '/'-relative path. A pattern with no '/' matches at any depth. */
+function globToRegExp(glob) {
+	const src = String(glob);
+	const anyDepth = !src.includes('/');
+	const conv = (g) => {
+		let re = '';
+		for (let i = 0; i < g.length;) {
+			const c = g[i];
+			if (c === '*') {
+				if (g[i + 1] === '*') {
+					i += 2;
+					if (g[i] === '/') { i++; re += '(?:.*/)?'; } else { re += '.*'; }
+				} else { re += '[^/]*'; i++; }
+			} else if (c === '?') { re += '[^/]'; i++; }
+			else if (c === '{') {
+				const j = g.indexOf('}', i);
+				if (j < 0) { re += '\\{'; i++; }
+				else { re += '(?:' + g.slice(i + 1, j).split(',').map(conv).join('|') + ')'; i = j + 1; }
+			} else if (c === '[') {
+				const j = g.indexOf(']', i + 1);
+				if (j < 0) { re += '\\['; i++; }
+				else { re += '[' + g.slice(i + 1, j).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = j + 1; }
+			} else { re += c.replace(/[.+^${}()|\\\/]/g, '\\$&'); i++; }
+		}
+		return re;
+	};
+	return new RegExp('^' + (anyDepth ? '(?:.*/)?' : '') + conv(src.replace(/^\.\//, '').replace(/^\//, '')) + '$');
+}
+
+/** True when `rel` or any directory above it matches one of the globs. */
+function matchesAny(rel, res) {
+	if (!res.length) { return false; }
+	const parts = rel.split('/');
+	let cur = '';
+	for (const part of parts) {
+		cur = cur ? cur + '/' + part : part;
+		if (res.some((r) => r.test(cur))) { return true; }
+	}
+	return false;
+}
+
+function subsequence(hay, needle) {
+	let j = 0;
+	for (let i = 0; i < hay.length && j < needle.length; i++) { if (hay[i] === needle[j]) { j++; } }
+	return j === needle.length;
+}
+
+class ScratchSearch {
+	constructor(fsp) { this.fsp = fsp; }
+
+	async _files(folder, includes, excludes) {
+		const root = norm(folder.path);
+		const prefix = under(root);
+		const inc = (includes || []).map(globToRegExp);
+		const exc = (excludes || []).map(globToRegExp);
+		const nodes = await this.fsp._range(root);
+		const out = [];
+		for (const n of nodes) {
+			if (n.type !== FILE) { continue; }
+			const rel = n.path.slice(prefix.length);
+			if (matchesAny(rel, exc)) { continue; }
+			if (inc.length && !inc.some((r) => r.test(rel))) { continue; }
+			out.push({ rel, node: n });
+		}
+		return out;
+	}
+
+	async provideFileSearchResults(query, options, token) {
+		const want = String(query.pattern || '').toLowerCase().replace(/\\/g, '/');
+		const files = await this._files(options.folder, options.includes, options.excludes);
+		const hits = [];
+		for (const f of files) {
+			if (token.isCancellationRequested) { break; }
+			const hay = f.rel.toLowerCase();
+			if (!want || hay.includes(want) || subsequence(hay, want)) { hits.push(f); }
+		}
+		const max = options.maxResults || 10000;
+		return hits.slice(0, max).map((f) => vscode.Uri.from({ scheme: SCHEME, path: f.node.path }));
+	}
+
+	async provideTextSearchResults(query, options, progress, token) {
+		const files = await this._files(options.folder, options.includes, options.excludes);
+		let re;
+		try {
+			const src = query.isRegExp ? query.pattern : query.pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			re = new RegExp(query.isWordMatch ? '\\b(?:' + src + ')\\b' : src, query.isCaseSensitive ? 'g' : 'gi');
+		} catch (e) { return { limitHit: false }; }
+		const max = options.maxResults || 10000;
+		const maxSize = options.maxFileSize || 1024 * 1024;
+		let count = 0;
+		const decoder = new TextDecoder('utf-8');
+		for (const f of files) {
+			if (token.isCancellationRequested) { break; }
+			const data = f.node.data;
+			if (!data || data.byteLength > maxSize) { continue; }
+			if (data.subarray(0, 8000).includes(0)) { continue; }   // binary
+			const lines = decoder.decode(data).split('\n');
+			const uri = vscode.Uri.from({ scheme: SCHEME, path: f.node.path });
+			for (let ln = 0; ln < lines.length; ln++) {
+				const line = lines[ln].replace(/\r$/, '');
+				re.lastIndex = 0;
+				const ranges = [];
+				const previews = [];
+				let m;
+				while ((m = re.exec(line)) !== null) {
+					if (m[0].length === 0) { re.lastIndex++; continue; }
+					ranges.push(new vscode.Range(ln, m.index, ln, m.index + m[0].length));
+					previews.push(new vscode.Range(0, m.index, 0, m.index + m[0].length));
+				}
+				if (!ranges.length) { continue; }
+				progress.report({ uri, ranges, preview: { text: line, matches: previews } });
+				count += ranges.length;
+				if (count >= max) { return { limitHit: true }; }
+			}
+		}
+		return { limitHit: false };
+	}
+}
+
 /* ----- activation ------------------------------------------------------------------------- */
 
 async function seedWelcome(fsp) {
@@ -237,6 +362,15 @@ async function activate(context) {
 	context.subscriptions.push(vscode.workspace.registerFileSystemProvider(SCHEME, fsp, { isCaseSensitive: true }));
 
 	await seedWelcome(fsp);
+
+	// Search is a proposed API; this extension is built in and declares it (package.json).
+	if (typeof vscode.workspace.registerFileSearchProvider === 'function') {
+		const search = new ScratchSearch(fsp);
+		context.subscriptions.push(
+			vscode.workspace.registerFileSearchProvider(SCHEME, search),
+			vscode.workspace.registerTextSearchProvider(SCHEME, search),
+		);
+	}
 
 	const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
 	item.text = '$(archive) Scratch';

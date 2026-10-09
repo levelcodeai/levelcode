@@ -46,14 +46,14 @@ function selfSigned() {
  */
 export function defaultModel(messages) {
 	const last = messages[messages.length - 1] || {};
-	if (last.role === 'tool') { return { text: 'Done: wrote the file you asked for.' }; }
+	if (last.role === 'tool') { return { text: 'Done: finished what you asked for.' }; }
 	const text = String(typeof last.content === 'string' ? last.content : JSON.stringify(last.content || ''));
-	if (/\bcreate\b/i.test(text)) {
-		return {
-			text: 'I will create the file now.',
-			toolCalls: [{ name: 'write_file', args: { path: 'hello.txt', content: 'hello from the browser\n', explanation: 'Create the greeting file' } }],
-		};
-	}
+	const call = (name, args, say) => ({ text: say, toolCalls: [{ name, args }] });
+	if (/\bcreate\b/i.test(text)) { return call('write_file', { path: 'hello.txt', content: 'hello from the browser\n', explanation: 'Create the greeting file' }, 'I will create the file now.'); }
+	if (/\blist\b/i.test(text)) { return call('list_files', {}, 'Let me look at the files.'); }
+	if (/\bsearch\b/i.test(text)) { return call('search', { query: 'hello', explanation: 'Find the greeting' }, 'Searching.'); }
+	if (/\bread\b/i.test(text)) { return call('read_file', { path: 'hello.txt', explanation: 'Read the greeting file' }, 'Reading it.'); }
+	if (/\bchange\b/i.test(text)) { return call('edit_file', { path: 'hello.txt', old_str: 'hello from the browser', new_str: 'hello again', explanation: 'Change the greeting' }, 'Changing it.'); }
 	return { text: 'Hello from the stand-in gateway.' };
 }
 
@@ -67,7 +67,7 @@ export async function startStub(o) {
 	const codes = new Map();       // code -> { challenge, at }
 	const refreshes = new Set();
 	const log = [];
-	const state = { log, codes, signIns: 0, chats: 0, lastChatBody: null };
+	const state = { log, codes, signIns: 0, chats: 0, lastChatBody: null, chatBodies: [] };
 
 	const handler = async (req, res) => {
 		const url = new URL(req.url, 'http://stub');
@@ -159,6 +159,7 @@ export async function startStub(o) {
 			const body = JSON.parse((await readBody()) || '{}');
 			state.chats++;
 			state.lastChatBody = body;
+			state.chatBodies.push(body);
 			const turn = model(body.messages || [], body);
 			res.writeHead(200, Object.assign({ 'content-type': 'text/event-stream', 'cache-control': 'no-store' }, cors));
 			const send = (obj) => res.write('data: ' + JSON.stringify(obj) + '\n\n');
