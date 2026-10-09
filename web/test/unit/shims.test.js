@@ -13,6 +13,8 @@
 const assert = require('assert');
 const nodePath = require('path');
 const nodeCrypto = require('crypto');
+// A browser always has the global; Node has had it since 19 (18 only behind a flag). The shim is for the browser.
+if (!globalThis.crypto) { globalThis.crypto = nodeCrypto.webcrypto; }
 
 const SHIMS = nodePath.join(__dirname, '..', '..', 'ai-extension', 'shims');
 const shimPath = require(nodePath.join(SHIMS, 'path.js'));
