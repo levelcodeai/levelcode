@@ -16,7 +16,8 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { makeDiff, resolveWorkspacePath } = require('./agent');
+const { makeDiff, resolveWorkspacePathAsync } = require('./agent');
+const host = require('./host');
 
 const PERSIST_KEY = 'levelcode.ai.pendingReviews';
 
@@ -108,18 +109,18 @@ function registerReview(context, post, dbg, recordTouch) {
 		if (!workspaceRoot()) { return false; }
 		// Multi-root aware — MUST resolve exactly like the agent's tool layer (same resolver), or an
 		// edit the agent computed against folder N would be applied into folder 0.
-		const abs = resolveWorkspacePath(req.path || '', { mustExist: !!req.exists });
+		const abs = await resolveWorkspacePathAsync(req.path || '', { mustExist: !!req.exists });
 		if (!abs) { return false; }
-		const uri = vscode.Uri.file(abs);
+		const uri = host.uriFor(abs);
 		const key = uri.toString();
 		const proposed = String(req.proposed != null ? req.proposed : '');
-		const existsNow = fs.existsSync(abs); // re-check at apply time (TOCTOU vs the agent's earlier check)
+		const existsNow = await host.exists(abs); // re-check at apply time (TOCTOU vs the agent's earlier check)
 
 		// Snapshot the pre-run content ONCE, from DISK (the true baseline — never a dirty buffer).
 		let snapshot;
 		if (pending.has(key)) { snapshot = pending.get(key).snapshot; }
 		else if (existsNow) {
-			try { snapshot = fs.readFileSync(abs, 'utf8').replace(/^﻿/, ''); }
+			try { snapshot = (await host.readText(abs)).replace(/^﻿/, ''); }
 			catch { return false; } // can't read the file we're about to edit → abort (never a destructive empty-snapshot edit)
 		} else { snapshot = ''; }
 
@@ -179,13 +180,13 @@ function registerReview(context, post, dbg, recordTouch) {
 	async function applyDelete(req) {
 		if (!workspaceRoot()) { return false; }
 		// Multi-root aware — same resolver as the agent's tool layer (see applyEdit).
-		const abs = resolveWorkspacePath(req.path || '', { mustExist: true });
+		const abs = await resolveWorkspacePathAsync(req.path || '', { mustExist: true });
 		if (!abs) { return false; }
-		const uri = vscode.Uri.file(abs);
+		const uri = host.uriFor(abs);
 		const key = uri.toString();
 		let snapshot;
 		if (pending.has(key)) { snapshot = pending.get(key).snapshot; }
-		else { try { snapshot = fs.readFileSync(abs, 'utf8').replace(/^﻿/, ''); } catch { return false; } }
+		else { try { snapshot = (await host.readText(abs)).replace(/^﻿/, ''); } catch { return false; } }
 		// Checkpoint hook: the file EXISTED (created=false) → per-turn Restore recreates it from this snapshot.
 		if (recordTouch) { try { recordTouch(key, snapshot, false); } catch (e) { /* checkpoint capture must never break editing */ } }
 		const edit = new vscode.WorkspaceEdit();
@@ -239,7 +240,7 @@ function registerReview(context, post, dbg, recordTouch) {
 		const fr = pending.get(key);
 		if (!fr) { return; }
 		const edit = new vscode.WorkspaceEdit();
-		const gone = !fs.existsSync(fr.uri.fsPath);
+		const gone = !(await host.exists(fr.uri.fsPath));
 		if (fr.exists && gone) {
 			// the agent DELETED this file → recreate it from the snapshot
 			edit.createFile(fr.uri, { ignoreIfExists: true });
@@ -333,11 +334,11 @@ function registerReview(context, post, dbg, recordTouch) {
 		vscode.window.onDidChangeActiveTextEditor(() => updateActiveUi()),
 		vscode.commands.registerCommand('levelcode.ai.review.keepActive', () => { const k = activePendingKey(); if (k) { keepFile(k, 'kept'); } }),
 		vscode.commands.registerCommand('levelcode.ai.review.undoActive', () => { const k = activePendingKey(); if (k) { undoFile(k); } }),
-		vscode.languages.registerCodeLensProvider({ scheme: 'file' }, lensProvider),
+		vscode.languages.registerCodeLensProvider({ scheme: host.isBrowser ? '*' : 'file' }, lensProvider),
 		vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshotProvider),
 		vscode.window.onDidChangeVisibleTextEditors(() => { for (const fr of pending.values()) { decorate(fr); } }),
 		vscode.workspace.onDidChangeTextDocument((e) => {
-			if (e.document.uri.scheme !== 'file') { return; }
+			if (!host.isBrowser && e.document.uri.scheme !== 'file') { return; }   // a browser workspace has its own schemes
 			const key = e.document.uri.toString();
 			if (!pending.has(key)) { return; }
 			if (expected.get(key) === e.document.getText()) { return; } // our own apply — ignore
@@ -361,18 +362,32 @@ function registerReview(context, post, dbg, recordTouch) {
 	);
 
 	// Rehydrate pending reviews from a previous window (so a reload mid-review keeps Keep/Undo working).
-	for (const s of (context.workspaceState.get(PERSIST_KEY, []) || [])) {
-		try {
-			const uri = vscode.Uri.parse(s.uri);
-			let current = '';
-			try { current = fs.readFileSync(uri.fsPath, 'utf8').replace(/^﻿/, ''); } catch { /* file gone */ }
-			const span = changedSpan(s.snapshot, current);
-			const { add, del } = countDiff(makeDiff(s.snapshot, current));
-			pending.set(s.uri, { uri, rel: s.rel, exists: s.exists, snapshot: s.snapshot, range: new vscode.Range(span.start, 0, span.end, 0), add, del, appliedText: current });
-			expected.set(s.uri, current);
-		} catch { /* */ }
+	const saved = context.workspaceState.get(PERSIST_KEY, []) || [];
+	function rehydrate(readCurrent) {
+		for (const s of saved) {
+			try {
+				const uri = vscode.Uri.parse(s.uri);
+				const current = readCurrent(uri, s);
+				const span = changedSpan(s.snapshot, current);
+				const { add, del } = countDiff(makeDiff(s.snapshot, current));
+				pending.set(s.uri, { uri, rel: s.rel, exists: s.exists, snapshot: s.snapshot, range: new vscode.Range(span.start, 0, span.end, 0), add, del, appliedText: current });
+				expected.set(s.uri, current);
+			} catch { /* */ }
+		}
+		if (pending.size) { for (const fr of pending.values()) { decorate(fr); } refreshLenses(); updateActiveUi(); }
 	}
-	if (pending.size) { for (const fr of pending.values()) { decorate(fr); } refreshLenses(); updateActiveUi(); }
+	if (!host.isBrowser) {
+		rehydrate((uri) => { try { return fs.readFileSync(uri.fsPath, 'utf8').replace(/^﻿/, ''); } catch { return ''; /* file gone */ } });
+	} else {
+		// A browser workspace can only be read asynchronously: read every pending file, then rehydrate.
+		void (async () => {
+			const current = new Map();
+			for (const s of saved) {
+				try { current.set(s.uri, ((await host.readTextOrNull(vscode.Uri.parse(s.uri).fsPath)) || '').replace(/^﻿/, '')); } catch { /* */ }
+			}
+			rehydrate((uri, s) => current.get(s.uri) || '');
+		})();
+	}
 
 	/** Re-send all pending review cards + state to the webview (called when the chat view becomes ready). */
 	function resync() {

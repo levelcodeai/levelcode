@@ -14,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const cp = require('child_process');
 const crypto = require('crypto');
+const host = require('./host');   // workspace I/O + what this machine can do (browser vs desktop)
 const providers = require('./providers/index');
 const catalog = require('./providers/catalog');
 const { resolveGateway } = require('./providers/gateway');
@@ -919,6 +920,36 @@ function rgFiles(term, cwd) {
 	});
 }
 
+/**
+ * Files whose content contains each term, for every term at once. ripgrep where the editor has one;
+ * a bounded scan of the workspace's text files where it does not (LevelCode in the browser). Returns
+ * one array of absolute paths per term, in order.
+ */
+async function contentHits(terms, dir) {
+	if (host.caps.ripgrep) { return Promise.all(terms.map((kw) => rgFiles(kw, dir))); }
+	const hits = terms.map(() => []);
+	if (!dir) { return hits; }
+	const prefix = dir.endsWith('/') ? dir : dir + '/';
+	let uris = [];
+	try { uris = await host.findFiles('**/*', '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/*.map,**/*.min.*}', 400); } catch { return hits; }
+	const needles = terms.map((t) => t.toLowerCase());
+	const deadline = Date.now() + 4000;   // the same budget rgFiles gives ripgrep
+	for (const uri of uris) {
+		if (Date.now() > deadline) { break; }
+		const abs = uri.path;
+		if (!abs.startsWith(prefix)) { continue; }
+		try {
+			const st = await host.stat(abs);
+			if (!st || !st.isFile || st.size > 1024 * 1024) { continue; }
+			const bytes = await host.readBytes(abs);
+			if (bytes.subarray(0, 8000).includes(0)) { continue; }
+			const text = new TextDecoder('utf-8').decode(bytes).toLowerCase();
+			needles.forEach((n, i) => { if (text.includes(n)) { hits[i].push(abs); } });
+		} catch { /* unreadable: not a hit */ }
+	}
+	return hits;
+}
+
 /** Scope retrieval to the active file's top-level sub-project, so unrelated sibling trees
  *  (e.g. a vendored source dump) don't pollute results. Returns the search dir + rel prefix. */
 function activeProjectScope() {
@@ -926,14 +957,17 @@ function activeProjectScope() {
 	const fallback = { dir: folders.length ? folders[0].uri.fsPath : '', prefix: '' };
 	if (!aiConfig().get('chat.scopeToActiveProject', true)) { return fallback; }
 	const ed = vscode.window.activeTextEditor;
-	if (!ed || ed.document.uri.scheme !== 'file') { return fallback; }
+	if (!ed || (!host.isBrowser && ed.document.uri.scheme !== 'file')) { return fallback; }
 	const wsFolder = vscode.workspace.getWorkspaceFolder(ed.document.uri);
 	if (!wsFolder) { return fallback; }
 	const rel = path.relative(wsFolder.uri.fsPath, ed.document.uri.fsPath);
 	if (!rel || rel.startsWith('..')) { return fallback; }
 	const top = rel.split(path.sep)[0];
 	const topPath = path.join(wsFolder.uri.fsPath, top);
-	try { if (!fs.statSync(topPath).isDirectory()) { return fallback; } } catch { return fallback; }
+	// A first segment is a directory when the file sits below it. The desktop asks the disk, as it
+	// always did; a browser workspace cannot be asked synchronously and the path says the same thing.
+	if (host.isBrowser) { if (rel.indexOf(path.sep) < 0) { return fallback; } }
+	else { try { if (!fs.statSync(topPath).isDirectory()) { return fallback; } } catch { return fallback; } }
 	return { dir: topPath, prefix: top + '/' };
 }
 
@@ -965,9 +999,9 @@ async function gatherAutoContext(question, allFiles) {
 
 	// 1. CONTENT search via ripgrep (primary signal — finds files by what's inside them).
 	const terms = keywords.slice(0, 6);
-	const hits = await Promise.all(terms.map((kw) => rgFiles(kw, scope.dir)));
+	const hits = await contentHits(terms, scope.dir);
 	for (let i = 0; i < terms.length; i++) {
-		for (const abs of hits[i]) { bump(vscode.Uri.file(abs), contentWeight(terms[i])); }
+		for (const abs of hits[i]) { bump(host.uriFor(abs), contentWeight(terms[i])); }
 	}
 
 	// 2. filename matches (scoped).
@@ -1087,7 +1121,7 @@ async function openDiagramLink(id, nodeId) {
 	if (!r.ok) { vscode.window.showWarningMessage('LevelCode: that link cannot be opened — ' + r.reason + '.'); dbg('diagram.link.refused', { reason: r.reason }); return; }
 	recordDiagramStat({ type: 'link' });
 	try {
-		const uri = vscode.Uri.file(r.abs);
+		const uri = host.uriFor(r.abs);
 		const doc = await vscode.workspace.openTextDocument(uri);
 		let line = Number.isInteger(node.link.line) ? node.link.line : null;
 		if (node.link.symbol) {
@@ -1881,6 +1915,7 @@ async function saveMcpLaunchTrust(store) {
  * broken configuration it exists to explain.
  */
 function mcpOverview() {
+	if (!host.caps.mcpStdio) { return { configured: 0, running: 0, awaitingTrust: 0, servers: [], problems: [] }; }
 	try {
 		const cfg = aiConfig();
 		const folders = (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath }));
@@ -2282,8 +2317,8 @@ async function agentFlow(text, imageBlocks) {
 			applyDelete: (req) => review.applyDelete(req), // file deletions: apply-then-review
 			verify: verifyCfg,                  // M5 auto-verify settings
 			touched: runTouched,                // agent.js adds each edited abs path here
-			getTouchedUris: () => [...runTouched].map((p) => vscode.Uri.file(p)),
-			getNewDiagnostics: () => collectNewDiagnostics([...runTouched].map((p) => vscode.Uri.file(p)), diagBaseline, verifyCfg.includeWarnings),
+			getTouchedUris: () => [...runTouched].map((p) => host.uriFor(p)),
+			getNewDiagnostics: () => collectNewDiagnostics([...runTouched].map((p) => host.uriFor(p)), diagBaseline, verifyCfg.includeWarnings),
 			signal: abort.signal
 		});
 	} finally {
@@ -2341,7 +2376,7 @@ async function attachImagePaths(paths) {
 			const mt = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
 				'.gif': 'image/gif', '.webp': 'image/webp' }[ext];
 			if (!mt) { vscode.window.showWarningMessage(path.basename(fsPath) + ' is not an image LevelCode can read.'); continue; }
-			const buf = await fs.promises.readFile(fsPath);
+			const buf = Buffer.from(await host.readBytes(fsPath));
 			// Guard before the bytes cross into the webview: a 200MB file would otherwise be
 			// base64-ed onto the message bus before anything got a chance to refuse it.
 			if (buf.length > 25 * 1024 * 1024) {

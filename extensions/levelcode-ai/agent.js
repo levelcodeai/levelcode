@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const os = require('os');   // MCP servers need a cwd even when no folder is open
+const host = require('./host');   // the machine we run on: workspace I/O is async here, and capabilities differ (browser)
 const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
@@ -24,7 +25,7 @@ const { connectAll, getServer } = require('./mcpClient');
 const diagramTool = require('./diagram/tool');
 const diagramRepair = require('./diagram/repair');
 
-const SYSTEM_BASE = [
+const SYSTEM_LINES = [
 	"You are LevelCode's built-in autonomous coding agent. You accomplish the user's goal in their",
 	'workspace using the provided tools. Rules:',
 	'- Be DECISIVE and FAST. Read only the file you are changing (plus at most 1 other if truly needed), then ACT.',
@@ -44,7 +45,24 @@ const SYSTEM_BASE = [
 	'- You have SKILLS — short expert playbooks for common task types, listed under "Available skills" below with a name and a one-line description. When the user\'s goal clearly matches a skill\'s description (e.g. reviewing a diff, fixing one reported bug, writing tests), call use_skill with that exact name FIRST, before other tools, and follow the steps it returns. Pick at most one; if nothing clearly fits, just proceed normally. Do not mention skills to the user.',
 	'- When the goal is finished, end with a line starting with "Done:" — one crisp sentence of what was accomplished. For a substantial run (several files, a tricky diagnosis, or a decision the user should know about), follow that line with a SHORT wrap-up in plain lines: what landed, how you verified it, anything left open or worth pushing on. For a trivial goal the "Done:" line alone is right. Then STOP (no more tools).',
 	'- After you finish, your work is verified automatically: editor diagnostics for the files you changed (plus a verify command, if the user configured one) are checked. If problems are found you will get them back as a follow-up message — fix the ones you introduced, then finish again with "Done:". If a reported problem is clearly pre-existing and unrelated to the goal, do not chase it: note it in one line and finish.'
-].join('\n');
+];
+const SYSTEM_BASE = SYSTEM_LINES.join('\n');
+
+// The same prompt for a host that cannot run programs (LevelCode in the browser). Derived from
+// SYSTEM_LINES rather than written out again so the two cannot drift: lines about commands go, the
+// two mixed lines lose their command sentences, and one line says plainly what is missing.
+const BROWSER_NOTE = '- You are running in LevelCode in the user\'s browser. There is no terminal: you cannot run commands, tests, installs or servers, and there is no run_command tool. Read, search, create, edit and delete files, and when something must be run, say so in one line and tell the user the exact command to run on their own computer.';
+function browserLines(lines) {
+	return lines
+		.filter((l) => !/run_command background:true/.test(l))
+		.map((l) => l
+			.replace(' Only run_command still needs approval; if the user skips a command, adapt or stop.', '')
+			.replace('EVERY run_command, read_file and search MUST include', 'EVERY read_file and search MUST include')
+			.replace(' ("Run the extension unit tests", "Find the insertion point in section 10", "Read the runAgent call site")', ' ("Find the insertion point in section 10", "Read the runAgent call site")')
+			.replace(' run_command accepts an optional "folder" to pick which folder it runs in.', ''))
+		.concat([BROWSER_NOTE]);
+}
+const SYSTEM_BASE_HOST = host.caps.shell ? SYSTEM_BASE : browserLines(SYSTEM_LINES).join('\n');
 
 const TOOLS = [
 	{ name: 'list_files', description: 'List workspace files (optional glob like "**/*.js"). Excludes node_modules/.git/build dirs.', input_schema: { type: 'object', properties: { glob: { type: 'string' } } } },
@@ -62,14 +80,14 @@ const TOOLS = [
 
 // Rough token estimates (chars/4) for the static prompt segments, so the context popover can break
 // down "what's filling the window" — system + tools are sent on every request, the rest is messages.
-const SYSTEM_TOKENS_EST = Math.round(SYSTEM_BASE.length / 4);
+const SYSTEM_TOKENS_EST = Math.round(SYSTEM_BASE_HOST.length / 4);
 
 /** Append an "Available skills" name+description menu to the base prompt. Bodies NEVER go here —
  *  progressive disclosure means only name+description are ever in the prompt (~100 words for a dozen). */
 function buildSystem(menu) {
-	if (!menu || !menu.length) { return SYSTEM_BASE; }
+	if (!menu || !menu.length) { return SYSTEM_BASE_HOST; }
 	const list = menu.map((s) => '- ' + s.name + ': ' + s.description).join('\n');
-	return SYSTEM_BASE + '\n\nAvailable skills (call use_skill with the name):\n' + list;
+	return SYSTEM_BASE_HOST + '\n\nAvailable skills (call use_skill with the name):\n' + list;
 }
 // The tools that resolve a PATH or a CWD against the workspace root. With no folder open they have
 // nothing to resolve against, so they are withheld from the model rather than offered and left to fail
@@ -87,7 +105,12 @@ const NEEDS_ROOT = new Set([
 ]);
 const PORTABLE_TOOLS = TOOLS.filter((t) => !NEEDS_ROOT.has(t.name));
 
-const TOOLS_TOKENS_EST = Math.round(JSON.stringify(TOOLS).length / 4);
+// A host that cannot start programs (LevelCode in the browser) never offers the shell tools: a tool
+// that is present but always errors is worse than one that is absent. The tool list is narrowed where
+// a run assembles it (see `withheld` in runAgent); this is the estimate for the list that is sent.
+// PORTABLE_TOOLS never contains them, since both are in NEEDS_ROOT.
+const NEEDS_SHELL = new Set(['run_command', 'read_command_output']);
+const TOOLS_TOKENS_EST = Math.round(JSON.stringify(host.caps.shell ? TOOLS : TOOLS.filter((t) => !NEEDS_SHELL.has(t.name))).length / 4);
 // The same estimate for the rootless list, and it has to exist separately rather than be derived at
 // call time: the plain path deliberately never re-stringifies (see toolsTokensEst below), so without a
 // second constant a rootless run reports the FULL schema cost for a list it never sent — about 1000
@@ -116,6 +139,7 @@ function rgPath() {
 	return cands.find((c) => { try { return fs.existsSync(c); } catch { return false; } }) || null;
 }
 function rgSearch(term, cwd) {
+	if (!host.caps.ripgrep) { return scanSearch(term, cwd); }
 	return new Promise((resolve) => {
 		const bin = rgPath();
 		if (!bin || !cwd) { resolve(''); return; }
@@ -129,6 +153,48 @@ function rgSearch(term, cwd) {
 			child.on('close', () => { clearTimeout(t); resolve(out.slice(0, 6000)); });
 		} catch { resolve(''); }
 	});
+}
+
+/**
+ * The same search without ripgrep: list the workspace's files and scan them. Output matches rg's
+ * (`./path:line:text`, case-insensitive literal, 20 matches per file, files over 1 MB skipped, capped
+ * at 6000 characters) so the callers that prefix folder names and the model's habits need no change.
+ * Used where there is no binary to run (LevelCode in the browser).
+ */
+async function scanSearch(term, root) {
+	if (!term || !root) { return ''; }
+	const needle = term.toLowerCase();
+	const out = [];
+	let size = 0;
+	let uris = [];
+	try { uris = await host.findFiles('**/*', FILE_EXCLUDES, 2000); } catch { return ''; }
+	const rootPrefix = root.endsWith('/') ? root : root + '/';
+	for (const uri of uris) {
+		if (size >= 6000) { break; }
+		const abs = uri.path;
+		if (abs !== root && !abs.startsWith(rootPrefix)) { continue; }   // another workspace folder's file
+		let text;
+		try {
+			const st = await host.stat(abs);
+			if (!st || !st.isFile || st.size > 1024 * 1024) { continue; }
+			const bytes = await host.readBytes(abs);
+			if (bytes.subarray(0, 8000).includes(0)) { continue; }          // binary, as rg would skip it
+			text = new TextDecoder('utf-8').decode(bytes);
+		} catch { continue; }
+		const rel = './' + abs.slice(rootPrefix.length);
+		let hits = 0;
+		const lines = text.split('\n');
+		for (let i = 0; i < lines.length && hits < 20; i++) {
+			if (lines[i].toLowerCase().includes(needle)) {
+				const line = rel + ':' + (i + 1) + ':' + lines[i].replace(/\r$/, '');
+				out.push(line);
+				size += line.length + 1;
+				hits++;
+				if (size >= 6000) { break; }
+			}
+		}
+	}
+	return out.join('\n').slice(0, 6000);
 }
 
 // ---- readable line diff ----------------------------------------------------
@@ -185,7 +251,8 @@ function workspaceRoot() {
 }
 function safeJoin(root, rel) {
 	const pth = path.resolve(root, rel);
-	if (pth !== root && !pth.startsWith(root + path.sep)) { return null; }
+	const prefix = root.endsWith(path.sep) ? root : root + path.sep;   // a root of "/" is its own prefix
+	if (pth !== root && !pth.startsWith(prefix)) { return null; }
 	return pth;
 }
 /** Resolve a model-supplied workspace-relative path to an absolute path, multi-root aware.
@@ -197,6 +264,22 @@ function safeJoin(root, rel) {
  *  the primary folder, then every other folder. Returns null if nowhere.
  *  mustExist=false (create): the folder-name prefix targets that folder; else the primary. */
 function resolveWorkspacePath(rel, opts) {
+	const r = resolveCandidates(rel, opts);
+	if (!r) { return null; }
+	if (!r.mustExist) { return r.create; }
+	for (const c of r.candidates) { if (c && fs.existsSync(c)) { return c; } }
+	return null;
+}
+/** The same resolution for a host that can only ask whether a file exists asynchronously. */
+async function resolveWorkspacePathAsync(rel, opts) {
+	const r = resolveCandidates(rel, opts);
+	if (!r) { return null; }
+	if (!r.mustExist) { return r.create; }
+	for (const c of r.candidates) { if (c && await host.exists(c)) { return c; } }
+	return null;
+}
+/** Where `rel` could be: the path to create it at, and the paths that count as "exists", in order. */
+function resolveCandidates(rel, opts) {
 	const mustExist = !!(opts && opts.mustExist);
 	const folders = workspaceFolderList();
 	if (!folders.length) { return null; }
@@ -205,11 +288,9 @@ function resolveWorkspacePath(rel, opts) {
 	const named = folders.length > 1 ? folders.find((f) => f.name === seg) : null;
 	const namedAbs = named ? safeJoin(named.root, rel.slice(seg.length).replace(/^[\\/]+/, '')) : null;
 	const primaryAbs = safeJoin(folders[0].root, rel);
-	if (!mustExist) { return namedAbs || primaryAbs; }
 	const candidates = [namedAbs, primaryAbs];
 	for (const f of folders.slice(1)) { candidates.push(safeJoin(f.root, rel)); }
-	for (const c of candidates) { if (c && fs.existsSync(c)) { return c; } }
-	return null;
+	return { mustExist, create: namedAbs || primaryAbs, candidates };
 }
 /** "file not found" help for the model — names the folders it can address in a multi-root workspace. */
 function whereHint() {
@@ -259,9 +340,7 @@ function inputPreview(input, redact) {
 }
 
 /** Cheap binary sniff — a NUL byte in the first 8KB means it isn't text we should round-trip as UTF-8. */
-function isBinaryFile(abs) {
-	try { const buf = fs.readFileSync(abs); const n = Math.min(buf.length, 8000); for (let i = 0; i < n; i++) { if (buf[i] === 0) { return true; } } return false; } catch { return false; }
-}
+function isBinaryFile(abs) { return host.isBinary(abs); }
 
 // Run a shell command, STREAMING its output: onChunk(text, 'stdout'|'stderr') fires as it runs (live
 // terminal in the chat), onExit(code, ms, how) at the end. onStart(child, stop) exposes a stop() that
@@ -333,10 +412,10 @@ async function runTool(tu, ctx) {
 			// label/path ride alongside the legacy `text` so the chat can title this action with the
 			// model's own words ("Read the runAgent call site") and still attribute it to a file.
 			ctx.post({ type: 'agentTool', icon: 'file', text: 'read ' + input.path, label: input.explanation || '', path: input.path, kind: 'read' });
-			const abs = resolveWorkspacePath(input.path || '', { mustExist: true });
+			const abs = await resolveWorkspacePathAsync(input.path || '', { mustExist: true });
 			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint(); }
-			if (isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — not reading it as text.'; }
-			let body = fs.readFileSync(abs, 'utf8').replace(/^﻿/, ''); // drop BOM so old_str matches cleanly
+			if (await isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — not reading it as text.'; }
+			let body = (await host.readText(abs)).replace(/^﻿/, ''); // drop BOM so old_str matches cleanly
 			if (body.length > 100 * 1024) { body = body.slice(0, 100 * 1024) + '\n…(truncated)…'; }
 			return body;
 		}
@@ -362,10 +441,10 @@ async function runTool(tu, ctx) {
 			return 'Plan updated (' + done + '/' + todos.length + ' done).';
 		}
 		if (tu.name === 'edit_file') {
-			const abs = resolveWorkspacePath(input.path || '', { mustExist: true });
+			const abs = await resolveWorkspacePathAsync(input.path || '', { mustExist: true });
 			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint() + ' (use write_file to create it)'; }
-			if (isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — refusing to edit it as text.'; }
-			const cur = fs.readFileSync(abs, 'utf8');
+			if (await isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — refusing to edit it as text.'; }
+			const cur = await host.readText(abs);
 			const oldStr = String(input.old_str || '');
 			if (!oldStr) { return 'ERROR: old_str is empty.'; }
 			const res = applyStringEdit(cur, oldStr, String(input.new_str || ''));
@@ -379,12 +458,12 @@ async function runTool(tu, ctx) {
 		if (tu.name === 'write_file') {
 			const abs = resolveWorkspacePath(input.path || '');
 			if (!abs) { return 'ERROR: path is outside the workspace' + whereHint(); }
-			const existed = fs.existsSync(abs);
+			const existed = await host.exists(abs);
 			let newStr = String(input.content || '');
 			if (existed) {
-				if (isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — refusing to overwrite it.'; }
-				try { if (fs.statSync(abs).size > 100 * 1024) { return 'ERROR: ' + input.path + ' is large (>100KB) and you only saw the first 100KB on read. Use edit_file for targeted changes — a full write_file risks dropping content you did not see.'; } } catch { /* */ }
-				const raw = fs.readFileSync(abs, 'utf8'); const eol = raw.includes('\r\n') ? '\r\n' : '\n'; newStr = newStr.replace(/\r\n/g, '\n').replace(/\n/g, eol);
+				if (await isBinaryFile(abs)) { return 'ERROR: ' + input.path + ' looks like a binary file — refusing to overwrite it.'; }
+				try { const st = await host.stat(abs); if (st && st.size > 100 * 1024) { return 'ERROR: ' + input.path + ' is large (>100KB) and you only saw the first 100KB on read. Use edit_file for targeted changes — a full write_file risks dropping content you did not see.'; } } catch { /* */ }
+				const raw = await host.readText(abs); const eol = raw.includes('\r\n') ? '\r\n' : '\n'; newStr = newStr.replace(/\r\n/g, '\n').replace(/\n/g, eol);
 			}
 			const ok = await ctx.applyEdit({ path: input.path, exists: existed, proposed: newStr });
 			if (!ok) { return 'ERROR: could not write ' + input.path + ' (path may be read-only or in conflict).'; }
@@ -393,9 +472,9 @@ async function runTool(tu, ctx) {
 			return 'Applied edit to ' + input.path + ' (pending the user\'s Keep/Undo review).';
 		}
 		if (tu.name === 'delete_file') {
-			const abs = resolveWorkspacePath(input.path || '', { mustExist: true });
+			const abs = await resolveWorkspacePathAsync(input.path || '', { mustExist: true });
 			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint(); }
-			try { if (fs.statSync(abs).isDirectory()) { return 'ERROR: ' + input.path + ' is a directory — delete_file removes a single file.'; } } catch { /* */ }
+			try { const st = await host.stat(abs); if (st && st.isDirectory) { return 'ERROR: ' + input.path + ' is a directory — delete_file removes a single file.'; } } catch { /* */ }
 			// Deletion is in the autopilot danger set — ask even when autopilot runs everything else silently.
 			// (In manual mode nothing gates here: the edit is applied and reviewed with Keep/Undo as before.)
 			if (ctx.autopilot && typeof ctx.approve === 'function') {
@@ -678,12 +757,15 @@ function resetContextAnnounce() { lastContextSig = ''; }
 async function setupMcp(ctx, wsFolders, dbg) {
 	const empty = { tools: [], routes: null };
 	const cfg = ctx.mcp || {};
+	// MCP servers here are local processes spoken to over stdio. A host that cannot start programs has
+	// none to offer; saying nothing is right, since nothing is configured that it could have run.
+	if (!host.caps.mcpStdio) { return empty; }
 	try {
-		const { servers, problems } = loadServerConfig({
+		const { servers, problems } = await host.withReads((readFile) => loadServerConfig({
 			settings: cfg.servers,
 			folders: wsFolders,
-			readFile: (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch { return null; } }
-		});
+			readFile
+		}));
 		for (const p of problems) { dbg('mcp.config', p); }
 		if (!servers.length) { return empty; }
 
@@ -780,7 +862,7 @@ async function runAgent(ctx) {
 	// Multi-root: name every workspace folder so the model addresses them by prefix from turn one.
 	const wsFolders = workspaceFolderList();
 	const multiRootNote = wsFolders.length > 1
-		? '\n\nWorkspace folders (multi-root — prefix paths with the folder name): ' + wsFolders.map((f) => f.name).join(', ') + '. The first folder ("' + wsFolders[0].name + '") is the default for unprefixed paths and run_command.'
+		? '\n\nWorkspace folders (multi-root — prefix paths with the folder name): ' + wsFolders.map((f) => f.name).join(', ') + '. The first folder ("' + wsFolders[0].name + '") is the default for unprefixed paths' + (host.caps.shell ? ' and run_command.' : '.')
 		: '';
 	// Rootless: say so plainly. Without this the model sees a tool list with no read_file and improvises —
 	// answering about files it cannot see, or apologising for a limit it cannot name. Telling it WHY the
@@ -796,13 +878,13 @@ async function runAgent(ctx) {
 	// Autopilot: act decisively and self-verify rather than pausing. Commands run without approval (the
 	// host still gates the danger set — deletion, sudo, force-push, remote|shell, publish, system writes),
 	// so the model should lean on verification, not on asking, when it's unsure.
-	const autopilotNote = ctx.autopilot
+	const autopilotNote = ctx.autopilot && host.caps.shell
 		? '\n\nAUTOPILOT IS ON. Work end-to-end without pausing for confirmation. Your run_command calls execute immediately (only irreversible ones — deleting files, sudo, force-push, piping a remote script to a shell, publishing — still ask the user). Do NOT call ask_user for anything you can reasonably decide; pick a sensible default and proceed. When you are unsure whether a change is correct, do not stop to ask — verify it: run the build/tests/linters via run_command and read editor diagnostics, then fix and re-verify until clean, and only then move on. Prefer doing and checking over asking.'
 		: '';
 	// Project rules: fold a repo's own AGENTS.md (or CLAUDE.md / .cursorrules) into the cached system
 	// block so the agent follows the project's conventions from turn one. Read once per run — an edit is
 	// picked up on the next run.
-	const rules = loadProjectRules(wsFolders, (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch { return null; } });
+	const rules = await host.withReads((readFile) => loadProjectRules(wsFolders, readFile));
 	// Project memory: a tight, verify-first digest of what earlier sessions achieved (built by extension.js
 	// from the per-project journal). Rides the SAME cached-system channel as project rules — always-on but
 	// small — so a new session's first reply is continuous, not amnesiac. It is untrusted context like the
@@ -859,6 +941,8 @@ async function runAgent(ctx) {
 	if (ctx.recallSessions) { extras.push(RECALL_TOOL); }
 	if (rich) { extras.push(diagramTool.RENDER_DIAGRAM); if (ctx.diagramsStubbed) { extras.push(diagramTool.GET_DIAGRAM); } }
 	if (extras.length) { tools = tools.concat(extras); }
+	// Withhold what this host cannot do: no shell, no run_command, no read_command_output.
+	if (!host.caps.shell) { tools = tools.filter((t) => !NEEDS_SHELL.has(t.name)); }
 	const baseTools = extras.length ? builtins.concat(extras) : builtins;   // built-ins + extras; MCP is the rest
 	// Recomputed only when MCP or a host-gated extra actually contributed tools, so the plain path keeps the module
 	// constant and pays nothing for a feature it isn't using — but there are now TWO plain paths, and the
@@ -904,7 +988,7 @@ async function runAgent(ctx) {
 	let feedbackUsed = 0, verifySeq = 0;
 	async function runVerifyOnce() {
 		const id = 'verify-' + (++verifySeq);
-		const cmd = ((ctx.verify && ctx.verify.command) || '').trim();
+		const cmd = host.caps.shell ? ((ctx.verify && ctx.verify.command) || '').trim() : '';
 		ctx.post({ type: 'verifyRun', id, command: cmd });
 		let ran = false, exitCode = 0, cmdTail = '';
 		if (cmd) {
@@ -929,7 +1013,7 @@ async function runAgent(ctx) {
 		if (!v || !v.enabled) { return false; }
 		if (ctx.signal.aborted) { return false; }
 		if (!(ctx.editCount > 0)) { return false; }                       // no edits this run → nothing to verify
-		const cmd = (v.command || '').trim();
+		const cmd = host.caps.shell ? (v.command || '').trim() : '';
 		const touchedCount = ctx.getTouchedUris ? ctx.getTouchedUris().length : 0;
 		if (!cmd && !touchedCount) { return false; }                      // nothing to check
 		const max = Math.max(0, v.maxRounds || 0);
@@ -1174,4 +1258,4 @@ async function runAgent(ctx) {
 	}
 }
 
-module.exports = { resetContextAnnounce, runAgent, makeDiff, resolveWorkspacePath, saysDone };
+module.exports = { resetContextAnnounce, runAgent, makeDiff, resolveWorkspacePath, resolveWorkspacePathAsync, saysDone };
