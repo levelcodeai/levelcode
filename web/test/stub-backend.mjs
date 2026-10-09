@@ -62,6 +62,8 @@ export function defaultModel(messages) {
  */
 export async function startStub(o) {
 	const editorOrigin = o.editorOrigin;
+	// `v--<hash>` is the marker the editor puts on the label; the parent domain is the editor's own.
+	const extHostOrigin = o.extHostOrigin || new RegExp('^' + (editorOrigin.startsWith('https') ? 'https' : 'http') + '://v--[a-z0-9]+\\.' + new URL(editorOrigin).hostname.replace(/\./g, '\\.') + '(:\\d+)?$');
 	const model = o.model || defaultModel;
 	const plan = o.plan || 'Pro';
 	const codes = new Map();       // code -> { challenge, at }
@@ -75,9 +77,10 @@ export async function startStub(o) {
 		const entry = { method: req.method, path: url.pathname, origin, auth: !!req.headers.authorization, at: Date.now() };
 		log.push(entry);
 
-		// CORS: only the editor's origin, never credentials.
+		// CORS: the editor's origin, or the origin of its isolated extension host (a per-session
+		// `v--<hash>` subdomain) — never credentials.
 		const cors = {};
-		if (origin && origin === editorOrigin && url.pathname.startsWith('/api/levelcode/v1/')) {
+		if (origin && (origin === editorOrigin || extHostOrigin.test(origin)) && url.pathname.startsWith('/api/levelcode/v1/')) {
 			cors['access-control-allow-origin'] = origin;
 			cors.vary = 'Origin';
 			cors['access-control-expose-headers'] = '';

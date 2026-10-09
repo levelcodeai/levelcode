@@ -62,6 +62,10 @@ const server = http.createServer((req, res) => {
 			'content-type': TYPES[path.extname(file)] || 'application/octet-stream',
 			'content-length': st.size,
 			'cache-control': 'no-cache',
+			// The extension host and the webviews run on origins of their own and fetch these files.
+			// They are public static assets and are never requested with credentials.
+			'access-control-allow-origin': '*',
+			'cross-origin-resource-policy': 'cross-origin',
 		});
 		if (req.method === 'HEAD') { res.end(); return; }
 		fs.createReadStream(file).pipe(res);

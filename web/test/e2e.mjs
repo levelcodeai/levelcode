@@ -21,7 +21,8 @@ const STATIC = path.resolve(args.static || process.env.LEVELCODE_WEB_STATIC || '
 const EXTS = path.resolve(args.extensions || process.env.LEVELCODE_WEB_EXTENSIONS || '');
 const SHOTS = args.shots ? path.resolve(args.shots) : null;
 const EDITOR_PORT = Number(args.port || 8801);
-const editorOrigin = `http://127.0.0.1:${EDITOR_PORT}`;
+// `localhost`, not 127.0.0.1: the extension host's own iframe policy admits https: and http://localhost:*.
+const editorOrigin = `http://localhost:${EDITOR_PORT}`;
 if (!fs.existsSync(STATIC) || !fs.existsSync(EXTS)) { console.error('usage: e2e.mjs --static <vscode-web dir> --extensions <dir>'); process.exit(2); }
 if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); }
 
@@ -31,7 +32,8 @@ const shot = async (page, name) => { if (SHOTS) { await page.screenshot(path.joi
 
 const stub = await startStub({ editorOrigin });
 const server = spawn(process.execPath, [path.join(HERE, '..', 'serve.mjs'), '--static', STATIC, '--extensions', EXTS,
-	'--extension-names', args['extension-names'] || 'levelcode-ai,levelcode-web', '--account', stub.origin, '--port', String(EDITOR_PORT)], { stdio: 'inherit' });
+	'--extension-names', args['extension-names'] || 'levelcode-ai,levelcode-web', '--account', stub.origin, '--port', String(EDITOR_PORT),
+	...(args.product ? ['--product', args.product] : [])], { stdio: 'inherit' });
 let chrome;
 const finish = async (code) => { try { chrome && chrome.close(); } catch {} try { server.kill(); } catch {} try { await stub.close(); } catch {} process.exit(code); };
 process.on('SIGINT', () => finish(130));
@@ -90,7 +92,14 @@ try {
 		await page.click(frame.x + inner.x, frame.y + inner.y);
 		await sleep(400);
 	};
-	const scratchFile = (p) => page.eval(`new Promise((res, rej) => { const r = indexedDB.open('levelcode-scratch'); r.onsuccess = () => { const g = r.result.transaction('nodes').objectStore('nodes').get(${JSON.stringify(p)}); g.onsuccess = () => res(g.result ? new TextDecoder().decode(g.result.data) : null); g.onerror = () => rej(g.error); }; r.onerror = () => rej(r.error); })`);
+	// With the extension host isolated on its own origin (--product with webEndpointUrlTemplate) the scratch
+	// workspace's IndexedDB belongs to THAT origin and the page cannot open it; the agent's read_file can.
+	const hardened = /webEndpointUrlTemplate/.test(args.product || '');
+	const scratchFile = hardened ? (async (p) => {
+		await ask('Please read the greeting');
+		const t = lastToolResult();
+		return /ERROR/.test(t) ? null : t;
+	}) : (p) => page.eval(`new Promise((res, rej) => { const r = indexedDB.open('levelcode-scratch'); r.onsuccess = () => { const g = r.result.transaction('nodes').objectStore('nodes').get(${JSON.stringify(p)}); g.onsuccess = () => res(g.result ? new TextDecoder().decode(g.result.data) : null); g.onerror = () => rej(g.error); }; r.onerror = () => rej(r.error); })`);
 
 	/* 1. boot */
 	await workbenchReady();
@@ -119,8 +128,8 @@ try {
 	await clickInChat('[data-act="signin"]');
 	await page.waitFor(() => stub.state.log.some((e) => e.path === '/api/levelcode/v1/auth/exchange'), { ms: 45000, label: 'code exchange' }).catch(() => null);
 	check('the sign-in page accepted the editor callback and returned a code', stub.state.signIns >= 1);
-	const exchanged = stub.state.log.some((e) => e.path === '/api/levelcode/v1/auth/exchange' && e.origin === editorOrigin);
-	check('the editor exchanged the code from the editor origin (CORS answered)', exchanged);
+	const exchangeOrigin = (stub.state.log.find((e) => e.path === '/api/levelcode/v1/auth/exchange' && e.method === 'POST') || {}).origin;
+	check('the editor exchanged the code across origins (CORS answered)', !!exchangeOrigin, 'from ' + exchangeOrigin);
 	await page.waitFor(() => stub.state.log.some((e) => e.path === '/api/levelcode/v1/account/profile' && e.auth), { ms: 20000, label: 'profile call' }).catch(() => null);
 	check('the editor used its session token against the account API', stub.state.log.some((e) => e.path === '/api/levelcode/v1/account/profile' && e.auth));
 	await shot(page, '2-signed-in');

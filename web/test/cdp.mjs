@@ -74,6 +74,8 @@ export class Page {
 			case 'Target.attachedToTarget':
 				this.sessions.set(d.params.sessionId, { url: d.params.targetInfo.url, type: d.params.targetInfo.type, targetId: d.params.targetInfo.targetId });
 				this.sendTo(d.params.sessionId, 'Runtime.enable').catch(() => {});
+				this.sendTo(d.params.sessionId, 'Network.enable').catch(() => {});
+				this.sendTo(d.params.sessionId, 'Log.enable').catch(() => {});
 				this.sendTo(d.params.sessionId, 'Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => {});
 				break;
 		}

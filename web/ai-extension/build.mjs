@@ -106,10 +106,11 @@ await esbuild.build({
 fs.rmSync(generated, { force: true });
 
 /* ----- manifest + the files it refers to ---------------------------------------------------- */
-const pkg = JSON.parse(fs.readFileSync(path.join(SRC, 'package.json'), 'utf8'));
-pkg.browser = './extension.web.js';
+const { toWebManifest } = createRequire(import.meta.url)('./manifest.js');
+const pkg = toWebManifest(JSON.parse(fs.readFileSync(path.join(SRC, 'package.json'), 'utf8')));
 fs.writeFileSync(path.join(outDir, 'package.json'), JSON.stringify(pkg, null, '\t') + '\n');
-for (const f of ['README.md', 'package.nls.json']) { if (fs.existsSync(path.join(SRC, f))) { fs.copyFileSync(path.join(SRC, f), path.join(outDir, f)); } }
+fs.writeFileSync(path.join(outDir, 'package.nls.json'), '{}\n');   // the workbench asks for it; there is nothing to localise
+for (const f of ['README.md']) { if (fs.existsSync(path.join(SRC, f))) { fs.copyFileSync(path.join(SRC, f), path.join(outDir, f)); } }
 fs.cpSync(path.join(SRC, 'media'), path.join(outDir, 'media'), { recursive: true });
 
 const size = fs.statSync(path.join(outDir, 'extension.web.js')).size;
