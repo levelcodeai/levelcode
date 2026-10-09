@@ -29,6 +29,7 @@ const config = webConfig({
 	extensions: (args['extension-names'] ?? 'levelcode-ai,levelcode-web').split(',').filter(Boolean),
 	development: true,
 	productConfiguration: args.product ? JSON.parse(args.product) : undefined,
+	configurationDefaults: args['config-defaults'] ? JSON.parse(args['config-defaults']) : undefined,
 });
 
 const TYPES = {

@@ -36,6 +36,8 @@ const esbuild = await import(esbuildEntry);
 const nodePaths = [path.join(vscodeDir, 'node_modules'), path.join(vscodeDir, 'build', 'node_modules')].filter((p) => fs.existsSync(p));
 if (!nodePaths.some((p) => fs.existsSync(path.join(p, 'buffer')))) { console.error('the "buffer" package is missing from ' + vscodeDir + '/node_modules'); process.exit(2); }
 
+const { applyCopy } = createRequire(import.meta.url)('./copy.js');
+
 const outDir = path.join(outRoot, 'levelcode-ai');
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
@@ -50,7 +52,7 @@ function collect(rel, filter) {
 			if (e.isDirectory()) { walk(r); continue; }
 			if (filter && !filter(r)) { continue; }
 			const buf = fs.readFileSync(path.join(SRC, r));
-			out[r] = TEXT.has(path.extname(r)) ? buf.toString('utf8') : { base64: buf.toString('base64') };
+			out[r] = TEXT.has(path.extname(r)) ? applyCopy(r, buf.toString('utf8')) : { base64: buf.toString('base64') };
 		}
 	};
 	if (fs.existsSync(path.join(SRC, rel))) { walk(rel); }
@@ -69,11 +71,14 @@ const dirnamePlugin = {
 	name: 'levelcode-dirname',
 	setup(b) {
 		b.onLoad({ filter: /extensions[\\/]levelcode-ai[\\/].*\.js$/ }, (a) => {
-			let text = fs.readFileSync(a.path, 'utf8');
-			if (!/\b__dirname\b/.test(text)) { return null; }
-			const rel = path.relative(SRC, path.dirname(a.path)).split(path.sep).join('/');
-			text = text.replace(/\b__dirname\b/g, `(globalThis.__lcExtPath + ${JSON.stringify(rel ? '/' + rel : '')})`);
-			return { contents: text, loader: 'js' };
+			const file = path.relative(SRC, a.path).split(path.sep).join('/');
+			const original = fs.readFileSync(a.path, 'utf8');
+			let text = applyCopy(file, original);                      // words that are only true on the desktop
+			if (/\b__dirname\b/.test(text)) {
+				const rel = path.relative(SRC, path.dirname(a.path)).split(path.sep).join('/');
+				text = text.replace(/\b__dirname\b/g, `(globalThis.__lcExtPath + ${JSON.stringify(rel ? '/' + rel : '')})`);
+			}
+			return text === original ? null : { contents: text, loader: 'js' };
 		});
 	},
 };

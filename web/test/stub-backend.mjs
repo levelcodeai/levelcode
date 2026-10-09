@@ -85,7 +85,7 @@ export async function startStub(o) {
 			cors.vary = 'Origin';
 			cors['access-control-expose-headers'] = '';
 		}
-		if (req.method === 'OPTIONS') {
+		if (req.method === 'OPTIONS' && url.pathname !== '/v1/chat/completions') {
 			if (cors['access-control-allow-origin']) {
 				const wanted = String(req.headers['access-control-request-headers'] || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
 				const ok = wanted.every((h) => ['authorization', 'content-type', 'accept'].includes(h));
@@ -158,7 +158,17 @@ export async function startStub(o) {
 			] });
 		}
 
-		if (url.pathname === '/api/levelcode/v1/ai/chat/completions' && req.method === 'POST') {
+		// A provider of the user's own (BYOK): any origin may call it, as real providers allow, and the
+		// key arrives as the bearer. Same scripted model as the gateway.
+		const isByok = url.pathname === '/v1/chat/completions';
+		if (isByok) {
+			cors['access-control-allow-origin'] = '*';
+			cors['access-control-allow-headers'] = 'authorization, content-type';
+			cors['access-control-allow-methods'] = 'POST, OPTIONS';
+			if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); return; }
+			state.byokAuth = (state.byokAuth || []).concat(req.headers.authorization || '');
+		}
+		if ((url.pathname === '/api/levelcode/v1/ai/chat/completions' || isByok) && req.method === 'POST') {
 			const body = JSON.parse((await readBody()) || '{}');
 			state.chats++;
 			state.lastChatBody = body;
