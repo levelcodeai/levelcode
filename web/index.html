@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>LevelCode</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<meta name="color-scheme" content="dark light">
+	<meta name="theme-color" content="#0b0d14">
+	<meta name="description" content="LevelCode, the AI code editor, in your browser tab. Sign in with your LevelCode account and start.">
+	<link rel="icon" type="image/svg+xml" href="/icon.svg">
+	<link rel="stylesheet" href="/boot.css">
+	<link rel="stylesheet" href="{{STATIC}}/out/vs/workbench/workbench.web.main.internal.css">
+	<script type="application/json" id="levelcode-web-config">{{CONFIG}}</script>
+</head>
+<body class="lc-booting" aria-label="LevelCode">
+	<div id="lc-boot" role="status" aria-live="polite">
+		<div class="lc-boot-inner">
+			<svg class="lc-mark" viewBox="0 0 120 120" fill="none" stroke="url(#lc-g)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<defs>
+					<linearGradient id="lc-g" x1="0" y1="1" x2="1" y2="0">
+						<stop offset="0" stop-color="#7C5CD6"/>
+						<stop offset="1" stop-color="#7fd4ff"/>
+					</linearGradient>
+				</defs>
+				<path d="M29,92 L60,70 L91,92" opacity=".5"/>
+				<path d="M29,71 L60,49 L91,71" opacity=".78"/>
+				<path d="M29,50 L60,28 L91,50"/>
+			</svg>
+			<div class="lc-word">LevelCode</div>
+			<div class="lc-bar" aria-hidden="true"><i></i></div>
+			<p class="lc-msg" data-boot-message>Opening your editor</p>
+		</div>
+		<noscript><p class="lc-msg">LevelCode needs JavaScript.</p></noscript>
+	</div>
+	<script type="module" src="/main.js"></script>
+</body>
+</html>

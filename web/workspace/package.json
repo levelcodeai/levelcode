@@ -1,0 +1,23 @@
+{
+	"name": "levelcode-web",
+	"displayName": "LevelCode Web",
+	"description": "The scratch workspace and the browser-only touches of LevelCode in your browser.",
+	"publisher": "levelcode",
+	"version": "0.1.0",
+	"license": "MIT",
+	"engines": { "vscode": "^1.126.0" },
+	"categories": ["Other"],
+	"browser": "./extension.js",
+	"activationEvents": ["onFileSystem:levelcode-scratch", "onStartupFinished"],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": { "supported": true }
+	},
+	"contributes": {
+		"commands": [
+			{ "command": "levelcode.web.openLocalFolder", "title": "Open Folder from Your Computer…", "category": "LevelCode" },
+			{ "command": "levelcode.web.openScratch", "title": "Open the Scratch Workspace", "category": "LevelCode" },
+			{ "command": "levelcode.web.aboutScratch", "title": "About the Scratch Workspace", "category": "LevelCode" }
+		]
+	}
+}
