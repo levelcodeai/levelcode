@@ -103,7 +103,7 @@ try {
 	let hardened = /webEndpointUrlTemplate/.test(args.product || '');
 	if (DIST) { try { hardened = /\(same origin/.test(fs.readFileSync(path.join(DIST, 'build.json'), 'utf8')) ? false : true; } catch { /* keep */ } }
 	const scratchFile = hardened ? (async (p) => {
-		await ask('Please read the greeting');
+		await ask('Please read ' + p.replace(/^\/scratch\//, ''));
 		const t = lastToolResult();
 		return /ERROR/.test(t) ? null : t;
 	}) : (p) => page.eval(`new Promise((res, rej) => { const r = indexedDB.open('levelcode-scratch'); r.onsuccess = () => { const g = r.result.transaction('nodes').objectStore('nodes').get(${JSON.stringify(p)}); g.onsuccess = () => res(g.result ? new TextDecoder().decode(g.result.data) : null); g.onerror = () => rej(g.error); }; r.onerror = () => rej(r.error); })`);
@@ -146,6 +146,11 @@ try {
 	/* 3. chat and agent */
 	await activateTab(/LevelCode AI/);
 	await page.waitFor(async () => (await inChat('!!d.getElementById("send")')) === true, { ms: 30000, label: 'chat webview' });
+	// Signing in leaves the account card open over the chat, as it does on the desktop; close it like a user would.
+	if ((await inChat(`getComputedStyle(d.getElementById('acctClose')).display !== 'none' && d.getElementById('acctClose').offsetParent !== null`)) === true) {
+		await clickInChat('#acctClose');
+		await sleep(400);
+	}
 	check('the chat webview renders from the editor', true);
 	/** Send a prompt and wait for the agent to finish its turns (a tool call, then its answer). */
 	const idle = () => inChat(`!d.getElementById('send').classList.contains('stop')`);
@@ -197,7 +202,25 @@ try {
 		const entries = await page.eval(`[...document.querySelectorAll('.quick-input-list .monaco-list-row')].map((e) => e.getAttribute('aria-label') || e.textContent)`);
 		check('Quick Open finds files in the scratch workspace', entries.some((t) => /hello\.txt/.test(t)), JSON.stringify(entries.slice(0, 4)));
 		await page.key('Escape', 'Escape');
+		await page.waitFor(() => page.eval(`(() => { const w = document.querySelector('.quick-input-widget'); return !w || getComputedStyle(w).display === 'none'; })()`), { ms: 5000, label: 'quick open to close' }).catch(() => null);
 	} else { check('Quick Open finds files in the scratch workspace', false, 'the quick open widget did not appear'); }
+	await activateTab(/LevelCode AI/);   // focus goes back to the chat before it is clicked
+
+	// Review: an agent edit is applied at once and offered for Keep or Undo. Undo of a file the agent created removes it.
+	await ask('Please make a notes file');
+	check('the agent created notes.md', (await scratchFile('/scratch/notes.md')) === 'notes\n');
+	await page.waitFor(async () => (await inChat(`getComputedStyle(d.getElementById('reviewBar')).display !== 'none'`)) === true, { ms: 10000, label: 'review bar' }).catch(() => null);
+	check('the chat offers Keep and Undo for it', (await inChat(`getComputedStyle(d.getElementById('reviewBar')).display !== 'none' && !!d.querySelector('#reviewBar .keepall') && !!d.querySelector('#reviewBar .undoall')`)) === true);
+	await shot(page, '3c-review');
+	await clickInChat('#reviewBar .undoall');
+	await sleep(2000);
+	check('Undo all removes the file the agent created', (await scratchFile('/scratch/notes.md')) === null);
+	check('and everything else still pending: hello.txt, created and edited earlier in the session, is gone too', (await scratchFile('/scratch/hello.txt')) === null);
+	await ask('Please make a notes file');
+	await page.waitFor(async () => (await inChat(`getComputedStyle(d.getElementById('reviewBar')).display !== 'none'`)) === true, { ms: 10000, label: 'review bar' }).catch(() => null);
+	await clickInChat('#reviewBar .keepall');
+	await sleep(1500);
+	check('Keep all keeps it, and the review bar goes away', (await scratchFile('/scratch/notes.md')) === 'notes\n' && (await inChat(`getComputedStyle(d.getElementById('reviewBar')).display === 'none'`)) === true);
 
 	/* 4. a reload keeps the session and the files */
 	const before = stub.state.log.filter((e) => e.path === '/api/levelcode/v1/account/models' || e.path === '/api/levelcode/v1/account/profile').length;
@@ -206,7 +229,7 @@ try {
 	await page.waitFor(() => stub.state.log.filter((e) => e.path === '/api/levelcode/v1/account/models' || e.path === '/api/levelcode/v1/account/profile').length > before, { ms: 30000, label: 'account call after reload' }).catch(() => null);
 	const after = stub.state.log.filter((e) => e.path === '/api/levelcode/v1/account/models' || e.path === '/api/levelcode/v1/account/profile').length;
 	check('after a reload the editor is still signed in', after > before, `${before} -> ${after}`);
-	check('after a reload the scratch file is still there', (await scratchFile('/scratch/hello.txt')) === 'hello again\n');
+	check('after a reload the file that was kept is still there', (await scratchFile('/scratch/notes.md')) === 'notes\n');
 	await shot(page, '4-reload');
 } catch (e) {
 	check('the run completed', false, String((e && e.stack) || e));

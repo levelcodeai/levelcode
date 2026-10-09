@@ -52,7 +52,11 @@ export function defaultModel(messages) {
 	if (/\bcreate\b/i.test(text)) { return call('write_file', { path: 'hello.txt', content: 'hello from the browser\n', explanation: 'Create the greeting file' }, 'I will create the file now.'); }
 	if (/\blist\b/i.test(text)) { return call('list_files', {}, 'Let me look at the files.'); }
 	if (/\bsearch\b/i.test(text)) { return call('search', { query: 'hello', explanation: 'Find the greeting' }, 'Searching.'); }
-	if (/\bread\b/i.test(text)) { return call('read_file', { path: 'hello.txt', explanation: 'Read the greeting file' }, 'Reading it.'); }
+	if (/\bmake\b/i.test(text)) { return call('write_file', { path: 'notes.md', content: 'notes\n', explanation: 'Make the notes file' }, 'Making it.'); }
+	if (/\bread\b/i.test(text)) {
+		const named = text.match(/read\s+(?:the\s+)?(\S+\.\w+)/i);
+		return call('read_file', { path: named ? named[1] : 'hello.txt', explanation: 'Read the file' }, 'Reading it.');
+	}
 	if (/\bchange\b/i.test(text)) { return call('edit_file', { path: 'hello.txt', old_str: 'hello from the browser', new_str: 'hello again', explanation: 'Change the greeting' }, 'Changing it.'); }
 	return { text: 'Hello from the stand-in gateway.' };
 }
