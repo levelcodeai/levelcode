@@ -35,7 +35,8 @@ LevelCode is a **clean overlay on top of Code-OSS**, not a vendored copy of the 
 - `extensions/` — the first-party extensions (native AI, Notepad++ pack, themes, hackability, sync, updater), plain JS with no build step.
 - `branding/` — the LevelCode identity (`product.overlay.json`) + icons, deep-merged onto upstream `product.json`; the extension gallery wired to **Open VSX**.
 - `patches/` — the small set of core source patches (each tagged `// [LevelCode]`).
-- `scripts/` — bootstrap / run-dev / build / dmg / icon.
+- `scripts/` — bootstrap / run-dev / build / dmg / icon, and `build-web.mjs` (LevelCode in a browser tab).
+- `web/` — LevelCode in your browser: the same workbench and AI extension as a static site you can host; sign in with a LevelCode account or use your own key. See [`docs/WEB.md`](docs/WEB.md).
 - `tools/` — dependency-free reference servers (Settings-Sync feed, update feed).
 - `PLAN.md`, `docs/`, `CLAUDE.md` — the vision, roadmap, and repo map.
 

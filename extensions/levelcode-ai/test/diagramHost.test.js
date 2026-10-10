@@ -114,7 +114,7 @@ const HOST = ['clientRender', 'openDiagramLink', 'diagramMarkdown', 'exportDiagr
 // eslint-disable-next-line no-new-func
 const makeHost = new Function('env', [
 	"'use strict';",
-	'const { vscode, fs, path, os, catalog, sessionMemory, diagrams, diagramLinks, diagramExport, diagramText, diagramTool, diagramBundle, diagramAscii, aiConfig, dbg,',
+	'const { vscode, host, fs, path, os, catalog, sessionMemory, diagrams, diagramLinks, diagramExport, diagramText, diagramTool, diagramBundle, diagramAscii, aiConfig, dbg,',
 	'  recordDiagramStat, agentFlow, findCompactionCut, estimateMsgTokens, meterModel, prepProviderRequest, authRetry, providers, checkpoints, ctx,',
 	'  sessionsManager, currentContextLimit, post, replaySessionExpired, postContextFiles, refreshSessions, focusChatView } = env;',
 	"const COMPACT_SYSTEM = 'system', COMPACT_INSTRUCTIONS = 'Summarize:\\n';",
@@ -134,7 +134,10 @@ function boot(over) {
 	const settings = Object.assign({ 'diagrams.enabled': true }, over && over.settings);
 	const diagrams = createDiagrams({ resolveLink: (link) => diagramLinks.resolveLink(link, [{ name: 'app', root: ws }]), onStat: (ev) => stats.push(ev) });
 	const env = {
-		vscode, fs, path, os, catalog, sessionMemory, diagrams, diagramLinks, diagramExport, diagramText, diagramTool, diagramBundle: bundle,
+		vscode,
+		// The host module (host.js) as the desktop sees it: workspace paths are files on disk.
+		host: { isBrowser: false, caps: { shell: true, mcpStdio: true, ripgrep: true }, uriFor: (abs) => vscode.Uri.file(abs) },
+		fs, path, os, catalog, sessionMemory, diagrams, diagramLinks, diagramExport, diagramText, diagramTool, diagramBundle: bundle,
 		diagramAscii: (over && over.ascii) || ascii,
 		aiConfig: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }),
 		dbg: (label, data) => logs.push({ label, data }),
