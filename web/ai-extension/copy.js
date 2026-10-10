@@ -24,6 +24,10 @@ const REPLACEMENTS = [
 	['extension.js',
 		"\tif (!context.globalState.get('levelcode.ai.didShowWelcome')) {",
 		"\tif (false) {   // browser edition: the chat is the first thing a visitor sees (web/ai-extension/copy.js)"],
+	// The conversation list is on the page's own rail in a tab, and the first thing beside an empty chat.
+	['media/chat.html',
+		'Every chat you have is saved here — automatically, on your machine.',
+		'Every chat you have is saved here — automatically, in this browser.'],
 	['media/chat.html',
 		'Bring your own API key, stored in your OS keychain.',
 		'Bring your own API key, stored encrypted in this browser.'],

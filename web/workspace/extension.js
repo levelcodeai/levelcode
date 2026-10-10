@@ -358,10 +358,27 @@ async function seedWelcome(fsp) {
 }
 
 async function activate(context) {
+	// These do not need the scratch store: a browser that refuses IndexedDB (the message below says to open a folder
+	// instead) must still have the command that does it, and the layout.
+	const startLayout = registerLayout(context);
+	context.subscriptions.push(
+		vscode.commands.registerCommand('levelcode.web.openLocalFolder', () => openLocalFolder(vscode)),
+		vscode.commands.registerCommand('levelcode.web.openScratch', () => vscode.commands.executeCommand(
+			'vscode.openFolder', vscode.Uri.from({ scheme: SCHEME, path: HOME }), { forceReuseWindow: true })),
+		vscode.commands.registerCommand('levelcode.web.aboutScratch', async () => {
+			const open = 'Open folder from your computer';
+			const pick = await vscode.window.showInformationMessage(
+				'This is your scratch workspace. Its files are saved in this browser on this computer, and nowhere else. To keep them, download them from the Explorer.',
+				open);
+			if (pick === open) { await vscode.commands.executeCommand('levelcode.web.openLocalFolder'); }
+		}),
+	);
+
 	let db;
 	try { db = await openDb(); }
 	catch (e) {
 		vscode.window.showWarningMessage('LevelCode could not open browser storage, so the scratch workspace is unavailable. Private windows in some browsers block it. Open a folder from your computer instead.');
+		startLayout();
 		return;
 	}
 	const fsp = new ScratchFileSystem(db);
@@ -387,8 +404,169 @@ async function activate(context) {
 	refresh();
 	context.subscriptions.push(item, vscode.workspace.onDidChangeWorkspaceFolders(refresh));
 
-	// The layout switch: a status-bar item and three commands. The commands only change the setting; one listener
-	// applies it, so the same thing happens whether it was chosen here, in a menu or in Settings.
+	// Last: the layout looks for the scratch workspace's README, so the file system has to be there.
+	startLayout();
+}
+
+/* ----- layout ----------------------------------------------------------------------------- */
+
+/** The view type the workbench gives LevelCode's chat panel (the key workbench.editor.autoLockGroups is set with). */
+const CHAT_VIEW_TYPE = 'mainThreadWebview-levelcode.ai.chat';
+const LAYOUTS = ['chatFirst', 'split'];
+/** Set once per workspace, when the first layout has been applied (the workbench remembers its own state per workspace). */
+const APPLIED_KEY = 'levelcode.web.layoutApplied';
+/** How long to wait for the chat tab to exist before arranging around it. */
+const CHAT_WAIT_MS = 2500;
+
+/**
+ * The tab group holding LevelCode's chat, if it is open.
+ * @param {typeof import('vscode')} api
+ */
+function chatGroup(api) {
+	for (const g of api.window.tabGroups.all) {
+		for (const t of g.tabs) {
+			const input = t.input;
+			if (input && typeof input === 'object' && input.viewType === CHAT_VIEW_TYPE) { return g; }
+		}
+	}
+	return undefined;
+}
+
+/**
+ * The chat's group, waiting for it if it is not there yet. `levelcode.ai.focus` returns before the extension host
+ * has been told about the new tab, and on a cold start the chat is opened by another extension a moment after
+ * this one is running, so the tab model is read when it changes, not at a guessed time.
+ * @param {typeof import('vscode')} api
+ * @param {number} ms
+ */
+function whenChatGroup(api, ms) {
+	const now = chatGroup(api);
+	const tabs = api.window.tabGroups;
+	if (now || !tabs.onDidChangeTabs) { return Promise.resolve(now); }
+	return new Promise((resolve) => {
+		let sub;
+		let timer;
+		const finish = () => { clearTimeout(timer); if (sub) { sub.dispose(); } resolve(chatGroup(api)); };
+		timer = setTimeout(finish, ms);
+		sub = tabs.onDidChangeTabs(() => { if (chatGroup(api)) { finish(); } });
+	});
+}
+
+/** Whether the chat is the tab on show in the group that has the focus: the editor the move commands act on. */
+function chatIsActive(api) {
+	const g = api.window.tabGroups.activeTabGroup;
+	const t = g && g.activeTab;
+	const input = t && t.input;
+	return !!(input && typeof input === 'object' && input.viewType === CHAT_VIEW_TYPE);
+}
+
+/**
+ * Wait for the chat to be the active editor. `levelcode.ai.focus` returns when the panel is revealed, not when the
+ * workbench has made it the active editor, and the move commands act on the active editor: moved too early they
+ * move the file next to it (or nothing). Gives up after `ms` and goes on — the layout is a courtesy.
+ * @param {typeof import('vscode')} api
+ * @param {number} ms
+ */
+function whenChatActive(api, ms) {
+	const tabs = api.window.tabGroups;
+	if (!tabs.activeTabGroup || chatIsActive(api) || !tabs.onDidChangeTabs) { return Promise.resolve(); }
+	return new Promise((resolve) => {
+		let timer;
+		const subs = [];
+		const finish = () => { clearTimeout(timer); subs.forEach((d) => d.dispose()); resolve(); };
+		timer = setTimeout(finish, ms);
+		const check = () => { if (chatIsActive(api)) { finish(); } };
+		subs.push(tabs.onDidChangeTabs(check));
+		if (tabs.onDidChangeTabGroups) { subs.push(tabs.onDidChangeTabGroups(check)); }
+	});
+}
+
+/** Each arrangement takes a number; one that finds a newer number has been overtaken by a later choice and stops. */
+let generation = 0;
+
+/**
+ * Arrange the window for one of the two ways of working:
+ *   chatFirst  the chat alone, in the middle, with its conversation list on its left — the way a chat app is used
+ *   split      the Explorer, the files, and the chat docked on the right — the way an editor is used
+ * Only existing workbench commands are used, so the layout the user then adjusts by hand is an ordinary one.
+ *
+ * @param {typeof import('vscode')} api
+ * @param {'chatFirst'|'split'} mode
+ * @param {{ explorer?: boolean, waitMs?: number }} [opts] explorer: reveal the Explorer in `split` (default; a start-up
+ *   passes false so that an Explorer the visitor closed stays closed, and the focus is not taken from the composer)
+ */
+async function applyLayout(api, mode, opts = {}) {
+	// Two arrangements can be in flight (the start-up one is waiting for the chat to appear when the visitor clicks
+	// the switch): the later choice wins, and the earlier one must not resume and put things back.
+	const mine = ++generation;
+	const run = async (id, ...args) => { if (mine === generation) { await api.commands.executeCommand(id, ...args); } };
+	await run('levelcode.ai.focus');   // the chat, taking the focus, in whichever group it is (or the active one)
+	const waitMs = opts.waitMs === undefined ? CHAT_WAIT_MS : opts.waitMs;
+	const group = await whenChatGroup(api, waitMs);
+	if (group) { await whenChatActive(api, Math.min(waitMs, 1500)); }
+	if (mine !== generation) { return; }
+	const columns = () => api.window.tabGroups.all.map((g) => g.viewColumn);
+	if (mode === 'chatFirst') {
+		// Bring the chat back from a side group, and put the side bars away: the page is the conversation.
+		const all = api.window.tabGroups.all;
+		if (group && all.length > 1 && group.viewColumn !== Math.min(...columns())) { await run('workbench.action.moveEditorToFirstGroup'); }
+		// A reload brings back the groups it had; an empty one would take half the window.
+		const left = api.window.tabGroups.all;
+		const empty = left.filter((g) => g.tabs.length === 0);
+		if (empty.length && empty.length < left.length && api.window.tabGroups.close && mine === generation) { await api.window.tabGroups.close(empty); }
+		await run('workbench.action.closeSidebar');
+		await run('workbench.action.closePanel');
+		await run('workbench.action.closeAuxiliaryBar');
+		return;
+	}
+	// split: the chat in a group of its own on the right (the setting locks it there, so files open beside it),
+	// the Explorer on the left, and a file in the group that is left. The file comes FIRST: a group that is
+	// emptied by moving the chat out of it is closed, and the chat would be alone again.
+	const groups = api.window.tabGroups.all;
+	if (group && groups.length < 2) {
+		const found = await api.workspace.findFiles('README.md', undefined, 1);
+		if (mine !== generation) { return; }
+		if (found.length) { await api.window.showTextDocument(found[0], { viewColumn: api.ViewColumn.One, preserveFocus: true, preview: false }); }
+		await run('levelcode.ai.focus');
+		await run('workbench.action.moveEditorToRightGroup');
+	} else if (group && group.tabs.length > 1 && group.viewColumn !== Math.max(...columns())) {
+		// A reload brings the two groups back, but the chat is opened again in the first of them, next to a file
+		// (the right one is empty and, being empty, not the place the setting that keeps files out of the chat's
+		// group has had a chance to claim). Dock it.
+		await run('workbench.action.moveEditorToRightGroup');
+	}
+	if (opts.explorer !== false) { await run('workbench.view.explorer'); }
+}
+
+/** @param {typeof import('vscode')} api */
+function currentLayout(api) {
+	const v = api.workspace.getConfiguration('levelcode.web').get('layout', 'chatFirst');
+	return LAYOUTS.includes(v) ? v : 'chatFirst';
+}
+
+/**
+ * What to do at start-up. The first time in a workspace the chosen layout is applied (the Explorer included); after
+ * that only a docked layout is, because the chat panel is not restored by a reload and the workbench remembers
+ * everything else — a side bar the visitor closed stays closed.
+ *
+ * @param {typeof import('vscode')} api
+ * @param {{ get(k: string): any, update(k: string, v: any): Thenable<void> }} state the workspace's own state
+ * @param {{ waitMs?: number }} [opts]
+ */
+async function applyAtStart(api, state, opts = {}) {
+	const mode = currentLayout(api);
+	const first = !state.get(APPLIED_KEY);
+	if (mode === 'split' || first) { await applyLayout(api, mode, { explorer: first, waitMs: opts.waitMs }); }
+	await state.update(APPLIED_KEY, true);
+}
+
+/**
+ * The layout switch: a status-bar item and three commands. The commands only change the setting; one listener
+ * applies it, so the same thing happens whether it was chosen here, in a menu or in Settings.
+ * @param {import('vscode').ExtensionContext} context
+ * @returns {() => void} start-up: arranges the window once the rest of the extension is ready
+ */
+function registerLayout(context) {
 	const layoutItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
 	layoutItem.command = 'levelcode.web.layout.toggle';
 	const showLayout = () => {
@@ -416,94 +594,7 @@ async function activate(context) {
 		}),
 		vscode.commands.registerCommand('levelcode.web.layout.toggle', () => setLayout(currentLayout(vscode) === 'split' ? 'chatFirst' : 'split')),
 	);
-	// At start-up: the first time, the layout chosen by default; after that only the one the workbench does not
-	// remember by itself — the chat panel is not restored on reload, so a docked chat has to be docked again.
-	setTimeout(async () => {
-		try {
-			const mode = currentLayout(vscode);
-			const first = !context.globalState.get('levelcode.web.layoutApplied');
-			if (mode === 'split' || first) { await applyLayout(vscode, mode); }
-			await context.globalState.update('levelcode.web.layoutApplied', true);
-		} catch { /* the window is usable as it is */ }
-	}, 1800);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('levelcode.web.openLocalFolder', () => openLocalFolder(vscode)),
-		vscode.commands.registerCommand('levelcode.web.openScratch', () => vscode.commands.executeCommand(
-			'vscode.openFolder', vscode.Uri.from({ scheme: SCHEME, path: HOME }), { forceReuseWindow: true })),
-		vscode.commands.registerCommand('levelcode.web.aboutScratch', async () => {
-			const open = 'Open folder from your computer';
-			const pick = await vscode.window.showInformationMessage(
-				'This is your scratch workspace. Its files are saved in this browser on this computer, and nowhere else. To keep them, download them from the Explorer.',
-				open);
-			if (pick === open) { await vscode.commands.executeCommand('levelcode.web.openLocalFolder'); }
-		}),
-	);
-}
-
-/* ----- layout ----------------------------------------------------------------------------- */
-
-/** The view type the workbench gives LevelCode's chat panel (the key workbench.editor.autoLockGroups is set with). */
-const CHAT_VIEW_TYPE = 'mainThreadWebview-levelcode.ai.chat';
-const LAYOUTS = ['chatFirst', 'split'];
-
-/**
- * The tab group holding LevelCode's chat, if it is open.
- * @param {typeof import('vscode')} api
- */
-function chatGroup(api) {
-	for (const g of api.window.tabGroups.all) {
-		for (const t of g.tabs) {
-			const input = t.input;
-			if (input && typeof input === 'object' && input.viewType === CHAT_VIEW_TYPE) { return g; }
-		}
-	}
-	return undefined;
-}
-
-/**
- * Arrange the window for one of the two ways of working:
- *   chatFirst  the chat alone, in the middle, with its conversation list on its left — the way a chat app is used
- *   split      the Explorer, the files, and the chat docked on the right — the way an editor is used
- * Only existing workbench commands are used, so the layout the user then adjusts by hand is an ordinary one.
- *
- * @param {typeof import('vscode')} api
- * @param {'chatFirst'|'split'} mode
- */
-async function applyLayout(api, mode) {
-	const run = (id, ...args) => api.commands.executeCommand(id, ...args);
-	await run('levelcode.ai.focus');   // the chat, taking the focus, in whichever group it is (or the active one)
-	const group = chatGroup(api);
-	const groups = api.window.tabGroups.all;
-	if (mode === 'chatFirst') {
-		// Bring the chat back from a side group, and put the side bars away: the page is the conversation.
-		if (group && groups.length > 1 && group.viewColumn !== groups[0].viewColumn) { await run('workbench.action.moveEditorToFirstGroup'); }
-		await run('workbench.action.closeSidebar');
-		await run('workbench.action.closePanel');
-		await run('workbench.action.closeAuxiliaryBar');
-		return;
-	}
-	// split: the chat in a group of its own on the right (the setting locks it there, so files open beside it),
-	// the Explorer on the left, and a file in the group that is left. The file comes FIRST: a group that is
-	// emptied by moving the chat out of it is closed, and the chat would be alone again.
-	if (group && groups.length < 2) {
-		const found = await api.workspace.findFiles('README.md', undefined, 1);
-		if (found.length) { await api.window.showTextDocument(found[0], { viewColumn: api.ViewColumn.One, preserveFocus: true, preview: false }); }
-		await run('levelcode.ai.focus');
-		await run('workbench.action.moveEditorToRightGroup');
-	} else if (group && group.tabs.length > 1 && group.viewColumn !== groups[groups.length - 1].viewColumn) {
-		// A reload brings the two groups back, but the chat is opened again in the first of them, next to a file
-		// (the right one is empty and, being empty, not the place the setting that keeps files out of the chat's
-		// group has had a chance to claim). Dock it.
-		await run('workbench.action.moveEditorToRightGroup');
-	}
-	await run('workbench.view.explorer');
-}
-
-/** @param {typeof import('vscode')} api */
-function currentLayout(api) {
-	const v = api.workspace.getConfiguration('levelcode.web').get('layout', 'chatFirst');
-	return LAYOUTS.includes(v) ? v : 'chatFirst';
+	return () => { applyAtStart(vscode, context.workspaceState).catch(() => { /* the window is usable as it is */ }); };
 }
 
 /**
@@ -528,10 +619,13 @@ async function openLocalFolder(api) {
 		title: 'Open a folder from your computer',
 	});
 	if (!picked || picked.length === 0) { return false; }
+	// Choosing a folder is choosing to work on its files: the window that comes back has the Explorer and the chat
+	// beside the files, not the chat alone with the folder out of sight. One click on the status bar undoes it.
+	try { await api.workspace.getConfiguration('levelcode.web').update('layout', 'split', api.ConfigurationTarget.Global); } catch { /* the layout is a courtesy */ }
 	await api.commands.executeCommand('vscode.openFolder', picked[0], { forceReuseWindow: true });
 	return true;
 }
 
 function deactivate() { }
 
-module.exports = { activate, deactivate, openLocalFolder, applyLayout, currentLayout, chatGroup, LAYOUTS };
+module.exports = { activate, deactivate, openLocalFolder, applyLayout, applyAtStart, currentLayout, chatGroup, whenChatGroup, whenChatActive, LAYOUTS, APPLIED_KEY };

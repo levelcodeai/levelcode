@@ -31,16 +31,30 @@ let groupsNow = /** @type {any[]} */ ([]);
 let config = /** @type {Record<string, any>} */ ({});
 let found = /** @type {any[]} */ ([]);
 const shown = /** @type {any[][]} */ ([]);
+const closed = /** @type {any[]} */ ([]);
+const updates = /** @type {any[][]} */ ([]);
+let tabListeners = /** @type {Function[]} */ ([]);
+/** The group that has the focus, when a test cares (undefined: the mock has no such property, like an older host). */
+let activeGroup = /** @type {any} */ (undefined);
+const fireTabs = () => tabListeners.slice().forEach((f) => f());
 const vscodeMock = {
 	Uri,
 	ViewColumn: { One: 1, Two: 2 },
 	window: {
 		async showOpenDialog(o) { calls.dialogs.push(o); return nextPick; },
-		get tabGroups() { return { all: groupsNow }; },
+		get tabGroups() {
+			return {
+				all: groupsNow,
+				...(activeGroup !== undefined ? { activeTabGroup: activeGroup, onDidChangeTabGroups: (fn) => { tabListeners.push(fn); return { dispose() { tabListeners = tabListeners.filter((x) => x !== fn); } }; } } : {}),
+				onDidChangeTabs: (fn) => { tabListeners.push(fn); return { dispose() { tabListeners = tabListeners.filter((x) => x !== fn); } }; },
+				close: async (g) => { closed.push(g); },
+			};
+		},
 		async showTextDocument(...a) { shown.push(a); calls.commands.push(['(show)', a[0] && a[0].path]); },
 	},
+	ConfigurationTarget: { Global: 1 },
 	workspace: {
-		getConfiguration(section) { return { get: (k, d) => (config[section + '.' + k] !== undefined ? config[section + '.' + k] : d) }; },
+		getConfiguration(section) { return { get: (k, d) => (config[section + '.' + k] !== undefined ? config[section + '.' + k] : d), update: async (k, v, t) => { updates.push([section + '.' + k, v, t]); } }; },
 		async findFiles() { return found; },
 	},
 	commands: { async executeCommand(...a) { calls.commands.push(a); } },
@@ -54,7 +68,7 @@ const ext = require(path.join(__dirname, '..', '..', 'workspace', 'extension.js'
 
 let n = 0;
 async function test(name, fn) {
-	calls.dialogs.length = 0; calls.commands.length = 0; shown.length = 0;
+	calls.dialogs.length = 0; calls.commands.length = 0; shown.length = 0; closed.length = 0; updates.length = 0; tabListeners = []; activeGroup = undefined;
 	groupsNow = []; config = {}; found = [];
 	await fn(); n++; console.log('  ok - ' + name);
 }
@@ -76,6 +90,19 @@ const ids = () => calls.commands.map((c) => c[0]);
 		nextPick = [picked];
 		assert.strictEqual(await ext.openLocalFolder(vscodeMock), true);
 		assert.deepStrictEqual(calls.commands, [['vscode.openFolder', picked, { forceReuseWindow: true }]]);
+	});
+	await test('choosing a folder is choosing to work on its files: the layout becomes the editor one, before the window is reused', async () => {
+		nextPick = [new Uri('file', '/my-project')];
+		await ext.openLocalFolder(vscodeMock);
+		assert.deepStrictEqual(updates, [['levelcode.web.layout', 'split', 1]]);
+		assert.deepStrictEqual(ids(), ['vscode.openFolder']);
+	});
+	await test('a layout setting that cannot be written does not stop the folder from opening', async () => {
+		nextPick = [new Uri('file', '/my-project')];
+		const real = vscodeMock.workspace.getConfiguration;
+		vscodeMock.workspace.getConfiguration = () => ({ get: () => 'chatFirst', update: async () => { throw new Error('read-only'); } });
+		try { assert.strictEqual(await ext.openLocalFolder(vscodeMock), true); } finally { vscodeMock.workspace.getConfiguration = real; }
+		assert.deepStrictEqual(ids(), ['vscode.openFolder']);
 	});
 	await test('cancelling the picker does nothing', async () => {
 		for (const none of [undefined, []]) {
@@ -158,6 +185,119 @@ const ids = () => calls.commands.map((c) => c[0]);
 		groupsNow = [{ viewColumn: 1, tabs: [fileTab] }, { viewColumn: 2, tabs: [fileTab, chatTab] }];
 		await ext.applyLayout(vscodeMock, 'split');
 		assert.ok(!ids().includes('workbench.action.moveEditorToRightGroup'));
+	});
+	await test('split with the chat not in the tab model yet: it is waited for, then docked (the status item click on a closed chat)', async () => {
+		groupsNow = [{ viewColumn: 1, tabs: [] }];
+		found = [new Uri('levelcode-scratch', '/README.md')];
+		const run = ext.applyLayout(vscodeMock, 'split', { waitMs: 2000 });
+		await new Promise((r) => setTimeout(r, 20));
+		assert.strictEqual(tabListeners.length, 1, 'it is listening for the tab');
+		groupsNow = [{ viewColumn: 1, tabs: [chatTab] }];   // the host is told about the new tab
+		fireTabs();
+		await run;
+		assert.strictEqual(tabListeners.length, 0, 'and stopped listening');
+		assert.deepStrictEqual(ids(), ['levelcode.ai.focus', '(show)', 'levelcode.ai.focus', 'workbench.action.moveEditorToRightGroup', 'workbench.view.explorer']);
+	});
+	await test('a chat that never comes is given up on after the wait, and the Explorer is still shown', async () => {
+		groupsNow = [{ viewColumn: 1, tabs: [] }];
+		const t0 = Date.now();
+		await ext.applyLayout(vscodeMock, 'split', { waitMs: 60 });
+		assert.ok(Date.now() - t0 >= 50 && Date.now() - t0 < 1500);
+		assert.deepStrictEqual(ids(), ['levelcode.ai.focus', 'workbench.view.explorer']);
+		assert.strictEqual(tabListeners.length, 0);
+	});
+	await test('a start-up does not reveal the Explorer when it is told not to (a visitor who closed it)', async () => {
+		groupsNow = [{ viewColumn: 1, tabs: [fileTab] }, { viewColumn: 2, tabs: [chatTab] }];
+		await ext.applyLayout(vscodeMock, 'split', { explorer: false });
+		assert.ok(!ids().includes('workbench.view.explorer'));
+	});
+	await test('chatFirst after a reload: the empty group that was restored is closed, and a window of only empty groups is left alone', async () => {
+		const emptyRight = { viewColumn: 2, tabs: [] };
+		groupsNow = [{ viewColumn: 1, tabs: [chatTab, fileTab] }, emptyRight];
+		await ext.applyLayout(vscodeMock, 'chatFirst');
+		assert.deepStrictEqual(closed, [[emptyRight]]);
+		closed.length = 0;
+		groupsNow = [{ viewColumn: 1, tabs: [] }, { viewColumn: 2, tabs: [] }];
+		await ext.applyLayout(vscodeMock, 'chatFirst', { waitMs: 10 });
+		assert.deepStrictEqual(closed, [], 'closing every group would leave nothing to put the chat in');
+	});
+	await test('columns, not the order of the list, say which group is on the left (the list is in creation order)', async () => {
+		// the chat's group was created second but sits first on screen
+		groupsNow = [{ viewColumn: 2, tabs: [fileTab, chatTab] }, { viewColumn: 1, tabs: [chatTab, fileTab] }];
+		const left = groupsNow[1];
+		groupsNow = [{ viewColumn: 2, tabs: [fileTab] }, left];
+		await ext.applyLayout(vscodeMock, 'chatFirst');
+		assert.ok(!ids().includes('workbench.action.moveEditorToFirstGroup'), 'the chat is already in column one');
+		calls.commands.length = 0;
+		await ext.applyLayout(vscodeMock, 'split');
+		assert.ok(ids().includes('workbench.action.moveEditorToRightGroup'), 'column one is not the last column: docked to the right');
+	});
+	await test('the move commands wait until the chat is the active editor, not just until its tab exists', async () => {
+		const chatGroup1 = { viewColumn: 2, tabs: [chatTab], activeTab: { input: fileTab.input } };
+		const files = { viewColumn: 1, tabs: [fileTab], activeTab: fileTab };
+		groupsNow = [files, chatGroup1];
+		activeGroup = files;   // the file's group has the focus: a move now would act on the file
+		const run = ext.applyLayout(vscodeMock, 'chatFirst', { waitMs: 1000 });
+		await new Promise((r) => setTimeout(r, 30));
+		assert.ok(!ids().includes('workbench.action.moveEditorToFirstGroup'), 'it moved before the chat was active');
+		activeGroup = { viewColumn: 2, tabs: [chatTab], activeTab: chatTab };
+		groupsNow = [files, { ...chatGroup1, activeTab: chatTab }];
+		fireTabs();
+		await run;
+		assert.ok(ids().includes('workbench.action.moveEditorToFirstGroup'));
+		assert.ok(ids().indexOf('workbench.action.moveEditorToFirstGroup') > ids().indexOf('levelcode.ai.focus'));
+	});
+	await test('an arrangement that is overtaken by a later choice stops: the start-up one does not put the chat back on the right', async () => {
+		groupsNow = [{ viewColumn: 1, tabs: [] }];
+		found = [new Uri('levelcode-scratch', '/README.md')];
+		const early = ext.applyLayout(vscodeMock, 'split', { waitMs: 1000 });   // waiting for the chat tab
+		await new Promise((r) => setTimeout(r, 20));
+		const later = ext.applyLayout(vscodeMock, 'chatFirst', { waitMs: 1000 });
+		await new Promise((r) => setTimeout(r, 20));
+		groupsNow = [{ viewColumn: 1, tabs: [chatTab] }];
+		fireTabs();
+		await Promise.all([early, later]);
+		assert.ok(!ids().includes('workbench.action.moveEditorToRightGroup'), 'the earlier split resumed and docked the chat');
+		assert.ok(!ids().includes('workbench.view.explorer'));
+		assert.ok(ids().includes('workbench.action.closeSidebar'), 'the later one was applied');
+		assert.strictEqual(shown.length, 0);
+	});
+	await test('a chat that never becomes active is given up on, and the layout goes on', async () => {
+		activeGroup = { viewColumn: 1, tabs: [fileTab], activeTab: fileTab };
+		groupsNow = [{ viewColumn: 1, tabs: [fileTab], activeTab: fileTab }, { viewColumn: 2, tabs: [chatTab], activeTab: { input: null } }];
+		const t0 = Date.now();
+		await ext.applyLayout(vscodeMock, 'chatFirst', { waitMs: 80 });
+		assert.ok(Date.now() - t0 < 1500);
+		assert.ok(ids().includes('workbench.action.closeSidebar'));
+		assert.strictEqual(tabListeners.length, 0);
+	});
+	/* ----- start-up ----- */
+	const state = () => { const m = new Map(); return { m, get: (k) => m.get(k), update: async (k, v) => { m.set(k, v); } }; };
+	await test('first start in a workspace: the chosen layout is applied, with the Explorer, and remembered for that workspace', async () => {
+		groupsNow = [{ viewColumn: 1, tabs: [chatTab] }];
+		const st = state();
+		await ext.applyAtStart(vscodeMock, st, { waitMs: 10 });
+		assert.ok(ids().includes('workbench.action.closeSidebar'));
+		assert.strictEqual(st.m.get(ext.APPLIED_KEY), true);
+	});
+	await test('a later start with chatFirst applies nothing: the workbench remembers its own side bars', async () => {
+		groupsNow = [{ viewColumn: 1, tabs: [chatTab] }];
+		const st = state(); st.m.set(ext.APPLIED_KEY, true);
+		await ext.applyAtStart(vscodeMock, st, { waitMs: 10 });
+		assert.deepStrictEqual(ids(), []);
+	});
+	await test('a later start with split docks the chat again and leaves the Explorer as the visitor left it', async () => {
+		config['levelcode.web.layout'] = 'split';
+		groupsNow = [{ viewColumn: 1, tabs: [fileTab, chatTab] }, { viewColumn: 2, tabs: [] }];
+		const st = state(); st.m.set(ext.APPLIED_KEY, true);
+		await ext.applyAtStart(vscodeMock, st, { waitMs: 10 });
+		assert.deepStrictEqual(ids(), ['levelcode.ai.focus', 'workbench.action.moveEditorToRightGroup']);
+	});
+	await test('the first start of a workspace in split reveals the Explorer', async () => {
+		config['levelcode.web.layout'] = 'split';
+		groupsNow = [{ viewColumn: 1, tabs: [fileTab] }, { viewColumn: 2, tabs: [chatTab] }];
+		await ext.applyAtStart(vscodeMock, state(), { waitMs: 10 });
+		assert.ok(ids().includes('workbench.view.explorer'));
 	});
 	await test('no layout closes anything in the other: split never closes the side bars, chatFirst never opens the Explorer', async () => {
 		groupsNow = [{ viewColumn: 1, tabs: [chatTab] }];

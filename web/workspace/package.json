@@ -37,9 +37,6 @@
 					"markdownDescription": "How the window is arranged. Also in the status bar and in the Command Palette under **LevelCode: Layout**."
 				}
 			}
-		},
-		"keybindings": [
-			{ "command": "levelcode.web.layout.toggle", "key": "ctrl+alt+l", "mac": "cmd+alt+l" }
-		]
+		}
 	}
 }

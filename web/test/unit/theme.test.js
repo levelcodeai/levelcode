@@ -117,17 +117,21 @@ function over(top, ground) {
 
 	await test('the desktop themes\' pinned default is removed from the staged copy, and only that', () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-theme-'));
-		const file = path.join(dir, 'package.json');
-		const source = fs.readFileSync(path.join(REPO, 'extensions', 'levelcode-themes', 'package.json'), 'utf8');
-		assert.ok(/configurationDefaults/.test(source), 'the desktop extension still pins its default');
-		fs.writeFileSync(file, source);
-		assert.strictEqual(withoutConfigurationDefaults(file), true);
-		const staged = JSON.parse(fs.readFileSync(file, 'utf8'));
-		const original = JSON.parse(source);
-		assert.ok(!('configurationDefaults' in staged.contributes));
-		assert.deepStrictEqual(staged.contributes.themes, original.contributes.themes, 'both of its themes stay selectable');
-		assert.strictEqual(withoutConfigurationDefaults(file), false, 'nothing left to remove');
-		assert.ok(/configurationDefaults/.test(fs.readFileSync(path.join(REPO, 'extensions', 'levelcode-themes', 'package.json'), 'utf8')), 'the desktop source is not touched');
+		try {
+			const file = path.join(dir, 'package.json');
+			const source = fs.readFileSync(path.join(REPO, 'extensions', 'levelcode-themes', 'package.json'), 'utf8');
+			assert.ok(/configurationDefaults/.test(source), 'the desktop extension still pins its default');
+			fs.writeFileSync(file, source);
+			assert.strictEqual(withoutConfigurationDefaults(file), true);
+			const staged = JSON.parse(fs.readFileSync(file, 'utf8'));
+			const original = JSON.parse(source);
+			assert.ok(!('configurationDefaults' in staged.contributes));
+			assert.deepStrictEqual(staged.contributes.themes, original.contributes.themes, 'both of its themes stay selectable');
+			assert.strictEqual(withoutConfigurationDefaults(file), false, 'nothing left to remove');
+			assert.ok(/configurationDefaults/.test(fs.readFileSync(path.join(REPO, 'extensions', 'levelcode-themes', 'package.json'), 'utf8')), 'the desktop source is not touched');
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });   // a failed assertion must not leave it behind either
+		}
 	});
 
 	console.log(`\n${n} tests passed`);

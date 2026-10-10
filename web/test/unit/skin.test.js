@@ -93,6 +93,113 @@ test('the script is valid and sends only messages the page already sends', () =>
 	}
 });
 
+/* ----- the script, run against a small stand-in for the page ----------------------------------- */
+function makePage({ railMatches }) {
+	class El {
+		constructor(tag) { this.tag = tag; this.children = []; this.attrs = {}; this.listeners = {}; this.style = {}; this.className = ''; this.textContent = ''; this.value = ''; this.classes = new Set(); }
+		setAttribute(k, v) { this.attrs[k] = String(v); }
+		getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+		removeAttribute(k) { delete this.attrs[k]; }
+		appendChild(c) { this.children.push(c); return c; }
+		addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
+		dispatchEvent() { return true; }
+		cloneNode() { return new El('svg'); }
+		focus() {}
+		querySelector(sel) { return this.found && this.found[sel] || null; }
+		get classList() { const c = this.classes; return { contains: (x) => c.has(x), add: (x) => c.add(x) }; }
+	}
+	const ids = {};
+	for (const id of ['empty', 'log', 'input', 'sessOverlay', 'sessList', 'lcLogo']) { ids[id] = new El('div'); }
+	ids.empty.found = {};
+	const panel = new El('div');
+	const bar = new El('div');
+	bar.found = {};
+	const body = new El('body'); body.classes.add('lc-web');
+	const posted = [];
+	const mq = { matches: railMatches, listeners: [], addEventListener(t, f) { this.listeners.push(f); } };
+	const windowListeners = {};
+	const timers = [];
+	const document = {
+		body, getElementById: (id) => ids[id] || null,
+		createElement: (t) => new El(t),
+		querySelector: (sel) => (sel === '#sessOverlay .sesspanel' ? panel : sel === '#sessOverlay .sessbar' ? bar : null),
+	};
+	const window = { matchMedia: () => mq, addEventListener: (t, f) => { (windowListeners[t] = windowListeners[t] || []).push(f); } };
+	const run = new Function('document', 'window', 'vscode', 'MutationObserver', 'setTimeout', 'clearTimeout', 'Event', js);
+	run(document, window, { postMessage: (m) => posted.push(m) }, function () { this.observe = () => {}; }, (f) => { timers.push(f); return timers.length; }, () => {}, function Event() {});
+	return { ids, panel, bar, mq, posted, windowListeners, timers };
+}
+
+test('the keyboard: Enter and Space on a conversation card resume it; other keys and the card\'s own buttons are left alone', () => {
+	const { ids } = makePage({ railMatches: true });
+	const [onKey] = ids.sessList.listeners.keydown;
+	const card = { classList: { contains: (c) => c === 'sesscard' }, click() { this.clicked = (this.clicked || 0) + 1; } };
+	const inner = { classList: { contains: () => false }, click() { this.clicked = (this.clicked || 0) + 1; } };
+	let prevented = 0;
+	const ev = (key, target) => ({ key, target, preventDefault() { prevented++; } });
+	onKey(ev('Enter', card)); onKey(ev(' ', card));
+	assert.strictEqual(card.clicked, 2);
+	assert.strictEqual(prevented, 2, 'Space would otherwise scroll the list');
+	onKey(ev('a', card)); onKey(ev('Tab', card)); onKey(ev('Enter', inner));
+	assert.strictEqual(card.clicked, 2);
+	assert.strictEqual(inner.clicked, undefined, 'a real button already does its own thing');
+});
+
+test('docked: the list is a complementary region with no aria-modal; narrow: a modal dialog, closed until asked for', () => {
+	const wide = makePage({ railMatches: true });
+	assert.strictEqual(wide.panel.getAttribute('role'), 'complementary');
+	assert.strictEqual(wide.panel.getAttribute('aria-modal'), null, 'aria-modal="false" on a non-dialog is not valid');
+	const narrow = makePage({ railMatches: false });
+	assert.strictEqual(narrow.panel.getAttribute('role'), 'dialog');
+	assert.strictEqual(narrow.panel.getAttribute('aria-modal'), 'true');
+	assert.strictEqual(narrow.ids.sessOverlay.style.display, 'none');
+	// the window is widened, the list is opened with /sessions (the page sets display inline), and then narrowed again
+	const p = makePage({ railMatches: true });
+	p.ids.sessOverlay.style.display = 'flex';
+	p.mq.matches = false;
+	p.mq.listeners.forEach((f) => f());
+	assert.strictEqual(p.ids.sessOverlay.style.display, 'none', 'no modal the visitor did not ask for');
+	assert.strictEqual(p.panel.getAttribute('role'), 'dialog');
+	assert.strictEqual(p.panel.getAttribute('aria-modal'), 'true');
+});
+
+test('docked: the list is asked for (never the sample cards), once per burst of events', () => {
+	const p = makePage({ railMatches: true });
+	assert.strictEqual(p.timers.length, 1, 'once on start');
+	p.timers.length = 0; p.posted.length = 0;
+	const [onMessage] = p.windowListeners.message;
+	for (const type of ['agentDone', 'assistantDone', 'sessionResumed']) { onMessage({ data: { type } }); }
+	onMessage({ data: { type: 'somethingElse' } });
+	p.timers.forEach((f) => f());
+	assert.deepStrictEqual(p.posted.map((m) => m.type), ['listSessions', 'listSessions', 'listSessions'], 'the timers were set per event; the real one is cleared and set again, so the page sees them debounced');
+	assert.ok(p.posted.every((m) => m.type !== 'openSessions'));
+});
+
+test('the starters make sense in an empty window: none of them names a selection or an open file', () => {
+	const m = [...js.matchAll(/\['([^']+)',\s*'([^']+)'\]/g)].map((x) => x.slice(1));
+	assert.strictEqual(m.length, 4);
+	for (const [title, prompt] of m) {
+		assert.ok(!/\b(my selection|the selection|current file|open file|this file|selected)\b/i.test(prompt), title + ': ' + prompt);
+	}
+});
+
+test('hover reveals the card actions only where there is hover; touch keeps them and gives up the second line', () => {
+	const at = css.indexOf('.sesscard .sessacts { display: none; }');
+	assert.ok(at > 0);
+	const head = css.lastIndexOf('@media', at);
+	assert.ok(/@media \(min-width: 1000px\) and \(hover: hover\) and \(pointer: fine\)/.test(css.slice(head, at)), 'the hiding rule is not under the hover media query');
+	assert.ok(/@media \(min-width: 1000px\) and \(hover: none\), \(min-width: 1000px\) and \(pointer: coarse\)[^{]*\{\s*body\.lc-web #sessOverlay \.sesscard \.sesssub \{ display: none; \}/.test(css));
+});
+
+test('text that was drawn in the translucent focus colour is drawn in the link colour; the empty chat can be scrolled to its top', () => {
+	assert.ok(/--lcw-accent-text: var\(--vscode-textLink-foreground, var\(--accent\)\)/.test(css));
+	for (const sel of ['.msg .body a', '.filechip .fcname', '.modeopt.active .moname', '#status .stap.autopilot']) {
+		assert.ok(new RegExp(`body\\.lc-web ${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^{]*\\{[^}]*color: var\\(--lcw-accent-text\\)`).test(css) || css.includes(`body.lc-web ${sel}, `) || css.includes(`, body.lc-web ${sel}`), sel);
+	}
+	assert.ok(/body\.lc-web:has\(#empty\) \{ justify-content: safe center; \}/.test(css), 'plain centre clips the top of a window shorter than its content');
+	assert.ok(!/#status \{ opacity/.test(css), 'opacity on the footer row dims its popovers too');
+});
+
 test('the build refuses a chat.html that is not the shape the skin is cut into', () => {
 	for (const anchor of [ANCHORS.STYLE_END, ANCHORS.BODY_OPEN, ANCHORS.SCRIPT_END]) {
 		assert.throws(() => skinChat(base.replace(anchor, '')), /expected exactly one/);

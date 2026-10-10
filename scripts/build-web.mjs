@@ -22,7 +22,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { webConfig, renderIndex } from '../web/lib/config.mjs';
-import { stageDeclarativeExtensions, copyExtension, withoutConfigurationDefaults } from '../web/lib/extensions.mjs';
+import { stageDeclarativeExtensions, declarativeExtensionNames, copyExtension, withoutConfigurationDefaults, COPY_SKIP } from '../web/lib/extensions.mjs';
 import { policy, toHeadersFile, toNginx } from '../web/lib/headers.mjs';
 import { hashTree } from '../web/lib/fingerprint.mjs';
 
@@ -77,6 +77,21 @@ hashTree(fingerprint, path.join(WEB, 'ai-extension'), { skip: ['assets.generated
 hashTree(fingerprint, path.join(WEB, 'workspace'), { skip: ['node_modules', '.DS_Store'] });
 hashTree(fingerprint, path.join(WEB, 'theme'), { skip: ['.DS_Store'] });
 hashTree(fingerprint, path.join(WEB, 'lib'), { skip: ['.DS_Store'] });
+// The declarative built-ins are staged from the checkout's extensions/ (grammars, language configurations, the desktop's
+// themes — whose manifest this build rewrites): a changed grammar is a changed build, and so is the fallback copy of
+// the themes taken from this repository when the checkout has none.
+{
+	const baked = fs.existsSync(path.join(staticDir, 'extensions')) ? fs.readdirSync(path.join(staticDir, 'extensions')) : [];
+	const source = path.join(vscodeDir, 'extensions');
+	if (fs.existsSync(source)) {
+		for (const name of declarativeExtensionNames(source, [...baked, 'levelcode-ai', 'levelcode-web'])) {
+			fingerprint.update('\0ext\0' + name);
+			hashTree(fingerprint, path.join(source, name), { skip: [...COPY_SKIP, '.DS_Store'] });
+		}
+	}
+	const themes = path.join(REPO, 'extensions', 'levelcode-themes');
+	if (fs.existsSync(themes)) { hashTree(fingerprint, themes, { skip: [...COPY_SKIP, '.DS_Store'] }); }
+}
 const id = String(args.id || fingerprint.digest('hex').slice(0, 12));
 let gitHead = 'unknown';
 try { gitHead = execFileSync('git', ['-C', REPO, 'rev-parse', '--short=10', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { /* not a checkout */ }

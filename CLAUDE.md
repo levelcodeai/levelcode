@@ -107,6 +107,9 @@ the desktop app exactly as it was:
   Every skin rule is under `body.lc-web`. An extension's `configurationDefaults` outrank the embedder's, so
   `levelcode-themes`' pinned default theme is stripped from the staged copy (`withoutConfigurationDefaults`).
   `node web/test/e2e-look.mjs --dist dist-web --stub-port <port>` is the check; look at its screenshots (`--shots`).
+  The embedder's command API is the module's `commands` (`api.commands.executeCommand`): `create()` returns a
+  disposable, so `workbench.commands` is `undefined` — a helper that used it ran inside a `try` and silently did
+  nothing until a browser test asked for its effect.
 - The session store (`createSecretStorage`) belongs to every tab: no cache, one-key read-modify-write under a
   Web Lock. The refresh token is rotated on use; do not reintroduce a start-up snapshot.
 - Build: `node scripts/build-web.mjs --account <origin>` → `dist-web/`; serve with `node web/serve.mjs --dist dist-web`.

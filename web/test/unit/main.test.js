@@ -12,7 +12,7 @@
  *    startReturnFromSignIn    ?signin=1 and the return from a sign-in
  *    pickInitialTheme         the colours painted before the theme has loaded follow the system
  *    addChromeStyles          chrome.css comes AFTER the workbench's own stylesheet, from the build's prefix
- *    hideBuiltInChat          the workbench's own chat is told it is disabled; a workbench without it is fine
+ *    hideBuiltInChat          the workbench's own chat is told it is disabled, again after the policy gate's own write
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -454,12 +454,21 @@ const ACCOUNT = 'https://levelcode.example';
 		add({});
 		assert.strictEqual(added[1].href, '/chrome.css', 'a development page has no prefix');
 	});
-	await test('look: the built-in chat is told it is disabled, through the one context key, and a failure there is not an error', async () => {
+
+	await test('look: the built-in chat is hidden through its two context keys, now and again after the policy gate\'s own write, and a failure is not an error', async () => {
 		const sent = [];
-		const hide = new Function(extract('hideBuiltInChat') + '\nreturn hideBuiltInChat;')();
+		const timers = [];
+		const hide = new Function('setTimeout', extract('hideBuiltInChat') + '\nreturn hideBuiltInChat;')((f, ms) => { timers.push([f, ms]); return 1; });
 		hide({ commands: { executeCommand: async (...a) => { sent.push(a); } } });
 		await new Promise((r) => setTimeout(r, 0));
-		assert.deepStrictEqual(sent, [['_setContext', 'chatSetupDisabledInWorkspace', true]]);
+		const keys = [['_setContext', 'chatAccountPolicyGateActive', true], ['_setContext', 'chatSetupDisabledInWorkspace', true]];
+		assert.deepStrictEqual(sent, keys);
+		assert.strictEqual(timers.length, 1);
+		assert.ok(timers[0][1] > 5000, 'after the gate\'s five-second write, not before it');
+		sent.length = 0;
+		timers[0][0]();
+		await new Promise((r) => setTimeout(r, 0));
+		assert.deepStrictEqual(sent, keys, 'set again');
 		assert.doesNotThrow(() => hide({ commands: { executeCommand: async () => { throw new Error('unknown command'); } } }));
 		assert.doesNotThrow(() => hide({ commands: { executeCommand: () => { throw new Error('sync'); } } }));
 		assert.doesNotThrow(() => hide({}));

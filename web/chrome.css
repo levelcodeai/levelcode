@@ -17,3 +17,8 @@
 
 /* The keyboard layout indicator is a desktop concern; in a page it is a US/UK label that means nothing. */
 .monaco-workbench .part.statusbar #status\.workbench\.keyboardLayout { display: none !important; }
+
+/* The title bar's toggle for the secondary side bar: the chat is an editor and its conversations are on the page's own
+   rail, so the bar has nothing of ours in it that the toggle is needed for (the built-in Chat view that was its
+   default is hidden by main.js). */
+.monaco-workbench li.action-item:has(> a.action-label[aria-label^="Toggle Secondary Side Bar"]) { display: none !important; }

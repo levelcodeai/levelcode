@@ -104,21 +104,29 @@ extension, a stylesheet or a build-time edit of the browser build's own copy of 
 | First paint | `initialColorTheme` in `web/lib/config.mjs`, picked by `pickInitialTheme` in `web/main.js` | The colours painted for the half second before the theme extension has loaded, so a dark visitor does not see a light flash. |
 | Default theme | `withoutConfigurationDefaults` in `web/lib/extensions.mjs` | An extension's `configurationDefaults` **outrank** the embedder's. `levelcode-themes` pins its own default theme, so the staged copy of it has that key removed (its two themes stay selectable). The desktop source is untouched. |
 | Panels, activity bar | `workbench.experimental.modernUI`, `workbench.activityBar.location: top`, `workbench.layoutControl.type: toggles` | Code-OSS's own switches. `modernUI` is **experimental**: if a bump renames or drops it the editor is still fine, only plainer (`e2e-look.mjs` still passes its theme and layout checks; its screenshots are the thing to look at). |
-| Chrome | `web/chrome.css`, linked by `main.js` **after** the workbench's stylesheet | Hides source control, run and extensions (this edition has none of them), the Outline and Timeline headers and the keyboard-layout status item. The selectors are workbench class names: when a bump stops matching them `e2e-look.mjs` fails on "not offered" rather than the icons quietly coming back. |
-| The workbench's own chat | `hideBuiltInChat` in `main.js` | Code-OSS's Copilot chat view appears in the secondary side bar on the web even with `chat.disableAIFeatures`; it is told it is disabled through an internal context key. Look for a "Chat" tab on the right on a bump. |
+| Chrome | `web/chrome.css`, linked by `main.js` **after** the workbench's stylesheet | Hides the activity-bar entries for source control, run and extensions (this edition has none of them), the Outline and Timeline headers, the keyboard-layout status item and the title bar's secondary-side-bar toggle. The selectors are workbench class names and aria labels: when a bump stops matching them `e2e-look.mjs` fails rather than the icons quietly coming back. Their **menus, palette entries and shortcuts are the workbench's own** and still lead to empty views (Run and Debug, Extensions, Source Control, an empty Terminal panel). |
+| The workbench's own chat | `hideBuiltInChat` in `main.js` | Code-OSS registers its Copilot Chat view on the web even with `chat.disableAIFeatures`, and opened it fills the window with a dead composer ("No default agent contributed"). Its `when` clause is gated by `chatAccountPolicyGateActive`, which nothing else reads; `main.js` sets it (and `chatSetupDisabledInWorkspace`) through the embedder's `commands.executeCommand('_setContext', …)` — the **module's** `commands`: `create()` returns a disposable, not the workbench — and again after five seconds, because the gate's own contribution writes its key again then. `e2e-look.mjs` opens the bar and fails on a "Chat" tab. |
+| Editor padding | `editor.padding.top: 24` | `modernUI` fades the top 24 px of every editor into the ground, line one included. |
+| No page-level `color-scheme` | `index.html`, `boot.css` | A page that declares `color-scheme: dark light` made every stock webview (the Markdown preview) paint an opaque *white* page under a dark theme. The chat page paints its own ground (`body.lc-web { background: … }`) for the same reason. |
 | Welcome page | `web/ai-extension/copy.js` | The desktop opens its walkthrough once, in front of everything. In a tab the chat is the first thing there is; the walkthrough stays in the Command Palette. |
 | The chat page | `web/ai-extension/skin.js` + `skin/chat.css` + `skin/chat.js` | Three exact insertions into the **embedded copy** of `media/chat.html`: a style block, `class="lc-web"` on `<body>`, a nonce'd script. Every rule is under `body.lc-web`; the script sends only messages the page already sends. The build **fails** if chat.html stops having the places the skin is cut into. The desktop's `chat.html` is never edited for this (the desktop suites pin it). |
 
 **Layouts.** `levelcode.web.layout` is `chatFirst` (the chat alone, side bars closed, conversations on its
 left — the way a chat app is used) or `split` (Explorer, files on the left, the chat docked on the right — the
-way an editor is used). The status bar item at the left, **LevelCode: Layout: Switch** and `Cmd/Ctrl+Alt+L`
-change the setting; one listener applies it, so Settings does the same. The first start is `chatFirst`. The
-chat panel is not restored by a reload, so a `split` layout is applied again at start. Only existing workbench
-commands are used, so what the visitor then arranges by hand is an ordinary layout.
+way an editor is used). The status bar item at the left and **LevelCode: Layout: Switch** change the setting
+(there is no default key binding: `Cmd+Alt+L` is Find in Selection on macOS); one listener applies it, so Settings
+does the same. The first start in a workspace is `chatFirst`. The chat panel is not restored by a reload, so a
+`split` layout docks the chat again at start — without revealing the Explorer or moving the focus (that is done
+once per workspace, `workspaceState`), so an Explorer the visitor closed stays closed. The start-up and a switch wait
+for the chat's tab to exist (`onDidChangeTabs`, 2.5 s) rather than reading the tab model at a guessed time. Only
+existing workbench commands are used, so what the visitor then arranges by hand is an ordinary layout. Files that are
+open when going back to `chatFirst` stay as tabs beside the chat.
 
 **Widths.** The chat page decides by **its own width**, not the window's: from 1000 px it docks the
 conversation list as a 264 px rail; below 760 px it compacts; in between the list is the dialog it is on the
-desktop. In `split` the chat is a narrower column, so it will usually be in the dialog form. The *workbench* is
+desktop. On a touch device (no hover) the rail's card actions are always shown, as in the dialog, and the second
+line gives way; with a mouse they appear on hover or focus. Enter and Space on a card resume it (the desktop's
+card is a `div` with a click handler only; the skin adds the keys). In `split` the chat is a narrower column, so it will usually be in the dialog form. The *workbench* is
 not responsive: below about 760 px the Explorer, tabs and status bar are the desktop's, and a phone is not a
 supported size for this edition yet.
 
@@ -129,6 +137,10 @@ Constraints worth knowing before changing it:
   **before** it moves the chat (`applyLayout`, pinned by `workspace.test.js`).
 - The rail asks the page for its conversations with `listSessions`; it must never call `openSessions()`,
   which seeds the list with sample conversations when nothing has arrived yet.
+- Text drawn in the theme's accent uses `textLink.foreground`, not `focusBorder` (which is translucent and a line
+  colour: 2.2–2.7:1 as text). The footer row is not dimmed with `opacity`: that dims its popovers as well.
+- `chat.html`'s own palettes for the conversation list and the account card (`--cc-*`, One Dark) are re-pointed at
+  the theme by the skin.
 
 ## Signing in
 
@@ -364,6 +376,16 @@ Say these out loud rather than discover them in production:
   landmark at wide widths and the dialog it already was below them.
 - **`workbench.experimental.modernUI` across a Code-OSS bump.** It is the workbench's own experimental flag; the
   pinned checkout was the only one run.
+- **The docked layout after a real browser reload.** `e2e-look.mjs` reloads through the debugger; the workbench
+  flushes the Explorer's visibility to its own storage on shutdown, and whether a closed tab always gets that
+  flush written was not measured. The layout is applied again at start (the chat docked), the side bar's state is
+  the workbench's.
+- **The Markdown preview's content.** The pane's ground is now the theme's (it was white); in headless Chrome the
+  preview's body rendered no text on the old and the new build alike, and that was not investigated.
+- **Known and left:** the Command Palette's "Chat: …" commands and the menus of features this edition lacks (above);
+  the empty Terminal panel behind the panel toggle (a terminal is the next stage, below); the chat page's
+  composer does not move with the soft keyboard on a phone; `levelcode.ai.chat.startLocation: none` is not
+  consulted by the layout.
 - **The operating system's folder picker itself.** It needs a person. Everything after it — the command, the
   workbench's `file` provider on a real `FileSystemDirectoryHandle`, the agent's list, read and write — is run
   (`web/test/e2e.mjs` section 5), with the origin-private file system standing in for the picker. Permission

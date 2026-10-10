@@ -115,6 +115,22 @@ export class Page {
 }
 export { sleep };
 
+/**
+ * Run a command from the Command Palette: F1 until the quick input is up (a key pressed while the chat webview is
+ * still taking the focus at start-up is lost, as it would be for a person), type, wait for the list, Enter.
+ */
+Page.prototype.palette = async function (text, { tries = 6, settle = 900 } = {}) {
+	const open = () => this.eval(`!!document.querySelector('.quick-input-widget:not([style*="display: none"]) .quick-input-box input')`);
+	for (let i = 0; i < tries && !(await open()); i++) {
+		await this.key('F1', 'F1');
+		await sleep(1200);
+	}
+	if (!(await open())) { throw new Error('the command palette did not open'); }
+	await this.type(text);
+	await sleep(settle);
+	await this.key('Enter', 'Enter');
+};
+
 /** Find the CDP session id of the first attached target whose URL matches. */
 Page.prototype.sessionFor = function (re) {
 	for (const [id, s] of this.sessions) { if (re.test(s.url || '')) { return id; } }

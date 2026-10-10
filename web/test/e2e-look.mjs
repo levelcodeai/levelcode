@@ -72,9 +72,22 @@ try {
 	})()`);
 	const visible = (sel) => page.eval(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) { return false; } const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; })()`);
 	const layoutItemText = () => page.eval(`(() => { const a = [...document.querySelectorAll('.statusbar-item')].find((x) => /Chat\\s*$|Editor \\+ chat/.test((x.textContent || '').trim())); return a ? (a.textContent || '').trim() : null; })()`);
+	/**
+	 * Click the layout item until it has done what it says. Straight after a start the status bar is still being
+	 * filled in (the window indicator, the scratch item), and an item moves between the moment it is measured and
+	 * the click: the click lands on its neighbour. A person clicks again; so does this.
+	 */
 	const clickLayoutItem = async () => {
-		const r = await page.waitFor(() => page.eval(`(() => { const a = [...document.querySelectorAll('.statusbar-item')].find((x) => /Chat\\s*$|Editor \\+ chat/.test((x.textContent || '').trim())); if (!a) { return null; } const b = a.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`), { ms: 20000, label: 'the layout item in the status bar' });
-		await page.click(r.x, r.y);
+		const before = await page.waitFor(() => layoutItemText(), { ms: 20000, label: 'the layout item in the status bar' });
+		for (let attempt = 0; attempt < 5; attempt++) {
+			await sleep(400);
+			const r = await page.eval(`(() => { const a = [...document.querySelectorAll('.statusbar-item')].find((x) => /^(\\$\\([^)]*\\)\\s*)?(Chat|Editor \\+ chat)\\s*$/.test((x.textContent || '').trim())); if (!a) { return null; } const b = a.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`);
+			if (!r) { continue; }
+			await page.click(r.x, r.y);
+			const changed = await page.waitFor(async () => (await layoutItemText()) !== before, { ms: 3000, label: 'the item to change' }).then(() => true).catch(() => false);
+			if (changed) { return; }
+		}
+		throw new Error('the layout item did not respond to five clicks');
 	};
 
 	/* 1. the first screen */
@@ -103,6 +116,29 @@ try {
 	const g1 = await groups();
 	check('the first layout is the chat on its own: one editor group, side bars away', g1.length === 1 && !(await visible('.part.sidebar')) && !(await visible('.part.auxiliarybar')), JSON.stringify(g1.map((g) => g.w)));
 	check('the status bar offers the switch', (await layoutItemText()) === 'Chat', JSON.stringify(await layoutItemText()));
+
+	/* 1b. the workbench's own chat is not offered next to LevelCode's, and the page does not make stock webviews unreadable */
+	const toggleShown = await page.eval(`(() => { const a = [...document.querySelectorAll('a.action-label')].find((x) => (x.getAttribute('aria-label') || '').startsWith('Toggle Secondary Side Bar')); if (!a) { return false; } const b = (a.closest('li') || a).getBoundingClientRect(); return b.width > 0; })()`);
+	check('the title bar has no toggle for the secondary side bar (it only leads to the workbench\'s own, dead, Chat view)', toggleShown === false, JSON.stringify(toggleShown));
+	await sleep(4000);   // the workbench's policy gate writes its context key again five seconds after start; the page sets it again after that
+	const palette = async (text) => {
+		await page.key('F1', 'F1');
+		await page.waitFor(() => page.eval(`!!document.querySelector('.quick-input-widget:not([style*="display: none"]) .quick-input-box input')`), { ms: 8000, label: 'command palette' });
+		await page.type(text);
+		await sleep(900);
+		await page.key('Enter', 'Enter');
+		await sleep(1500);
+	};
+	await palette('View: Toggle Secondary Side Bar Visibility');
+	const aux = await page.eval(`(() => { const p = document.querySelector('.part.auxiliarybar'); if (!p) { return null; } const r = p.getBoundingClientRect(); const shown = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(e).display !== 'none'; };
+		return { open: r.width > 0, builtIn: [...p.querySelectorAll('.composite-bar a.action-label.codicon-chat-view-icon')].some((a) => shown(a.closest('li') || a)), tabs: [...p.querySelectorAll('.composite-bar a.action-label')].filter((a) => shown(a.closest('li') || a)).map((a) => a.getAttribute('aria-label')) }; })()`);
+	await shot('1b-aux');
+	check('opened by the palette, the side bar on the right has only LevelCode\'s own container: the workbench\'s Chat view is not there', !!aux && aux.open && !aux.builtIn && aux.tabs.length === 1 && /LevelCode/.test(aux.tabs[0]), JSON.stringify(aux));
+	await palette('View: Toggle Secondary Side Bar Visibility');
+	const auxClosed = await page.waitFor(async () => !(await visible('.part.auxiliarybar')), { ms: 8000, label: 'the side bar to close' }).then(() => true).catch(() => false);
+	check('and it closes again', auxClosed, JSON.stringify(await page.eval(`(() => { const p = document.querySelector('.part.auxiliarybar'); return p ? Math.round(p.getBoundingClientRect().width) : null; })()`)));
+	const scheme0 = await page.eval(`getComputedStyle(document.documentElement).colorScheme`);
+	check('the page declares no colour scheme of its own (a stock webview, such as the Markdown preview, would paint a white page for a dark theme)', scheme0 === 'normal', JSON.stringify(scheme0));
 
 	/* 2. a starter fills the composer and does not send it */
 	const before = stub.state.chats;
@@ -150,6 +186,8 @@ try {
 	await shot('5-split');
 	check('the switch gives files on the left and the chat docked on the right', !!split && !split[0].chat && split[1].chat && split[0].tabs.some((t) => /README/.test(t)), JSON.stringify(split));
 	check('with the Explorer open on the left', (await visible('.explorer-folders-view')) === true);
+	const lineOne = await page.eval(`(() => { const ed = document.querySelector('.editor-group-container .monaco-editor'); const l = document.querySelector('.editor-group-container .view-line'); if (!ed || !l) { return null; } return Math.round(l.getBoundingClientRect().top - ed.getBoundingClientRect().top); })()`);
+	check('the first line of a file sits below the 24 px fade of the floating panels', typeof lineOne === 'number' && lineOne >= 24, JSON.stringify(lineOne));
 	check('the status item now says which one it is', (await layoutItemText()) === 'Editor + chat', JSON.stringify(await layoutItemText()));
 	const hidden = await page.eval(`(() => {
 		const icons = ['source-control-view-icon', 'run-view-icon', 'extensions-view-icon'].map((c) => {
@@ -171,13 +209,14 @@ try {
 	check('after a reload the chat is docked on the right again', !!again, JSON.stringify(again));
 	await clickLayoutItem();
 	const single = await page.waitFor(async () => { const g = await groups(); return g.length === 1 && g[0].chat ? g : null; }, { ms: 30000, label: 'the chat on its own' }).catch(() => null);
-	check('switching back puts the chat in a single group again, as the tab on show', !!single, JSON.stringify(single));
+	check('switching back puts the chat in a single group again, as the tab on show', !!single, JSON.stringify(single || await groups()));
 	check('and the side bar is put away', !(await visible('.part.sidebar')));
 	await shot('6-back');
 } catch (e) {
 	check('the run completed', false, String((e && e.stack) || e));
 }
 
+if (process.env.E2E_DEBUG) { console.log(stub.state.log.filter((e) => /__dbg/.test(e.path || '')).map((e) => decodeURIComponent(((e.url || e.path) || '').replace(/^.*[?&]m=/, ''))).join('\n')); }
 const failed = results.filter((r) => !r).length;
 console.log(`\n${results.length - failed}/${results.length} checks passed`);
 await finish(failed ? 1 : 0);

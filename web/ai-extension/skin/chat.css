@@ -24,8 +24,18 @@ body.lc-web {
 }
 body.lc-web ::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 
+/* The page paints its own ground. Left to the browser, a page that declares both colour schemes gets Chrome's
+   canvas (#121212 in dark), not the theme's editor colour. */
+body.lc-web { background: var(--vscode-editor-background); }
+
+/* --accent is the theme's focus border: translucent, and a line colour, not a text colour (2.2-2.7:1 as text on
+   the dark ground). Text that was drawn in it, and the focus ring, take the theme's link colour instead
+   (5.7:1 dark, 7.5:1 light). Fills keep --accent. */
+body.lc-web { --lcw-accent-text: var(--vscode-textLink-foreground, var(--accent)); }
+body.lc-web .msg .body a, body.lc-web .filechip .fcname, body.lc-web .modeopt.active .moname, body.lc-web #status .stap.autopilot { color: var(--lcw-accent-text); }
+
 /* ---- the empty chat: a hero and the composer in the middle of the page --------------------------- */
-body.lc-web:has(#empty) { justify-content: center; }
+body.lc-web:has(#empty) { justify-content: safe center; }
 body.lc-web:has(#empty) #log { flex: 0 0 auto; overflow: visible; padding-bottom: 0; }
 body.lc-web #empty { opacity: 1; padding: 0 0 22px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
 body.lc-web #empty .lc-ascii-wrap, body.lc-web #empty .lc-ascii-sub { display: none; }
@@ -47,8 +57,8 @@ body.lc-web #composer {
 	transition: border-color .15s, box-shadow .15s;
 }
 body.lc-web #composer:focus-within, body.lc-web #composer.focused {
-	border-color: color-mix(in srgb, var(--accent) 70%, var(--lcw-line-strong));
-	box-shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 10px 32px rgba(0, 0, 0, .18), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+	border-color: color-mix(in srgb, var(--lcw-accent-text) 80%, var(--lcw-line-strong));
+	box-shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 10px 32px rgba(0, 0, 0, .18), 0 0 0 3px color-mix(in srgb, var(--lcw-accent-text) 26%, transparent);
 }
 body.lc-web textarea#input { font-size: 15px; line-height: 1.5; min-height: 46px; background: transparent; border: 0; }
 body.lc-web #toolbar .tbtn { border-radius: 999px; }
@@ -63,15 +73,31 @@ body.lc-web #send:disabled { opacity: .35; }
 
 /* ---- the footer row: quiet, and the brand mark is not repeated ----------------------------------- */
 body.lc-web #status #lcLogo { display: none; }
-body.lc-web #status { opacity: .78; }
 
 /* ---- the conversation --------------------------------------------------------------------------- */
 body.lc-web .msg.user .body {
 	border: 0; border-radius: 20px; padding: 10px 16px; background: var(--lcw-soft-2); max-width: 82%; width: fit-content;
 }
-body.lc-web .msgcopy { opacity: .7; border-color: transparent; }
+body.lc-web .msgcopy { border-color: transparent; }
 body.lc-web pre, body.lc-web .codeblock { border-radius: 12px; }
 body.lc-web #reviewBar, body.lc-web #planBar { border-radius: 14px; }
+
+/* ---- the conversation list and the account card carry their own (One Dark) palette in chat.html; point it at the
+   theme, so the rail and the sign-in are the same family as the page next to them. */
+body.lc-web .sesspanel, body.lc-web .acctcard.classic {
+	--cc-bg: var(--vscode-editor-background);
+	--cc-surface: color-mix(in srgb, var(--vscode-foreground) 3%, var(--vscode-editor-background));
+	--cc-text: var(--vscode-foreground);
+	--cc-text2: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+	--cc-text3: color-mix(in srgb, var(--vscode-foreground) 68%, transparent);
+	--cc-line: var(--lcw-line-strong);
+	--cc-accent: var(--vscode-button-background, var(--accent));
+}
+body.lc-web .acctcard.classic .signout { color: var(--lcw-accent-text); }
+body.lc-web .acctcard.classic .abtn.primary { color: var(--vscode-button-foreground, #fff); }
+
+/* A dialog taller than the window scrolls, with its top reachable (the sign-in card is 660px). */
+body.lc-web .overlay { overflow-y: auto; align-items: safe center; }
 
 /* ---- narrow: the compact column that sits beside an editor --------------------------------------- */
 @media (max-width: 759px) {
@@ -80,6 +106,12 @@ body.lc-web #reviewBar, body.lc-web #planBar { border-radius: 14px; }
 	body.lc-web .lcw-hero { font-size: 20px; }
 	body.lc-web .lcw-mark { width: 30px; height: 30px; }
 	body.lc-web .lcw-sub { display: none; }
+	body.lc-web #status { gap: 6px; padding-inline: 6px; }
+}
+/* Short windows (a laptop at 200% zoom, a phone in landscape): the greeting gives up its mark and its sentence. */
+@media (max-height: 460px) {
+	body.lc-web .lcw-mark, body.lc-web .lcw-sub { display: none; }
+	body.lc-web #empty { padding-bottom: 12px; }
 }
 
 /* ---- wide: chat-first, the conversation list docked on the left ---------------------------------- */
@@ -104,11 +136,18 @@ body.lc-web #reviewBar, body.lc-web #planBar { border-radius: 14px; }
 	}
 	body.lc-web .lcw-new:hover { background: var(--lcw-soft-2); }
 	body.lc-web #sessOverlay .sesscard { border-radius: 10px; }
-	/* A narrow card has room for its title and one line, not for six buttons as well: they appear on hover or
-	   focus and take the place of the second line. */
+}
+/* A narrow card has room for its title and one line, not for six buttons as well. With a mouse they appear on hover
+   or focus and take the place of the second line. Without one (a tap applies :hover first, then lands on whatever
+   the layout change put under the finger — a rename, a delete) they are always there and the second line gives
+   way, as in the dialog. */
+@media (min-width: 1000px) and (hover: hover) and (pointer: fine) {
 	body.lc-web #sessOverlay .sesscard .sessacts { display: none; }
 	body.lc-web #sessOverlay .sesscard:hover .sessacts, body.lc-web #sessOverlay .sesscard:focus-within .sessacts { display: flex; margin-left: 0; }
 	body.lc-web #sessOverlay .sesscard:hover .sesssub, body.lc-web #sessOverlay .sesscard:focus-within .sesssub { display: none; }
+}
+@media (min-width: 1000px) and (hover: none), (min-width: 1000px) and (pointer: coarse) {
+	body.lc-web #sessOverlay .sesscard .sesssub { display: none; }
 }
 @media (max-width: 999px) { body.lc-web .lcw-new { display: none; } }
 

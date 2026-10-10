@@ -5,11 +5,12 @@
 	'use strict';
 	if (!document.body || !document.body.classList.contains('lc-web')) { return; }
 
+	// Each one must make sense in an empty window: no open file, no selection (the first layout has no editor).
 	var STARTERS = [
 		['Build a small web page', 'Create an index.html with a simple, good-looking landing page.'],
 		['Explain this project', 'Look through the files here and explain what this project does.'],
-		['Fix a bug', 'Find and fix the bug in my selection.'],
-		['Write tests', 'Write tests for the current file.'],
+		['Fix a bug', 'Look through the files here for bugs, fix the most likely one and tell me what you changed.'],
+		['Write tests', 'Add tests for the main logic of this project, using the test setup that is already here or suggesting one.'],
 	];
 	var post = function (m) { try { vscode.postMessage(m); } catch (e) { /* the page is going away */ } };
 
@@ -77,12 +78,29 @@
 		nb.addEventListener('click', function () { post({ type: 'newChat' }); });
 		bar.appendChild(nb);
 	}
+	var overlay = document.getElementById('sessOverlay');
 	function sync() {
 		if (panel) {
 			panel.setAttribute('role', rail.matches ? 'complementary' : 'dialog');
-			panel.setAttribute('aria-modal', rail.matches ? 'false' : 'true');
+			// aria-modal is only meaningful on a dialog; on the docked list it is left off, not set to false.
+			if (rail.matches) { panel.removeAttribute('aria-modal'); } else { panel.setAttribute('aria-modal', 'true'); }
 		}
+		// /sessions opened while the list was docked leaves the overlay's inline display on; narrowing the window
+		// would then show it as a modal nobody asked for. Below the breakpoint it is closed until it is asked for.
+		if (overlay && !rail.matches) { overlay.style.display = 'none'; }
 		if (rail.matches) { ask(); }
+	}
+	// A card is a div with a role of button and a click handler only: Enter and Space do nothing on it. Do what a
+	// button does, for the card itself (its own buttons are real buttons and already work).
+	var list = document.getElementById('sessList');
+	if (list) {
+		list.addEventListener('keydown', function (e) {
+			var t = e.target;
+			if ((e.key === 'Enter' || e.key === ' ') && t && t.classList && t.classList.contains('sesscard')) {
+				e.preventDefault();
+				t.click();
+			}
+		});
 	}
 	if (rail.addEventListener) { rail.addEventListener('change', sync); }
 	sync();

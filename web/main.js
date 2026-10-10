@@ -70,7 +70,7 @@ try {
 	void workbench;
 	boot.whenWorkbenchReady();
 	addChromeStyles(config);
-	hideBuiltInChat(workbench);
+	hideBuiltInChat(api);
 	startReturnFromSignIn(callbacks, URI);
 } catch (err) {
 	console.error('[levelcode-web] failed to start', err);
@@ -110,14 +110,24 @@ function addChromeStyles(cfg) {
 }
 
 /**
- * Code-OSS's own Chat view (the Copilot one) shows up in the secondary side bar on the web even with
- * chat.disableAIFeatures, through an interaction of its account-policy gate with that setting. LevelCode's chat
- * is the assistant here, so the built-in view is told it is disabled. It is an internal context key set through
- * the underscore command, so the symptom (a "Chat" tab in the right side bar) is what to look for on a bump.
+ * Code-OSS's own Chat view (the Copilot one) is registered on the web even with chat.disableAIFeatures, and nothing
+ * behind it works (no default agent): opened, it fills the window with "Build with Agent" and a dead composer.
+ * Its `when` is `!chatAccountPolicyGateActive && (!chatSetupHidden && !chatSetupDisabledInWorkspace || ...)`, so the
+ * gate key — which has no other reader — hides it. Internal context keys, set through the underscore command; the
+ * gate's own contribution writes its key again five seconds after start (and when a policy changes, which there is
+ * none of in a tab), so it is set again after that. If a Code-OSS bump moves any of this, web/test/e2e-look.mjs
+ * opens the side bar and fails on the built-in "Chat" tab.
  */
-function hideBuiltInChat(workbench) {
-	try { void Promise.resolve(workbench.commands.executeCommand('_setContext', 'chatSetupDisabledInWorkspace', true)).catch(() => undefined); }
-	catch { /* a Code-OSS without it has nothing to hide */ }
+function hideBuiltInChat(api) {
+	// `create()` returns a disposable, not the workbench: the embedder's command API is the module's own `commands`.
+	const set = () => {
+		for (const key of ['chatAccountPolicyGateActive', 'chatSetupDisabledInWorkspace']) {
+			try { void Promise.resolve(api.commands.executeCommand('_setContext', key, true)).catch(() => undefined); }
+			catch { /* a Code-OSS without it has nothing to hide */ }
+		}
+	};
+	set();
+	setTimeout(set, 6500);
 }
 
 /* ----- signing in ------------------------------------------------------------------------- */

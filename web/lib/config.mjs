@@ -57,12 +57,16 @@ export function webConfig(o = {}) {
 			'workbench.tips.enabled': false,
 			'breadcrumbs.enabled': false,
 			'editor.minimap.enabled': false,
+			// modernUI fades the top 24px of every editor into the ground (a scroll shadow that is there at scroll
+			// position zero too), which washes out line one. The editor starts below it.
+			'editor.padding.top': 24,
 			// Light or dark follows the visitor's system; the dark one is where it starts.
 			'window.autoDetectColorScheme': true,
 			'workbench.colorTheme': 'LevelCode Web Dark',
 			'workbench.preferredDarkColorTheme': 'LevelCode Web Dark',
 			'workbench.preferredLightColorTheme': 'LevelCode Web Light',
-			// The chat keeps its own group: files the agent opens go beside it, never over it.
+			// Once the chat is in a group of its own (the split layout) that group is locked: files the agent opens go
+			// beside it, never over it. The workbench only locks when there is more than one group.
 			'workbench.editor.autoLockGroups': { 'mainThreadWebview-levelcode.ai.chat': true },
 			'workbench.startupEditor': 'none',
 			'telemetry.telemetryLevel': 'off',
