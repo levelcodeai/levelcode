@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build LevelCode in your browser: one static directory, dist-web/, that any static host can serve.
 //
-//   node scripts/build-web.mjs [--vscode vscode] [--out dist-web] [--account https://levelcode.ai]
+//   node scripts/build-web.mjs [--vscode vscode] [--out dist-web] [--account https://levelcode.ai] [--api-url <origin>]
 //                              [--webview-origin 'https://{{uuid}}.view.example.com']
 //                              [--ext-host-origin 'https://{{uuid}}.ext.example.com']
 //                              [--static <prebuilt vscode-web dir>] [--id <build id>]
@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { webConfig, renderIndex } from '../web/lib/config.mjs';
 import { stageDeclarativeExtensions, copyExtension } from '../web/lib/extensions.mjs';
 import { policy, toHeadersFile, toNginx } from '../web/lib/headers.mjs';
+import { hashTree } from '../web/lib/fingerprint.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(REPO, 'web');
@@ -34,6 +35,8 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((a, v, i, all) => {
 const vscodeDir = path.resolve(REPO, args.vscode || 'vscode');
 const outDir = path.resolve(REPO, args.out || 'dist-web');
 const account = String(args.account || process.env.LEVELCODE_WEB_ACCOUNT || 'https://levelcode.ai').replace(/\/+$/, '');
+// Only for a deployment whose API is not on the account origin (production has one host for both).
+const apiUrl = String(args['api-url'] || process.env.LEVELCODE_WEB_API_URL || '').replace(/\/+$/, '');
 const webviewOrigin = args['webview-origin'] || process.env.LEVELCODE_WEB_WEBVIEW_ORIGIN || '';
 const extHostOrigin = args['ext-host-origin'] || process.env.LEVELCODE_WEB_EXTHOST_ORIGIN || '';
 
@@ -65,8 +68,13 @@ for (const must of ['out/vs/workbench/workbench.web.main.internal.js', 'out/vs/w
 const fingerprint = createHash('sha256');
 fingerprint.update(fs.readFileSync(path.join(staticDir, 'out/vs/workbench/workbench.web.main.internal.js')));
 for (const f of ['main.js', 'boot.css', 'index.html']) { fingerprint.update(fs.readFileSync(path.join(WEB, f))); }
+// Everything that goes into /_/<id>/ and is not the web client itself: the extension (its sources, media and skills),
+// its browser build, the scratch workspace, and the page's own configuration code.
 const aiDir = path.join(REPO, 'extensions', 'levelcode-ai');
-for (const f of fs.readdirSync(aiDir)) { if (f.endsWith('.js')) { fingerprint.update(fs.readFileSync(path.join(aiDir, f))); } }
+hashTree(fingerprint, aiDir, { skip: ['test', 'node_modules', 'scripts', '.DS_Store'] });
+hashTree(fingerprint, path.join(WEB, 'ai-extension'), { skip: ['assets.generated.js', 'node_modules', '.DS_Store'] });
+hashTree(fingerprint, path.join(WEB, 'workspace'), { skip: ['node_modules', '.DS_Store'] });
+hashTree(fingerprint, path.join(WEB, 'lib'), { skip: ['.DS_Store'] });
 const id = String(args.id || fingerprint.digest('hex').slice(0, 12));
 let gitHead = 'unknown';
 try { gitHead = execFileSync('git', ['-C', REPO, 'rev-parse', '--short=10', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { /* not a checkout */ }
@@ -124,6 +132,7 @@ if (webviewOrigin) { productConfiguration.webviewContentExternalBaseUrlTemplate 
 if (extHostOrigin) { productConfiguration.webEndpointUrlTemplate = `${extHostOrigin}${prefix}/static`; }
 const config = webConfig({
 	account,
+	apiUrl,
 	extensions,
 	base: prefix,
 	staticBase: `${prefix}/static`,
@@ -142,7 +151,7 @@ fs.writeFileSync(path.join(outDir, '_headers'), toHeadersFile(pol));
 fs.mkdirSync(path.join(outDir, 'deploy'), { recursive: true });
 fs.writeFileSync(path.join(outDir, 'deploy', 'nginx.conf'), toNginx(pol));
 const info = {
-	id, levelcode: gitHead, builtAt: new Date().toISOString(), account,
+	id, levelcode: gitHead, builtAt: new Date().toISOString(), account, apiUrl: apiUrl || '(the account origin)',
 	webviewOrigin: webviewOrigin || '(Code-OSS default: *.vscode-cdn.net)',
 	extHostOrigin: extHostOrigin || '(same origin as the editor)',
 	extensions,
