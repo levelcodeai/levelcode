@@ -14,7 +14,8 @@
 //   3. lays everything out under a build-addressed prefix (/_/<id>/...), renders index.html with the
 //      configuration baked in, and writes the HTTP policy for the host (_headers, nginx).
 //
-// It changes nothing outside --out. It does not deploy.
+// It changes nothing outside --out, except that building the client from the checkout leaves gulp's own output,
+// vscode-web/, next to it (pass --static to use a client built earlier and skip that). It does not deploy.
 import { spawnSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';

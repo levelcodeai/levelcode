@@ -280,11 +280,13 @@ The repo's checks use a stand-in for the account site. To use the real one, loca
    `LEVELCODE_WEB_EDITOR_ORIGINS=http://localhost:8800` and `LEVELCODE_WEB_EDITOR_URL=http://localhost:8800/`.
    (The gateway refuses plain http, so the editor's API host has to be the tunnel.)
 2. **Account site** — the onetime branch: `npm run dev` (it proxies to the backend), at `http://localhost:5173/ai`.
-3. **Editor:**
+3. **Editor** (from the levelcode repo root; the build needs the bootstrapped `vscode/` checkout, and a git
+   worktree has none, so pass `--vscode <path to one>` there):
 
    ```bash
-   node scripts/build-web.mjs --account http://localhost:5173 --api-url https://<your tunnel> --out dist-web
-   node web/serve.mjs --dist dist-web          # http://localhost:8800
+   export API_URL=https://your-tunnel.example.com    # the https address of your backend
+   node scripts/build-web.mjs --account http://localhost:5173 --api-url "$API_URL" --out dist-web
+   node web/serve.mjs --dist dist-web                # http://localhost:8800
    ```
 
 4. **What to do, and what you should see:**
