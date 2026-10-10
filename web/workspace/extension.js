@@ -388,9 +388,7 @@ async function activate(context) {
 	context.subscriptions.push(item, vscode.workspace.onDidChangeWorkspaceFolders(refresh));
 
 	context.subscriptions.push(
-		// The workbench owns the picker (File System Access lives on the window, not in this worker)
-		// and tells the user itself when the browser has no support for it.
-		vscode.commands.registerCommand('levelcode.web.openLocalFolder', () => vscode.commands.executeCommand('workbench.action.files.openFolder')),
+		vscode.commands.registerCommand('levelcode.web.openLocalFolder', () => openLocalFolder(vscode)),
 		vscode.commands.registerCommand('levelcode.web.openScratch', () => vscode.commands.executeCommand(
 			'vscode.openFolder', vscode.Uri.from({ scheme: SCHEME, path: HOME }), { forceReuseWindow: true })),
 		vscode.commands.registerCommand('levelcode.web.aboutScratch', async () => {
@@ -403,6 +401,32 @@ async function activate(context) {
 	);
 }
 
+/**
+ * Open a folder from the user's computer: the browser's own directory picker, then that folder as the workspace.
+ *
+ * The workbench chooses between its own file browser and the browser's picker by the SCHEME of the default
+ * location, and from inside the scratch workspace that scheme is this extension's: `File: Open Folder` would show
+ * the scratch workspace's own folders and never reach the picker. A dialog that starts from the `file` scheme —
+ * which the web workbench serves with the File System Access handles the user picks — does. A browser without
+ * File System Access (Safari, Firefox) is told so by the workbench itself, and nothing here runs after that.
+ *
+ * @param {typeof import('vscode')} api
+ * @returns {Promise<boolean>} true when a folder was opened; false when the user cancelled
+ */
+async function openLocalFolder(api) {
+	const picked = await api.window.showOpenDialog({
+		canSelectFolders: true,
+		canSelectFiles: false,
+		canSelectMany: false,
+		defaultUri: api.Uri.from({ scheme: 'file', path: '/' }),
+		openLabel: 'Open Folder',
+		title: 'Open a folder from your computer',
+	});
+	if (!picked || picked.length === 0) { return false; }
+	await api.commands.executeCommand('vscode.openFolder', picked[0], { forceReuseWindow: true });
+	return true;
+}
+
 function deactivate() { }
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, openLocalFolder };

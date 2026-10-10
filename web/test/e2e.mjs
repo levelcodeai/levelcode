@@ -231,6 +231,44 @@ try {
 	check('after a reload the editor is still signed in', after > before, `${before} -> ${after}`);
 	check('after a reload the file that was kept is still there', (await scratchFile('/scratch/notes.md')) === 'notes\n');
 	await shot(page, '4-reload');
+
+	/* 5. a folder from "the computer". The OS picker needs a person, so the page's File System Access entry point is
+	      replaced by one that hands back a real FileSystemDirectoryHandle (a folder of the origin-private file system);
+	      everything after the picker — the command, the workbench's file provider, the agent's reads and writes — is real. */
+	await page.eval(`(async () => {
+		const root = await navigator.storage.getDirectory();
+		try { await root.removeEntry('project', { recursive: true }); } catch (e) {}
+		const dir = await root.getDirectoryHandle('project', { create: true });
+		const f = await dir.getFileHandle('main.py', { create: true });
+		const w = await f.createWritable(); await w.write('print("hello from main.py")\\n'); await w.close();
+		window.showDirectoryPicker = async () => { const r = await navigator.storage.getDirectory(); return r.getDirectoryHandle('project', { create: true }); };
+		return true;
+	})()`);
+	await page.key('F1', 'F1');
+	await page.waitFor(() => page.eval(`!!document.querySelector('.quick-input-widget:not([style*="display: none"]) .quick-input-box input')`), { ms: 8000, label: 'command palette' });
+	await page.type('Open Folder from Your Computer');
+	await sleep(900);
+	await page.key('Enter', 'Enter');
+	const folderRows = await page.waitFor(async () => {
+		const r = await page.eval(`[...document.querySelectorAll('.explorer-folders-view .monaco-list-row')].map((e) => e.getAttribute('aria-label'))`);
+		return r.some((x) => /main\.py/.test(x)) ? r : null;
+	}, { ms: 90000, label: 'the folder in the Explorer' }).catch(() => null);
+	check('"Open Folder from Your Computer" opens the folder the picker returned, and the Explorer lists its file', !!folderRows, JSON.stringify(folderRows));
+	const folderWindow = await page.eval('document.title');
+	check('the workspace is that folder (the window title), not the scratch workspace', /project/.test(String(folderWindow)) && !/scratch/i.test(String(folderWindow)), JSON.stringify(folderWindow));
+	await shot(page, '5-folder');
+	const opfs = (name) => page.eval(`(async () => { try { const root = await navigator.storage.getDirectory(); const dir = await root.getDirectoryHandle('project'); const f = await dir.getFileHandle(${JSON.stringify(name)}); return await (await f.getFile()).text(); } catch (e) { return null; } })()`);
+	await activateTab(/LevelCode AI/);
+	await page.waitFor(async () => (await inChat('!!d.getElementById("send")')) === true, { ms: 30000, label: 'chat webview' });
+	await ask('Please list the files');
+	check('list_files sees the folder\'s files (the workbench searches a File System Access folder)', /main\.py/.test(lastToolResult()), JSON.stringify(lastToolResult().slice(0, 120)));
+	await ask('Please read main.py');
+	check('read_file reads a file of the folder through the browser\'s file handle', /hello from main\.py/.test(lastToolResult()), JSON.stringify(lastToolResult().slice(0, 120)));
+	await ask('Please make a notes file');
+	let notes = null;
+	for (let i = 0; i < 20 && notes === null; i++) { notes = await opfs('notes.md'); if (notes === null) { await sleep(500); } }
+	check('write_file creates the file in the folder on "the computer"', notes === 'notes\n', JSON.stringify(notes));
+	await shot(page, '5b-folder-agent');
 } catch (e) {
 	check('the run completed', false, String((e && e.stack) || e));
 }
