@@ -39,13 +39,7 @@ try {
 	await page.waitFor(async () => (await page.eval(`[...document.querySelectorAll('.tabs-container .tab')].some((e) => /LevelCode AI/.test(e.getAttribute('aria-label') || ''))`)), { ms: 60000, label: 'chat tab' });
 	await sleep(2500);
 
-	const palette = async (text) => {
-		await page.key('F1', 'F1');
-		await page.waitFor(() => page.eval(`!!document.querySelector('.quick-input-widget:not([style*="display: none"]) .quick-input-box input')`), { ms: 8000, label: 'command palette' });
-		await page.type(text);
-		await sleep(900);
-		await page.key('Enter', 'Enter');
-	};
+	const palette = (text) => page.palette(text);
 
 	await palette('Set API Key');
 	await page.waitFor(() => page.eval(`!!document.querySelector('.quick-input-widget:not([style*="display: none"]) .quick-input-box input[type=password]')`), { ms: 10000, label: 'key prompt' });

@@ -22,7 +22,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { webConfig, renderIndex } from '../web/lib/config.mjs';
-import { stageDeclarativeExtensions, copyExtension } from '../web/lib/extensions.mjs';
+import { stageDeclarativeExtensions, declarativeExtensionNames, copyExtension, withoutConfigurationDefaults, COPY_SKIP } from '../web/lib/extensions.mjs';
 import { policy, toHeadersFile, toNginx } from '../web/lib/headers.mjs';
 import { hashTree } from '../web/lib/fingerprint.mjs';
 
@@ -68,14 +68,30 @@ for (const must of ['out/vs/workbench/workbench.web.main.internal.js', 'out/vs/w
 /* ----- 2. identity of this build ---------------------------------------------------------------- */
 const fingerprint = createHash('sha256');
 fingerprint.update(fs.readFileSync(path.join(staticDir, 'out/vs/workbench/workbench.web.main.internal.js')));
-for (const f of ['main.js', 'boot.css', 'index.html']) { fingerprint.update(fs.readFileSync(path.join(WEB, f))); }
+for (const f of ['main.js', 'boot.css', 'chrome.css', 'index.html']) { fingerprint.update(fs.readFileSync(path.join(WEB, f))); }
 // Everything that goes into /_/<id>/ and is not the web client itself: the extension (its sources, media and skills),
 // its browser build, the scratch workspace, and the page's own configuration code.
 const aiDir = path.join(REPO, 'extensions', 'levelcode-ai');
 hashTree(fingerprint, aiDir, { skip: ['test', 'node_modules', 'scripts', '.DS_Store'] });
 hashTree(fingerprint, path.join(WEB, 'ai-extension'), { skip: ['assets.generated.js', 'node_modules', '.DS_Store'] });
 hashTree(fingerprint, path.join(WEB, 'workspace'), { skip: ['node_modules', '.DS_Store'] });
+hashTree(fingerprint, path.join(WEB, 'theme'), { skip: ['.DS_Store'] });
 hashTree(fingerprint, path.join(WEB, 'lib'), { skip: ['.DS_Store'] });
+// The declarative built-ins are staged from the checkout's extensions/ (grammars, language configurations, the desktop's
+// themes — whose manifest this build rewrites): a changed grammar is a changed build, and so is the fallback copy of
+// the themes taken from this repository when the checkout has none.
+{
+	const baked = fs.existsSync(path.join(staticDir, 'extensions')) ? fs.readdirSync(path.join(staticDir, 'extensions')) : [];
+	const source = path.join(vscodeDir, 'extensions');
+	if (fs.existsSync(source)) {
+		for (const name of declarativeExtensionNames(source, [...baked, 'levelcode-ai', 'levelcode-web'])) {
+			fingerprint.update('\0ext\0' + name);
+			hashTree(fingerprint, path.join(source, name), { skip: [...COPY_SKIP, '.DS_Store'] });
+		}
+	}
+	const themes = path.join(REPO, 'extensions', 'levelcode-themes');
+	if (fs.existsSync(themes)) { hashTree(fingerprint, themes, { skip: [...COPY_SKIP, '.DS_Store'] }); }
+}
 const id = String(args.id || fingerprint.digest('hex').slice(0, 12));
 let gitHead = 'unknown';
 try { gitHead = execFileSync('git', ['-C', REPO, 'rev-parse', '--short=10', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { /* not a checkout */ }
@@ -110,12 +126,19 @@ if (!declarative.includes('levelcode-themes')) {
 	const themes = path.join(REPO, 'extensions', 'levelcode-themes');
 	if (fs.existsSync(themes)) { copyExtension(themes, path.join(extOut, 'levelcode-themes')); declarative.push('levelcode-themes'); }
 }
-const extensions = ['levelcode-ai', 'levelcode-web', ...declarative.sort()];
-log(`${extensions.length} extensions: levelcode-ai, levelcode-web and ${declarative.length} declarative (${declarative.slice(0, 6).join(', ')}, ...)`);
+// The browser edition's own colour themes. The desktop's default theme is pinned by levelcode-themes' manifest
+// (an extension's defaults outrank the page's), so that one is dropped here; its themes stay selectable.
+const themeOut = path.join(extOut, 'levelcode-web-theme');
+copyExtension(path.join(WEB, 'theme', 'levelcode-web-theme'), themeOut);
+fs.writeFileSync(path.join(themeOut, 'package.nls.json'), '{}\n');
+const desktopThemes = path.join(extOut, 'levelcode-themes', 'package.json');
+if (fs.existsSync(desktopThemes)) { withoutConfigurationDefaults(desktopThemes); }
+const extensions = ['levelcode-ai', 'levelcode-web', 'levelcode-web-theme', ...declarative.sort()];
+log(`${extensions.length} extensions: levelcode-ai, levelcode-web, levelcode-web-theme and ${declarative.length} declarative (${declarative.slice(0, 6).join(', ')}, ...)`);
 
 log('writing the page');
 // main.js and boot.css are addressed by the build id like everything else; the page names them.
-for (const f of ['main.js', 'boot.css']) { fs.copyFileSync(path.join(WEB, f), path.join(root, f)); }
+for (const f of ['main.js', 'boot.css', 'chrome.css']) { fs.copyFileSync(path.join(WEB, f), path.join(root, f)); }
 
 const productConfiguration = {
 	// No gallery: nothing is installed from the Internet into the page's own origin.
@@ -166,7 +189,8 @@ if (!m) { die('index.html has no configuration'); }
 JSON.parse(m[1]);
 if (/\{\{[A-Z]+\}\}/.test(html)) { die('index.html still has an unfilled placeholder'); }
 for (const must of [`${prefix}/main.js`, `${prefix}/boot.css`, `${prefix}/static/out/nls.messages.js`, `${prefix}/extensions/levelcode-ai/extension.web.js`,
-	`${prefix}/extensions/levelcode-ai/package.json`, `${prefix}/extensions/levelcode-web/extension.js`]) {
+	`${prefix}/extensions/levelcode-ai/package.json`, `${prefix}/extensions/levelcode-web/extension.js`,
+	`${prefix}/chrome.css`, `${prefix}/extensions/levelcode-web-theme/package.json`]) {
 	if (!fs.existsSync(path.join(outDir, must))) { die('missing ' + must); }
 }
 log(`done: ${outDir}  ${mb(sizeOf(outDir))}  (client ${mb(sizeOf(path.join(root, 'static')))}, extensions ${mb(sizeOf(extOut))})`);

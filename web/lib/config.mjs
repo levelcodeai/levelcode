@@ -45,7 +45,29 @@ export function webConfig(o = {}) {
 			// LevelCode is the assistant here; the stock Copilot surfaces (status item, chat view, command
 			// center) are for an account this editor does not use. The desktop app sets the same.
 			'chat.disableAIFeatures': true,
-			'chat.commandCenter.enabled': false,
+			'chat.agentsControl.enabled': 'hidden',
+			// The look (web/theme, web/chrome.css, web/ai-extension/skin.js): floating rounded panels, the
+			// activity bar as an icon row, nothing on screen that a tab cannot use. modernUI is Code-OSS's own
+			// experimental switch for the first of those; if a Code-OSS bump renames it the editor is still fine,
+			// only plainer.
+			'workbench.experimental.modernUI': true,
+			'workbench.activityBar.location': 'top',
+			'workbench.layoutControl.type': 'toggles',
+			'workbench.editor.empty.hint': 'hidden',
+			'workbench.tips.enabled': false,
+			'breadcrumbs.enabled': false,
+			'editor.minimap.enabled': false,
+			// modernUI fades the top 24px of every editor into the ground (a scroll shadow that is there at scroll
+			// position zero too), which washes out line one. The editor starts below it.
+			'editor.padding.top': 24,
+			// Light or dark follows the visitor's system; the dark one is where it starts.
+			'window.autoDetectColorScheme': true,
+			'workbench.colorTheme': 'LevelCode Web Dark',
+			'workbench.preferredDarkColorTheme': 'LevelCode Web Dark',
+			'workbench.preferredLightColorTheme': 'LevelCode Web Light',
+			// Once the chat is in a group of its own (the split layout) that group is locked: files the agent opens go
+			// beside it, never over it. The workbench only locks when there is more than one group.
+			'workbench.editor.autoLockGroups': { 'mainThreadWebview-levelcode.ai.chat': true },
 			'workbench.startupEditor': 'none',
 			'telemetry.telemetryLevel': 'off',
 			'update.mode': 'none',
@@ -53,6 +75,12 @@ export function webConfig(o = {}) {
 			'extensions.autoCheckUpdates': false,
 			'security.workspace.trust.enabled': false,
 		}, o.configurationDefaults),
+		// The workbench paints these until the theme extension has loaded (about half a second): without them the
+		// page flashes the web default, a light theme, first.
+		initialColorTheme: {
+			dark: { themeType: 'dark', colors: { 'editor.background': '#1b1c22', 'sideBar.background': '#15161b', 'activityBar.background': '#15161b', 'statusBar.background': '#15161b', 'titleBar.activeBackground': '#15161b', foreground: '#e4e5ea' } },
+			light: { themeType: 'light', colors: { 'editor.background': '#ffffff', 'sideBar.background': '#f3f3f6', 'activityBar.background': '#f3f3f6', 'statusBar.background': '#f3f3f6', 'titleBar.activeBackground': '#f3f3f6', foreground: '#1b1c22' } },
+		},
 		development: !!o.development,
 	};
 }

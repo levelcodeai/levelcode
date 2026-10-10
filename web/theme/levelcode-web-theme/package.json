@@ -1,0 +1,28 @@
+{
+	"name": "levelcode-web-theme",
+	"displayName": "LevelCode Web Themes",
+	"description": "The look of LevelCode in the browser: a quiet neutral chrome with the editor one step lighter, hairline borders and one violet accent.",
+	"publisher": "levelcode",
+	"version": "0.1.0",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.126.0"
+	},
+	"categories": [
+		"Themes"
+	],
+	"contributes": {
+		"themes": [
+			{
+				"label": "LevelCode Web Dark",
+				"uiTheme": "vs-dark",
+				"path": "./themes/web-dark.json"
+			},
+			{
+				"label": "LevelCode Web Light",
+				"uiTheme": "vs",
+				"path": "./themes/web-light.json"
+			}
+		]
+	}
+}

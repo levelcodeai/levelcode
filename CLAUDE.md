@@ -42,7 +42,7 @@ extensions/levelcode-updater/    notify-only update checker (polls the update fe
 patches/levelcode-core.patch     our core source edits, applied on bootstrap
 scripts/                    bootstrap.sh, apply-branding.mjs, run-dev.sh, editor-identity.mjs, build-macos.sh, make-dmg.sh, make-icon.sh, build-web.mjs; atom (CLI launcher) + install-level.sh
 tools/                      dependency-free reference servers: sync-server (/v1 Settings-Sync), update-server (/api/update feed)
-web/                        LevelCode in a browser tab: page entry + callback, scratch-workspace extension, browser build of levelcode-ai, dev server, tests (docs/WEB.md)
+web/                        LevelCode in a browser tab: page entry + callback, scratch-workspace extension, layout, themes + chat skin, browser build of levelcode-ai, dev server, tests (docs/WEB.md)
 vscode/                     GITIGNORED upstream Code-OSS checkout (generated)
 ```
 
@@ -101,6 +101,15 @@ the desktop app exactly as it was:
 - `web/main.js` is a plain ES module with a **top-level `await`**: a `const` declared lower in the file is not
   initialised until that await finishes (this cleared a saved session once). Declare constants above the
   `try`, and use function declarations for helpers it calls.
+- **The look is web-only and lives in `web/`** (theme package, `chrome.css`, the chat skin, the layout commands;
+  `docs/WEB.md` "The look and the layout"). The chat skin is cut into the browser build's **copy** of
+  `media/chat.html` by `web/ai-extension/skin.js`; never edit the desktop file for it (its suites pin the page).
+  Every skin rule is under `body.lc-web`. An extension's `configurationDefaults` outrank the embedder's, so
+  `levelcode-themes`' pinned default theme is stripped from the staged copy (`withoutConfigurationDefaults`).
+  `node web/test/e2e-look.mjs --dist dist-web --stub-port <port>` is the check; look at its screenshots (`--shots`).
+  The embedder's command API is the module's `commands` (`api.commands.executeCommand`): `create()` returns a
+  disposable, so `workbench.commands` is `undefined` — a helper that used it ran inside a `try` and silently did
+  nothing until a browser test asked for its effect.
 - The session store (`createSecretStorage`) belongs to every tab: no cache, one-key read-modify-write under a
   Web Lock. The refresh token is rotated on use; do not reintroduce a start-up snapshot.
 - Build: `node scripts/build-web.mjs --account <origin>` → `dist-web/`; serve with `node web/serve.mjs --dist dist-web`.

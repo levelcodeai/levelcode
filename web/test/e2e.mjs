@@ -116,6 +116,10 @@ try {
 		return t.some((x) => /LevelCode AI/.test(x)) ? t : null;
 	}, { ms: 60000, label: 'LevelCode AI tab' }).catch(() => null);
 	check('the LevelCode AI extension activates in the web worker and opens its chat', !!tabs, JSON.stringify(tabs));
+	// The first layout is the chat on its own, side bars away; the Explorer is one command from there.
+	await sleep(3000);
+	check('the first screen is the chat on its own, with no side bar', !(await page.eval(`(() => { const s = document.querySelector('.part.sidebar'); return !!s && s.getBoundingClientRect().width > 0; })()`)));
+	await page.palette('View: Show Explorer');
 	const rows = await page.waitFor(async () => {
 		const r = await page.eval(`[...document.querySelectorAll('.explorer-folders-view .monaco-list-row')].map((e) => e.getAttribute('aria-label'))`);
 		return r.length ? r : null;
@@ -126,9 +130,11 @@ try {
 	await shot(page, '1-boot');
 
 	/* 2. sign in: the user icon in the chat footer opens the account card, which has "Sign in with browser" */
-	// First-run Welcome opens a moment after startup and takes the focus; let it settle, then go to the chat.
-	await page.waitFor(async () => (await page.eval(`[...document.querySelectorAll('.tabs-container .tab')].some((e) => /Welcome/.test(e.getAttribute('aria-label') || ''))`)), { ms: 30000, label: 'Welcome tab' }).catch(() => null);
-	await sleep(1500);
+	// The desktop's first-run Welcome page opens a moment after startup and takes the focus; in the browser edition it
+	// is switched off (web/ai-extension/copy.js) and the chat is the first thing there is. Give it the time it needs
+	// on the desktop (the extension opens it 900 ms after activation), then check that it did not come.
+	await sleep(4000);
+	check('no Welcome page opens in front of the chat', !(await page.eval(`[...document.querySelectorAll('.tabs-container .tab')].some((e) => /Welcome/.test(e.getAttribute('aria-label') || ''))`)));
 	await activateTab(/LevelCode AI/);
 	await page.waitFor(async () => (await inChat('!!d.getElementById("acctBtn")')) === true, { ms: 30000, label: 'chat account button' });
 	await clickInChat('#acctBtn');
@@ -244,11 +250,7 @@ try {
 		window.showDirectoryPicker = async () => { const r = await navigator.storage.getDirectory(); return r.getDirectoryHandle('project', { create: true }); };
 		return true;
 	})()`);
-	await page.key('F1', 'F1');
-	await page.waitFor(() => page.eval(`!!document.querySelector('.quick-input-widget:not([style*="display: none"]) .quick-input-box input')`), { ms: 8000, label: 'command palette' });
-	await page.type('Open Folder from Your Computer');
-	await sleep(900);
-	await page.key('Enter', 'Enter');
+	await page.palette('Open Folder from Your Computer');
 	const folderRows = await page.waitFor(async () => {
 		const r = await page.eval(`[...document.querySelectorAll('.explorer-folders-view .monaco-list-row')].map((e) => e.getAttribute('aria-label'))`);
 		return r.some((x) => /main\.py/.test(x)) ? r : null;
