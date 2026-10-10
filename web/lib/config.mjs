@@ -9,6 +9,8 @@ export const WEB_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url))
 /**
  * @param {object} o
  * @param {string} [o.account]      LevelCode Cloud origin the editor signs in to and calls (the gateway lives there).
+ * @param {string} [o.apiUrl]       The API host, when it is not the account origin (the extension's levelcode.cloud.apiUrl):
+ *                                  a tunnel to a local backend, say. The gateway must be https.
  * @param {string[]} [o.extensions] Folder names, under /extensions, of the extensions loaded as built-ins.
  * @param {string} [o.staticBase]   Where the Code-OSS web build is mounted.
  * @param {object} [o.productConfiguration] Overrides merged over the product the build embeds.
@@ -39,6 +41,7 @@ export function webConfig(o = {}) {
 		}, o.productConfiguration),
 		configurationDefaults: Object.assign({
 			'levelcode.cloud.endpoint': account,
+			...(o.apiUrl ? { 'levelcode.cloud.apiUrl': trimSlash(o.apiUrl) } : {}),
 			// LevelCode is the assistant here; the stock Copilot surfaces (status item, chat view, command
 			// center) are for an account this editor does not use. The desktop app sets the same.
 			'chat.disableAIFeatures': true,

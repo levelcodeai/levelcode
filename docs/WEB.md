@@ -140,6 +140,7 @@ node web/serve.mjs --dist dist-web            # http://127.0.0.1:8800
 | `build-web.mjs` flag | Meaning |
 | --- | --- |
 | `--account <origin>` (`LEVELCODE_WEB_ACCOUNT`) | The LevelCode Cloud origin: where sign-in happens, and where the gateway is. Baked into `index.html`. |
+| `--api-url <origin>` (`LEVELCODE_WEB_API_URL`) | Only when the API is not on the account origin (production has one host for both): a local account site with the backend behind a tunnel, say. The gateway must be `https`. |
 | `--webview-origin 'https://{{uuid}}.view.example.com'` (`LEVELCODE_WEB_WEBVIEW_ORIGIN`) | Self-host the webview origin. Without it the page uses Code-OSS's CDN at this build's own commit. Needs wildcard DNS and TLS — see below. |
 | `--ext-host-origin 'https://{{uuid}}.ext.example.com'` (`LEVELCODE_WEB_EXTHOST_ORIGIN`) | Run the extension host on an origin of its own. Optional while no third-party code is loaded. |
 | `--static <dir>` | Use a prebuilt client (skips the gulp build). |
@@ -271,16 +272,53 @@ webview from Code-OSS's CDN), and against the development server with the webvie
 host on origins of their own (`--product` with `webviewContentExternalBaseUrlTemplate` and
 `webEndpointUrlTemplate`).
 
+### Trying it yourself, against a real backend
+
+The repo's checks use a stand-in for the account site. To use the real one, locally:
+
+1. **Backend** — the thin.ly branch with the web edition, its usual dev server and https tunnel, plus
+   `LEVELCODE_WEB_EDITOR_ORIGINS=http://localhost:8800` and `LEVELCODE_WEB_EDITOR_URL=http://localhost:8800/`.
+   (The gateway refuses plain http, so the editor's API host has to be the tunnel.)
+2. **Account site** — the onetime branch: `npm run dev` (it proxies to the backend), at `http://localhost:5173/ai`.
+3. **Editor:**
+
+   ```bash
+   node scripts/build-web.mjs --account http://localhost:5173 --api-url https://<your tunnel> --out dist-web
+   node web/serve.mjs --dist dist-web          # http://localhost:8800
+   ```
+
+4. **What to do, and what you should see:**
+   - Signed out everywhere: open `http://localhost:8800/?signin=1`. The tab goes to the account site's
+     sign-in page ("Connect the editor to your account…"). Sign in with an email code. The tab comes back to
+     the editor with a clean address, a "Signed in to LevelCode." message, and the model and plan in the chat footer.
+   - Signed in on the account site first: open `http://localhost:5173/ai/account` and use **Open in browser**.
+     The editor opens, the tab flashes through the login page ("Opening LevelCode…") and is back signed in,
+     with nothing typed.
+   - Ask the agent: *Create a file named hello.txt containing: hello.* The file appears in the Explorer.
+   - **LevelCode: Open Folder from Your Computer…** (palette) in Chrome or Edge: pick a folder, ask the agent
+     to read a file of it and write another.
+   - A second tab of the editor opens already signed in (it shares the session).
+
+Look at the browser's network panel while you do it: every call to the API should be `200`, with no CORS
+errors in the console. A CORS error means the editor's origin is not in `LEVELCODE_WEB_EDITOR_ORIGINS`.
+
+This was run once, by a hand-driven script, against Rails from the thin.ly branch in test mode (email and
+Stripe stubbed, a throwaway database): email-code sign-in from the editor, sign-in from an already
+signed-in browser, a gateway chat, the agent writing a file, and a folder opened through a real
+`FileSystemDirectoryHandle` (the origin-private file system stands in for the OS picker). That script needs
+the other repository's internals and is not part of this repo's checks.
+
 ### What was not run
 
 Say these out loud rather than discover them in production:
 
 - **A real browser other than headless Chrome.** Safari and Firefox are untested; so are phones.
-- **The File System Access path** (open a folder from the computer): it needs a user gesture and a
-  picker that headless Chrome does not offer. The code path is the editor's own (`showDirectoryPicker`),
-  and the agent's tools reach it through `vscode.workspace.fs` as for the scratch workspace.
-- **The real account SPA and the real Rails app** in the same-tab flow. The stand-in plays "already
-  signed in there"; the backend's rules are its own specs, run in a separate checkout.
+- **The operating system's folder picker itself.** It needs a person. Everything after it — the command, the
+  workbench's `file` provider on a real `FileSystemDirectoryHandle`, the agent's list, read and write — is run
+  (`web/test/e2e.mjs` section 5), with the origin-private file system standing in for the picker. Permission
+  handling on a *persisted* handle after a reload (the browser asks again) is the browser's and was not run.
+- **A production account site.** The real sign-in page and Rails were run locally (above), not the deployed
+  ones; the backend's rules are its own specs.
 - **Another provider's CORS.** Anthropic's browser-access header is set; whether a given provider
   answers a page's request is that provider's.
 - **Production hosting:** DNS, a wildcard certificate, the CDN in front, the real headers on the real host.
