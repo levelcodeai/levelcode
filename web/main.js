@@ -59,6 +59,7 @@ try {
 		})),
 		productConfiguration: config.productConfiguration || {},
 		configurationDefaults: config.configurationDefaults || {},
+		initialColorTheme: pickInitialTheme(config),
 		enableWorkspaceTrust: false,
 		// The sign-in page is opened from the editor; it is ours, so it opens without a link-safety prompt.
 		additionalTrustedDomains: config.trustedDomains || [],
@@ -68,6 +69,8 @@ try {
 	// create() resolves once the workbench has been constructed. The splash goes when its DOM exists.
 	void workbench;
 	boot.whenWorkbenchReady();
+	addChromeStyles(config);
+	hideBuiltInChat(workbench);
 	startReturnFromSignIn(callbacks, URI);
 } catch (err) {
 	console.error('[levelcode-web] failed to start', err);
@@ -83,6 +86,39 @@ function readConfig() {
 }
 
 function trimSlash(s) { return s.replace(/\/+$/, ''); }
+
+/* ----- the look ----------------------------------------------------------------------------- */
+
+/** The colours the workbench paints before its theme has loaded: the dark set unless the system is light. */
+function pickInitialTheme(cfg) {
+	const set = cfg.initialColorTheme;
+	if (!set) { return undefined; }
+	let light = false;
+	try { light = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches); } catch { /* dark */ }
+	return light ? set.light : set.dark;
+}
+
+/**
+ * chrome.css after the workbench's own stylesheet, so that rules of equal weight are ours. (index.html links
+ * boot.css before it, which is right for the splash and wrong for overrides.)
+ */
+function addChromeStyles(cfg) {
+	const link = document.createElement('link');
+	link.rel = 'stylesheet';
+	link.href = trimSlash(cfg.base || '') + '/chrome.css';
+	document.head.appendChild(link);
+}
+
+/**
+ * Code-OSS's own Chat view (the Copilot one) shows up in the secondary side bar on the web even with
+ * chat.disableAIFeatures, through an interaction of its account-policy gate with that setting. LevelCode's chat
+ * is the assistant here, so the built-in view is told it is disabled. It is an internal context key set through
+ * the underscore command, so the symptom (a "Chat" tab in the right side bar) is what to look for on a bump.
+ */
+function hideBuiltInChat(workbench) {
+	try { void Promise.resolve(workbench.commands.executeCommand('_setContext', 'chatSetupDisabledInWorkspace', true)).catch(() => undefined); }
+	catch { /* a Code-OSS without it has nothing to hide */ }
+}
 
 /* ----- signing in ------------------------------------------------------------------------- */
 

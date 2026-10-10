@@ -60,3 +60,19 @@ export function copyExtension(from, to) {
 		else if (e.isFile()) { fs.copyFileSync(src, dst); }
 	}
 }
+
+/**
+ * Remove a staged extension's default settings from its manifest. An extension's `configurationDefaults` outrank the
+ * embedder's, and levelcode-themes pins the desktop's default theme; the browser edition has a theme of its own, so
+ * the page's configuration has to be the one that decides.
+ * @param {string} manifestPath
+ * @returns {boolean} whether anything was removed
+ */
+export function withoutConfigurationDefaults(manifestPath) {
+	const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+	const c = manifest.contributes;
+	if (!c || !Object.prototype.hasOwnProperty.call(c, 'configurationDefaults')) { return false; }
+	delete c.configurationDefaults;
+	fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, '\t') + '\n');
+	return true;
+}

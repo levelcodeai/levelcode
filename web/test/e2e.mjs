@@ -126,9 +126,11 @@ try {
 	await shot(page, '1-boot');
 
 	/* 2. sign in: the user icon in the chat footer opens the account card, which has "Sign in with browser" */
-	// First-run Welcome opens a moment after startup and takes the focus; let it settle, then go to the chat.
-	await page.waitFor(async () => (await page.eval(`[...document.querySelectorAll('.tabs-container .tab')].some((e) => /Welcome/.test(e.getAttribute('aria-label') || ''))`)), { ms: 30000, label: 'Welcome tab' }).catch(() => null);
-	await sleep(1500);
+	// The desktop's first-run Welcome page opens a moment after startup and takes the focus; in the browser edition it
+	// is switched off (web/ai-extension/copy.js) and the chat is the first thing there is. Give it the time it needs
+	// on the desktop (the extension opens it 900 ms after activation), then check that it did not come.
+	await sleep(4000);
+	check('no Welcome page opens in front of the chat', !(await page.eval(`[...document.querySelectorAll('.tabs-container .tab')].some((e) => /Welcome/.test(e.getAttribute('aria-label') || ''))`)));
 	await activateTab(/LevelCode AI/);
 	await page.waitFor(async () => (await inChat('!!d.getElementById("acctBtn")')) === true, { ms: 30000, label: 'chat account button' });
 	await clickInChat('#acctBtn');

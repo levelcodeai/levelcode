@@ -18,7 +18,28 @@
 		"commands": [
 			{ "command": "levelcode.web.openLocalFolder", "title": "Open Folder from Your Computer…", "category": "LevelCode" },
 			{ "command": "levelcode.web.openScratch", "title": "Open the Scratch Workspace", "category": "LevelCode" },
-			{ "command": "levelcode.web.aboutScratch", "title": "About the Scratch Workspace", "category": "LevelCode" }
+			{ "command": "levelcode.web.aboutScratch", "title": "About the Scratch Workspace", "category": "LevelCode" },
+			{ "command": "levelcode.web.layout.chatFirst", "title": "Layout: Chat on Its Own", "category": "LevelCode" },
+			{ "command": "levelcode.web.layout.split", "title": "Layout: Explorer, Files and Chat", "category": "LevelCode" },
+			{ "command": "levelcode.web.layout.toggle", "title": "Layout: Switch", "category": "LevelCode" }
+		],
+		"configuration": {
+			"title": "LevelCode Web",
+			"properties": {
+				"levelcode.web.layout": {
+					"type": "string",
+					"enum": ["chatFirst", "split"],
+					"default": "chatFirst",
+					"enumDescriptions": [
+						"The chat on its own, with the conversation list beside it.",
+						"The Explorer and the files, with the chat docked on the right."
+					],
+					"markdownDescription": "How the window is arranged. Also in the status bar and in the Command Palette under **LevelCode: Layout**."
+				}
+			}
+		},
+		"keybindings": [
+			{ "command": "levelcode.web.layout.toggle", "key": "ctrl+alt+l", "mac": "cmd+alt+l" }
 		]
 	}
 }

@@ -10,6 +10,7 @@ run. For the product's own page and copy see the account site (`/web`, `/docs/br
 
 - [What it is, and what it is not](#what-it-is-and-what-it-is-not)
 - [How it fits together](#how-it-fits-together)
+- [The look and the layout](#the-look-and-the-layout)
 - [Signing in](#signing-in)
 - [Build and run](#build-and-run)
 - [Deploying](#deploying) — origins, headers, backend settings
@@ -64,6 +65,8 @@ the same lines so it never promises one (`host.caps`, see below).
 | `web/ai-extension/` | The browser build of `levelcode-ai`: `build.mjs` (esbuild, `platform: browser`), `shims/` (`fs`, `path`, `os`, `crypto`, `child_process`, `process`), `manifest.js` (the desktop manifest minus what a tab cannot do), `copy.js` (the few strings that are true on a Mac and false in a tab). |
 | `extensions/levelcode-ai/host.js` | The one place the desktop/browser difference lives in the extension (see below). |
 | `web/workspace/` | The `levelcode-web` extension: the **scratch workspace** (`levelcode-scratch:` file system in IndexedDB, with file and text search), and the commands to open a local folder or the scratch. |
+| `web/theme/levelcode-web-theme/`, `web/chrome.css` | The two colour themes (dark and light) and the stylesheet that tidies the workbench's chrome. See [the look](#the-look-and-the-layout). |
+| `web/ai-extension/skin.js`, `skin/chat.css`, `skin/chat.js` | The chat's browser skin, cut into the browser build's copy of `media/chat.html` at build time. |
 | `web/serve.mjs` | Dev / end-to-end server. Serves a build (`--dist`) with its own `_headers`, or the pieces (`--static`, `--extensions`). |
 | `web/test/` | Unit tests (`unit/`) and the end-to-end checks (`e2e*.mjs`) with a hand-written CDP driver and a stand-in backend. |
 
@@ -87,6 +90,45 @@ The two rules that keep the desktop app exactly as it was:
   call, the same error.
 - **Nothing outside `host.js` asks "am I in a browser?".** A call site asks for a capability
   (`host.caps.shell`) or calls a function that already knows.
+
+## The look and the layout
+
+The first thing a visitor sees is the chat, not an IDE: a centred greeting with four starters and one rounded
+composer, with the list of conversations docked on its left when there is room, and the Explorer and the files one
+click away in the status bar. It is made **without forking the workbench** — every piece is a setting, a built-in
+extension, a stylesheet or a build-time edit of the browser build's own copy of a file.
+
+| Piece | Where | What it does, and what it depends on |
+| --- | --- | --- |
+| Colour themes | `web/theme/levelcode-web-theme/` (staged as a built-in extension by `build-web.mjs`) | "LevelCode Web Dark" / "LevelCode Web Light": neutral chrome with the editor one step lighter, hairline borders, one violet accent. They carry the `agentsPanel.*` keys the floating cards use. Follows the system (`window.autoDetectColorScheme` + the two preferred-theme settings). |
+| First paint | `initialColorTheme` in `web/lib/config.mjs`, picked by `pickInitialTheme` in `web/main.js` | The colours painted for the half second before the theme extension has loaded, so a dark visitor does not see a light flash. |
+| Default theme | `withoutConfigurationDefaults` in `web/lib/extensions.mjs` | An extension's `configurationDefaults` **outrank** the embedder's. `levelcode-themes` pins its own default theme, so the staged copy of it has that key removed (its two themes stay selectable). The desktop source is untouched. |
+| Panels, activity bar | `workbench.experimental.modernUI`, `workbench.activityBar.location: top`, `workbench.layoutControl.type: toggles` | Code-OSS's own switches. `modernUI` is **experimental**: if a bump renames or drops it the editor is still fine, only plainer (`e2e-look.mjs` still passes its theme and layout checks; its screenshots are the thing to look at). |
+| Chrome | `web/chrome.css`, linked by `main.js` **after** the workbench's stylesheet | Hides source control, run and extensions (this edition has none of them), the Outline and Timeline headers and the keyboard-layout status item. The selectors are workbench class names: when a bump stops matching them `e2e-look.mjs` fails on "not offered" rather than the icons quietly coming back. |
+| The workbench's own chat | `hideBuiltInChat` in `main.js` | Code-OSS's Copilot chat view appears in the secondary side bar on the web even with `chat.disableAIFeatures`; it is told it is disabled through an internal context key. Look for a "Chat" tab on the right on a bump. |
+| Welcome page | `web/ai-extension/copy.js` | The desktop opens its walkthrough once, in front of everything. In a tab the chat is the first thing there is; the walkthrough stays in the Command Palette. |
+| The chat page | `web/ai-extension/skin.js` + `skin/chat.css` + `skin/chat.js` | Three exact insertions into the **embedded copy** of `media/chat.html`: a style block, `class="lc-web"` on `<body>`, a nonce'd script. Every rule is under `body.lc-web`; the script sends only messages the page already sends. The build **fails** if chat.html stops having the places the skin is cut into. The desktop's `chat.html` is never edited for this (the desktop suites pin it). |
+
+**Layouts.** `levelcode.web.layout` is `chatFirst` (the chat alone, side bars closed, conversations on its
+left — the way a chat app is used) or `split` (Explorer, files on the left, the chat docked on the right — the
+way an editor is used). The status bar item at the left, **LevelCode: Layout: Switch** and `Cmd/Ctrl+Alt+L`
+change the setting; one listener applies it, so Settings does the same. The first start is `chatFirst`. The
+chat panel is not restored by a reload, so a `split` layout is applied again at start. Only existing workbench
+commands are used, so what the visitor then arranges by hand is an ordinary layout.
+
+**Widths.** The chat page decides by **its own width**, not the window's: from 1000 px it docks the
+conversation list as a 264 px rail; below 760 px it compacts; in between the list is the dialog it is on the
+desktop. In `split` the chat is a narrower column, so it will usually be in the dialog form. The *workbench* is
+not responsive: below about 760 px the Explorer, tabs and status bar are the desktop's, and a phone is not a
+supported size for this edition yet.
+
+Constraints worth knowing before changing it:
+
+- The chat webview's CSP has no `font-src`: the skin uses the system font stack only.
+- A group that is emptied by moving the chat out of it is closed, so `split` opens a file in the first group
+  **before** it moves the chat (`applyLayout`, pinned by `workspace.test.js`).
+- The rail asks the page for its conversations with `listSessions`; it must never call `openSessions()`,
+  which seeds the list with sample conversations when nothing has arrived yet.
 
 ## Signing in
 
@@ -257,8 +299,9 @@ secret store then falls back to memory for the session.
 
 | Check | Command | What it proves |
 | --- | --- | --- |
-| Unit gate | `./scripts/test-extensions.sh` | Includes `web/test/unit/*.test.js`: the shims against Node, `host.js` on both sides, `main.js`'s functions (address check, delivery, the shared secret store, `?signin=1`), the manifest, the copy rewrites. Runs in CI on every PR (`test.yml`). Also run on Linux / Node 18 in a container with the network refused. |
+| Unit gate | `./scripts/test-extensions.sh` | Includes `web/test/unit/*.test.js`: the shims against Node, `host.js` on both sides, `main.js`'s functions (address check, delivery, the shared secret store, `?signin=1`), the manifest, the copy rewrites, the chat skin (what it inserts and that every rule is scoped), the themes (required colours, contrast of the text pairs, the page's defaults naming themes that exist) and the layout commands. Runs in CI on every PR (`test.yml`). Also run on Linux / Node 18 in a container with the network refused. |
 | End to end | `node web/test/e2e.mjs --dist dist-web --stub-port <port the build used>` | Real headless Chrome: boot from static files, the extension activates in the worker, sign in through the real callback page, agent tool calls (write / list / search / read / edit) against the scratch workspace, Quick Open, Keep and Undo, a reload that keeps the session and files. |
+| The look | `node web/test/e2e-look.mjs --dist dist-web --stub-port <port>` | The skinned chat (greeting, starters, composer in the reading column, the rail at 1440 px and the dialog at 900 px), light and dark following the system with this build's own colours (also in the chat's webview), no Welcome page, no second chat, source control / run / extensions not offered, the layout switch both ways, and the docked layout docked again after a reload. Release builds only. |
 | Same-tab sign-in | `node web/test/e2e-signin-tab.mjs --dist dist-web --stub-port <port>` | No second window; verifier survives the reload; no repeat; no sign-in for a signed-in editor; a second tab uses the same session; a stranded result is delivered, an old one dropped. |
 | Bring your own key | `node web/test/e2e-byok.mjs --static … --extensions …` | The request goes from the tab to the provider with the user's key and nothing of LevelCode's. |
 
@@ -315,6 +358,12 @@ the other repository's internals and is not part of this repo's checks.
 Say these out loud rather than discover them in production:
 
 - **A real browser other than headless Chrome.** Safari and Firefox are untested; so are phones.
+- **The look in Safari, Firefox and on a phone.** `e2e-look.mjs` and the screenshots are headless Chrome at 1440,
+  1100, 900 and 420 px wide. The chat page is responsive down to 420 px; the workbench around it is not (see
+  [widths](#the-look-and-the-layout)). No screen-reader pass was done on the skin; the rail is a labelled
+  landmark at wide widths and the dialog it already was below them.
+- **`workbench.experimental.modernUI` across a Code-OSS bump.** It is the workbench's own experimental flag; the
+  pinned checkout was the only one run.
 - **The operating system's folder picker itself.** It needs a person. Everything after it — the command, the
   workbench's `file` provider on a real `FileSystemDirectoryHandle`, the agent's list, read and write — is run
   (`web/test/e2e.mjs` section 5), with the origin-private file system standing in for the picker. Permission

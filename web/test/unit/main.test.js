@@ -10,6 +10,9 @@
  *    createUrlCallbackProvider  .drain / .whenListening: what is delivered when the page starts
  *    createSecretStorage      the session store, shared by every tab of the origin
  *    startReturnFromSignIn    ?signin=1 and the return from a sign-in
+ *    pickInitialTheme         the colours painted before the theme has loaded follow the system
+ *    addChromeStyles          chrome.css comes AFTER the workbench's own stylesheet, from the build's prefix
+ *    hideBuiltInChat          the workbench's own chat is told it is disabled; a workbench without it is fine
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -419,6 +422,48 @@ const ACCOUNT = 'https://levelcode.example';
 		const t = makeStart('https://editor.example/?signin=1', { sessionThrows: true });
 		t.start(); await tick();
 		assert.strictEqual(t.calls.fired.length, 1);
+	});
+
+
+	/* ---- the look ---- */
+	const THEMES = { dark: { themeType: 'dark', colors: { 'editor.background': '#111111' } }, light: { themeType: 'light', colors: { 'editor.background': '#ffffff' } } };
+	const makePick = (matchMedia) => new Function('window', extract('pickInitialTheme') + '\nreturn pickInitialTheme;')({ matchMedia });
+	await test('look: the colours before the theme loads are the light set when the system is light, the dark one otherwise', () => {
+		const asked = [];
+		const pick = makePick((q) => { asked.push(q); return { matches: /light/.test(q) }; });
+		assert.strictEqual(pick({ initialColorTheme: THEMES }), THEMES.light);
+		assert.deepStrictEqual(asked, ['(prefers-color-scheme: light)']);
+		assert.strictEqual(makePick(() => ({ matches: false }))({ initialColorTheme: THEMES }), THEMES.dark);
+	});
+	await test('look: no matchMedia, or one that throws, is dark and not an error', () => {
+		assert.strictEqual(makePick(undefined)({ initialColorTheme: THEMES }), THEMES.dark);
+		assert.strictEqual(makePick(() => { throw new Error('no'); })({ initialColorTheme: THEMES }), THEMES.dark);
+	});
+	await test('look: a page configured without colours gives the workbench none (it keeps its own default)', () => {
+		assert.strictEqual(makePick(() => ({ matches: true }))({}), undefined);
+	});
+	await test('look: chrome.css is linked from the build\'s prefix, at the end of the head', () => {
+		const added = [];
+		const head = { appendChild: (e) => added.push(e) };
+		const document = { head, createElement: (t) => ({ tagName: t }) };
+		const trimSlash = (x) => x.replace(/\/+$/, '');
+		const add = new Function('document', 'trimSlash', extract('addChromeStyles') + '\nreturn addChromeStyles;')(document, trimSlash);
+		add({ base: '/_/abc123/' });
+		assert.strictEqual(added.length, 1);
+		assert.deepStrictEqual({ tag: added[0].tagName, rel: added[0].rel, href: added[0].href }, { tag: 'link', rel: 'stylesheet', href: '/_/abc123/chrome.css' });
+		add({});
+		assert.strictEqual(added[1].href, '/chrome.css', 'a development page has no prefix');
+	});
+	await test('look: the built-in chat is told it is disabled, through the one context key, and a failure there is not an error', async () => {
+		const sent = [];
+		const hide = new Function(extract('hideBuiltInChat') + '\nreturn hideBuiltInChat;')();
+		hide({ commands: { executeCommand: async (...a) => { sent.push(a); } } });
+		await new Promise((r) => setTimeout(r, 0));
+		assert.deepStrictEqual(sent, [['_setContext', 'chatSetupDisabledInWorkspace', true]]);
+		assert.doesNotThrow(() => hide({ commands: { executeCommand: async () => { throw new Error('unknown command'); } } }));
+		assert.doesNotThrow(() => hide({ commands: { executeCommand: () => { throw new Error('sync'); } } }));
+		assert.doesNotThrow(() => hide({}));
+		await new Promise((r) => setTimeout(r, 0));   // the rejected promise was handled, or this run would die here
 	});
 
 	console.log(`\n${n} tests passed`);

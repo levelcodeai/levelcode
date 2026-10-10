@@ -19,6 +19,11 @@ const REPLACEMENTS = [
 	['extension.js',
 		"\tdbg('account.signin', { provider: provider || 'browser', create: !!create });\n\tawait vscode.env.openExternal(vscode.Uri.parse(url));",
 		"\tdbg('account.signin', { provider: provider || 'browser', create: !!create });\n\tawait host.openAuth(vscode.Uri.parse(url));"],
+	// The desktop opens its Welcome walkthrough once, in front of everything. In a tab the first thing a visitor
+	// should see is the chat; the walkthrough stays in the Command Palette (Help: Welcome).
+	['extension.js',
+		"\tif (!context.globalState.get('levelcode.ai.didShowWelcome')) {",
+		"\tif (false) {   // browser edition: the chat is the first thing a visitor sees (web/ai-extension/copy.js)"],
 	['media/chat.html',
 		'Bring your own API key, stored in your OS keychain.',
 		'Bring your own API key, stored encrypted in this browser.'],

@@ -1,0 +1,19 @@
+/* LevelCode in your browser: what configuration and the colour theme cannot do. Linked by web/main.js after the
+   workbench's own stylesheet. Every rule says why it exists; the selectors are the stable ones (action-item,
+   codicon names, aria labels), not the generated class names.
+
+   Keep this file short. Each line is a thing a Code-OSS bump can move. */
+
+/* There is no git, no debugger and no marketplace in a tab (extensionsGallery is null), so their entries in the
+   activity bar only lead to empty views. With the activity bar at the top (config.mjs) the items live in the side
+   bar's header; the selector does not care which. */
+.monaco-workbench li.action-item:has(> a.action-label.codicon-source-control-view-icon),
+.monaco-workbench li.action-item:has(> a.action-label.codicon-run-view-icon),
+.monaco-workbench li.action-item:has(> a.action-label.codicon-extensions-view-icon) { display: none !important; }
+
+/* Outline and Timeline have nothing to show in the scratch workspace and take half of the Explorer. */
+.monaco-workbench .part.sidebar .pane-header[aria-label^="Outline"],
+.monaco-workbench .part.sidebar .pane-header[aria-label^="Timeline"] { display: none !important; }
+
+/* The keyboard layout indicator is a desktop concern; in a page it is a US/UK label that means nothing. */
+.monaco-workbench .part.statusbar #status\.workbench\.keyboardLayout { display: none !important; }
