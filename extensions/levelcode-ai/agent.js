@@ -894,7 +894,10 @@ async function runAgent(ctx) {
 	// told about a tool it does not have. The block goes straight after the base prompt — it is the
 	// same text for every run, so it belongs with the part of the prompt that never changes.
 	const rich = richClient(ctx);
-	const system = (ctx.skills ? buildSystem(ctx.skills.menu()) : SYSTEM_BASE) + (rich ? '\n\n' + diagramTool.PROMPT : '')
+	// buildSystem already answers a run with no skills menu with the HOST's base prompt. Falling back to SYSTEM_BASE
+	// here sent the desktop prompt — run_command, background:true, "EVERY run_command" — to a tab, whenever
+	// levelcode.ai.skills.enabled was off, while run_command itself was withheld.
+	const system = buildSystem(ctx.skills ? ctx.skills.menu() : null) + (rich ? '\n\n' + diagramTool.PROMPT : '')
 		+ multiRootNote + noWorkspaceNote + autopilotNote + rules.text
 		+ (ctx.projectMemory ? '\n\n' + ctx.projectMemory : '');
 	const systemTokensEst = Math.round(system.length / 4);
