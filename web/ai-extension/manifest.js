@@ -65,7 +65,7 @@ const DESCRIPTION_OVERRIDES = {
 		description: 'Backstop timeout in milliseconds before a command in LevelCode Shell is stopped. The Stop button on the command\'s card is the primary control; set 0 to disable the backstop.',
 	},
 	'levelcode.ai.verify.command': {
-		markdownDescription: 'Optional one-shot command run in **LevelCode Shell** to verify the agent\'s edits (e.g. `grep -rn TODO src && exit 1`, or `sh check.sh` for a script of your own). It must exit on its own. Leave empty to verify with editor diagnostics only.',
+		markdownDescription: 'Optional one-shot command run in **LevelCode Shell** to verify the agent\'s edits (e.g. `! grep -rn TODO src`, which fails while any TODO is left, or `sh check.sh` for a script of your own). It must exit on its own. Leave empty to verify with editor diagnostics only.',
 	},
 	'levelcode.ai.agent.autopilot': {
 		description: 'Autopilot: let the agent run commands without asking, and prefer verifying its own work over pausing to ask you. It still stops and asks before deleting files. File edits stay reviewable with Keep/Undo either way. Off by default.',
