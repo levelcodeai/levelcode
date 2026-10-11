@@ -11,7 +11,10 @@
  *    FileSystemError -> POSIX code, the per-file cap is checked with a stat BEFORE the read, the per-run
  *    budget cannot be beaten by reading in parallel, a size that is not a number is EIO and not "unlimited",
  *    and every read is answered whatever the provider threw;
- *    planMounts always returns (a folder rooted at /mnt included), nested roots map to the longest one;
+ *    planMounts always returns (a folder rooted at /mnt included), nested roots map to the longest one, and its
+ *    plan is the ENGINE's own: the same mounts as engine/overlay-fs.js planMounts for the same folders (a fuzz of
+ *    6000 sets), every mount a normalised path, and the engine never moves a mount the host planned;
+ *    runtime.resolve / runtime.stat: what the terminal's links ask of the mounts;
  *    a worker that fails is logged as `worker-failed`; the idle timer never kills a worker that is running.
  *
  *  The commit of what a run changed is shell-runtime-commit.test.js; Session and Tab completion are
@@ -32,6 +35,7 @@ const { createRig, flush, FileSystemError } = require(path.join(__dirname, '..',
 const { observe } = require(path.join(__dirname, '..', 'helpers', 'shell-conformance.js'));
 const { planMounts, toMountPath, toRootPath, normalizePath, posixCode } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'runtime.js'));
 const { PROGRAMS } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'info.js'));
+const enginePlan = require(path.join(__dirname, '..', '..', 'shell', 'engine', 'overlay-fs.js')).planMounts;
 
 const MiB = 1024 * 1024;
 let n = 0;
@@ -904,8 +908,13 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		try {
 			const hostile = Object.create(null);
 			const getter = Object.defineProperty({}, 'message', { get() { throw new Error('getter'); } });
+			const revoked = Proxy.revocable({}, {});
+			revoked.revoke();
 			const cases = [['a string', 'boom'], ['undefined', undefined], ['no prototype', hostile], ['a throwing toString', { toString() { throw new Error('no'); } }],
-				['a throwing message getter', getter], ['a number', 42], ['null', null]];
+				['a throwing message getter', getter], ['a number', 42], ['null', null],
+				['a Proxy that throws on every read', new Proxy({}, new Proxy({}, { get() { throw new Error('trap'); } }))], ['a revoked Proxy', revoked.proxy],
+				['a Symbol', Symbol('s')], ['a BigInt', 7n], ['a throwing code getter', Object.defineProperty(new Error('c'), 'code', { get() { throw new Error('code'); } })],
+				['a throwing name getter', Object.defineProperty(new Error('n'), 'name', { get() { throw new Error('name'); } })]];
 			/** @type {any[]} */ const out = [];
 			r.engines.state.onRun = async (run, w, h) => {
 				for (const [, err] of cases) {
@@ -1077,9 +1086,174 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		assert.deepStrictEqual(mounts([f('a', '/a'), f('b', '/a/b')]), ['/a', '/mnt/b'], 'nested');
 		assert.deepStrictEqual(mounts([f('b', '/a/b'), f('a', '/a')]), ['/a/b', '/mnt/a'], 'nested the other way');
 		assert.deepStrictEqual(mounts([f('x', '/x'), f('x', '/x')]), ['/x', '/mnt/x'], 'the same root twice (two schemes)');
-		assert.deepStrictEqual(mounts([f('My Project!', '/'), f('My Project!', '/tmp')]), ['/mnt/my-project', '/mnt/my-project-2']);
+		// the engine's own rule for a name (engine/overlay-fs.js): case is kept, a run of anything else is one `_`
+		assert.deepStrictEqual(mounts([f('My Project!', '/'), f('My Project!', '/tmp')]), ['/mnt/My_Project_', '/mnt/My_Project_-2']);
 		assert.deepStrictEqual(mounts([f('a', '/a//b/../c/'), f('rel', 'relative'), { name: 'nouri', root: '/z' }, null]), ['/a/c'], 'a bad entry is skipped, not fatal');
 		assert.deepStrictEqual(planMounts([f('a', '/a'), f('b', '/b')]).map((m) => m.id), ['ws0', 'ws1']);
+	});
+
+
+	await test('a worker\'s error event whose message is a getter that throws is a failure like any other: the run ends with an error, the host is not broken', async () => {
+		const r = createRig();
+		r.engines.state.onRun = async (run, w) => {
+			const ev = { preventDefault() { }, get message() { throw new Error('getter-boom'); } };
+			w.onerror(ev);
+		};
+		const res = await r.rt.createSession().run('x');
+		assert.deepStrictEqual({ how: res.how, exit: res.exitCode }, { how: 'error', exit: 1 });
+		assert.ok(/the shell engine stopped unexpectedly/.test(res.notes.join('')), res.notes.join(''));
+		r.rt.dispose();
+	});
+
+	/* ===== the host's plan is the engine's plan ================================================ */
+
+	await test('planMounts: a folder called "." or ".." is mounted at a leaf that is a name (_), never at /mnt/.. - which no path matches and the engine would move again', async () => {
+		const f = (/** @type {string} */ name, /** @type {string} */ root) => ({ name, root, uri: 'file://' + root });
+		const mounts = (/** @type {any[]} */ list) => planMounts(list).map((m) => m.mount);
+		assert.deepStrictEqual(mounts([f('..', '/'), f('x', '/tmp/q')]), ['/mnt/_', '/mnt/x'], 'the verifier\'s own case');
+		assert.deepStrictEqual(mounts([f('.', '/home')]), ['/mnt/_']);
+		assert.deepStrictEqual(mounts([f('...', '/'), f('..', '/tmp'), f('.', '/home')]), ['/mnt/_', '/mnt/_-2', '/mnt/_-3'], 'and they are kept apart');
+		assert.deepStrictEqual(mounts([f('.git', '/'), f('.config', '/tmp')]), ['/mnt/_git', '/mnt/_config'], 'a leading dot is `_`, the engine\'s rule');
+		assert.deepStrictEqual(mounts([f('a.b', '/'), f('c..d', '/tmp')]), ['/mnt/a.b', '/mnt/c..d'], 'a dot inside a name is a dot');
+		// every mount is a path the host can match: what the engine reads at /mnt/_ reaches the folder
+		const m = planMounts([f('..', '/')]);
+		assert.strictEqual(normalizePath(m[0].mount), m[0].mount);
+		assert.strictEqual(toRootPath(m, '/mnt/_/etc/hosts'), '/etc/hosts');
+		assert.strictEqual(toMountPath(m, '/etc/hosts'), '/mnt/_/etc/hosts');
+	});
+
+	/** A fixed pseudo-random sequence: the same sets on every machine. */
+	function rng(/** @type {number} */ seed) { let x = seed >>> 0; return (/** @type {number} */ n2) => { x = (Math.imul(x, 1664525) + 1013904223) >>> 0; return (x >>> 8) % n2; }; }
+	const FUZZ_NAMES = ['proj', 'My Project!', '.', '..', '...', '.hidden', '.git', 'a b', 'caf\u{E9}', '\u{65E5}\u{672C}\u{8A9E}', '\u{1F600}', '', ' ', 'a/b', 'a\0b', 'mnt', 'lc-mnt', 'dup', 'dup', '_', '-', 'tmp', 'Foo', 'foo', 'x'.repeat(99), 'x'.repeat(100), 'a\nb', '\u{202E}rtl'];
+	const FUZZ_ROOTS = ['/', '/mnt', '/mnt/a', '/mnt/mnt', '/lc-mnt', '/lc-mnt/x', '/lc-mnt-2', '/lc-mnt-3', '/tmp', '/tmp/x', '/home', '/home/user/p', '/bin', '/usr/lib', '/dev', '/proc', '/a', '/a/b', '/a/b/c', '/work', '/work/', '/a//b/../c', '/mnt/_', '/mnt/My_Project_', '/mnt/proj', '/mnt/_-2', '/lc-mnt/_'];
+	/** One random folder set (valid roots and uris: the host skips the invalid ones, which the older tests cover). */
+	function fuzzSet(/** @type {(n: number) => number} */ pick) {
+		const segs = ['a', 'b', 'mnt', 'tmp', 'x', 'lc-mnt', '..', '.', '_', 'My_Project_'];
+		return Array.from({ length: 1 + pick(8) }, () => {
+			const root = pick(4) === 0 ? '/' + Array.from({ length: 1 + pick(3) }, () => segs[pick(segs.length)]).join('/') : FUZZ_ROOTS[pick(FUZZ_ROOTS.length)];
+			return { name: FUZZ_NAMES[pick(FUZZ_NAMES.length)], root, uri: 'file://' + (root.startsWith('/') ? root : '/' + root) };
+		});
+	}
+	/** The engine's plan of the same folders, as the mounts it would make. */
+	const engineAt = (/** @type {any[]} */ list) => enginePlan(list.map((f, i) => ({ id: 'ws' + i, path: f.root, name: f.name }))).map((m) => m.at);
+
+	await test('parity: for 6000 random sets (dots, spaces, unicode, empty and long names, duplicates, /mnt and /lc-mnt roots) the host plans the engine\'s own mounts, every mount is a normal path, and the engine never moves a mount the host planned', async () => {
+		const pick = rng(20261011);
+		const sets = Array.from({ length: 6000 }, () => fuzzSet(pick));
+		// one watchdog over the whole run: a search that never ends fails here, it does not hang the suite
+		const plans = /** @type {any[][]} */ (JSON.parse(vm.runInNewContext('JSON.stringify(sets.map((s) => planMounts(s)))', { planMounts, sets: JSON.parse(JSON.stringify(sets)) }, { timeout: 20000 })));
+		assert.strictEqual(plans.length, 6000);
+		let relocated = 0;
+		sets.forEach((list, i) => {
+			const host = plans[i];
+			const where = JSON.stringify(list.map((f) => [f.name.length > 20 ? f.name.slice(0, 8) + '...' : f.name, f.root]));
+			assert.deepStrictEqual(host.map((m) => m.id), list.map((_, j) => 'ws' + j), where);
+			assert.deepStrictEqual(host.map((m) => m.mount), engineAt(list), 'the host and the engine disagree: ' + where);
+			for (const m of host) {
+				assert.strictEqual(normalizePath(m.mount), m.mount, 'a mount is a normalised path: ' + m.mount + ' for ' + where);
+				assert.notStrictEqual(m.mount, '/', where);
+				if (m.reason) { relocated++; }
+			}
+			for (let a = 0; a < host.length; a++) {
+				for (let b = a + 1; b < host.length; b++) {
+					const x = host[a].mount, y = host[b].mount;
+					assert.ok(x !== y && !x.startsWith(y + '/') && !y.startsWith(x + '/'), 'mounts overlap: ' + x + ' ' + y + ' for ' + where);
+				}
+			}
+			// what the engine is handed is these mounts: it has nothing left to move, so it prints no second relocation note
+			const again = enginePlan(host.map((m) => ({ id: m.id, path: m.mount, name: m.name })));
+			assert.deepStrictEqual(again.map((m) => m.relocated), host.map(() => false), 'the engine moved a mount the host had planned: ' + where);
+			assert.deepStrictEqual(again.map((m) => m.at), host.map((m) => m.mount), where);
+		});
+		assert.ok(relocated > 3000, 'the fuzz really relocates folders: ' + relocated);
+	});
+
+	await test('parity: a name the host would have to cut (over 100 characters) still gives a readable mount, and the engine takes it as it is', async () => {
+		const f = (/** @type {string} */ name, /** @type {string} */ root) => ({ name, root, uri: 'file://' + root });
+		const long = 'p'.repeat(5000);
+		const m = planMounts([f(long, '/'), f(long, '/tmp'), f('q'.repeat(100), '/home'), f('r'.repeat(101), '/bin')]);
+		assert.deepStrictEqual(m.map((x) => x.mount), [
+			'/mnt/' + 'p'.repeat(100), '/mnt/' + 'p'.repeat(100) + '-2', '/mnt/' + 'q'.repeat(100), '/mnt/' + 'r'.repeat(100),
+		], 'exactly 100 is a name; 101 is cut to it');
+		for (const x of m) { assert.strictEqual(normalizePath(x.mount), x.mount); assert.ok(x.mount.length < 120); }
+		assert.deepStrictEqual(enginePlan(m.map((x) => ({ id: x.id, path: x.mount, name: x.name }))).map((x) => x.relocated), [false, false, false, false]);
+		// and a path under it is one the runtime reads (a mount of 5000 characters would put every file past the 4096 it accepts)
+		const deep = toMountPath(m, '/x/file.txt');
+		assert.strictEqual(deep, '/mnt/' + 'p'.repeat(100) + '/x/file.txt');
+		assert.strictEqual(normalizePath(deep), deep);
+	});
+
+	await test('a folder with no name is called by the last segment of its path (the engine\'s rule), or "folder" at the root', async () => {
+		const m = planMounts([{ name: '', root: '/', uri: 'file:///' }, { name: '', root: '/work/proj', uri: 'file:///work/proj' }, { name: '', root: '/tmp/site', uri: 'file:///tmp/site' }]);
+		assert.deepStrictEqual(m.map((x) => [x.name, x.mount]), [['folder', '/mnt/folder'], ['proj', '/work/proj'], ['site', '/mnt/site']]);
+	});
+
+	await test('a very long folder name is cut in the relocation note too: a note is not a place to put 100,000 characters', async () => {
+		const name = 'N'.repeat(100000);
+		const r = createRig({ workspace: { folders: [{ name, uri: 'file:///home' }] } });
+		const res = await r.rt.createSession().run('pwd');
+		assert.strictEqual(res.notes.length, 1);
+		assert.ok(res.notes[0].length < 400, String(res.notes[0].length));
+		assert.ok(res.notes[0].includes('"' + 'N'.repeat(100) + '..."'), res.notes[0].slice(0, 200));
+		r.rt.dispose();
+	});
+
+	/* ===== runtime.resolve and runtime.stat (what the terminal's links ask) ====================== */
+
+	await test('runtime.resolve: an engine path as a command prints it, mapped by the mounts as of now, to the Uri behind it; null outside them', async () => {
+		const r = createRig({ workspace: { folders: [{ name: 'home', uri: 'file:///home' }, { name: 'scratch', uri: 'levelcode-scratch:///scratch' }] } });
+		const u = r.rt.resolve('/mnt/home/src/a.js');
+		assert.deepStrictEqual([u.scheme, u.path], ['file', '/home/src/a.js']);
+		assert.strictEqual(r.rt.resolve('/mnt/home').path, '/home');
+		const v = r.rt.resolve('/scratch/x/../y.txt');
+		assert.deepStrictEqual([v.scheme, v.path], ['levelcode-scratch', '/scratch/y.txt'], '.. is resolved first');
+		for (const outside of ['/etc/passwd', '/home/a.txt', '/mnt', '/mnt/home/../../etc', '/', 'relative/path', '', '/a\0b', '/x'.repeat(2100), undefined, null, 5, {}]) {
+			assert.strictEqual(r.rt.resolve(/** @type {any} */ (outside)), null, JSON.stringify(outside));
+		}
+		r.ws.setFolders([{ name: 'other', uri: 'file:///other' }]);
+		assert.strictEqual(r.rt.resolve('/scratch/y.txt'), null, 'live: the folder is gone');
+		assert.strictEqual(r.rt.resolve('/other/z').path, '/other/z');
+		assert.deepStrictEqual(r.ws.calls, [], 'a mapping asks the file system nothing');
+		r.rt.dispose();
+	});
+
+	await test('runtime.stat: { type, size } of what is there, null for nothing or for a path outside the mounts (which the file system is not asked about); it never throws', async () => {
+		const r = createRig({ workspace: { folders: [{ name: 'home', uri: 'file:///home' }] } });
+		r.ws.put('file:/home/a.txt', 'abc');
+		r.ws.mkdir('file:/home/d');
+		assert.deepStrictEqual(await r.rt.stat('/mnt/home/a.txt'), { type: 'file', size: 3 });
+		assert.deepStrictEqual(await r.rt.stat('/mnt/home/d'), { type: 'dir', size: 0 });
+		// a provider that does not say how large a file is: 0, as the engine's own stat has it (a number, never undefined)
+		const real = r.ws.fs.stat.bind(r.ws.fs);
+		r.ws.fs.stat = async (/** @type {any} */ u) => { const x = await real(u); return /a\.txt$/.test(u.path) ? { type: x.type, mtime: x.mtime } : x; };
+		assert.deepStrictEqual(await r.rt.stat('/mnt/home/a.txt'), { type: 'file', size: 0 });
+		r.ws.fs.stat = real;
+		assert.strictEqual(await r.rt.stat('/mnt/home/missing'), null);
+		assert.strictEqual(await r.rt.stat('/mnt/home/a.txt/under'), null, 'ENOTDIR is nothing too');
+		r.ws.calls.length = 0;
+		assert.strictEqual(await r.rt.stat('/etc/passwd'), null);
+		assert.strictEqual(await r.rt.stat('relative'), null);
+		assert.deepStrictEqual(r.ws.calls, [], 'a path outside the mounts never reaches the file system');
+		for (const thrown of [new Error('boom'), undefined, 'text', Object.create(null), Object.defineProperty({}, 'message', { get() { throw new Error('g'); } }), Symbol('s')]) {
+			r.ws.clearRules();
+			r.ws.fail('stat', () => true, thrown);
+			assert.strictEqual(await r.rt.stat('/mnt/home/a.txt'), null);
+		}
+		r.rt.dispose();
+	});
+
+	await test('runtime.stat is bounded by fsMs: a provider that never answers is null at 60 s, not a promise that never settles', async () => {
+		const r = createRig();
+		r.ws.put('/scratch/a.txt', 'x');
+		r.ws.hang('stat', (k) => k.endsWith('/a.txt'));
+		let got = /** @type {any} */ ('pending');
+		r.rt.stat('/scratch/a.txt').then((v) => { got = v; });
+		await r.clock.advance(59999);
+		assert.strictEqual(got, 'pending');
+		await r.clock.advance(1);
+		assert.strictEqual(got, null);
+		r.rt.dispose();
+		assert.strictEqual(r.clock.pending, 0);
 	});
 
 	/* ===== planMounts always returns ======================================================= */
@@ -1098,7 +1272,7 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		const mounts = (/** @type {any[]} */ list) => planWithin(list).map((/** @type {any} */ m) => m.mount);
 		assert.deepStrictEqual(mounts([folder('mnt', '/mnt'), folder('root', '/')]), ['/mnt', '/lc-mnt/root'], 'the root after /mnt (it never returned)');
 		assert.deepStrictEqual(mounts([folder('mnt', '/mnt'), folder('t', '/tmp/x')]), ['/mnt', '/lc-mnt/t'], 'a reserved name after /mnt');
-		assert.deepStrictEqual(mounts([folder('t', '/tmp/x'), folder('mnt', '/mnt')]), ['/mnt/t', '/mnt/mnt'], 'the other way round, /mnt itself is what overlaps');
+		assert.deepStrictEqual(mounts([folder('t', '/tmp/x'), folder('mnt', '/mnt')]), ['/lc-mnt/t', '/mnt'], 'the other way round: a folder stays at its own path, and what had to move goes where there is room (it is never the folder that was fine that moves)');
 		assert.deepStrictEqual(mounts([folder('mnt', '/mnt'), folder('mnt', '/tmp')]), ['/mnt', '/lc-mnt/mnt'], 'two folders named mnt');
 		assert.deepStrictEqual(mounts([folder('mnt', '/mnt'), folder('mnt', '/mnt')]), ['/mnt', '/lc-mnt/mnt'], 'the same /mnt twice (two schemes)');
 		assert.deepStrictEqual(mounts([folder('a', '/mnt'), folder('b', '/lc-mnt'), folder('r', '/')]), ['/mnt', '/lc-mnt', '/lc-mnt-2/r'], 'both bases taken');

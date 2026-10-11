@@ -66,10 +66,6 @@ const KNOWN_DIFFERENCES = [
 		cases: { 'grep-backref': 'stdout+stderr', 'x-grep-E-backref': 'stdout+exit+stderr', 'grep-P': 'stdout+stderr', 'sed-backref-pattern': 'stdout', 'x-sed-E-backref': 'stdout' },
 	},
 	{
-		why: 'engine: a POSIX class followed by \\+ in a basic regular expression does not match',
-		cases: { 'grep-posix-class': 'stdout' },
-	},
-	{
 		why: 'engine: sed has no \\U \\L \\E case conversion in the replacement',
 		cases: { 'sed-case-flag': 'stdout', 'sed-regex-extensions': 'stdout' },
 	},
@@ -88,10 +84,6 @@ const KNOWN_DIFFERENCES = [
 	{
 		why: 'engine: awk reads /dev/stdin as an empty file, and system() is not allowed',
 		cases: { 'awk-environ-vars': 'stdout', 'awk-system-getline-file': 'stdout+exit+stderr' },
-	},
-	{
-		why: 'engine: sort -u -f keeps the last of a run of equal lines, GNU the first',
-		cases: { 's-sort-uf': 'stdout' },
 	},
 	{
 		why: 'engine: expr\'s \\( \\) in a match returns 0, not the captured text',
@@ -119,7 +111,7 @@ const KNOWN_DIFFERENCES = [
 	},
 	{
 		why: 'engine: the order of standard output and standard error under 2>&1 is the order of statements, not of writes',
-		cases: { 'stderr-ordering': 'stdout' },
+		cases: { 'stderr-ordering': 'stdout', 'r3-gap-xargs-t-order': 'stdout' },
 	},
 	{
 		why: 'engine: `cmd &` runs the command to its end before the next statement (nothing runs in the background)',
@@ -165,10 +157,39 @@ const KNOWN_DIFFERENCES = [
 		why: 'engine: into a file under &> or 2>&1 a command\'s standard output comes before its standard error (GNU ls reports the missing name first); the file holds the same lines in the other order (see 2>&1 above)',
 		cases: { 'redir-amp-gt': 'tree' },
 	},
+	// Found by the third round's differencing, not before it (round3.mjs, `r3-gap-*`): new entries, each with its reason
+	{
+		why: 'engine: date -d reads @N, now, yesterday, tomorrow and a wall clock (with or without a zone); a relative form (`+1 day`, `1 month`, `next friday`) or `1 Jan 2020 3pm` is "invalid date"',
+		cases: { 'r3-gap-date-relative': 'stdout+exit+stderr' },
+	},
+	{
+		why: 'engine: sed q and Q take no exit status (`2q5` is a syntax error) and sed has no -z',
+		cases: { 'r3-gap-sed-q-exit-and-z': 'stdout+exit+stderr' },
+	},
+	{
+		why: 'engine: rm has no -d (remove an empty directory)',
+		cases: { 'r3-gap-rm-d': 'stdout+stderr+tree' },
+	},
+	{
+		why: 'engine: sort has no -z (records ended by NUL)',
+		cases: { 'r3-gap-sort-z': 'stdout+stderr' },
+	},
+	{
+		why: 'engine: grep has no -b (byte offset)',
+		cases: { 'r3-gap-grep-b': 'stdout+exit+stderr' },
+	},
+	{
+		why: 'engine: find -printf prints %y (the type) as typed; it knows the names, sizes, modes and times',
+		cases: { 'r3-gap-find-printf-type': 'stdout' },
+	},
+	{
+		why: 'by design: hard links cannot be made (the engine says so in its own words), as symbolic ones cannot',
+		cases: { 'r3-gap-ln-hard': 'stdout+stderr+tree' },
+	},
 ];
 
-/** The most entries the list may have: it can only shrink. */
-const MAX_DIFFERENCES = 73;
+/** The most entries the list may have: it can only shrink (73 before the third round, 2 removed, 8 added for what it found). */
+const MAX_DIFFERENCES = 79;
 
 const INLINE_MAX = golden.meta.inlineMax;
 function encodeBytes(buf) {
@@ -251,9 +272,9 @@ async function main() {
 		assert.deepStrictEqual(golden.meta.flaky, ['patch', 'tar-gz', 'whoami-uname']);
 		assert.strictEqual(golden.meta.cases, golden.cases.length);
 		assert.ok(golden.cases.length >= 500, 'the batteries and the added cases: ' + golden.cases.length);
-		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra', 'round2']);
+		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra', 'round2', 'round3']);
 		const size = fs.statSync(path.join(REPO, 'web', 'test', 'fixtures', 'shell', 'golden', 'golden.json')).size;
-		assert.ok(size < 400 * 1024, 'fixtures stay small: ' + size);
+		assert.ok(size < 480 * 1024, 'fixtures stay small: ' + size);
 	});
 
 	test('the list of known differences names only cases that exist, and may only shrink', () => {

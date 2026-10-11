@@ -88,9 +88,9 @@ async function main() {
 
 	/* ------------------------------------------------------------------------------------------ the patches */
 
-	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9', 'LC-10', 'LC-11', 'LC-12', 'LC-13', 'LC-14', 'LC-15', 'LC-16', 'LC-17', 'LC-18'];
+	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9', 'LC-10', 'LC-11', 'LC-12', 'LC-13', 'LC-14', 'LC-15', 'LC-16', 'LC-17', 'LC-18', 'LC-19', 'LC-20', 'LC-21', 'LC-22', 'LC-23', 'LC-24', 'LC-25'];
 
-	test('there are eighteen patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
+	test('there are twenty-five patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
 		assert.deepStrictEqual(patchMod.PATCHES.map((p) => p.id), IDS);
 		let edits = 0;
 		for (const p of patchMod.PATCHES) {
@@ -114,7 +114,7 @@ async function main() {
 		assert.ok(r.text.includes('MODIFIED by LevelCode'));
 		assert.ok(r.text.includes('Apache-2.0'));
 		assert.ok(r.text.includes('section 4(b)'));
-		assert.ok(r.text.includes('LC-1 .. LC-18'), 'the notice says how many patches there are');
+		assert.ok(r.text.includes('LC-1 .. LC-25'), 'the notice says how many patches there are');
 		assert.deepStrictEqual(r.patches.map((p) => p.id), IDS);
 	});
 
@@ -194,7 +194,7 @@ async function main() {
 		const used = loader.lastTempDir();
 		assert.ok(used && path.dirname(used) === os.tmpdir() && path.basename(used).startsWith('lc-shell-engine-'), String(used));
 		assert.strictEqual(fs.existsSync(used), false);
-		assert.deepStrictEqual(Object.keys(E).filter((k) => k !== 'lcSha256').sort(), ['Bash', 'InMemoryFs', 'MountableFs', 'NetworkAccessDeniedError', 'RedirectNotAllowedError', 'TooManyRedirectsError', 'createCommandContext', 'defineCommand', 'getCommandNames', 'getNetworkCommandNames']);
+		assert.deepStrictEqual(Object.keys(E).filter((k) => k !== 'lcSha256').sort(), ['Bash', 'InMemoryFs', 'LimitError', 'MountableFs', 'NetworkAccessDeniedError', 'RedirectNotAllowedError', 'TooManyRedirectsError', 'createCommandContext', 'defineCommand', 'getCommandNames', 'getNetworkCommandNames']);
 	});
 
 	/* ------------------------------------------------------------------------------------------ LC-1 */
@@ -679,6 +679,81 @@ async function main() {
 			const x = await sh.exec(`${n} 2>&1 </dev/null; echo "rc=$?"`);
 			assert.strictEqual(x.stdout, `bash: ${n}: command not found\nrc=127\n`, n);
 		}
+	});
+
+	/* ------------------------------------------------------------------------------------------ LC-19 .. LC-25 */
+
+	/** each of the three zones a PROCESS may be in (the visitor's, in a browser): the answer must not move */
+	const inProcessZones = async (fn) => {
+		const was = process.env.TZ;
+		try {
+			for (const zone of ['UTC', 'America/New_York', 'Asia/Tokyo']) {
+				process.env.TZ = zone;
+				await fn(zone);
+			}
+		} finally {
+			if (was === undefined) { delete process.env.TZ; } else { process.env.TZ = was; }
+		}
+	};
+
+	test('LC-19: printf \'%(fmt)T\' formats in the command\'s zone, never the process\'s; %Z is GNU\'s abbreviation (JST, EDT), not Intl\'s GMT+9', async () => {
+		await inProcessZones(async (zone) => {
+			const { sh } = bash({});
+			const r = await sh.exec(`printf '%(%F %T %Z %z)T\\n' 1600000000; TZ=Asia/Tokyo printf '%(%F %T %Z %z)T\\n' 1600000000; export TZ=America/New_York; printf '%(%F %T %Z)T\\n' 1600000000; printf '%(%F %T %Z)T\\n' 1610000000; export TZ=Asia/Tokyo; printf '%(%Z)T\\n' -1; printf '%(%Z)T\\n' -2; export TZ=Asia/Kolkata; printf '%(%Z)T\\n' 0; export TZ=Asia/Dubai; printf '%(%Z)T\\n' 0`);
+			assert.strictEqual(r.stderr, '', zone);
+			assert.strictEqual(r.stdout, ['2020-09-13 12:26:40 UTC +0000', '2020-09-13 21:26:40 JST +0900', '2020-09-13 08:26:40 EDT', '2021-01-07 01:13:20 EST', 'JST', 'JST', 'IST', '+04'].join('\n') + '\n', zone + ': ' + r.stdout);
+		});
+	});
+
+	test('LC-20: date -u reads the string in UTC even when TZ names a zone, -I prints what GNU does, and a TZ that is not exported is not the zone', async () => {
+		await inProcessZones(async (zone) => {
+			const { sh } = bash({});
+			const r = await sh.exec(`export TZ=America/New_York; date -u -d '2020-02-29 12:00:00' '+%F %T %Z'; date -d '2020-02-29 12:00:00' '+%F %T %Z'; date -u -d @0 '+%F %T %Z'; date -d @1600000000 -I; date -d @1600000000 -Iseconds; date -d @1600000000 --iso-8601=hours; date -d @1600000000 --iso-8601=minutes; date -u -d @1600000000 -Idate; date -d @1600000000 -R; unset TZ; TZ=Asia/Tokyo; date -d @0 '+%F %T %Z'; export TZ; date -d @0 '+%F %T %Z'; TZ=JST-9 date -d @0 '+%F %T %Z %z'`);
+			assert.strictEqual(r.stderr, '', zone);
+			assert.strictEqual(r.stdout, [
+				'2020-02-29 12:00:00 UTC', '2020-02-29 12:00:00 EST', '1970-01-01 00:00:00 UTC',
+				'2020-09-13', '2020-09-13T08:26:40-04:00', '2020-09-13T08-04:00', '2020-09-13T08:26-04:00', '2020-09-13', 'Sun, 13 Sep 2020 08:26:40 -0400',
+				'1970-01-01 00:00:00 UTC', '1970-01-01 09:00:00 JST', '1970-01-01 09:00:00 JST +0900',
+			].join('\n') + '\n', zone + ': ' + r.stdout);
+		});
+	});
+
+	test('LC-21: what the script exported reaches the commands that start commands (xargs, timeout, find -exec, env), and a variable given to a child is exported there', async () => {
+		const { sh } = bash({ '/w/f': 'x' });
+		const r = await sh.exec(`export FOO=1 TZ=Asia/Tokyo; NOTEXPORTED=2; echo x | xargs -I {} sh -c 'echo [$FOO][$NOTEXPORTED]'; timeout 5 sh -c 'echo [$FOO]'; find . -maxdepth 0 -exec sh -c 'echo [$FOO]' ';'; echo @0 | xargs -I {} date -d {} +%T; timeout 5 date -d @0 +%T; env BAR=3 sh -c 'echo [$BAR]'; BAZ=4 sh -c 'echo [$BAZ]'; env -i sh -c 'echo [$FOO]'; env -i TZ=Asia/Tokyo date -d @0 +%T; env TZ=America/New_York date -d @0 +%T; cd /; echo x | xargs -I {} sh -c 'echo $PWD'`);
+		assert.strictEqual(r.stderr, '');
+		assert.strictEqual(r.stdout, '[1][]\n[1]\n[1]\n09:00:00\n09:00:00\n[3]\n[4]\n[]\n09:00:00\n19:00:00\n/\n');
+	});
+
+	test('LC-22: grep and sed: \\+ and \\? after an atom are quantifiers, \\< and \\> are word boundaries (basic and extended), grep -c -o counts lines', async () => {
+		const { sh } = bash({ '/w/f': 'abc 12 def345 a+b\ncolour color colr\nthe cat concatenate\n' });
+		const r = await sh.exec(`grep -o '[0-9]\\+' f | tr '\\n' ' '; echo; grep -o 'a\\+' f | tr '\\n' ' '; echo; grep -o 'colou\\?r' f | tr '\\n' ' '; echo; grep -o '\\<cat\\>' f; grep -c '\\<cat' f; grep -oE '\\<cat\\>' f; grep -o 'cat\\>' f | tr '\\n' ' '; echo; grep -oc a f; grep -c a f; grep -o '\\(ab\\|de\\)\\+' f | tr '\\n' ' '; echo; echo 'abc abcd xabc' | sed 's/\\<abc\\>/X/g'; echo 'abc abcd' | sed -E 's/\\<abc/X/'; echo 'abc 12' | sed 's/[0-9]\\+/N/'; printf 'a+b\\n' | grep -c 'a+b'; printf '+a\\n' | grep -c '\\+a'; printf 'x<y\\n' | grep -c '\\<y'`);
+		assert.strictEqual(r.stderr, '');
+		assert.strictEqual(r.stdout, ['12 345 ', 'a a a a a ', 'colour color ', 'cat', '1', 'cat', 'cat ', '2', '2', 'ab de ', 'X abcd xabc', 'X abcd', 'abc N', '1', '1', '1'].join('\n') + '\n');
+	});
+
+	test('LC-23: sort: a key with no end runs to the end of the line, a field takes the blanks before it, -u keeps the first of equal lines, -cu is strict', async () => {
+		const { sh } = bash({});
+		const r = await sh.exec(`printf 'a 1 z\\nb 1 y\\nc 1 x\\n' | sort -k2; echo -; printf 'x,3,b\\ny,1,a\\nz,2,c\\nw,2,d\\n' | sort -t, -u -k2,2; echo -; printf '1\\n01\\n1.0\\n2\\n' | sort -un; echo -; printf 'b\\nA\\na\\nB\\n' | sort -uf; echo -; printf 'a   b\\nc b\\nd  a\\n' | sort -k2b; echo -; printf 'a   b\\nc b\\nd  a\\n' | sort -k2; echo -; printf 'a 11\\nb 12\\nc 21\\nd 02\\n' | sort -k2.2,2.2; echo -; printf 'a\\na\\nb\\n' | sort -cu; echo "rc=$?"`);
+		assert.strictEqual(r.stdout, ['c 1 x', 'b 1 y', 'a 1 z', '-', 'y,1,a', 'z,2,c', 'x,3,b', '-', '1', '2', '-', 'A', 'b', '-', 'd  a', 'a   b', 'c b', '-', 'a   b', 'd  a', 'c b', '-', 'd 02', 'a 11', 'b 12', 'c 21', '-', 'rc=1'].join('\n') + '\n');
+		assert.ok(/sort: -:2: disorder: a/.test(r.stderr), r.stderr);
+	});
+
+	test('LC-24: sed: s///w FILE writes the lines that were substituted, a range whose numeric end is not after its start is one line', async () => {
+		const { fs: fsys, sh } = bash({ '/w/in': 'a\nx\nb\nx\n', '/w/five': 'one\ntwo\nthree\nfour\nfive\n' });
+		const r = await sh.exec(`sed 's/x/y/w out' in; echo -; sed -n 's/x/z/gpw out2' in; echo -; sed '/four/,3c X' five; echo -; sed -n '/four/,3p' five; echo -; sed '/four/,3d' five; echo -; sed '/two/,/four/c X' five`);
+		assert.strictEqual(r.stderr, '');
+		assert.strictEqual(r.stdout, ['a', 'y', 'b', 'y', '-', 'z', 'z', '-', 'one', 'two', 'three', 'X', 'five', '-', 'four', '-', 'one', 'two', 'three', 'five', '-', 'one', 'X', 'five'].join('\n') + '\n');
+		assert.strictEqual(await fsys.readFile('/w/out'), 'y\ny\n');
+		assert.strictEqual(await fsys.readFile('/w/out2'), 'z\nz\n');
+	});
+
+	test('LC-25: the engine\'s own limit error is exported, so a program of ours can end a script the way its find does', () => {
+		assert.strictEqual(typeof E.LimitError, 'function');
+		const e = new E.LimitError('du: filesystem traversal entry limit exceeded (3)', 'iterations');
+		assert.strictEqual(e.name, 'ExecutionLimitError');
+		assert.strictEqual(E.LimitError.EXIT_CODE, 126);
+		assert.ok(e instanceof Error && e.stderr.startsWith('bash: du: filesystem'));
 	});
 
 	for (const t of tests) {

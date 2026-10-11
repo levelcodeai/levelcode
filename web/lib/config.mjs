@@ -69,6 +69,11 @@ export function webConfig(o = {}) {
 			'terminal.integrated.allowedLinkSchemes': ['http', 'https', 'mailto'],
 			'terminal.integrated.showExitAlert': false,
 			'terminal.integrated.enableKittyKeyboardProtocol': false,
+			// The workbench's own terminal IntelliSense and its first-run hint ("Show suggestions ⌃Space") are made for
+			// pwsh, zsh, bash and fish; the shell has its own Tab completion over the files of the workspace, and a second
+			// suggestion widget over the same line would be a second answer.
+			'terminal.integrated.suggest.enabled': false,
+			'terminal.integrated.initialHint': false,
 			// Light or dark follows the visitor's system; the dark one is where it starts.
 			'window.autoDetectColorScheme': true,
 			'workbench.colorTheme': 'LevelCode Web Dark',

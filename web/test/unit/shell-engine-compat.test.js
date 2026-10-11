@@ -288,10 +288,14 @@ async function main() {
 		assert.deepStrictEqual(c.parseStat(['--format=%y', 'f']).format, '%y');
 		assert.deepStrictEqual(c.parseStat(['-c%Y', 'f']), { format: '%Y', files: ['f'], other: [] });
 		assert.deepStrictEqual(c.parseTouch(['-t', '202005060708.09', 'f']).time, Date.UTC(2020, 4, 6, 7, 8, 9));
-		assert.deepStrictEqual(c.parseTouch(['-d', '@100', 'f']), { args: ['f'], time: 100000, files: ['f'] });
+		assert.deepStrictEqual(c.parseTouch(['-d', '@100', 'f']), { args: ['f'], time: 100000, files: ['f'], reference: null });
 		assert.deepStrictEqual(c.parseTouch(['--date=@-5', 'f']).time, -5000);
-		assert.deepStrictEqual(c.parseTouch(['-d', '2020-01-01', 'f']), { args: ['-d', '2020-01-01', 'f'], time: null, files: ['f'] });
-		assert.deepStrictEqual(c.parseTouch(['-r', 'ref', 'f']), { args: ['-r', 'ref', 'f'], time: null, files: ['ref', 'f'].slice(1) });
+		assert.deepStrictEqual(c.parseTouch(['-d', '2020-01-01', 'f']), { args: ['-d', '2020-01-01', 'f'], time: null, files: ['f'], reference: null });
+		// -r REF is taken out of the line (the engine ignored it) and handed to the wrapper, which reads REF's time
+		assert.deepStrictEqual(c.parseTouch(['-r', 'ref', 'f']), { args: ['f'], time: null, files: ['f'], reference: 'ref' });
+		assert.deepStrictEqual(c.parseTouch(['--reference=ref', 'f', 'g']), { args: ['f', 'g'], time: null, files: ['f', 'g'], reference: 'ref' });
+		assert.deepStrictEqual(c.parseTouch(['--reference', 'ref', '-c', 'f']), { args: ['-c', 'f'], time: null, files: ['f'], reference: 'ref' });
+		assert.deepStrictEqual(c.parseTouch(['-rref', 'f']), { args: ['f'], time: null, files: ['f'], reference: 'ref' });
 		const r = await sh("touch -d '@100' a; touch -t 197001010000 z; stat -c '%n %Y' a z; date -u -r a +%s; printf 'BEGIN{print \"p\"}\\n{print $1}\\n' > p.awk; echo 'x y' | awk -f p.awk");
 		assert.strictEqual(r.stdout, 'a 100\nz 0\n100\np\nx\n');
 	});
@@ -671,7 +675,9 @@ async function main() {
 		assert.strictEqual(await run('cp a.txt nodir/x 2>&1; echo "rc=$?"'), "cp: cannot create regular file 'nodir/x': No such file or directory\nrc=1\n");
 		assert.strictEqual(await run('mv a.txt nodir/x 2>&1; echo "rc=$?"'), "mv: cannot move 'a.txt' to 'nodir/x': No such file or directory\nrc=1\n");
 		assert.strictEqual(await run('cp -r d1 nodir/y 2>&1; echo "rc=$?"'), "cp: cannot create directory 'nodir/y': No such file or directory\nrc=1\n");
-		assert.strictEqual(await run('cp a.txt a.txt/x 2>&1; echo "rc=$?"'), "cp: cannot create regular file 'a.txt/x': Not a directory\nrc=1\n");
+		// GNU says "failed to access" when a FILE is on the way (the first expectation here, "cannot create regular file",
+		// was a guess that the reference run of the third round contradicts); "cannot create" is for a folder that is not there
+		assert.strictEqual(await run('cp a.txt a.txt/x 2>&1; echo "rc=$?"'), "cp: failed to access 'a.txt/x': Not a directory\nrc=1\n");
 		assert.strictEqual(await run('cp nope nodir/x 2>&1; echo "rc=$?"'), "cp: cannot stat 'nope': No such file or directory\nrc=1\n");
 		assert.strictEqual(await run('echo b > b.txt; cp a.txt b.txt nodir/x 2>&1; echo "rc=$?"; rm b.txt'), "cp: target 'nodir/x' is not a directory\nrc=1\n", 'two sources: the engine\'s message, not the one for a single source');
 		assert.strictEqual(await run('cp a.txt nodir/x zzz 2>&1; echo "rc=$?"'), "cp: target 'zzz' is not a directory\nrc=1\n", 'the destination is the LAST operand');
@@ -727,6 +733,246 @@ async function main() {
 		assert.strictEqual(c.withoutDoubledPrefix(fine, 'sed'), fine);
 		assert.deepStrictEqual(c.withoutDoubledPrefix({ stderr: 'sed: awk: z\n' }, 'sed'), { stderr: 'sed: awk: z\n' });
 		assert.deepStrictEqual(c.withoutDoubledPrefix({ stdout: 'x' }, 'sed'), { stdout: 'x' });
+	});
+
+	/* ------------------------------------------------------------------------------------------ the third round */
+
+	test('cp and mv onto `name/` that does not exist: a directory source is copied or renamed to it; only a file cannot be (the commonest way to write either, which the first fix of this broke)', async () => {
+		const variants = ['cp -r d d2/', 'cp -r d/ d2/', 'cp -R d d2/', 'cp -a d d2/', 'cp -rT d d2/', 'cp -rv d d2/', 'cp -r d ex/n/', 'mv d d2/', 'mv d/ d2/', 'mv d d2//', 'mv -v d d2/', 'cp -ru d d2/', 'mv -u d d2/'];
+		for (const v of variants) {
+			const h = await host({ '/w/d/f': 'one\n', '/w/d/h': 'two\n', '/w/ex': null });
+			const r = await h.run(`${v}; echo "rc=$?"`);
+			assert.strictEqual(r.exitCode, 0, v);
+			assert.ok(/(^|\n)rc=0\n$/.test(r.stdout), v + ' -> ' + r.stdout);
+			assert.strictEqual(r.stderr, '', v);
+			const made = v.includes('ex/n') ? '/w/ex/n' : '/w/d2';
+			assert.strictEqual(h.tree.text(made + '/f'), 'one\n', v);
+			assert.strictEqual(h.tree.text(made + '/h'), 'two\n', v);
+			assert.strictEqual(h.tree.nodes.has('/w/d/f'), v.startsWith('cp'), v + ': a copy keeps the source, a move does not');
+		}
+		// a directory without -r is still "omitting directory", not "not a directory"
+		const noR = await sh('cp d d2/ 2>&1; echo "rc=$?"', { '/w/d/f': 'x' });
+		assert.strictEqual(noR.stdout, "cp: -r not specified; omitting directory 'd'\nrc=1\n");
+		// a FILE onto a name that ends in a slash: GNU's words, status 1, nothing made
+		const f = await sh('cp a.txt n/ 2>&1; echo "rc=$?"; mv a.txt n/ 2>&1; echo "rc=$?"; cp a.txt nodir/n/ 2>&1; echo "rc=$?"; ls', { '/w/a.txt': 'a\n' });
+		assert.strictEqual(f.stdout, "cp: cannot create regular file 'n/': Not a directory\nrc=1\nmv: cannot move 'a.txt' to 'n/': Not a directory\nrc=1\ncp: cannot create regular file 'nodir/n/': No such file or directory\nrc=1\na.txt\n");
+		// a file on the way: "failed to access", for a file and for a directory, with and without the slash
+		const w = await sh("cp a b.txt/x/y 2>&1; mv a b.txt/x/y 2>&1; cp -r d b.txt/x/y 2>&1; cp -r d b.txt/x/y/ 2>&1; cp a b.txt/ 2>&1; mv a b.txt/ 2>&1; echo \"rc=$?\"; cat a b.txt", { '/w/a': 'a\n', '/w/b.txt': 'b\n', '/w/d': null });
+		assert.strictEqual(w.stdout, "cp: failed to access 'b.txt/x/y': Not a directory\nmv: failed to access 'b.txt/x/y': Not a directory\ncp: failed to access 'b.txt/x/y': Not a directory\ncp: failed to access 'b.txt/x/y/': Not a directory\ncp: failed to access 'b.txt/': Not a directory\nmv: failed to access 'b.txt/': Not a directory\nrc=1\na\nb\n");
+	});
+
+	test('cp and mv: a source written with a slash that is a file is "cannot stat", the other sources go on; a file onto itself is "the same file" (status 1, -n makes it nothing)', async () => {
+		const h = await host({ '/w/a': 'a\n', '/w/b': 'b\n', '/w/t': null });
+		const r = await h.run('cp a/ b t 2>&1; echo "rc=$?"; ls t; mv a/ x 2>&1; echo "rc=$?"; mv a a 2>&1; echo "rc=$?"; mv a ./a 2>&1; echo "rc=$?"; mv -n a a; echo "rc=$?"; mv a . 2>&1; echo "rc=$?"; cp a a 2>&1; echo "rc=$?"; cp -n a a; echo "rc=$?"; mkdir d; mv d d 2>&1; echo "rc=$?"; mv d/ d 2>&1; echo "rc=$?"; cat a');
+		assert.strictEqual(r.stdout, [
+			"cp: cannot stat 'a/': Not a directory", 'rc=1', 'b',
+			"mv: cannot stat 'a/': Not a directory", 'rc=1',
+			"mv: 'a' and 'a' are the same file", 'rc=1',
+			"mv: 'a' and './a' are the same file", 'rc=1',
+			'rc=0',
+			"mv: 'a' and './a' are the same file", 'rc=1',
+			"cp: 'a' and 'a' are the same file", 'rc=1',
+			'rc=0',
+			"mv: cannot move 'd' to a subdirectory of itself, 'd/d'", 'rc=1',
+			"mv: cannot move 'd/' to a subdirectory of itself, 'd/d'", 'rc=1',
+			'a', '',
+		].join('\n'));
+	});
+
+	test('cp -T and mv -T: the destination is the target itself, never a folder to go into', async () => {
+		const files = { '/w/d/f': '1\n', '/w/e/g': '2\n', '/w/a': 'A\n', '/w/b': 'B\n', '/w/c': null };
+		const tree = ' . ./a ./b ./c ./d ./d/f ./e ./e/g';
+		const one = async (script) => (await sh(script + '; echo "rc=$?"; find . | sort | tr "\\n" " "', files)).stdout;
+		assert.strictEqual(await one('cp -rT d e'), 'rc=0\n. ./a ./b ./c ./d ./d/f ./e ./e/f ./e/g ');
+		assert.strictEqual(await one('cp -r --no-target-directory d e'), 'rc=0\n. ./a ./b ./c ./d ./d/f ./e ./e/f ./e/g ');
+		assert.strictEqual(await one('cp -rT d n'), 'rc=0\n. ./a ./b ./c ./d ./d/f ./e ./e/g ./n ./n/f ');
+		assert.strictEqual(await one('cp -ruT d e'), 'rc=0\n. ./a ./b ./c ./d ./d/f ./e ./e/f ./e/g ', 'with -u as well');
+		assert.strictEqual(await one('cp -ru d e'), 'rc=0\n. ./a ./b ./c ./d ./d/f ./e ./e/d ./e/d/f ./e/g ', 'and without -T it goes into the folder');
+		assert.strictEqual(await one('cp -T a b; cat b'), 'A\nrc=0\n' + tree.slice(1) + ' ');
+		assert.strictEqual(await one('cp -T a c 2>&1'), "cp: cannot overwrite directory 'c' with non-directory\nrc=1\n" + tree.slice(1) + ' ');
+		assert.strictEqual(await one('cp -T a b c 2>&1'), "cp: extra operand 'c'\nTry 'cp --help' for more information.\nrc=1\n" + tree.slice(1) + ' ');
+		assert.strictEqual(await one('cp -T d e 2>&1'), "cp: -r not specified; omitting directory 'd'\nrc=1\n" + tree.slice(1) + ' ');
+		assert.strictEqual(await one('mv -T d c'), 'rc=0\n. ./a ./b ./c ./c/f ./e ./e/g ');
+		assert.strictEqual(await one('mv -T d e 2>&1'), "mv: cannot move 'd' to 'e': Directory not empty\nrc=1\n" + tree.slice(1) + ' ');
+		assert.strictEqual(await one('mv -T a c 2>&1'), "mv: cannot overwrite directory 'c' with non-directory\nrc=1\n" + tree.slice(1) + ' ');
+		assert.strictEqual(await one('mv -vT d c'), "renamed 'd' -> 'c'\nrc=0\n. ./a ./b ./c ./c/f ./e ./e/g ");
+		assert.strictEqual(await one('mv -T a b; cat b'), 'A\nrc=0\n. ./b ./c ./d ./d/f ./e ./e/g ');
+		assert.strictEqual(c.wantsNoTargetDirectory(['-rT', 'a', 'b']), true);
+		assert.strictEqual(c.wantsNoTargetDirectory(['--no-target-directory', 'a', 'b']), true);
+		assert.strictEqual(c.wantsNoTargetDirectory(['-t', 'T', 'a']), false, 'the value of -t is not an option');
+		assert.strictEqual(c.wantsNoTargetDirectory(['-tT', 'a']), false, 'nor is the value attached to it');
+		assert.strictEqual(c.wantsNoTargetDirectory(['-rtT', 'a']), false);
+		assert.strictEqual(c.wantsNoTargetDirectory(['-rT', '-t', 'x', 'a']), true);
+		assert.strictEqual(c.wantsNoTargetDirectory(['a', '--', '-T']), false);
+	});
+
+	test('cp -rv lists every file it copies; mkdir -pv every folder it makes', async () => {
+		const files = { '/w/d/f': '1\n', '/w/d/s/g': '2\n' };
+		const r = await sh('cp -rv d e | sort; cp -av d x/ 2>&1 | sort; mkdir -pv p/q/r p/q/s; mkdir -v u; mkdir -pv p/q/t', files);
+		assert.strictEqual(r.stdout, [
+			"'d' -> 'e'", "'d/f' -> 'e/f'", "'d/s' -> 'e/s'", "'d/s/g' -> 'e/s/g'",
+			"'d' -> 'x/'", "'d/f' -> 'x/f'", "'d/s' -> 'x/s'", "'d/s/g' -> 'x/s/g'",
+			"mkdir: created directory 'p'", "mkdir: created directory 'p/q'", "mkdir: created directory 'p/q/r'", "mkdir: created directory 'p/q/s'",
+			"mkdir: created directory 'u'", "mkdir: created directory 'p/q/t'", '',
+		].join('\n'));
+	});
+
+	test('touch -r REF takes the time of REF (the engine ignored it); a reference that is not there is an error and nothing is made', async () => {
+		const r = await sh("touch -d '@86400' a; touch -r a b; touch --reference=a c; touch --reference a d; touch -ra e; stat -c '%n %Y' b c d e; touch -r nofile f 2>&1; echo \"rc=$?\"; ls f 2>&1 | head -1; echo x > g; touch -d @5 h; touch -r h g; stat -c %Y g; cat g; touch -c -r a nothere; ls nothere 2>&1 | head -1; touch -t 202001020304 -r a i; stat -c %Y i");
+		assert.strictEqual(r.stdout, "b 86400\nc 86400\nd 86400\ne 86400\ntouch: failed to get attributes of 'nofile': No such file or directory\nrc=1\nls: cannot access 'f': No such file or directory\n5\nx\nls: cannot access 'nothere': No such file or directory\n1577934240\n");
+	});
+
+	test('tail -c +N starts at byte N (the engine printed the last N bytes), -c -N is -c N, and the other forms are the engine\'s', async () => {
+		assert.deepStrictEqual(c.parseTailFrom(['-c', '+3', 'f']), { from: 3, quiet: false, verbose: false, files: ['f'] });
+		assert.deepStrictEqual(c.parseTailFrom(['-qc+2', 'f', 'g']), { from: 2, quiet: true, verbose: false, files: ['f', 'g'] });
+		assert.deepStrictEqual(c.parseTailFrom(['--bytes=+1', '-v', 'f']), { from: 1, quiet: false, verbose: true, files: ['f'] });
+		assert.strictEqual(c.parseTailFrom(['-c', '3', 'f']), null);
+		assert.strictEqual(c.parseTailFrom(['-n', '+3', 'f']), null);
+		assert.strictEqual(c.parseTailFrom(['-n', '2', '-c', '+3']), null, 'a line count with it: the engine\'s');
+		const r = await sh("printf 'abcdef' | tail -c +1; echo; printf 'abcdef' | tail -c +3; echo; printf 'abcdef' | tail -c +7; echo '|'; printf 'abcdef' > f; printf 'xyz' > g; tail -c +2 f g; echo; tail -qc +2 f g; echo; printf 'abcdef' | tail -c -2; echo; printf 'abcdef' | tail -c2; echo; seq 1 5 | tail -n -2; seq 1 5 | tail -n +4; printf '//4=' | base64 -d | tail -c +2 | od -An -tx1");
+		assert.strictEqual(r.stdout, 'abcdef\ncdef\n|\n==> f <==\nbcdef\n==> g <==\nyz\nbcdefyz\nef\nef\n4\n5\n4\n5\n fe\n');
+	});
+
+	test('xargs: items, lines and quotes as GNU reads them; -I, -L, -n, -E, -a, -d, -0; its status codes', async () => {
+		// the parser of the options: every form, the warnings for options that exclude each other, the errors in GNU's words
+		const p = (...a) => c.parseXargs(a);
+		const o = (...a) => /** @type {any} */ (p(...a)).opts;
+		assert.deepStrictEqual(p('-I{}', 'echo', '{}'), { opts: { nul: false, delim: null, replace: '{}', eof: null, maxLines: null, maxArgs: null, verbose: false, noRun: false, argFile: null }, command: ['echo', '{}'], warnings: [] });
+		assert.strictEqual(o('-I', '@', 'x').replace, '@');
+		assert.strictEqual(o('-i', 'x').replace, '{}');
+		assert.strictEqual(o('-iX', 'x').replace, 'X');
+		assert.strictEqual(o('--replace', 'x').replace, '{}');
+		assert.strictEqual(o('--replace=%', 'x').replace, '%');
+		assert.strictEqual(o('-L', '2', 'x').maxLines, 2);
+		assert.strictEqual(o('-l', 'x').maxLines, 1);
+		assert.strictEqual(o('-l3', 'x').maxLines, 3);
+		assert.strictEqual(o('--max-lines=4', 'x').maxLines, 4);
+		assert.strictEqual(o('-n', '5', 'x').maxArgs, 5);
+		assert.strictEqual(o('-n5', 'x').maxArgs, 5);
+		assert.strictEqual(o('--max-args=6', 'x').maxArgs, 6);
+		assert.strictEqual(o('-E', 'END', 'x').eof, 'END');
+		assert.strictEqual(o('-E', '', 'x').eof, null);
+		assert.strictEqual(o('-e', 'x').eof, null);
+		assert.strictEqual(o('-0rt', 'x').nul, true);
+		assert.strictEqual(o('-0rt', 'x').noRun, true);
+		assert.strictEqual(o('-0rt', 'x').verbose, true);
+		assert.strictEqual(o('-d', ',', 'x').delim, ',');
+		assert.strictEqual(o('-d', '\\n', 'x').delim, '\n');
+		assert.strictEqual(o('-d', '\\t', 'x').delim, '\t');
+		assert.strictEqual(o('-a', 'f', 'x').argFile, 'f');
+		assert.strictEqual(o('--arg-file=f', 'x').argFile, 'f');
+		assert.deepStrictEqual(/** @type {any} */ (p('-P4', '-s', '100', '-x', 'echo')).command, ['echo']);
+		assert.deepStrictEqual(/** @type {any} */ (p('--', '-n', 'x')).command, ['-n', 'x'], 'the command starts at the first operand');
+		assert.deepStrictEqual(/** @type {any} */ (p('echo', '-n')).command, ['echo', '-n']);
+		assert.strictEqual(p('--bogus', 'x'), null, 'an option it does not know is the engine\'s to answer');
+		assert.strictEqual(p('-z', 'x'), null);
+		assert.deepStrictEqual(p('-n0', 'x'), { error: "xargs: value 0 for -n option should be >= 1\nTry 'xargs --help' for more information.\n" });
+		assert.deepStrictEqual(p('-n', 'x', 'y'), { error: "xargs: invalid number \"x\" for -n option\nTry 'xargs --help' for more information.\n" });
+		assert.deepStrictEqual(p('-L0', 'x'), { error: "xargs: value 0 for -L option should be >= 1\nTry 'xargs --help' for more information.\n" });
+		assert.deepStrictEqual(p('-d', '', 'x'), { error: 'xargs: Invalid input delimiter specification : the delimiter must be either a single character or an escape sequence starting with \\.\n' });
+		assert.deepStrictEqual(/** @type {any} */ (p('-I{}', '-L1', 'echo')).warnings, ['xargs: warning: options --replace and -L are mutually exclusive, ignoring previous --replace value\n']);
+		assert.deepStrictEqual(/** @type {any} */ (p('-n1', '-L1', 'echo')).warnings, ['xargs: warning: options --max-args and -L are mutually exclusive, ignoring previous --max-args value\n']);
+		assert.deepStrictEqual(/** @type {any} */ (p('-L1', '-n1', 'echo')).warnings, ['xargs: warning: options --max-lines and --max-args/-n are mutually exclusive, ignoring previous --max-lines value\n']);
+		// the input
+		const items = (input, opts) => c.xargsInput(input, Object.assign({ nul: false, delim: null, replace: null, eof: null }, opts)).lines.map((l) => [...l]);
+		assert.deepStrictEqual(items('a b\nc\n\nd\n'), [['a', 'b'], ['c'], ['d']]);
+		assert.deepStrictEqual(items('"a b" c \'d e\' f\\ g\n'), [['a b', 'c', 'd e', 'f g']]);
+		assert.deepStrictEqual(items('a\\\nb\n'), [['a\nb']]);
+		assert.deepStrictEqual(items('a\tb\n'), [['a', 'b']]);
+		assert.deepStrictEqual(items('""\n'), [['']], 'an empty quoted string is an item');
+		assert.deepStrictEqual(items('  a b  \n\n c\n', { replace: '{}' }), [['a b  '], ['c']]);
+		assert.deepStrictEqual(items('"a b" c\n', { replace: '{}' }), [['a b c']]);
+		assert.deepStrictEqual(items('a b\0c\0', { nul: true }), [['a b'], ['c']]);
+		assert.deepStrictEqual(items('a\0\0b\0', { nul: true }), [['a'], [''], ['b']]);
+		assert.deepStrictEqual(items('a b,c d,e', { delim: ',' }), [['a b'], ['c d'], ['e']]);
+		assert.deepStrictEqual(items('a b\nc d\n', { delim: '\n' }), [['a b'], ['c d']]);
+		assert.deepStrictEqual(items('a\nSTOP\nb\n', { eof: 'STOP' }), [['a']]);
+		assert.deepStrictEqual(items('a b STOP c\nd\n', { eof: 'STOP' }), [['a', 'b']]);
+		const bad = c.xargsInput("a 'b\nc\n", { nul: false, delim: null, replace: null, eof: null });
+		assert.deepStrictEqual(bad.lines.map((l) => [...l]), [['a']]);
+		assert.strictEqual(bad.error, 'xargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\n');
+		assert.ok(/unmatched double quote/.test(c.xargsInput('"a\n', { nul: false, delim: null, replace: null, eof: null }).error || ''));
+		// the batches
+		const lines = (...ls) => ls.map((l) => Object.assign(l.words, { continued: !!l.cont }));
+		const batches = (ls, o) => c.xargsBatches(lines(...ls), Object.assign({ replace: null, maxLines: null, maxArgs: null }, o));
+		assert.deepStrictEqual(batches([{ words: ['a', 'b'] }, { words: ['c'] }], {}), [['a', 'b', 'c']]);
+		assert.deepStrictEqual(batches([{ words: ['a', 'b'] }, { words: ['c'] }], { maxArgs: 2 }), [['a', 'b'], ['c']]);
+		assert.deepStrictEqual(batches([{ words: ['a', 'b'] }, { words: ['c'] }], { maxLines: 1 }), [['a', 'b'], ['c']]);
+		assert.deepStrictEqual(batches([{ words: ['a'] }, { words: ['b'] }, { words: ['c'] }], { maxLines: 2 }), [['a', 'b'], ['c']]);
+		assert.deepStrictEqual(batches([{ words: ['a'], cont: true }, { words: ['b'] }, { words: ['c'] }], { maxLines: 1 }), [['a', 'b'], ['c']], 'a line that ends in a blank continues');
+		assert.deepStrictEqual(batches([{ words: ['a b'] }, { words: ['c'] }], { replace: '{}' }), [['a b'], ['c']]);
+		assert.deepStrictEqual(batches([], {}), []);
+		assert.strictEqual(c.xargsQuote('a'), 'a');
+		assert.strictEqual(c.xargsQuote('a b'), "'a b'");
+		assert.strictEqual(c.xargsQuote("it's"), '"it\'s"');
+		assert.strictEqual(c.xargsQuote('x=y'), "'x=y'");
+		assert.strictEqual(c.xargsQuote(''), "''");
+		// through the shell
+		const files = { '/w/f s.txt': 'a\n', '/w/g.txt': 'b\n', '/w/in': 'x y\nz\n' };
+		const run = async (script) => (await sh(script, files)).stdout;
+		assert.strictEqual(await run("ls | xargs -I{} echo file:{}"), 'file:f s.txt\nfile:g.txt\nfile:in\n');
+		assert.strictEqual(await run("ls | xargs -L 1 echo"), 'f s.txt\ng.txt\nin\n');
+		assert.strictEqual(await run("printf 'a b\\nc d\\ne\\n' | xargs -L 2 echo"), 'a b c d\ne\n');
+		assert.strictEqual(await run("printf '\"a b\" c\\n' | xargs -n1 echo"), 'a b\nc\n');
+		assert.strictEqual(await run("xargs -a in -n1 echo; xargs --arg-file=in echo"), 'x\ny\nz\nx y z\n');
+		assert.strictEqual(await run("xargs -a nofile echo 2>&1; echo \"rc=$?\""), "xargs: Cannot open input file 'nofile': No such file or directory\nrc=1\n");
+		assert.strictEqual(await run("printf 'a\\nb\\n' | xargs -n1 sh -c 'exit 3' _; echo \"rc=$?\""), 'rc=123\n');
+		assert.strictEqual(await run("printf 'a\\n' | xargs nosuchcmd 2>&1; echo \"rc=$?\""), 'xargs: nosuchcmd: No such file or directory\nrc=127\n');
+		assert.strictEqual(await run("printf 'a\\nb\\n' | xargs -n1 sh -c 'echo $0; exit 255' 2>&1; echo \"rc=$?\""), 'a\nxargs: sh: exited with status 255; aborting\nrc=124\n');
+		assert.strictEqual(await run("printf \"a 'b\\n\" | xargs echo 2>&1; echo \"rc=$?\""), "a\nxargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\nrc=1\n");
+		assert.strictEqual(await run("printf 'a\\n' | xargs -t echo 'x y' 2>&1 >/dev/null; printf '' | xargs -r echo none; printf '' | xargs echo once; printf '' | xargs -I{} echo never"), "echo 'x y' a\nonce\n");
+		assert.strictEqual(await run("printf 'echo\\n' | xargs -I{} {} hi 2>&1; echo \"rc=$?\""), 'xargs: {}: No such file or directory\nrc=127\n', 'the command word is not replaced');
+	});
+
+	test('sed: a label ends at ; (or a blank, or the line), so the one-line a/i/c after it is still rewritten; -f script files are rewritten like -e text, and bounded', async () => {
+		assert.strictEqual(c.fixSedOneLiner(':a;N;$!ba;s/\\n/ /g;$a\\END'), ':a;N;$!ba;s/\\n/ /g;$a\\\nEND');
+		assert.strictEqual(c.fixSedOneLiner(':a;2a\\foo'), ':a;2a\\\nfoo');
+		assert.strictEqual(c.fixSedOneLiner(':a\n1i\\H'), ':a\n1i\\\nH');
+		assert.strictEqual(c.fixSedOneLiner(': a;1i\\H'), ': a;1i\\\nH', 'a blank before the name');
+		assert.strictEqual(c.fixSedOneLiner(':a b;1i\\H'), ':a b;1i\\\nH', 'a label ends at a blank, as in GNU');
+		assert.strictEqual(c.fixSedOneLiner('b end;$a\\X'), 'b end;$a\\\nX');
+		const files = { '/w/a.txt': 'a\nb\n', '/w/one.sed': '$a\\END\n1i\\START\n', '/w/two.sed': '1i\\\nHEAD\ns/a/A/\n', '/w/plain.sed': 's/a/Z/\n' };
+		const r = await sh("sed -f one.sed a.txt; sed -f two.sed a.txt; sed -f plain.sed a.txt; sed -n -f plain.sed -e '$p' a.txt; sed -f nofile a.txt 2>&1 | head -1; echo; sed ':a;N;$!ba;s/\\n/+/g;$a\\END' a.txt", files);
+		assert.strictEqual(r.stdout, ['START', 'a', 'b', 'END', 'HEAD', 'A', 'b', 'Z', 'b', 'b', "sed: couldn't open file nofile: No such file or directory", '', 'a+b', 'END', ''].join('\n'));
+		// a script file over the bound is not read by the wrapper: the engine gets the file
+		const big = '1i\\X\n' + '#'.repeat(70000) + '\n';
+		const r2 = await sh("sed -f big.sed a.txt 2>&1 | head -3", { '/w/a.txt': 'a\n', '/w/big.sed': big });
+		assert.strictEqual(r2.stdout, '\\X\na\n', 'the engine got the file, and prints the one-line form as it always did');
+		const small = await sh("sed -f s.sed a.txt 2>&1 | head -3", { '/w/a.txt': 'a\n', '/w/s.sed': '1i\\X\n' });
+		assert.strictEqual(small.stdout, 'X\na\n', 'the same line in a small file is GNU\'s one-line form');
+	});
+
+	test('sed: an option that needs a value and has none is passed on without one (it used to hand the engine the word "undefined")', () => {
+		for (const [input, expected] of [[['-f'], ['-f']], [['-e'], ['-e']], [['--file'], ['-f']], [['--expression'], ['-e']], [['-n', '-e'], ['-n', '-e']], [['-nf'], ['-n', '-f']], [['-e', 'p', '-f'], ['-e', 'p', '-f']]]) {
+			assert.deepStrictEqual(c.normaliseSed(input).args, expected, JSON.stringify(input));
+		}
+	});
+
+	test('xargs: the warnings of options that exclude each other are printed, and a count of runs over the loop limit ends the script', async () => {
+		const r = await sh("printf 'a\\nb\\n' | xargs -n1 -L1 echo 2>&1 >/dev/null; printf 'a\\n' | xargs -I{} -L1 echo 2>&1 >/dev/null");
+		assert.strictEqual(r.stdout, 'xargs: warning: options --max-args and -L are mutually exclusive, ignoring previous --max-args value\nxargs: warning: options --replace and -L are mutually exclusive, ignoring previous --replace value\n');
+		// a count of runs over what the engine lets a loop run is the engine's own limit
+		const h = await makeHost({ Engine: E, tree: makeTree({ '/w': null }), start: false });
+		await h.core.handle({ t: 'init', gen: 1, folders: [{ id: 'f', path: '/w', name: 'w' }], limits: { maxLoopIterations: 3 } });
+		const ok = await h.run("printf 'a\\nb\\nc\\n' | xargs -n1 echo");
+		assert.strictEqual(ok.how, 'exit', 'exactly the limit is fine');
+		assert.strictEqual(ok.stdout, 'a\nb\nc\n');
+		const over = await h.run("printf 'a\\nb\\nc\\nd\\n' | xargs -n1 echo; echo after");
+		assert.strictEqual(over.how, 'limit');
+		assert.ok(/xargs: iteration limit exceeded \(3\)/.test(over.stderr), over.stderr);
+		assert.ok(!/after/.test(over.stdout));
+	});
+
+	test('du walks a tree with the engine\'s bound: an entry limit that is a limit of the script, and a tree that is deeper than the depth limit', async () => {
+		const seen = [];
+		const stat = async (p) => { seen.push(p); return p.endsWith('/f') || p === '/d/f' ? { isFile: true, isDirectory: false, size: 1 } : { isFile: false, isDirectory: true, size: 0 }; };
+		const io = (traversal) => ({ cwd: '/', stat, readdir: async (p) => (p === '/d' ? ['f', 'g', 'h'].map((n) => n) : []), resolve: (b, p) => (b === '/' ? '/' + p : b + '/' + p), traversal });
+		const boom = (m) => Object.assign(new Error(m), { name: 'ExecutionLimitError' });
+		await assert.rejects(c.du(['d'], io({ entries: 3, exceeded: boom })), /du: filesystem traversal entry limit exceeded \(3\)/);
+		const ok = await c.du(['d'], io({ entries: 4, exceeded: boom }));
+		assert.strictEqual(ok.exitCode, 0);
+		const deepIo = { cwd: '/', stat: async () => ({ isFile: false, isDirectory: true, size: 0 }), readdir: async () => ['x'], resolve: (b, p) => b + '/' + p, traversal: { entries: 1000, depth: 3, exceeded: boom } };
+		await assert.rejects(c.du(['d'], deepIo), /du: filesystem traversal depth limit exceeded \(3\)/);
 	});
 
 	for (const t of tests) {

@@ -215,6 +215,23 @@ const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms)
 		assert.ok(await real.allExited(5000));
 	});
 
+	await test('folders called ".." and "." that must be moved: the real engine reads them at /mnt/_ and says ONE relocation each, not a second one of its own', async () => {
+		const x = setup({ folders: [{ name: 'scratch', uri: 'levelcode-scratch:///scratch' }, { name: '..', uri: 'file:///' }, { name: '.', uri: 'file:///tmp/q' }] });
+		x.ws.put('file:/etc/hosts', '127.0.0.1 localhost\n');
+		x.ws.put('file:/tmp/q/notes.txt', 'notes\n');
+		const s = x.rt.createSession();
+		const r = await line(s, 'cat /mnt/_/etc/hosts; cat /mnt/_-2/notes.txt; ls /mnt');
+		assert.strictEqual(r.out, '127.0.0.1 localhost\nnotes\n_\n_-2\n');
+		assert.strictEqual(r.err, '', r.err);
+		assert.deepStrictEqual({ how: r.how, exit: r.exitCode }, { how: 'exit', exit: 0 });
+		assert.deepStrictEqual(r.notes, [
+			'[LevelCode Shell: The folder ".." is mounted at /mnt/_, not at /: it is the root of the file system.]',
+			'[LevelCode Shell: The folder "." is mounted at /mnt/_-2, not at /tmp/q: that path is one the shell uses for itself.]',
+		], 'one note a folder, from the host; the engine moved nothing');
+		x.rt.dispose();
+		assert.ok(await real.allExited(5000));
+	});
+
 	await test('a terminal\'s /tmp that was lost with a replaced thread is said on the next line (needs the engine to report stats.tmpFiles)', async () => {
 		const x = setup({ limits: { workers: { idleMs: 600 } } });
 		const s = x.rt.createSession();

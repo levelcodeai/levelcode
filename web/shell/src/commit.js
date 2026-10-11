@@ -15,9 +15,18 @@
  *    3. A write that fails part-way is reported as what it is: "applied N of M", where it stopped and why.
  *       It is not atomic across files (a series of awaits) and the text does not pretend it is.
  *
- *  Stopping is allowed while the set is being JUDGED (reading is harmless) and not while it is being WRITTEN
- *  (half of a `mv` is worse than all of it): `cancelled()` is asked before each file is checked and once more
- *  before the first write.
+ *  Stopping is asked in two ways. `cancelled()` is looked at while the set is being JUDGED (reading is harmless):
+ *  before each file is checked and once more before the first write; after that this module does not look at it,
+ *  because a half-applied set is only as safe as the ORDER above makes it, and finishing is better. What can end
+ *  the writing early is the `io` itself: a call that ran out of time, or that was given up on because the run was
+ *  stopped, rejects, and a rejection is a failure part-way (rule 3) like any other. A write that was given up on
+ *  was not cancelled - a provider has no way to - and the note says it may still land.
+ *
+ *  Time is the io's business, not this module's: it has no clock. An io call that is out of time rejects with an
+ *  error whose `timedOut` is true (its own bound, or the budget of the whole phase), one that was given up on
+ *  because of a Stop with `abandoned: true`; `mayStillLand: true` says the call had been made, so its effect is
+ *  unknown. While the set is being checked the first such error ends the check: a provider that does not answer
+ *  does not answer the next file either, and the whole set is refused once, with how far the check got.
  *
  *  Pure: every file-system call, and the question "is this path inside a folder", is injected (`io`), so it is
  *  tested with plain node. A path is judged by `io.resolve`, never by string tests of its own.
@@ -25,7 +34,7 @@
 // @ts-check
 'use strict';
 
-const { forNote } = require('./sanitize');
+const { forNote, safeMessage, safeGet } = require('./sanitize');
 
 /** How many reasons a note spells out; the rest are counted. */
 const SHOWN = 6;
@@ -51,6 +60,12 @@ const UNNORMALISED = /(^|\/)\.\.?(\/|$)|\/\/|.\/$/;
  * @typedef {{ writeFile: number, writeRun: number, entries: number }} Caps
  * @typedef {{ total: number, applied: number, failed: number, refused: boolean, cancelled?: boolean, notes: string[] }} CommitResult
  *     `cancelled`: it was asked to stop before it had written anything; nothing was applied and it has no note
+ * @typedef {{ phase: string, applied: number, total: number }} Progress
+ *     The caller's own record of a commit, which it may read at any moment (to say what is known when it stops
+ *     waiting): `phase` is 'check' until the first write is made, then 'write' (a caller that is committing what
+ *     a review left sets its own name for the phase before the call); `applied` counts the changes that are
+ *     confirmed done, STARTING from what it holds - a review that applied files already says how many - and
+ *     `total` is the size of the whole command's change set, which the notes count against.
  */
 
 /** @param {string} p */
@@ -59,8 +74,12 @@ function depth(p) { return p.split('/').length; }
 function dirOf(p) { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); }
 /** @param {string} a @param {string} b */
 function byPath(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
-/** @param {unknown} e */
-function reasonOf(e) { return forNote((e && /** @type {any} */ (e).message) || e).slice(0, 160); }
+/** What was thrown, as a note's reason. Total: `e.message` is read inside safeMessage, where a getter that throws is only a reason. @param {unknown} e */
+function reasonOf(e) { return safeMessage(e, 160); }
+/** Did this io call run out of time, or get given up on? (The io's own words: see the header.) @param {unknown} e */
+function isEnded(e) { return safeGet(e, 'timedOut') === true || safeGet(e, 'abandoned') === true; }
+/** Was the call made, so that its effect is unknown? @param {unknown} e */
+function mayStillLand(e) { return safeGet(e, 'mayStillLand') === true; }
 /** @param {Uint8Array} a @param {Uint8Array} b */
 function sameBytes(a, b) {
 	if (a.length !== b.length) { return false; }
@@ -119,35 +138,51 @@ function checkChangeSet(changes, io, caps) {
 }
 
 /**
+ * What is wrong with one path of the set, or null: it is no longer what the command saw.
+ * @param {Change} c @param {CommitIO} io @returns {Promise<string|null>}
+ */
+async function conflictOf(c, io) {
+	const t = io.resolve(c.path);
+	const p = forNote(c.path);
+	const st = await io.stat(t);
+	if (c.kind === 'write' || c.kind === 'delete') {
+		const expectedHere = c.kind === 'delete' || c.existed;
+		if (!expectedHere) { return st ? p + ' was created while the command ran' : null; }
+		if (!st) { return p + ' was removed while the command ran'; }
+		if (st.isDirectory) { return p + ' is a folder now'; }
+		const before = c.before;
+		if (before && (st.size !== before.length || !sameBytes(await io.readFile(t), before))) { return p + ' changed while the command ran'; }
+		return null;
+	}
+	return st && !st.isDirectory ? p + ' is a file now' : null;
+}
+
+/**
  * Is anything on disk no longer what the command saw? Reads each path once, and a file's bytes only when its
- * size still matches. A path that cannot be checked is a conflict, not a pass. Stops looking, and returns what
- * it has, as soon as `cancelled()` says so (the caller then discards the answer).
+ * size still matches. A path that cannot be checked is a conflict, not a pass - except one the file system did
+ * not ANSWER in time: that ends the check (`late` says where and why), because the next path will not be answered
+ * either and the answer is the same whatever else is found. Stops looking, and returns what it has, as soon as
+ * `cancelled()` says so (the caller then discards the answer).
  * @param {Change[]} changes @param {CommitIO} io @param {() => boolean} [cancelled]
- * @returns {Promise<string[]>}
+ * @returns {Promise<{ conflicts: string[], late: string|null }>}
  */
 async function findConflicts(changes, io, cancelled) {
-	/** @type {string[]} */ const out = [];
+	/** @type {string[]} */ const conflicts = [];
+	let looked = 0;
 	for (const c of changes) {
 		if (cancelled && cancelled()) { break; }
-		const t = io.resolve(c.path);
-		const p = forNote(c.path);
 		try {
-			const st = await io.stat(t);
-			if (c.kind === 'write' || c.kind === 'delete') {
-				const expectedHere = c.kind === 'delete' || c.existed;
-				if (!expectedHere) { if (st) { out.push(p + ' was created while the command ran'); } continue; }
-				if (!st) { out.push(p + ' was removed while the command ran'); continue; }
-				if (st.isDirectory) { out.push(p + ' is a folder now'); continue; }
-				const before = c.before;
-				if (before && (st.size !== before.length || !sameBytes(await io.readFile(t), before))) { out.push(p + ' changed while the command ran'); }
-			} else if (st && !st.isDirectory) {
-				out.push(p + ' is a file now');
-			}
+			const why = await conflictOf(c, io);
+			if (why) { conflicts.push(why); }
 		} catch (e) {
-			out.push(p + ' could not be checked: ' + reasonOf(e));
+			if (isEnded(e)) {
+				return { conflicts, late: 'the changes could not be checked in time: ' + forNote(c.path) + ': ' + reasonOf(e) + ' (' + looked + ' of ' + changes.length + ' were checked)' };
+			}
+			conflicts.push(forNote(c.path) + ' could not be checked: ' + reasonOf(e));
 		}
+		looked++;
 	}
-	return out;
+	return { conflicts, late: null };
 }
 
 /**
@@ -156,24 +191,32 @@ async function findConflicts(changes, io, cancelled) {
  * @param {CommitIO} io
  * @param {Caps} caps
  * @param {() => boolean} [cancelled]  true: stop, before anything is written (see the header)
+ * @param {Progress} [progress]  kept up to date as the commit goes (see the type); the notes count against its numbers
  * @returns {Promise<CommitResult>}
  */
-async function commitChanges(changes, io, caps, cancelled) {
-	const refuse = (/** @type {string[]} */ reasons, /** @type {number} */ total) => {
+async function commitChanges(changes, io, caps, cancelled, progress) {
+	const total = Array.isArray(changes) ? changes.length : 0;
+	// A review may have applied files already, and this is what it left: the notes say "3 of 5", not "0 of 2".
+	const base = progress ? progress.applied : 0;
+	const grand = progress ? Math.max(progress.total, base + total) : total;
+	const refuse = (/** @type {string[]} */ reasons) => {
 		const notes = reasons.slice(0, SHOWN).map((r) => note('refused: ' + r));
 		if (reasons.length > SHOWN) { notes.push(note('and ' + (reasons.length - SHOWN) + ' more refused')); }
-		notes.push(note('NONE of this command\'s file changes were applied.'));
+		notes.push(note(base === 0
+			? 'NONE of this command\'s file changes were applied.'
+			: 'NONE of the remaining ' + total + ' change' + (total === 1 ? ' was' : 's were') + ' applied (' + base + ' of ' + grand + ' had already been).'));
 		return { total, applied: 0, failed: total, refused: true, notes };
 	};
-	const total = Array.isArray(changes) ? changes.length : 0;
 	const problems = checkChangeSet(changes, io, caps);
-	if (problems.length) { return refuse(problems, total); }
+	if (problems.length) { return refuse(problems); }
 	if (total === 0) { return { total: 0, applied: 0, failed: 0, refused: false, notes: [] }; }
-	const conflicts = await findConflicts(changes, io, cancelled);
+	const check = await findConflicts(changes, io, cancelled);
 	// Asked again here, after the last await of the check: from this line to the end of the function nothing waits
 	// for a decision, and what is written is written whole.
 	if (cancelled && cancelled()) { return { total, applied: 0, failed: total, refused: false, cancelled: true, notes: [] }; }
-	if (conflicts.length) { return refuse(conflicts, total); }
+	if (check.late !== null) { return refuse(check.conflicts.concat(check.late)); }
+	if (check.conflicts.length) { return refuse(check.conflicts); }
+	if (progress) { progress.phase = 'write'; }
 
 	const of = (/** @type {string} */ kind) => /** @type {any[]} */ (changes.filter((c) => c.kind === kind));
 	const mkdirs = of('mkdir'), writes = of('write').sort((a, b) => byPath(a.path, b.path));
@@ -181,12 +224,15 @@ async function commitChanges(changes, io, caps, cancelled) {
 	const rmdirs = of('rmdir').sort((a, b) => depth(b.path) - depth(a.path) || byPath(a.path, b.path));
 
 	let applied = 0;
-	/** @type {{ path: string, reason: string } | null} */
+	/** @type {{ path: string, reason: string, landing: boolean } | null} */
 	let stopped = null;
-	/** Run one step unless an earlier one failed; the first failure ends the apply. */
+	/** Run one step unless an earlier one failed; the first failure ends the apply. It never throws: a reason is read totally. */
 	const step = async (/** @type {string} */ path, /** @type {boolean} */ counted, /** @type {() => Promise<void>} */ fn) => {
 		if (stopped) { return; }
-		try { await fn(); if (counted) { applied++; } } catch (e) { stopped = { path, reason: reasonOf(e) }; }
+		try {
+			await fn();
+			if (counted) { applied++; if (progress) { progress.applied++; } }
+		} catch (e) { stopped = { path, reason: reasonOf(e), landing: mayStillLand(e) }; }
 	};
 
 	// Folders first: the ones the command made, and the parent of every file it wrote. A folder that is already
@@ -214,10 +260,11 @@ async function commitChanges(changes, io, caps, cancelled) {
 	}
 
 	if (stopped) {
-		const s = /** @type {{ path: string, reason: string }} */ (stopped);
+		const s = /** @type {{ path: string, reason: string, landing: boolean }} */ (stopped);
 		return {
 			total, applied, failed: total - applied, refused: false,
-			notes: [note('applied ' + applied + ' of ' + total + ' file changes; stopped at ' + forNote(s.path) + ': ' + s.reason + '. The rest were not applied.')],
+			notes: [note('applied ' + (base + applied) + ' of ' + grand + ' file changes; stopped at ' + forNote(s.path) + ': ' + s.reason + '.'
+				+ (s.landing ? ' That call was not answered and cannot be cancelled: it may still land.' : '') + ' The rest were not applied.')],
 		};
 	}
 	return { total, applied, failed: 0, refused: false, notes: [] };

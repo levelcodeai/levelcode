@@ -44,7 +44,20 @@ const LIMITS = deepFreeze({
 		readyMs: 20000,
 		/** How long one call to the file system may take (a read for the engine, a write of the commit). */
 		fsMs: 60000,
-		/** How long levelcode-ai's review of a change set may take. */
+		/**
+		 * How long the read-only check of a change set may take in all (the terminal's: has anything changed on disk since
+		 * the command read it?), counted from its first call. It is fsMs on purpose: a provider that does not answer costs
+		 * the visitor one such wait and the set is refused whole ("could not be checked in time"), not one per file, and
+		 * a provider that answers every call just before fsMs is not waited for for 2000 of them. The terminal's cap of
+		 * 2000 entries (a stat and a read each) fits in it at 15 ms a call.
+		 */
+		checkMs: 60000,
+		/**
+		 * How long the part of a commit that WRITES may take in all, counted from its first call: levelcode-ai's review
+		 * of a change set and then the folders it left to the shell (one budget, for the agent), or the shell's own
+		 * writes (the terminal, after its check, which has checkMs). Each call is also bound by fsMs. What is not done
+		 * when this runs out is not started, and the one call in flight may still land: the result says so.
+		 */
 		commitMs: 120000,
 		/** The host's deadline for a run is the engine's backstop plus this. */
 		deadlineGraceMs: 15000,

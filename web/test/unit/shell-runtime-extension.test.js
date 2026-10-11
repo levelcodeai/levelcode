@@ -147,7 +147,7 @@ async function test(/** @type {string} */ name, /** @type {(ext: any) => Promise
 		assert.deepStrictEqual(Object.keys(o).sort(), ['config', 'context', 'runtime', 'vscode']);
 		assert.strictEqual(o.vscode, vscodeMock);
 		assert.strictEqual(o.context, ctx);
-		for (const f of ['folders', 'createSession', 'onAgentRun', 'spawnAgent', 'dispose']) { assert.strictEqual(typeof o.runtime[f], 'function', f); }
+		for (const f of ['folders', 'mounts', 'resolve', 'stat', 'createSession', 'onAgentRun', 'spawnAgent', 'dispose']) { assert.strictEqual(typeof o.runtime[f], 'function', f); }
 		assert.strictEqual(o.config.info, api.agent.info, 'one ShellInfo, the same the agent reads');
 		assert.strictEqual(o.config.limits.workers.max, 4);
 		ext.deactivate();
@@ -170,6 +170,29 @@ async function test(/** @type {string} */ name, /** @type {(ext: any) => Promise
 		assert.ok(seen.channels.every((c) => c.lines.length === 1 && /^terminal-unavailable /.test(c.lines[0])), JSON.stringify(seen.channels.map((c) => c.lines)));
 		assert.ok(/profile provider already registered/.test(seen.channels[2].lines[0]));
 		void ext;
+	});
+
+	await test('a terminal that fails with something hostile (a message that is a throwing getter), and a script load that fails the same way, are reasons and not exceptions', async (ext) => {
+		const hostile = () => Object.defineProperty({}, 'message', { get() { throw new Error('getter-boom'); } });
+		terminalModule = { createTerminalSupport() { throw hostile(); } };
+		let api;
+		assert.doesNotThrow(() => { api = fresh().activate(context()); });
+		assert.ok(/** @type {any} */ (api).agent, 'the agent\'s shell does not depend on the terminal');
+		assert.ok(seen.channels.length === 1 && /^terminal-unavailable \{"message":"[^"]+"\}$/.test(seen.channels[0].lines[0]), JSON.stringify(seen.channels.map((c) => c.lines)));
+		// the script cannot be read, and the address cannot be fetched either, and both say it in the worst way
+		const savedRead = vscodeMock.workspace.fs.readFile;
+		/** @type {any} */ const g = globalThis;
+		const savedFetch = g.fetch;
+		vscodeMock.workspace.fs.readFile = async () => { throw hostile(); };
+		g.fetch = async () => { throw hostile(); };
+		try {
+			const api2 = ext.activate(context());
+			const o = observe(api2.agent.spawn('a', { cwd: '/scratch', folders: [{ name: 'scratch', root: '/scratch', uri: 'levelcode-scratch:///scratch' }] }), 3000);
+			await o.closed;
+			assert.strictEqual(/** @type {any} */ (o.events[o.events.length - 1]).code, 1);
+			assert.ok(/fetching engine\.worker\.js instead failed too: /.test(o.stderr), o.stderr);
+		} finally { vscodeMock.workspace.fs.readFile = savedRead; if (savedFetch) { g.fetch = savedFetch; } else { delete g.fetch; } }
+		ext.deactivate();
 	});
 
 	await test('a worker that fails is written to the Output channel (routine start and stop are not): support can see a pattern', async (ext) => {

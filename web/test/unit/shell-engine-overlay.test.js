@@ -407,6 +407,55 @@ test('a write a real file system would refuse (no parent, the parent is a file, 
 	assert.deepStrictEqual(await changes(ov), []);
 });
 
+test('the content write of a redirection never throws once the redirection opened its target: the command may have removed the parent or replaced the file (GNU writes to the open descriptor); a write with no opening still does', async () => {
+	const { ov, fs } = setup({ '/w/d/x': 'x', '/w/f': 'old', '/w/g': 'old' });
+	// the engine opens first (an empty write, 'binary'), runs the command, then writes the content
+	await fs.writeFile('/w/d/f', '', 'binary');
+	await fs.rm('/w/d', { recursive: true, force: true });
+	await fs.writeFile('/w/d/f', 'hi\n', 'utf8');                  // the parent is gone: no error, nothing written
+	await fs.appendFile('/w/d/f', 'more\n', 'utf8');
+	assert.strictEqual(await fs.exists('/w/d'), false);
+	// the target itself replaced by a directory
+	await fs.writeFile('/w/f', '', 'binary');
+	await fs.rm('/w/f');
+	await fs.mkdir('/w/f');
+	await fs.writeFile('/w/f', 'hi\n', 'utf8');
+	assert.strictEqual((await fs.stat('/w/f')).isDirectory, true, 'the new folder is untouched');
+	// a path that was never opened: the errno, as a real file system answers touch, tee, sort -o
+	await fs.mkdir('/w/newdir');
+	assert.strictEqual(await code(fs.writeFile('/w/d/never', 'data', 'utf8')), 'ENOENT');
+	assert.strictEqual(await code(fs.writeFile('/w/newdir', 'data', 'binary')), 'EISDIR');
+	assert.strictEqual(await code(fs.appendFile('/w/nodir/x', 'data', 'utf8')), 'ENOENT');
+	// the opening itself is still refused out loud, whatever was opened before
+	assert.strictEqual(await code(fs.writeFile('/w/d/f', '', 'binary')), 'ENOENT');
+	assert.deepStrictEqual(ov.denied, [], 'a dropped descriptor write is not a refusal by the shell');
+	assert.ok(!(await changes(ov)).some((c) => c.kind === 'write'), 'and nothing was written anywhere');
+});
+
+test('a policy refusal of a content write is still dropped and recorded after its opening was accepted (a cap is not a missing folder)', async () => {
+	const { ov, fs } = setup({}, { caps: { writeFile: 10 } });
+	await fs.writeFile('/w/f', '', 'binary');
+	await fs.writeFile('/w/f', 'x'.repeat(11), 'utf8');
+	assert.deepStrictEqual(ov.denied.map((d) => [d.path, d.reason, d.code]), [['/w/f', 'cap-file', 'EFBIG']]);
+});
+
+test('a name with a lone surrogate (the escape of a byte that is not UTF-8) refuses the whole change set, naming it as U+FFFD, and writes nothing', async () => {
+	const { ov, fs } = setup({ '/w/keep': 'k' });
+	await fs.writeFile('/w/ok.txt', 'fine');
+	await fs.writeFile('/w/bad\udcff', 'x');
+	await fs.mkdir('/w/dir\udc80z');
+	const r = await ov.changes();
+	assert.ok(r.refused && r.refused.includes('/w/bad� has a name that is not valid UTF-8'), String(r.refused));
+	assert.ok(!/[\ud800-\udfff]/.test(r.refused), 'the reason is text a person can be shown');
+	assert.ok(r.changes.every((c) => !/[\udc80-\udcff]/.test(c.path)), 'no path with a lone surrogate is handed over');
+	// a pair is a character: an emoji in a name is a name
+	const emoji = setup({});
+	await emoji.fs.writeFile('/w/😀.txt', 'x');
+	const e = await emoji.ov.changes();
+	assert.strictEqual(e.refused, null);
+	assert.deepStrictEqual(brief(e.changes), ['write /w/😀.txt']);
+});
+
 test('opening a file for writing truncates it in the stage; opening for append changes nothing', async () => {
 	const { base, ov, fs } = setup({ '/w/f': 'keep me\n', '/w/g': 'also\n' });
 	await fs.appendFile('/w/f', '', 'binary');

@@ -24,21 +24,26 @@
  *    - what a run changed is applied ONLY when the script ran to its end (how 'exit'). Stopped, timed out,
  *      over a limit or failed: nothing, and a note says so;
  *    - once the engine has said `done`, the commit is what ends the run, with the count of what it really
- *      applied: a worker that dies, a dispose() or a Stop then change the wording of the result, never what
- *      is on disk, and a Stop that comes while the set is only being CHECKED applies nothing;
+ *      applied, and it is BOUNDED: a provider call by fsMs, the read-only check by checkMs (refused whole when
+ *      it runs out, nothing applied), the writing - or the agent's review - by commitMs; a worker that dies
+ *      changes the wording of the result and never what is on disk;
+ *    - a Stop or a dispose() during the commit ends it AT ONCE: every wait is given up and no further call is
+ *      made, a set that was only being checked applies nothing, and one that was being written says how many
+ *      changes were confirmed and that the one in flight cannot be cancelled and may still land;
  *    - every read of the engine is answered, whatever the provider threw, and a size that is not a number
  *      is an error, never "no limit";
  *    - a message from a terminated worker is dropped (the generation guard);
  *    - a terminal's /tmp lives in its engine's memory and dies with it: the line after a replaced engine says
  *      so, once, and an engine that holds /tmp files is kept twice as long when idle;
- *    - planMounts returns for any set of folders (one rooted at /mnt included).
+ *    - planMounts returns for any set of folders (one rooted at /mnt included), and what it returns is what the
+ *      engine would plan for the same folders: mounts that are normalised paths the engine never moves again.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
 
 const { PROGRAMS, BUILTINS, createInfo } = require('./info');
 const { commitChanges, checkChangeSet, note } = require('./commit');
-const { forNote } = require('./sanitize');
+const { forNote, safeMessage, safeGet } = require('./sanitize');
 
 /** vscode.FileType.Directory (a stable bit of the API). */
 const DIR = 2;
@@ -91,42 +96,68 @@ function normalizePath(p) {
 /** @param {string} p @param {string} root */
 function isInside(p, root) { return p === root || p.startsWith(root === '/' ? '/' : root + '/'); }
 
+/** The longest name a relocated folder is given under /mnt (and the longest one a note shows): a longer one cannot be typed, and a path is at most 4096 characters. */
+const MOUNT_NAME_MAX = 100;
+
+/** @param {string} p */
+function baseName(p) { return p.slice(p.lastIndexOf('/') + 1); }
+
+/**
+ * The leaf a relocated folder is mounted at: the engine's own rule (engine/overlay-fs.js planMounts), so that a plan
+ * made here is one the engine takes as it is and never moves again. Whatever is not [A-Za-z0-9._-] is `_`, and so are
+ * leading dots: a folder called '.' or '..' must not become '/mnt/..', which is no normalised path (this side could
+ * never match it, and the engine would normalise it to '/' and relocate it a second time).
+ * @param {string} name
+ */
+function mountLeaf(name) {
+	return name.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^\.+/, '_').slice(0, MOUNT_NAME_MAX);
+}
+
 /**
  * Where each workspace folder is mounted in the engine. Normally at its own root, so the paths a person or the
- * model sees are the paths the shell sees. A mount the engine cannot hold is moved under /mnt, in order:
- * the root itself, a folder that would shadow the engine's own /tmp, /bin, /home..., and a folder equal to or
- * nested with an earlier one (the engine's mount table refuses to be built with any of them, which would
- * take the whole shell down for one oddly named folder).
+ * model sees are the paths the shell sees. A mount the engine cannot hold is moved under /mnt: the root itself,
+ * a folder that would shadow the engine's own /tmp, /bin, /home..., and a folder equal to or nested with an
+ * earlier one (the engine's mount table refuses to be built with any of them, which would take the whole shell
+ * down for one oddly named folder).
  *
- * It always returns: a folder that is itself rooted at /mnt takes /mnt away as a place to move others to, and
- * they go under /lc-mnt instead (then /lc-mnt-2, ...). Every search below is over finitely many names, each of
- * which one taken mount can spoil at most once.
+ * It is the engine's own plan (engine/overlay-fs.js planMounts), in the same two steps and with the same names, so
+ * the engine - which is handed these mounts, not the folders - never has anything left to move; the unit tests run
+ * both over the same folders. First every folder that can stay where it is does, in order; then the others go under
+ * the base, in order, each at its own name or that and -2, -3... The base is /mnt, unless a folder that stayed is
+ * AT or ABOVE it (one rooted at /mnt would swallow every name below it, and a search for a free one would never
+ * end), then /lc-mnt, /lc-mnt-2... So a folder is never moved because of another folder that was itself moved.
+ *
+ * It always returns: every search below is over finitely many names, each of which one taken mount spoils at most once.
  * @param {FolderRef[]} folders
  * @returns {Mount[]}
  */
 function planMounts(folders) {
 	/** @type {Mount[]} */ const out = [];
+	/** @type {Mount[]} */ const moved = [];
 	/** @type {string[]} */ const taken = [];
 	const clashes = (/** @type {string} */ p) => taken.some((t) => isInside(p, t) || isInside(t, p));
 	folders.forEach((f, i) => {
 		if (!f || typeof f.uri !== 'string') { return; }
 		const root = normalizePath(f.root);
 		if (root === null) { return; }
-		let mount = root;
+		// (the engine's name for a folder with none is the last segment of its path)
+		const name = f.name ? String(f.name) : baseName(root) || 'folder';
 		/** @type {string|null} */ let reason = null;
 		if (root === '/') { reason = 'it is the root of the file system'; }
 		else if (RESERVED_TOP.has(root.split('/')[1])) { reason = 'that path is one the shell uses for itself'; }
 		else if (clashes(root)) { reason = 'it overlaps another folder'; }
-		if (reason) {
-			const slug = String(f.name).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'folder';
-			let base = '/mnt';
-			for (let b = 1; taken.some((t) => isInside(base, t)); b++) { base = '/lc-mnt' + (b > 1 ? '-' + b : ''); }
-			let n = 1;
-			do { mount = base + '/' + slug + (n > 1 ? '-' + n : ''); n++; } while (clashes(mount));
-		}
-		taken.push(mount);
-		out.push({ id: 'ws' + i, name: String(f.name), root, mount, uri: f.uri, reason });
+		/** @type {Mount} */ const m = { id: 'ws' + i, name, root, mount: root, uri: f.uri, reason };
+		out.push(m);
+		if (reason) { moved.push(m); } else { taken.push(root); }
 	});
+	let base = '/mnt';
+	for (let b = 1; taken.some((t) => isInside(base, t)); b++) { base = '/lc-mnt' + (b > 1 ? '-' + b : ''); }
+	for (const m of moved) {
+		const leaf = mountLeaf(m.name);
+		let n = 1;
+		do { m.mount = base + '/' + leaf + (n > 1 ? '-' + n : ''); n++; } while (clashes(m.mount));
+		taken.push(m.mount);
+	}
 	return out;
 }
 
@@ -172,8 +203,11 @@ const POSIX_TEXT = /** @type {Record<string, string>} */ ({
  * @param {any} e
  */
 function posixCode(e) {
-	const c = e && typeof e.code === 'string' ? e.code : '';
-	const n = e && typeof e.name === 'string' ? e.name : '';
+	// (read totally: what a provider throws may have a getter that throws)
+	const code = safeGet(e, 'code');
+	const name = safeGet(e, 'name');
+	const c = typeof code === 'string' ? code : '';
+	const n = typeof name === 'string' ? name : '';
 	if (c === 'FileNotFound' || /^EntryNotFound/.test(n) || n === 'NotFoundError') { return 'ENOENT'; }
 	if (c === 'FileExists' || /^EntryExists/.test(n)) { return 'EEXIST'; }
 	if (c === 'FileNotADirectory' || /^EntryNotADirectory/.test(n) || n === 'TypeMismatchError') { return 'ENOTDIR'; }
@@ -194,10 +228,10 @@ function fsError(code, more) {
  * @param {any} e @returns {{ code: string, message: string }}
  */
 function toWireError(e) {
-	if (e && e.ours) { return { code: e.code, message: e.message }; }
 	const code = posixCode(e);
+	if (safeGet(e, 'ours') === true) { return { code, message: safeMessage(e, 200) }; }
 	if (code !== 'EIO') { return { code, message: POSIX_TEXT[code] }; }
-	return { code, message: POSIX_TEXT.EIO + ': ' + forNote((e && e.message) || e).slice(0, 160) };
+	return { code, message: POSIX_TEXT.EIO + ': ' + safeMessage(e, 160) };
 }
 
 /* ===== small helpers ================================================================================== */
@@ -235,6 +269,9 @@ function cleanEnv(o) {
 function droppedEnvNote(n) {
 	return note(n + ' environment variable' + (n === 1 ? ' was' : 's were') + ' not kept: this shell carries at most ' + MAX_ENV_ENTRIES + ' variables and ' + MAX_ENV_BYTES / 1024 + ' KiB of them');
 }
+
+/** A duration for a note: '60 s', '1.5 s', '100 ms'. @param {number} ms */
+function span(ms) { return ms >= 1000 ? Math.round(ms / 100) / 10 + ' s' : Math.round(ms) + ' ms'; }
 
 /** The first `max` UTF-16 units of `text`, without half of a surrogate pair at the end. @param {string} text @param {number} max */
 function cut(text, max) {
@@ -294,7 +331,18 @@ function cleanNotes(list) {
  * @property {any} deadlineTimer
  * @property {string[]} lead                 notes that go first in whatever ends the run (a /tmp that was emptied, variables left out)
  * @property {string|null} workerFailure     why the engine's worker died after it had said `done`, while the commit was going on
+ * @property {Progress|null} progress        where the commit is (from the moment the engine said `done`)
+ * @property {Gate|null} gate                what the commit's calls to the provider go through
  * @property {(o: Outcome) => void} resolve
+ *
+ * @typedef {import('./commit').Progress} Progress
+ *
+ * @typedef {object} Gate
+ * @property {<T>(start: () => Promise<T>, o: { writes: boolean, within?: number }) => Promise<T>} call
+ *     one provider call: not made at all once the gate is closed or its budget is spent; waited for until the
+ *     first of the call's own bound (`within`, else fsMs), the phase's budget and abandon()
+ * @property {() => boolean} abandon   end every wait now, and make no further call; true when a call that changes
+ *     things was in flight (it cannot be taken back: it may still land)
  *
  * @typedef {object} Outcome
  * @property {number} exitCode @property {RunResult['how']} how @property {string[]} notes @property {string} cwd
@@ -372,24 +420,89 @@ function createRuntime(deps) {
 		return m ? targetFor(m, /** @type {string} */ (p)) : null;
 	}
 
-	/** @param {Mount[]} mounts */
-	function commitIO(mounts) {
+	/**
+	 * What every call of a commit to the file system goes through. A provider that never answers (a permission prompt
+	 * nobody sees) must not hold a run for ever, and a Stop must not have to wait for it, so:
+	 *
+	 *    - a call is waited for at most `fsMs` (`within`: the review, which is one call that does a lot, is given the
+	 *      whole budget instead);
+	 *    - the read-only CHECK of a change set has `checkMs` in all, the part that WRITES (the agent's review, then
+	 *      the folders it left; or the shell's own writes) has `commitMs` in all, each counted from the first call
+	 *      made in it: a provider that answers every call just before fsMs is not waited for for N x fsMs;
+	 *    - abandon() ends every wait at once and no call is made after it: a Stop is not an in-flight read's time out.
+	 *
+	 * A call that is given up on is NOT cancelled - a provider has no way to - it is only no longer waited for, and
+	 * if it changes things it may still land; the error says so (`mayStillLand`) and commit.js puts that in the
+	 * note. A call that was never made cannot land, and its error says that too. `progress.phase` says which budget
+	 * a call is in ('check' is the check's, any other the writing's).
+	 * @param {Progress} progress @returns {Gate}
+	 */
+	function createGate(progress) {
+		/** @type {Map<(e: Error) => void, boolean>} every wait there is, and whether it is for a call that changes things */
+		const waiting = new Map();
+		let abandoned = false;
+		/** @type {{ check: number|null, apply: number|null }} */
+		const began = { check: null, apply: null };
+		const timedOut = (/** @type {string} */ message, /** @type {boolean} */ landing) =>
+			Object.assign(new Error(message), { code: 'ETIMEDOUT', timedOut: true, mayStillLand: landing });
+		const stopped = () => Object.assign(new Error('stopped'), { abandoned: true });
+		return {
+			call(start, o) {
+				// (unreachable while every wait is a chain of microtasks, since a Stop is a task of its own; it is here so that
+				// "no call is made after a Stop" is the gate's own rule and not a consequence of how it is scheduled)
+				if (abandoned) { return Promise.reject(stopped()); }
+				const family = progress.phase === 'check' ? 'check' : 'apply';
+				const budget = family === 'check' ? limits.workers.checkMs : limits.workers.commitMs;
+				const now = deps.now();
+				if (began[family] === null) { began[family] = now; }
+				const left = /** @type {number} */ (began[family]) + budget - now;
+				const budgetText = 'ran out of time: ' + (family === 'check' ? 'the check gets ' : 'the changes get ') + span(budget) + ' in all';
+				if (left <= 0) { return Promise.reject(timedOut(budgetText, false)); }
+				const own = o.within === undefined ? limits.workers.fsMs : o.within;
+				const ms = Math.min(own, left);
+				/** @type {Promise<any>} */ let p;
+				try { p = Promise.resolve(start()); } catch (e) { return Promise.reject(e); }
+				return new Promise((resolve, reject) => {
+					/** @type {any} */ let timer = null;
+					const end = () => { deps.clearTimeout(timer); waiting.delete(give); };
+					const give = (/** @type {Error} */ err) => { end(); reject(err); };
+					timer = deps.setTimeout(() => give(timedOut(ms < own ? budgetText : 'timed out', o.writes)), ms);
+					waiting.set(give, o.writes);
+					p.then((v) => { end(); resolve(v); }, (e) => { end(); reject(e); });
+				});
+			},
+			abandon() {
+				if (abandoned) { return false; }
+				abandoned = true;
+				let landing = false;
+				for (const [give, writes] of Array.from(waiting)) { landing = landing || writes; give(stopped()); }
+				return landing;
+			},
+		};
+	}
+
+	/** @param {Mount[]} mounts @param {Gate} gate */
+	function commitIO(mounts, gate) {
 		const fs = vscode.workspace.fs;
+		const read = { writes: false };
+		const write = { writes: true };
 		return {
 			resolve: (/** @type {string} */ p) => resolveIn(mounts, p),
-			// A provider that never answers (a permission prompt nobody sees) must not hold a run for ever.
 			async stat(/** @type {any} */ t) {
-				try { const s = await withTimeout(fs.stat(t), limits.workers.fsMs); return { isDirectory: (s.type & DIR) !== 0, size: s.size }; }
+				try { const s = await gate.call(() => fs.stat(t), read); return { isDirectory: (s.type & DIR) !== 0, size: s.size }; }
 				catch (e) { const c = posixCode(e); if (c === 'ENOENT' || c === 'ENOTDIR') { return null; } throw e; }
 			},
-			readFile: (/** @type {any} */ t) => withTimeout(fs.readFile(t), limits.workers.fsMs),
-			writeFile: (/** @type {any} */ t, /** @type {Uint8Array} */ b) => withTimeout(fs.writeFile(t, b), limits.workers.fsMs),
-			createDirectory: (/** @type {any} */ t) => withTimeout(fs.createDirectory(t), limits.workers.fsMs),
-			remove: (/** @type {any} */ t) => withTimeout(fs.delete(t, { recursive: false, useTrash: false }), limits.workers.fsMs),
+			readFile: (/** @type {any} */ t) => gate.call(() => fs.readFile(t), read),
+			writeFile: (/** @type {any} */ t, /** @type {Uint8Array} */ b) => gate.call(() => fs.writeFile(t, b), write),
+			createDirectory: (/** @type {any} */ t) => gate.call(() => fs.createDirectory(t), write),
+			remove: (/** @type {any} */ t) => gate.call(() => fs.delete(t, { recursive: false, useTrash: false }), write),
 		};
 	}
 
 	/* ----- the read RPC: stat, readFile, readDir ---------------------------------------------------- */
+
+	/** vscode.FileType bits -> the engine's word for it. @param {number} t @returns {'dir'|'file'} */
+	function kindOf(t) { return (t & DIR) !== 0 ? 'dir' : 'file'; }
 
 	/** A file's size from a stat, or null when it is not a number that can be counted with. @param {any} s */
 	function sizeOf(s) { return s && typeof s.size === 'number' && Number.isFinite(s.size) && s.size >= 0 ? s.size : null; }
@@ -412,17 +525,16 @@ function createRuntime(deps) {
 		const uri = resolveIn(run.mounts, /** @type {string} */ (rawPath));
 		if (!uri) { throw fsError('EACCES', 'outside the workspace folders'); }
 		const fs = vscode.workspace.fs;
-		const kind = (/** @type {number} */ t) => ((t & DIR) !== 0 ? 'dir' : 'file');
 		if (op === 'stat') {
 			const s = await fs.stat(uri);
 			// A folder's size is nothing the engine uses; a file's is what its caps and its budget are measured by.
 			const size = sizeOf(s);
 			if (size === null && (s.type & DIR) === 0) { throw fsError('EIO', 'the file system did not say how large the file is'); }
-			return { type: kind(s.type), size: size === null ? 0 : size, mtime: typeof s.mtime === 'number' ? s.mtime : 0 };
+			return { type: kindOf(s.type), size: size === null ? 0 : size, mtime: typeof s.mtime === 'number' ? s.mtime : 0 };
 		}
 		if (op === 'readDir') {
 			const list = await fs.readDirectory(uri);
-			return list.map((/** @type {[string, number]} */ e) => [e[0], kind(e[1])]);
+			return list.map((/** @type {[string, number]} */ e) => [e[0], kindOf(e[1])]);
 		}
 		if (op !== 'readFile') { throw fsError('EINVAL', 'unknown operation'); }
 		const s = await fs.stat(uri);
@@ -443,7 +555,8 @@ function createRuntime(deps) {
 
 	/**
 	 * Answer one read of the engine. Always answers (a read nobody answers holds the run until its deadline): an
-	 * error that cannot even be described - a provider threw something with no usable text - is EIO.
+	 * error that cannot even be described - a provider threw something with no usable text - is EIO (toWireError is
+	 * total).
 	 * @param {Rec} rec @param {any} msg
 	 */
 	async function serveFs(rec, msg) {
@@ -455,9 +568,7 @@ function createRuntime(deps) {
 			const value = await withTimeout(readOp(run, msg.op, msg.path), limits.workers.fsMs);
 			reply = { t: 'fsr', rid: msg.rid, ok: true, value };
 		} catch (e) {
-			/** @type {{ code: string, message: string }} */ let error;
-			try { error = toWireError(e); } catch { error = { code: 'EIO', message: POSIX_TEXT.EIO }; }
-			reply = { t: 'fsr', rid: msg.rid, ok: false, error };
+			reply = { t: 'fsr', rid: msg.rid, ok: false, error: toWireError(e) };
 		}
 		if (rec.dead || rec.run !== run || run.state !== 'running') { return; }
 		if (reply.ok && reply.value instanceof Uint8Array) {
@@ -510,8 +621,8 @@ function createRuntime(deps) {
 		catch (e) { failRec(rec, 'the shell engine could not be reached: ' + messageOf(e)); return false; }
 	}
 
-	/** @param {unknown} e */
-	function messageOf(e) { return forNote((e && /** @type {any} */ (e).message) || e).slice(0, 200); }
+	/** What was thrown, as text for a note or the log. Total: see sanitize.safeMessage. @param {unknown} e */
+	function messageOf(e) { return safeMessage(e, 200); }
 
 	/**
 	 * Terminate a worker for good: nothing it sends afterwards is heard. A run that still has it must be
@@ -574,7 +685,8 @@ function createRuntime(deps) {
 		worker.onmessage = (/** @type {any} */ ev) => onMessage(rec, ev && ev.data);
 		worker.onerror = (/** @type {any} */ ev) => {
 			if (ev && typeof ev.preventDefault === 'function') { ev.preventDefault(); }
-			failRec(rec, 'the shell engine stopped unexpectedly' + (ev && ev.message ? ': ' + messageOf(ev.message) : ''));
+			const said = safeGet(ev, 'message');
+			failRec(rec, 'the shell engine stopped unexpectedly' + (said ? ': ' + messageOf(said) : ''));
 		};
 		worker.onmessageerror = () => failRec(rec, 'the shell engine sent a message that could not be read');
 		rec.readyTimer = deps.setTimeout(() => failRec(rec, 'the shell engine did not start in ' + Math.round(limits.workers.readyMs / 1000) + ' s'), limits.workers.readyMs);
@@ -644,33 +756,48 @@ function createRuntime(deps) {
 	}
 
 	/**
-	 * Stop a run, now. The worker is terminated, so nothing it staged is ever heard of: the result says so.
-	 * Once the engine has finished and the change set is being applied, the application is not interrupted
-	 * (half of a `mv` is worse than all of it); the run then ends with the status of the signal.
+	 * Stop a run, now. Still running: the worker is terminated, so nothing it staged is ever heard of, and the result
+	 * says so. Already committing: the engine has finished and what is going on is the application of its changes,
+	 * which a provider has no way to cancel - so the run does not wait for it. Every wait of the commit is given up and
+	 * no further call is made (the gate), and the run ends AT ONCE with what is known: a Stop that came while the set
+	 * was only being checked applied nothing, one that came while it was written says how many changes are confirmed
+	 * and, when a write was in flight, that it cannot be cancelled and may still land.
 	 * @param {Run} run @param {'SIGTERM'|'SIGKILL'} signal @returns {boolean}
 	 */
 	function killRun(run, signal) {
 		if (run.state === 'settled') { return false; }
-		if (run.killed) { return true; }
 		run.killed = signal;
-		if (run.state === 'committing') { return true; }
+		if (run.state === 'committing') {
+			const landing = /** @type {Gate} */ (run.gate).abandon();
+			settleRun(run, stoppedWhileCommitting(run, signal, landing));
+			return true;
+		}
 		if (run.rec) { terminateRec(run.rec, 'stopped'); }
-		settleRun(run, stoppedOutcome(run, signal, null));
+		settleRun(run, finish(run, 'aborted', signal === 'SIGKILL' ? 137 : 130, [note('stopped. Any file changes the command had made were NOT applied.')], null, 0, run.rec ? run.rec.gen : 0));
 		return true;
 	}
 
 	/**
-	 * @param {Run} run @param {'SIGTERM'|'SIGKILL'} signal
-	 * @param {number|null} applied  null: the command was still running; else how many changes had been made
-	 * @param {boolean} [early]      the stop came while the change set was being checked: nothing was written
+	 * The result of a run that was stopped after its engine had finished: what the commit had got to, in words that
+	 * are true of that moment. `landing`: a call that changes things was in flight, so it may still land.
+	 * @param {Run} run @param {'SIGTERM'|'SIGKILL'} signal @param {boolean} landing @returns {Outcome}
 	 */
-	function stoppedOutcome(run, signal, applied, early) {
-		const text = applied === null
-			? 'stopped. Any file changes the command had made were NOT applied.'
-			: early
-				? 'stopped before anything was applied: the command\'s file changes were checked, and were NOT applied.'
-				: 'stopped while its file changes were being applied; ' + applied + ' of them were applied.';
-		return finish(run, 'aborted', signal === 'SIGKILL' ? 137 : 130, [note(text)], null, applied || 0, run.rec ? run.rec.gen : 0);
+	function stoppedWhileCommitting(run, signal, landing) {
+		const p = /** @type {Progress} */ (run.progress);
+		/** @type {string[]} */ const notes = [];
+		// (the engine's worker died after it had finished, and then this: both are true)
+		if (run.workerFailure) { notes.push(note(run.workerFailure + ', after the command had finished')); }
+		let applied = 0;
+		if (p.phase === 'check') {
+			notes.push(note('stopped before anything was applied: the command\'s file changes were being checked, and were NOT applied.'));
+		} else if (p.phase === 'review') {
+			notes.push(note('stopped while the review of its file changes was going on. A review cannot be interrupted: it may still apply some of them, and how many it applied is not known.'));
+		} else {
+			applied = p.applied;
+			notes.push(note('stopped while its file changes were being applied: ' + applied + ' of ' + p.total + ' were applied.'
+				+ (landing ? ' The change being made at that moment cannot be cancelled and may still land; nothing more was started.' : ' Nothing more was started.')));
+		}
+		return finish(run, 'aborted', signal === 'SIGKILL' ? 137 : 130, notes, null, applied, run.rec ? run.rec.gen : 0);
 	}
 
 	/**
@@ -693,8 +820,11 @@ function createRuntime(deps) {
 		if (rec && rec.key !== key) { terminateRec(rec, 'folders changed'); rec = null; }
 		if (!rec) {
 			if (workers.size >= limits.workers.max) {
+				// The one to replace: the least recently used idle worker - but one whose /tmp holds files only when every
+				// idle one does (the files are the one thing that cannot be made again; an agent's worker holds none).
 				/** @type {Rec|null} */ let lru = null;
-				for (const r of workers) { if (idle(r) && (!lru || r.lastUsed < lru.lastUsed)) { lru = r; } }
+				const before = (/** @type {Rec} */ a, /** @type {Rec} */ b) => ((a.tmpFiles > 0) !== (b.tmpFiles > 0) ? b.tmpFiles > 0 : a.lastUsed < b.lastUsed);
+				for (const r of workers) { if (idle(r) && (!lru || before(r, lru))) { lru = r; } }
 				if (!lru) { throw new Error('too many commands are running at once (' + limits.workers.max + '); try again when one has finished'); }
 				terminateRec(lru, 'evicted');
 			}
@@ -747,6 +877,9 @@ function createRuntime(deps) {
 		if (!run || run.state !== 'running' || msg.id !== run.id) { return; }   // late, duplicate, or for a run that was stopped
 		run.state = 'committing';
 		deps.clearTimeout(run.deadlineTimer);
+		// From here the run is ended by its commit, which is bounded (the gate) and which a Stop gives up on at once.
+		run.progress = { phase: 'check', applied: 0, total: Array.isArray(msg.changes) ? msg.changes.length : 0 };
+		run.gate = createGate(run.progress);
 		if (run.kind === 'terminal') { rec.tmpFiles = tmpFilesOf(msg); }
 		outcomeOf(run, rec, msg).then(
 			(o) => settleRun(run, o),
@@ -762,7 +895,7 @@ function createRuntime(deps) {
 		const engineExit = toExit(msg.exitCode, how === 'exit' ? 1 : 0);
 		// A folder that is not where its own path says is a surprise to whoever reads `pwd`: said on every run.
 		// (a folder's name and path are the visitor's, or a file's: untrusted like everything that is not a constant here)
-		const notes = run.mounts.filter((m) => m.reason).map((m) => note('The folder "' + forNote(m.name) + '" is mounted at ' + forNote(m.mount) + ', not at ' + forNote(m.root) + ': ' + m.reason + '.'))
+		const notes = run.mounts.filter((m) => m.reason).map((m) => note('The folder "' + forNote(cut(m.name, MOUNT_NAME_MAX)) + (m.name.length > MOUNT_NAME_MAX ? '...' : '') + '" is mounted at ' + forNote(m.mount) + ', not at ' + forNote(m.root) + ': ' + m.reason + '.'))
 			.concat(cleanNotes(msg.notes));
 		if (run.outCapped) { notes.push(note('the command wrote more than ' + limits.engine.maxOutputSize * 2 + ' characters; the rest was dropped')); }
 		const changes = Array.isArray(msg.changes) ? msg.changes : [];
@@ -783,8 +916,7 @@ function createRuntime(deps) {
 				: 'the shell engine failed';
 			const n = changes.length;
 			notes.push(note(cause + '.' + (n > 0 ? ' Its ' + n + ' file change' + (n === 1 ? ' was' : 's were') + ' NOT applied.' : '')));
-			const sig = run.killed;
-			return done(sig ? (sig === 'SIGKILL' ? 137 : 130) : (how === 'error' ? Math.max(engineExit, 1) : EXIT_FOR_HOW[how]), 0);
+			return done(how === 'error' ? Math.max(engineExit, 1) : EXIT_FOR_HOW[how], 0);
 		}
 
 		// The script ran to its end: what it changed is applied now, and only now.
@@ -795,24 +927,16 @@ function createRuntime(deps) {
 
 		let applied = 0;
 		let failed = 0;
-		let early = false;
 		if (changes.length > 0) {
 			const r = await applyChanges(run, changes);
 			applied = r.applied;
 			failed = r.failed;
-			early = r.early;
 			notes.push(...r.notes);
 		}
 		if (failed > 0 && exit === 0) { exit = 1; }
 		// The engine died after it had finished (see failRec): the commit above did not need it and is reported as it was.
 		if (run.workerFailure) { notes.push(note(run.workerFailure + ', after the command had finished')); }
-		if (run.killed) {
-			const o = stoppedOutcome(run, run.killed, applied, early);
-			o.notes = notes.concat(o.notes);
-			o.cwd = cwd;
-			o.gen = rec.gen;
-			return o;
-		}
+		// (a run that was stopped meanwhile was settled by killRun, at once; this answer is then dropped)
 		return done(exit, applied);
 	}
 
@@ -836,36 +960,45 @@ function createRuntime(deps) {
 	 * command made and removed, which this shell then makes and removes; `notes`; `failed`, a count - and no
 	 * more: an entry that is not one of those folders is not applied, an answer that is not that shape is "no
 	 * answer", and a count that is not a count is not believed.
+	 *
+	 * Time is the same in both routes (the gate): a call to the file system is waited for `fsMs` at most and the
+	 * part that writes `commitMs` in all - for the agent the review, then the folders it left, sharing that one
+	 * budget; for the terminal its own writes, after a read-only check that has `checkMs` of its own. Stop
+	 * is not waited for in either (killRun settles the run; what this returns after that is dropped).
 	 * @param {Run} run @param {Change[]} changes
-	 * @returns {Promise<{ applied: number, failed: number, notes: string[], early: boolean }>}
-	 *     `early`: it was stopped while the set was being checked, before anything was written
+	 * @returns {Promise<{ applied: number, failed: number, notes: string[] }>}
 	 */
 	async function applyChanges(run, changes) {
-		const io = commitIO(run.mounts);
+		const progress = /** @type {Progress} */ (run.progress);
+		const gate = /** @type {Gate} */ (run.gate);
+		const io = commitIO(run.mounts, gate);
 		const caps = { writeFile: run.caps.writeFile, writeRun: run.caps.writeRun, entries: run.caps.entries };
 		const total = changes.length;
 		const cancelled = () => run.killed !== null;
-		if (!run.commit) {
-			const r = await commitChanges(changes, io, caps, cancelled);
-			return { applied: r.applied, failed: r.failed, notes: r.notes, early: r.cancelled === true };
+		const review = run.commit;
+		if (!review) {
+			const r = await commitChanges(changes, io, caps, cancelled, progress);
+			return { applied: r.applied, failed: r.failed, notes: r.notes };
 		}
 		// An agent run: the change set is checked here before levelcode-ai sees it (an engine that sent a path
 		// outside every folder is a bug, and its review must not be handed one), then judged by its own rules.
 		const problems = checkChangeSet(changes, io, caps);
 		if (problems.length > 0) {
-			return { applied: 0, failed: total, early: false, notes: problems.slice(0, 6).map((p) => note('refused: ' + p)).concat(note('NONE of this command\'s file changes were applied.')) };
+			return { applied: 0, failed: total, notes: problems.slice(0, 6).map((p) => note('refused: ' + p)).concat(note('NONE of this command\'s file changes were applied.')) };
 		}
 		const handed = changes.map((c) => toAgentChange(run.mounts, c));
 		/** @type {any} */ let r;
+		progress.phase = 'review';
 		try {
-			// The second argument is what the review may ask while it checks: has the command been stopped? (The review
-			// is not interrupted from outside; one that looks between its reads makes a Stop take effect sooner.)
-			r = await withTimeout(Promise.resolve(run.commit(handed, { cancelled })), limits.workers.commitMs);
+			// The second argument is what the review may ask while it checks: has the command been stopped? (A Stop does not
+			// wait for the review - killRun settles the run - but one that looks between its reads stops applying sooner.)
+			// The review is ONE call that does a lot, so it is given the whole budget, not a provider call's.
+			r = await gate.call(() => review(handed, { cancelled }), { writes: true, within: limits.workers.commitMs });
 		} catch (e) {
-			return { applied: 0, failed: total, early: false, notes: [note('the command\'s file changes could not be applied (' + messageOf(e) + '); some of them may have been')] };
+			return { applied: 0, failed: total, notes: [note('the command\'s file changes could not be applied (' + messageOf(e) + '); some of them may have been')] };
 		}
 		if (!r || typeof r !== 'object' || !Array.isArray(r.rest)) {
-			return { applied: 0, failed: total, early: false, notes: [note('the review of the command\'s file changes gave no answer, so none of them can be counted as applied; some of them may have been')] };
+			return { applied: 0, failed: total, notes: [note('the review of the command\'s file changes gave no answer, so none of them can be counted as applied; some of them may have been')] };
 		}
 		const notes = cleanNotes(r.notes);
 		const refused = r.refused === true;
@@ -886,16 +1019,44 @@ function createRuntime(deps) {
 			failed += ignored;
 			notes.push(note(ignored + ' entr' + (ignored === 1 ? 'y' : 'ies') + ' the review handed back to the shell ' + (ignored === 1 ? 'is' : 'are') + ' not ' + (ignored === 1 ? 'a folder' : 'folders') + ' the command made or removed, and ' + (ignored === 1 ? 'was' : 'were') + ' NOT applied'));
 		}
-		let early = false;
 		if (rest.length > 0) {
 			const back = rest.map((/** @type {any} */ c) => Object.assign({}, c, { path: toMountPath(run.mounts, c.path) || c.path }));
-			const rr = await commitChanges(back, io, caps, cancelled);
+			// What the review applied is what this phase starts from: a Stop now, or a note, counts against the whole set.
+			progress.phase = 'rest';
+			progress.applied = applied;
+			const rr = await commitChanges(back, io, caps, cancelled, progress);
 			applied += rr.applied;
 			failed += rr.failed;
 			notes.push(...rr.notes);
-			early = rr.cancelled === true && applied === 0;
 		}
-		return { applied, failed, notes, early };
+		return { applied, failed, notes };
+	}
+
+	/* ----- what the terminal asks of the mounts ------------------------------------------------------- */
+
+	/**
+	 * The workspace Uri behind an engine path (a path as a command prints it: /mnt/site/src/a.js), by the mounts as of now,
+	 * or null when the path is in no mount (or is not an absolute path). Total: nothing in it can throw.
+	 * @param {string} p
+	 * @returns {any}
+	 */
+	function resolve(p) { return resolveIn(currentMounts(), p); }
+
+	/**
+	 * What is at an engine path: { type: 'file'|'dir', size } - or null when nothing is, when it is in no mount, or when
+	 * the file system did not say in `workers.fsMs` or failed. Never throws and never waits longer: a caller that
+	 * cannot wait that long (a link under the mouse) races its own timer, as the answer is cheap to drop.
+	 * @param {string} p
+	 * @returns {Promise<{ type: 'file'|'dir', size: number } | null>}
+	 */
+	async function stat(p) {
+		try {
+			const uri = resolve(p);
+			if (!uri) { return null; }
+			const s = await withTimeout(vscode.workspace.fs.stat(uri), limits.workers.fsMs);
+			const size = sizeOf(s);
+			return { type: kindOf(s.type), size: size === null ? 0 : size };
+		} catch { return null; }
 	}
 
 	/* ----- sessions: the visitor's terminal ---------------------------------------------------------- */
@@ -914,7 +1075,7 @@ function createRuntime(deps) {
 			// setTimeout reads anything above 2^31-1 as 1 ms: a number outside what it can hold is the default, not a deadline now.
 			timeoutMs: typeof o.timeoutMs === 'number' && o.timeoutMs >= 1 && o.timeoutMs <= MAX_TIMER_MS
 				? o.timeoutMs : Math.min(MAX_TIMER_MS, limits.engine.maxExecutionTimeMs + limits.workers.deadlineGraceMs),
-			rec: null, killed: null, readBytes: 0, outChars: 0, outCapped: false, t0: deps.now(), deadlineTimer: null, lead: [], workerFailure: null, resolve: () => { },
+			rec: null, killed: null, readBytes: 0, outChars: 0, outCapped: false, t0: deps.now(), deadlineTimer: null, lead: [], workerFailure: null, progress: null, gate: null, resolve: () => { },
 		};
 	}
 
@@ -1008,7 +1169,13 @@ function createRuntime(deps) {
 					pending = null;
 					if (out.how === 'exit' && !closed) {
 						cwd = out.cwd;
-						if (out.env) { env = out.env; }
+						if (out.env) {
+							env = out.env;
+							// The size of the terminal is a fact of ONE run (it was passed as COLUMNS and LINES), not state of the
+							// session: carried, it would be a stale size for the next run that is not told its own.
+							if (columns && env.COLUMNS === columns) { delete env.COLUMNS; }
+							if (lines && env.LINES === lines) { delete env.LINES; }
+						}
 						cwdGen = out.gen;
 					}
 					return { exitCode: out.exitCode, how: out.how, notes: lead.concat(out.notes), cwd, applied: out.applied, durationMs: out.durationMs };
@@ -1174,8 +1341,8 @@ function createRuntime(deps) {
 	function dispose() {
 		if (disposed) { return; }
 		disposed = true;
-		// A run that is still running ends now, stopped. One whose engine had finished is being committed, and that is not
-		// interrupted: it ends when the commit does, with what it really applied (killRun knows the difference).
+		// Every run ends now, stopped: one that is still running by terminating its worker, one whose engine had finished
+		// by giving up on its commit (killRun knows the difference; the write in flight may still land, and says so).
 		for (const run of Array.from(active)) { killRun(run, 'SIGKILL'); }
 		for (const s of Array.from(sessions)) { s.dispose(); }
 		for (const r of Array.from(workers)) { terminateRec(r, 'disposed'); }
@@ -1189,6 +1356,8 @@ function createRuntime(deps) {
 		folders,
 		/** Where each folder is mounted in the engine, as of now: the plan every run is started with (and what a prompt may show). */
 		mounts: currentMounts,
+		resolve,
+		stat,
 		createSession,
 		spawnAgent,
 		/** @param {(e: AgentRunEvent) => void} listener */

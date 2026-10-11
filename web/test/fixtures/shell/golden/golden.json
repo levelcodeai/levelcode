@@ -8,7 +8,7 @@
 			"whoami-uname"
 		],
 		"inlineMax": 4096,
-		"cases": 587
+		"cases": 682
 	},
 	"fixture": {
 		"script": "rm -rf proj; mkdir -p proj/src/lib proj/docs proj/node_modules/pkg proj/empty\nprintf 'hello\\nworld\\nfoo bar\\n' > proj/a.txt\nprintf 'alpha\\nbeta\\ngamma\\nbeta\\nalpha\\nbeta\\n' > proj/words.txt\nprintf 'line1\\nTODO: fix this\\nline3\\nTODO: another\\n' > proj/src/main.js\nprintf 'export const x = 1;\\n// TODO later\\n' > proj/src/lib/util.js\nprintf '# Title\\n\\nSome docs with TODO.\\n' > proj/docs/README.md\nprintf '{\"name\":\"pkg\",\"version\":\"1.0.0\"}\\n' > proj/node_modules/pkg/package.json\nprintf 'name,age,city\\nalice,30,paris\\nbob,25,london\\ncarol,35,paris\\n' > proj/data.csv\nprintf 'a b c\\n1 2 3\\n4 5 6\\n' > proj/nums.txt\nprintf 'no newline at end' > proj/nonl.txt\nprintf '#!/bin/sh\\necho script ran: $1\\n' > proj/run.sh\nprintf 'tab\\tseparated\\tvalues\\nsecond\\trow\\there\\n' > proj/tabs.txt\n",
@@ -14356,6 +14356,3347 @@
 			"fixture": false,
 			"script": "unset PATH; echo a; printf 'b\\n'; pwd",
 			"stdout": "a\nb\n/w\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-r-d-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; echo 2 > d/h; cp -r d d2/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d\n./d/f\n./d/h\n./d2\n./d2/f\n./d2/h\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"d/h": "2\n",
+					"d2/f": "1\n",
+					"d2/h": "2\n"
+				},
+				"dirs": [
+					"d",
+					"d2"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-r-dslash-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; cp -r d/ d2/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d\n./d/f\n./d2\n./d2/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"d2/f": "1\n"
+				},
+				"dirs": [
+					"d",
+					"d2"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-R-a",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; cp -R d e/; cp -a d g/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d\n./d/f\n./e\n./e/f\n./g\n./g/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"e/f": "1\n",
+					"g/f": "1\n"
+				},
+				"dirs": [
+					"d",
+					"e",
+					"g"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-rT-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; cp -rT d d2/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d\n./d/f\n./d2\n./d2/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"d2/f": "1\n"
+				},
+				"dirs": [
+					"d",
+					"d2"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-rv-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; cp -rv d d2/; echo \"rc=$?\"; find . | sort",
+			"stdout": "'d' -> 'd2/'\n'd/f' -> 'd2/f'\nrc=0\n.\n./d\n./d/f\n./d2\n./d2/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"d2/f": "1\n"
+				},
+				"dirs": [
+					"d",
+					"d2"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-r-into-existing-parent",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d ex; echo 1 > d/f; cp -r d ex/n/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d\n./d/f\n./ex\n./ex/n\n./ex/n/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"ex/n/f": "1\n"
+				},
+				"dirs": [
+					"d",
+					"ex",
+					"ex/n"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-r-missing-parent",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; cp -r d nodir/n/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\n.\n./d\n./d/f\n",
+			"stderr": "cp: cannot create directory 'nodir/n/': No such file or directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n"
+				},
+				"dirs": [
+					"d"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-dir-no-r-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; cp d d2/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\n.\n./d\n./d/f\n",
+			"stderr": "cp: -r not specified; omitting directory 'd'\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n"
+				},
+				"dirs": [
+					"d"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-d-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; mv d d2/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d2\n./d2/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d2/f": "1\n"
+				},
+				"dirs": [
+					"d2"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-dslash-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; mv d/ d2/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d2\n./d2/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d2/f": "1\n"
+				},
+				"dirs": [
+					"d2"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-double-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; mv d d2//; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d2\n./d2/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d2/f": "1\n"
+				},
+				"dirs": [
+					"d2"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-v-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; mv -v d d2/; echo \"rc=$?\"; find . | sort",
+			"stdout": "renamed 'd' -> 'd2/'\nrc=0\n.\n./d2\n./d2/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d2/f": "1\n"
+				},
+				"dirs": [
+					"d2"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-missing-parent-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; mv d nodir/n/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\n.\n./d\n",
+			"stderr": "mv: cannot move 'd' to 'nodir/n/': No such file or directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [
+					"d"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-file-onto-missing-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo a > a.txt; cp a.txt n/; echo \"rc=$?\"; mv a.txt n/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\nrc=1\n.\n./a.txt\n",
+			"stderr": "cp: cannot create regular file 'n/': Not a directory\nmv: cannot move 'a.txt' to 'n/': Not a directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a.txt": "a\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-file-below-a-file",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo a > a; echo b > b.txt; cp a b.txt/x/y; mv a b.txt/x/y; mkdir d; cp -r d b.txt/x/y/; cp a b.txt/; mv a b.txt/n; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\n.\n./a\n./b.txt\n./d\n",
+			"stderr": "cp: failed to access 'b.txt/x/y': Not a directory\nmv: failed to access 'b.txt/x/y': Not a directory\ncp: failed to access 'b.txt/x/y/': Not a directory\ncp: failed to access 'b.txt/': Not a directory\nmv: failed to access 'b.txt/n': Not a directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a": "a\n",
+					"b.txt": "b\n"
+				},
+				"dirs": [
+					"d"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-src-file-with-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo a > a; mkdir d; cp a/ x; cp -r a/ x; mv a/ x; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\n.\n./a\n./d\n",
+			"stderr": "cp: cannot stat 'a/': Not a directory\ncp: cannot stat 'a/': Not a directory\nmv: cannot stat 'a/': Not a directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a": "a\n"
+				},
+				"dirs": [
+					"d"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-src-file-with-slash-multi",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo a > a; echo b > b; mkdir t; cp a/ b t; echo \"rc=$?\"; mv a/ b t; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\nrc=1\n.\n./a\n./t\n./t/b\n",
+			"stderr": "cp: cannot stat 'a/': Not a directory\nmv: cannot stat 'a/': Not a directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a": "a\n",
+					"t/b": "b\n"
+				},
+				"dirs": [
+					"t"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-u-r-slash",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo 1 > d/f; cp -ru d d2/; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d\n./d/f\n./d2\n./d2/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"d2/f": "1\n"
+				},
+				"dirs": [
+					"d",
+					"d2"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-same-file",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo 1 > a; mv a a; echo \"rc=$?\"; mv a ./a; echo \"rc=$?\"; mv -n a a; echo \"rc=$?\"; mv a .; echo \"rc=$?\"; cp a a; echo \"rc=$?\"; cp -n a a; echo \"rc=$?\"; cat a",
+			"stdout": "rc=1\nrc=1\nrc=0\nrc=1\nrc=1\nrc=0\n1\n",
+			"stderr": "mv: 'a' and 'a' are the same file\nmv: 'a' and './a' are the same file\nmv: 'a' and './a' are the same file\ncp: 'a' and 'a' are the same file\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a": "1\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-T-dir",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d e; echo 1 > d/f; echo 2 > e/g; cp -rT d e; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d\n./d/f\n./e\n./e/f\n./e/g\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"e/f": "1\n",
+					"e/g": "2\n"
+				},
+				"dirs": [
+					"d",
+					"e"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-T-file-onto-dir",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo 1 > a; mkdir b; cp -T a b; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\n.\n./a\n./b\n",
+			"stderr": "cp: cannot overwrite directory 'b' with non-directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a": "1\n"
+				},
+				"dirs": [
+					"b"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-T-extra-operand",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo 1 > a; echo 2 > b; mkdir c; cp -T a b c; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\n.\n./a\n./b\n./c\n",
+			"stderr": "cp: extra operand 'c'\nTry 'cp --help' for more information.\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a": "1\n",
+					"b": "2\n"
+				},
+				"dirs": [
+					"c"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-T-long",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d e; echo 1 > d/f; cp -r --no-target-directory d e; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./d\n./d/f\n./e\n./e/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"e/f": "1\n"
+				},
+				"dirs": [
+					"d",
+					"e"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-T-empty-dir",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d e; echo 1 > d/f; mv -T d e; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=0\n.\n./e\n./e/f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"e/f": "1\n"
+				},
+				"dirs": [
+					"e"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-T-full-dir",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d e; echo 1 > d/f; echo 2 > e/g; mv -T d e; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\n.\n./d\n./d/f\n./e\n./e/g\n",
+			"stderr": "mv: cannot move 'd' to 'e': Directory not empty\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"e/g": "2\n"
+				},
+				"dirs": [
+					"d",
+					"e"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-T-file-onto-dir",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo 1 > a; mkdir e; mv -T a e; echo \"rc=$?\"; find . | sort",
+			"stdout": "rc=1\n.\n./a\n./e\n",
+			"stderr": "mv: cannot overwrite directory 'e' with non-directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a": "1\n"
+				},
+				"dirs": [
+					"e"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mv-T-file",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo 1 > a; echo 2 > b; mv -T a b; echo \"rc=$?\"; cat b; find . | sort",
+			"stdout": "rc=0\n1\n.\n./b\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"b": "1\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-cp-rv-lists-files",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d d2; echo 1 > d/f; mkdir d/s; echo 2 > d/s/g; cp -rv d d2 | sort; cp -av d e | sort; cp -rv d/. d2 | sort",
+			"stdout": "'d' -> 'd2/d'\n'd/f' -> 'd2/d/f'\n'd/s' -> 'd2/d/s'\n'd/s/g' -> 'd2/d/s/g'\n'd' -> 'e'\n'd/f' -> 'e/f'\n'd/s' -> 'e/s'\n'd/s/g' -> 'e/s/g'\n'd/./f' -> 'd2/./f'\n'd/./s' -> 'd2/./s'\n'd/./s/g' -> 'd2/./s/g'\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": "1\n",
+					"d/s/g": "2\n",
+					"d2/d/f": "1\n",
+					"d2/d/s/g": "2\n",
+					"d2/f": "1\n",
+					"d2/s/g": "2\n",
+					"e/f": "1\n",
+					"e/s/g": "2\n"
+				},
+				"dirs": [
+					"d",
+					"d/s",
+					"d2",
+					"d2/d",
+					"d2/d/s",
+					"d2/s",
+					"e",
+					"e/s"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-redirect-parent-removed",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo before; { rm -rf d; echo hi; } > d/f; echo \"after rc=$?\"; ls",
+			"stdout": "before\nafter rc=0\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-redirect-function",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; f() { rm -rf d; echo hi; }; f > d/log; echo \"after rc=$?\"; ls",
+			"stdout": "after rc=0\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-redirect-subshell-2to1",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; ( rm -rf d; echo hi ) > d/f 2>&1; echo \"after rc=$?\"; ls",
+			"stdout": "after rc=0\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-redirect-loop",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; for i in 1 2; do rm -rf d; echo $i; done > d/f; echo \"after rc=$?\"; ls",
+			"stdout": "after rc=0\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-redirect-exec",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; exec > d/log; rm -rf d; echo hi; echo there",
+			"stdout": "",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-redirect-append-parent-removed",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; echo x > d/f; { rm -rf d; echo hi; } >> d/f; echo \"after rc=$?\"; ls",
+			"stdout": "after rc=0\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-printf-T-utc",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf '%(%F %T %Z %z)T\\n' 1600000000; printf '%(%Y-%m-%d)T|%(%H:%M)T\\n' 0 86400; printf '%(%Z)T\\n' -1; printf '%(%Z)T\\n' -2",
+			"stdout": "2020-09-13 12:26:40 UTC +0000\n1970-01-01|00:00\nUTC\nUTC\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-printf-T-tz-prefix",
+			"source": "round3",
+			"fixture": false,
+			"script": "TZ=Asia/Tokyo printf '%(%F %T %Z %z)T\\n' 1600000000; TZ=America/New_York printf '%(%F %T %Z)T\\n' 1600000000; TZ=America/New_York printf '%(%F %T %Z)T\\n' 1610000000",
+			"stdout": "2020-09-13 21:26:40 JST +0900\n2020-09-13 08:26:40 EDT\n2021-01-07 01:13:20 EST\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-printf-T-tz-export",
+			"source": "round3",
+			"fixture": false,
+			"script": "export TZ=Europe/London; printf '%(%F %T %Z)T\\n' 1600000000; printf '%(%F %T %Z)T\\n' 1610000000; printf '%(%c)T\\n' 0",
+			"stdout": "2020-09-13 13:26:40 BST\n2021-01-07 06:13:20 GMT\nThu Jan  1 01:00:00 1970\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-printf-T-unexported-tz",
+			"source": "round3",
+			"fixture": false,
+			"script": "TZ=Asia/Tokyo; printf '%(%F %T %Z)T\\n' 1600000000; date -d @1600000000 '+%F %T %Z'; export TZ; date -d @1600000000 '+%F %T %Z'",
+			"stdout": "2020-09-13 12:26:40 UTC\n2020-09-13 12:26:40 UTC\n2020-09-13 21:26:40 JST\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-date-u-d-with-tz",
+			"source": "round3",
+			"fixture": false,
+			"script": "TZ=America/New_York date -u -d '2020-02-29 12:00:00' '+%F %T %Z'; export TZ=Asia/Tokyo; date -u -d '2020-02-29 12:00:00' '+%F %T %Z'; date -d '2020-02-29 12:00:00' '+%F %T %Z %s'; date -u -d @0 '+%F %T %Z'",
+			"stdout": "2020-02-29 12:00:00 UTC\n2020-02-29 12:00:00 UTC\n2020-02-29 12:00:00 JST 1582945200\n1970-01-01 00:00:00 UTC\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-date-Z-names",
+			"source": "round3",
+			"fixture": false,
+			"script": "for z in Asia/Tokyo Europe/London America/New_York Asia/Kolkata Europe/Paris Australia/Sydney Asia/Dubai America/Sao_Paulo Asia/Singapore Europe/Moscow Pacific/Auckland America/Los_Angeles Asia/Kathmandu; do TZ=$z date -d @1600000000 '+%Z %z'; TZ=$z date -d @1610000000 '+%Z %z'; done",
+			"stdout": "JST +0900\nJST +0900\nBST +0100\nGMT +0000\nEDT -0400\nEST -0500\nIST +0530\nIST +0530\nCEST +0200\nCET +0100\nAEST +1000\nAEDT +1100\n+04 +0400\n+04 +0400\n-03 -0300\n-03 -0300\n+08 +0800\n+08 +0800\nMSK +0300\nMSK +0300\nNZST +1200\nNZDT +1300\nPDT -0700\nPST -0800\n+0545 +0545\n+0545 +0545\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-date-iso",
+			"source": "round3",
+			"fixture": false,
+			"script": "date -d @1600000000 -I; date -d @1600000000 -Iseconds; date -d @1600000000 --iso-8601=hours; date -d @1600000000 --iso-8601=minutes; date -d @1600000000 --iso-8601; TZ=Asia/Tokyo date -d @1600000000 -Iseconds; date -u -d @1600000000 -I; date -d @1600000000 -R",
+			"stdout": "2020-09-13\n2020-09-13T12:26:40+00:00\n2020-09-13T12+00:00\n2020-09-13T12:26+00:00\n2020-09-13\n2020-09-13T21:26:40+09:00\n2020-09-13\nSun, 13 Sep 2020 12:26:40 +0000\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-tz-posix-forms",
+			"source": "round3",
+			"fixture": false,
+			"script": "TZ=JST-9 date -d @0 '+%F %T %Z %z'; TZ=UTC+3 date -d @0 '+%F %T %Z %z'; TZ=:America/New_York date -d @0 '+%F %T %Z'; TZ=EST5EDT date -d @1600000000 '+%F %T %Z'; TZ=GMT date -d @0 '+%F %T %Z'; TZ=Etc/GMT-9 date -d @0 '+%F %T %Z'",
+			"stdout": "1970-01-01 09:00:00 JST +0900\n1969-12-31 21:00:00 UTC -0300\n1969-12-31 19:00:00 EST\n2020-09-13 08:26:40 EDT\n1970-01-01 00:00:00 GMT\n1970-01-01 09:00:00 +09\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-tz-exported-vs-assigned",
+			"source": "round3",
+			"fixture": false,
+			"script": "TZ=Asia/Tokyo; date -d @0 '+%F %T'; export TZ; date -d @0 '+%F %T'; f() { local TZ=America/New_York; date -d @0 '+%F %T'; }; unset TZ; f; touch -d @100 t; TZ=Asia/Tokyo; stat -c %y t; ls -l t | awk '{print $6,$7,$8}'",
+			"stdout": "1970-01-01 00:00:00\n1970-01-01 09:00:00\n1970-01-01 00:00:00\n1970-01-01 00:01:40.000000000 +0000\nJan 1 1970\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"t": ""
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-tz-reaches-children",
+			"source": "round3",
+			"fixture": false,
+			"script": "env TZ=Asia/Tokyo date -d @0 '+%F %T %Z'; (export TZ=Asia/Tokyo; date -d @0 '+%F %T'); date -d @0 '+%F %T'; export TZ=Asia/Tokyo; echo @0 | xargs -I{} date -d {} '+%F %T'; timeout 5 date -d @0 '+%F %T'; sh -c 'date -d @0 +%T'; env -i date -d @0 '+%F %T'",
+			"stdout": "1970-01-01 09:00:00 JST\n1970-01-01 09:00:00\n1970-01-01 00:00:00\n1970-01-01 09:00:00\n1970-01-01 09:00:00\n09:00:00\n1970-01-01 00:00:00\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-exported-vars-reach-xargs",
+			"source": "round3",
+			"fixture": false,
+			"script": "export FOO=1; echo x | xargs -I{} sh -c 'echo [$FOO]'; BAR=2; echo x | xargs -I{} sh -c 'echo [$BAR]'; BAZ=3 sh -c 'echo [$BAZ]'; echo x | BAZ=4 xargs -I{} sh -c 'echo [$BAZ]'; export FOO=1; find . -maxdepth 0 -exec sh -c 'echo [$FOO]' ';'",
+			"stdout": "[1]\n[]\n[3]\n[4]\n[1]\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-plus-class",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'abc 12 def345 a+b\\n' | grep -o '[0-9]\\+'; printf 'abc 12 def345 a+b\\n' | grep -c '[0-9]\\+'",
+			"stdout": "12\n345\n1\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-plus-atoms",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'abc 12 def345 a+b\\n' | grep -o 'a\\+'; printf 'abc 12 def345 a+b\\n' | grep -o '.\\+'; printf 'abc 12 def345 a+b\\n' | grep -o '\\w\\+'",
+			"stdout": "a\na\nabc 12 def345 a+b\nabc\n12\ndef345\na\nb\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-question",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'abc de\\n' | grep -o 'd\\?e'; printf 'colour\\ncolor\\ncolr\\n' | grep 'colou\\?r'",
+			"stdout": "de\ncolour\ncolor\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-word-boundaries",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'abc abcd\\nxabc\\nabc\\n' | grep -o '\\<abc\\>'; printf 'the cat\\nconcatenate\\ncat\\n' | grep '\\<cat\\>'; printf 'the cat\\nconcatenate\\n' | grep '\\<cat'; printf 'the cat\\nbobcat\\n' | grep 'cat\\>'",
+			"stdout": "abc\nabc\nthe cat\ncat\nthe cat\nthe cat\nbobcat\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-ere-word-boundaries",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a cat b\\nconcat\\n' | grep -oE '\\<cat\\>'; printf 'a cat b\\nconcat\\n' | grep -E '\\<cat'; printf 'a cat\\nconcat\\n' | egrep 'cat\\>'",
+			"stdout": "cat\na cat b\na cat\nconcat\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-group-plus",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'ababx\\nx\\n' | grep -o '\\(ab\\)\\+'; printf 'ab\\ncd\\nxe\\n' | grep '\\(ab\\|cd\\)'",
+			"stdout": "abab\nab\ncd\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-posix-class-plus",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a1\\nb\\n' | grep '[[:digit:]]\\+'; printf 'a1\\nb\\n' | grep '[[:alpha:]]\\+[0-9]'; printf 'a b\\n' | grep -o '\\S\\+'",
+			"stdout": "a1\na1\na\nb\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-literals",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a+b\\na?b\\nab\\n' | grep 'a+b'; printf 'a+b\\na?b\\nab\\n' | grep 'a?b'; printf '*a\\nb\\n' | grep '*a'; printf 'a*b\\n' | grep 'a\\*b'; printf '+a\\nb\\n' | grep '\\+a'",
+			"stdout": "a+b\na?b\n*a\na*b\n+a\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-anchors",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a^b\\na$b\\n' | grep 'a^b'; printf 'a^b\\na$b\\n' | grep 'a$b'; printf 'ab\\ncd\\nxe\\n' | grep '^ab\\|cd$'",
+			"stdout": "a^b\na$b\nab\ncd\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-intervals",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'aa\\na\\naaa\\n' | grep -x 'a\\{2,3\\}'; printf 'aa\\na\\naaa\\n' | grep -x 'a\\{2\\}'; printf 'aa\\na\\naaa\\n' | grep 'a\\{2,\\}'",
+			"stdout": "aa\naaa\naa\naa\naaa\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-bre-options-combined",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'cat catalog cat\\n' | grep -ow cat; printf 'Cat CAT cat\\n' | grep -io 'c\\w\\+'; printf 'a\\nab\\nb\\n' | grep -vx 'a\\|b'; printf 'foo12 12 bar\\n' | grep -ow '[0-9]\\+'; printf 'a1\\nb2\\nc\\n' | grep -e '[0-9]\\+' -e 'c'",
+			"stdout": "cat\ncat\nCat\nCAT\ncat\nab\n12\na1\nb2\nc\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-grep-oc-counts-lines",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a a a\\nb\\na\\n' | grep -oc a; printf 'a a a\\nb\\na\\n' | grep -co a; printf 'a a a\\nb\\na\\n' > f; grep -oc a f; grep -c a f",
+			"stdout": "2\n2\n2\n2\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f": "a a a\nb\na\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sed-word-boundaries",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo 'abc abcd xabc abc' | sed 's/\\<abc\\>/X/g'; echo 'abc abcd xabc' | sed 's/\\<abc/X/g'; echo 'abc abcd xabc' | sed 's/abc\\>/X/g'; echo 'abc abcd' | sed -E 's/\\<abc\\>/X/'; echo 'abc abcd' | sed -n '/\\<abc\\>/p'",
+			"stdout": "X abcd xabc X\nX Xd xabc\nX abcd xX\nX abcd\nabc abcd\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sed-plus-question-alt",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo 'abc 12 def345 aa' | sed 's/[0-9]\\+/N/g'; echo 'colour color' | sed 's/colou\\?r/C/g'; echo 'cat dog bird' | sed 's/cat\\|dog/PET/g'; echo 'ab_1 c-d' | sed 's/\\w\\+/W/g'",
+			"stdout": "abc N defN aa\nC C\nPET PET bird\nW W-W\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sed-label-semicolon",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a\\nb\\nc\\n' | sed ':a;N;$!ba;s/\\n/ /g;$a\\END'; printf 'a\\nb\\n' | sed ':a;2a\\foo'",
+			"stdout": "a b c\nEND\na\nb\nfoo\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sed-f-oneliner",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a\\nb\\n' > a.txt; printf '$a\\\\END\\n1i\\\\START\\n' > s.sed; sed -f s.sed a.txt; printf '1i\\\\\\nHEAD\\n$a\\\\\\nTAIL\\ns/a/A/\\n' > t.sed; sed -f t.sed a.txt",
+			"stdout": "START\na\nb\nEND\nHEAD\nA\nb\nTAIL\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a.txt": "a\nb\n",
+					"s.sed": "$a\\END\n1i\\START\n",
+					"t.sed": "1i\\\nHEAD\n$a\\\nTAIL\ns/a/A/\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sed-label-branches",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a\\nb\\n' | sed -e ':x' -e 'N;s/\\n/+/;tx'; printf 'a\\nb\\n' | sed -n '/a/b end;p;:end'; printf 'aaa\\n' | sed ':a;s/a/b/;ta'",
+			"stdout": "a+b\nb\nbbb\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sed-s-w-file",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a\\nx\\nb\\nx\\n' > in; sed 's/x/y/w out' in; echo ---; cat out; sed -n 's/x/z/gpw out2' in; echo ---; cat out2",
+			"stdout": "a\ny\nb\ny\n---\ny\ny\nz\nz\n---\nz\nz\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"in": "a\nx\nb\nx\n",
+					"out": "y\ny\n",
+					"out2": "z\nz\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sed-range-numeric-end-before-start",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'one\\ntwo\\nthree\\nfour\\nfive\\n' | sed '/four/,3c X'; printf 'one\\ntwo\\nthree\\nfour\\nfive\\n' | sed -n '/four/,3p'; printf 'one\\ntwo\\nthree\\nfour\\nfive\\n' | sed '/four/,3d'; printf 'one\\ntwo\\nthree\\nfour\\nfive\\n' | sed '/two/,/four/c X'",
+			"stdout": "one\ntwo\nthree\nX\nfive\nfour\none\ntwo\nthree\nfive\none\nX\nfive\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sort-k-no-end",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'x,3,b\\ny,1,a\\nz,2,c\\nw,2,d\\n' > c.csv; sort -t, -k2 c.csv; printf 'a 1 z\\nb 1 y\\nc 1 x\\n' | sort -k2; printf 'a 1 z\\nb 1 y\\nc 1 x\\n' | sort -k2,2",
+			"stdout": "y,1,a\nz,2,c\nw,2,d\nx,3,b\nc 1 x\nb 1 y\na 1 z\na 1 z\nb 1 y\nc 1 x\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"c.csv": "x,3,b\ny,1,a\nz,2,c\nw,2,d\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sort-u-keeps-first",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'x,3,b\\ny,1,a\\nz,2,c\\nw,2,d\\n' | sort -t, -u -k2,2; printf '1\\n01\\n1.0\\n2\\n02\\n' | sort -un; printf 'b\\nA\\na\\nB\\nc\\n' | sort -uf; printf 'b\\na\\nb\\nc\\na\\n' | sort -ur; printf 'a 2\\nb 1\\na 1\\nb 2\\n' | sort -u -k1,1",
+			"stdout": "y,1,a\nz,2,c\nx,3,b\n1\n2\nA\nb\nc\nc\nb\na\na 2\nb 1\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sort-fields-blanks",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a   b\\nc b\\nd  a\\n' | sort -k2b; printf 'a   b\\nc b\\nd  a\\n' | sort -k2; printf 'a   b\\nc b\\nd  a\\n' | sort -b -k2",
+			"stdout": "d  a\na   b\nc b\na   b\nd  a\nc b\nd  a\na   b\nc b\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sort-fields-chars",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a 11\\nb 12\\nc 21\\nd 02\\n' | sort -k2.2; printf 'a 11\\nb 12\\nc 21\\nd 02\\n' | sort -k2.2,2.2; printf 'abcd 1\\nabxy 0\\n' | sort -k1.1,1.2",
+			"stdout": "d 02\na 11\nb 12\nc 21\nd 02\na 11\nb 12\nc 21\nabcd 1\nabxy 0\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sort-t-fields",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a:3:z\\nb:1:y\\nc:2:x\\n' | sort -t: -k2n; printf 'a::z\\nb:1:y\\nc:2:x\\n' | sort -t: -k2; printf 'a b\\nc\\nd e f\\n' | sort -k3",
+			"stdout": "b:1:y\nc:2:x\na:3:z\nb:1:y\nc:2:x\na::z\na b\nc\nd e f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sort-multi-keys",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a 2 z\\nb 1 y\\na 1 x\\nb 1 w\\n' | sort -k1,1 -k2,2n; printf 'b 1\\na 2\\nb 0\\na 1\\n' | sort -k1,1 -k2; printf 'b 1\\na 1\\nc 0\\n' | sort -s -k2,2; printf 'a 1\\nb 1\\nc 2\\n' | sort -u -rk2,2",
+			"stdout": "a 1 x\na 2 z\nb 1 w\nb 1 y\na 1\na 2\nb 0\nb 1\nc 0\nb 1\na 1\nc 2\na 1\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-sort-check-unique",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a\\na\\nb\\n' | sort -cu; echo \"rc=$?\"; printf 'a\\nb\\n' | sort -cu; echo \"rc=$?\"",
+			"stdout": "rc=1\nrc=0\n",
+			"stderr": "sort: -:2: disorder: a\n",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-I-lines",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a b\\nc d\\n' | xargs -I{} echo [{}]; printf '  a b  \\n\\n c\\n' | xargs -I{} echo [{}]; echo a > 'f s.txt'; echo b > g.txt; ls | xargs -I{} echo file:{}",
+			"stdout": "[a b]\n[c d]\n[a b  ]\n[c]\nfile:f s.txt\nfile:g.txt\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f s.txt": "a\n",
+					"g.txt": "b\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-I-quotes",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf '\"a b\" c\\n'\"'x y'\"' z\\n' | xargs -I{} echo [{}]; printf 'f s.txt\\ng.txt\\n' | xargs -I{} sh -c 'echo file:{}'; printf 'a\\n' | xargs -I@ echo @ @ x@y; printf 'echo\\n' | xargs -I{} {} hi; echo \"rc=$?\"",
+			"stdout": "[a b c]\n[x y z]\nfile:f s.txt\nfile:g.txt\na a xay\nrc=127\n",
+			"stderr": "xargs: {}: No such file or directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-L",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a b\\nc d\\n' | xargs -L 1 echo; printf 'a b\\nc d\\ne\\n' | xargs -L 2 echo; printf 'a \\nb\\nc\\n' | xargs -L 1 echo; printf 'a b\\nc d\\n' | xargs --max-lines=1 echo; printf 'a b\\nc\\n' | xargs -l echo; printf 'a\\nb\\nc\\n' | xargs -l2 echo",
+			"stdout": "a b\nc d\na b c d\ne\na b\nc\na b\nc d\na b\nc\na b\nc\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-quotes-and-backslash",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf '\"a b\" c '\"'d e'\"' f\\\\ g\\n' | xargs -n1 echo; printf 'a\\\\\\nb\\n' | xargs echo; printf 'a\\tb\\n' | xargs -n1 echo",
+			"stdout": "a b\nc\nd e\nf g\na\nb\na\nb\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-delimiters",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a b\\0c\\0' | xargs -0 -n1 echo; printf 'a b,c d,e' | xargs -d, -n1 echo; printf 'a b\\nc d\\n' | xargs -d '\\n' echo; printf 'a b,c d' | xargs -d, -I{} echo [{}]; printf 'a\\0\\0b\\0' | xargs -0 -n1 echo '[x]'; printf 'a,b\\n' | xargs -d, -n1 echo",
+			"stdout": "a b\nc\na b\nc d\ne\na b c d\n[a b]\n[c d]\n[x] a\n[x] \n[x] b\na\nb\n\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-eof-and-files",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a\\nSTOP\\nb\\n' | xargs -E STOP echo; printf 'a b STOP c\\nd\\n' | xargs -E STOP echo; printf 'a\\nb\\n' | xargs -E '' echo; printf 'x y\\nz\\n' > in; xargs -a in echo; xargs --arg-file=in -n1 echo",
+			"stdout": "a\na b\na b\nx y z\nx\ny\nz\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"in": "x y\nz\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-status",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a\\nb\\n' | xargs -n1 sh -c 'exit 3' _; echo \"rc=$?\"; printf 'a\\n' | xargs nosuchcmd; echo \"rc=$?\"; printf 'a\\n' | xargs sh -c 'exit 255' _; echo \"rc=$?\"; printf '1\\n2\\n3\\n' | xargs -n1 sh -c 'echo $0; test $0 != 2'; echo \"rc=$?\"; printf '1\\n2\\n' | xargs -n1 sh -c 'echo $0; exit 255'; echo \"rc=$?\"",
+			"stdout": "rc=123\nrc=127\nrc=124\n1\n2\n3\nrc=123\n1\nrc=124\n",
+			"stderr": "xargs: nosuchcmd: No such file or directory\nxargs: sh: exited with status 255; aborting\nxargs: sh: exited with status 255; aborting\n",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-empty-input",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf '' | xargs -r echo hi; echo \"rc=$?\"; printf '' | xargs echo hi; echo \"rc=$?\"; printf '' | xargs -I{} echo [{}]; echo \"rc=$?\"; printf '' | xargs -L1 echo hi; printf '' | xargs -n1 echo hi; printf '  \\n' | xargs echo done; printf '\\n' | xargs -I{} echo [{}]; echo \"rc=$?\"",
+			"stdout": "rc=0\nhi\nrc=0\nrc=0\nhi\nhi\ndone\nrc=0\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-bad-options",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo a | xargs -n0 echo; echo \"rc=$?\"; echo a | xargs -n x echo; echo \"rc=$?\"; echo a | xargs -L0 echo; echo \"rc=$?\"; echo a | xargs -d '' echo; echo \"rc=$?\"; echo a | xargs -P x echo; echo \"rc=$?\"",
+			"stdout": "rc=1\nrc=1\nrc=1\nrc=1\nrc=1\n",
+			"stderr": "xargs: value 0 for -n option should be >= 1\nTry 'xargs --help' for more information.\nxargs: invalid number \"x\" for -n option\nTry 'xargs --help' for more information.\nxargs: value 0 for -L option should be >= 1\nTry 'xargs --help' for more information.\nxargs: Invalid input delimiter specification : the delimiter must be either a single character or an escape sequence starting with \\.\nxargs: invalid number \"x\" for -P option\nTry 'xargs --help' for more information.\n",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-long-forms",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a b c\\n' | xargs --max-args=2 echo; printf 'a\\nb\\n' | xargs --replace=@ echo @; printf 'a\\nb\\n' | xargs -i echo x{}; printf 'a\\n' | xargs -iX echo '<X>'; printf 'a\\nb\\n' | xargs -P2 -n1 echo; printf 'a b\\n' | xargs -s 4096 echo; printf 'a b\\n' | xargs echo pre",
+			"stdout": "a b\nc\na\nb\nxa\nxb\n<a>\na\nb\na b\npre a b\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-xargs-pipelines",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; touch 'd/a b' d/c; find d -type f -print0 | xargs -0 ls | sort; echo hi > d/c; find d -type f | grep -v ' ' | xargs grep -l hi; printf 'b\\na\\n' | xargs -n1 | sort",
+			"stdout": "d/a b\nd/c\nd/c\na\nb\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/a b": "",
+					"d/c": "hi\n"
+				},
+				"dirs": [
+					"d"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-touch-r",
+			"source": "round3",
+			"fixture": false,
+			"script": "touch -d '2020-05-05 05:05:05' a; touch -r a b; stat -c '%y' a b; touch -d '@86400' c; touch --reference=c d; touch --reference c e; touch -rc f; stat -c %Y d e f",
+			"stdout": "2020-05-05 05:05:05.000000000 +0000\n2020-05-05 05:05:05.000000000 +0000\n86400\n86400\n86400\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a": "",
+					"b": "",
+					"c": "",
+					"d": "",
+					"e": "",
+					"f": ""
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-touch-r-missing-and-c",
+			"source": "round3",
+			"fixture": false,
+			"script": "touch -r nofile b; echo \"rc=$?\"; ls; touch -d '@1000' a; touch -c -r a nofile; ls; echo x > b; touch -r a b; stat -c %Y b; cat b; touch -d '@5000' g; touch -r g h i; stat -c %Y h i",
+			"stdout": "rc=1\na\n1000\nx\n5000\n5000\n",
+			"stderr": "touch: failed to get attributes of 'nofile': No such file or directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a": "",
+					"b": "x\n",
+					"g": "",
+					"h": "",
+					"i": ""
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-tail-c-plus",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'abcdef' | tail -c +1; echo; printf 'abcdef' | tail -c +3; echo; printf 'abcdef' | tail -c +7; echo; printf 'abcdef' > f; printf 'xyz' > g; tail -c +2 f g; echo; tail -qc +2 f g; echo; tail -c+4 f; echo; printf 'abcdef' | tail -c -2; echo; seq 1 10 | tail -n -3",
+			"stdout": "abcdef\ncdef\n\n==> f <==\nbcdef\n==> g <==\nyz\nbcdefyz\ndef\nef\n8\n9\n10\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f": "abcdef",
+					"g": "xyz"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-mkdir-pv",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir -pv a/b/c a/x; mkdir -v d e; mkdir -pv a/b",
+			"stdout": "mkdir: created directory 'a'\nmkdir: created directory 'a/b'\nmkdir: created directory 'a/b/c'\nmkdir: created directory 'a/x'\nmkdir: created directory 'd'\nmkdir: created directory 'e'\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [
+					"a",
+					"a/b",
+					"a/b/c",
+					"a/x",
+					"d",
+					"e"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-du-slash-and-multi",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d e; touch d/f; du d/; du -s d/; du -s d e; du -s .",
+			"stdout": "4\td/\n4\td/\n4\td\n4\te\n12\t.\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": ""
+				},
+				"dirs": [
+					"d",
+					"e"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-gap-date-relative",
+			"source": "round3",
+			"fixture": false,
+			"script": "date -d '2020-01-01 +1 day' +%F; date -d '2020-01-31 +1 month' +%F; date -d '1 Jan 2020 3pm' '+%F %T'; date -d '2020-01-01 -2 days' +%F",
+			"stdout": "2020-01-02\n2020-03-02\n2020-01-01 15:00:00\n2019-12-30\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-gap-sed-q-exit-and-z",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf '1\\n2\\n3\\n' | sed '2q5'; echo \"rc=$?\"; printf 'a\\nb\\n' | sed -z 's/\\n/,/g'",
+			"stdout": "1\n2\nrc=5\na,b,",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-gap-rm-d",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; rm -d d; echo \"rc=$?\"; ls",
+			"stdout": "rc=0\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-gap-sort-z",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'b\\0a\\0' | sort -z | tr '\\0' '\\n'",
+			"stdout": "a\nb\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-gap-grep-b",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'ab\\ncd\\n' | grep -b c",
+			"stdout": "3:cd\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-gap-find-printf-type",
+			"source": "round3",
+			"fixture": false,
+			"script": "mkdir d; touch d/f; find d -printf '%p %y\\n' | sort",
+			"stdout": "d d\nd/f f\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"d/f": ""
+				},
+				"dirs": [
+					"d"
+				],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-gap-ln-hard",
+			"source": "round3",
+			"fixture": false,
+			"script": "echo a > f; ln f g; echo \"rc=$?\"; ls",
+			"stdout": "rc=0\nf\ng\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f": "a\n",
+					"g": "a\n"
+				},
+				"dirs": [],
+				"gone": [
+					"proj",
+					"proj/a.txt",
+					"proj/data.csv",
+					"proj/docs",
+					"proj/docs/README.md",
+					"proj/empty",
+					"proj/node_modules",
+					"proj/node_modules/pkg",
+					"proj/node_modules/pkg/package.json",
+					"proj/nonl.txt",
+					"proj/nums.txt",
+					"proj/run.sh",
+					"proj/src",
+					"proj/src/lib",
+					"proj/src/lib/util.js",
+					"proj/src/main.js",
+					"proj/tabs.txt",
+					"proj/words.txt"
+				]
+			}
+		},
+		{
+			"name": "r3-gap-xargs-t-order",
+			"source": "round3",
+			"fixture": false,
+			"script": "printf 'a b\\n' | xargs -t echo 2>&1; printf 'a\\nb\\n' | xargs -L1 -n1 echo 2>&1",
+			"stdout": "echo a b\na b\nxargs: warning: options --max-lines and --max-args/-n are mutually exclusive, ignoring previous --max-lines value\na\nb\n",
 			"stderr": "",
 			"exit": 0,
 			"tree": {

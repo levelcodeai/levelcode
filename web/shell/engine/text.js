@@ -140,13 +140,15 @@ function decodeIfBytes(s) {
 }
 
 /**
- * What a person or a model is shown: an escaped byte is U+FFFD, the one character a terminal could draw for it (and
- * a lone surrogate in a JSON string is something an API may refuse). A surrogate PAIR is a character and stays.
+ * What a person or a model is shown: an escaped byte is U+FFFD, the one character a terminal could draw for it, and so
+ * is any other lone surrogate (half of a character that something cut, such as awk's `substr` through an emoji): a lone
+ * surrogate in a JSON string is something an API may refuse, and in a URI something that cannot be encoded. A surrogate
+ * PAIR is a character and stays.
  * @param {string} s
  * @returns {string}
  */
 function displayText(s) {
-	if (!/[\udc80-\udcff]/.test(s)) { return s; }
+	if (!/[\ud800-\udfff]/.test(s)) { return s; }
 	let out = '';
 	for (let i = 0; i < s.length; i++) {
 		const c = s.charCodeAt(i);
@@ -154,9 +156,27 @@ function displayText(s) {
 			const d = s.charCodeAt(i + 1);
 			if (d >= 0xdc00 && d <= 0xdfff) { out += s[i] + s[i + 1]; i++; continue; }
 		}
-		out += c >= 0xdc80 && c <= 0xdcff ? '\ufffd' : s[i];
+		out += c >= 0xd800 && c <= 0xdfff ? '\ufffd' : s[i];
 	}
 	return out;
 }
 
-module.exports = { decodeBytes, encodeText, decodeByteString, decodeIfBytes, displayText };
+/**
+ * Does the string hold a surrogate that is not half of a pair? (A name like that cannot be made into a URI.)
+ * @param {string} s
+ * @returns {boolean}
+ */
+function hasLoneSurrogate(s) {
+	if (!/[\ud800-\udfff]/.test(s)) { return false; }
+	for (let i = 0; i < s.length; i++) {
+		const c = s.charCodeAt(i);
+		if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+			const d = s.charCodeAt(i + 1);
+			if (d >= 0xdc00 && d <= 0xdfff) { i++; continue; }
+		}
+		if (c >= 0xd800 && c <= 0xdfff) { return true; }
+	}
+	return false;
+}
+
+module.exports = { decodeBytes, encodeText, decodeByteString, decodeIfBytes, displayText, hasLoneSurrogate };

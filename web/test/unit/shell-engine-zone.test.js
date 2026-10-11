@@ -162,6 +162,51 @@ test('a Date made elsewhere is still a Date of this class, and the class keeps w
 	assert.strictEqual(JSON.stringify({ t: new D(0) }), '{"t":"1970-01-01T00:00:00.000Z"}');
 });
 
+test('what a TZ may be: an IANA name (with glibc\'s colon too), UTC, or POSIX NAME+offset in hours WEST (JST-9 is UTC+9); with a daylight rule, or anything else, it is UTC', () => {
+	const offsetOf = (name, at = 0) => zone.offsetAt(/** @type {string} */ (zone.validZone(name)), at) / 60000;
+	assert.strictEqual(zone.validZone(':America/New_York'), 'America/New_York');
+	assert.strictEqual(zone.validZone(':UTC'), 'UTC');
+	assert.strictEqual(offsetOf('JST-9'), 540);
+	assert.strictEqual(offsetOf('UTC+3'), -180);
+	assert.strictEqual(offsetOf('EST5'), -300);
+	assert.strictEqual(offsetOf('<+0530>-5:30'), 330);
+	assert.strictEqual(offsetOf('<-03>3'), -180);
+	assert.strictEqual(offsetOf('ABC-1:30:15'), 90 + 0.25);
+	assert.strictEqual(offsetOf('EST5EDT', Date.UTC(2020, 6, 1)), -240, 'a name Intl knows has its rules');
+	for (const bad of ['EST5EDT,M3.2.0,M11.1.0', 'JST-25', 'AB-9', '+09:00', '-0500', '9', 'JST-', ':', 'a/b/c', 'JST-9x']) { assert.strictEqual(zone.validZone(bad), null, bad); }
+	underProcessZones((proc) => {
+		zone.setZone('JST-9');
+		assert.strictEqual(new D(2020, 1, 29, 12).toISOString(), '2020-02-29T03:00:00.000Z', proc);
+		assert.deepStrictEqual([new D(0).getHours(), new D(0).getTimezoneOffset()], [9, -540], proc);
+		assert.strictEqual(zone.parseWall('2020-02-29 12:00:00'), Date.UTC(2020, 1, 29, 3), proc);
+		zone.setZone(undefined);
+	});
+});
+
+test('%Z: the short name by the offset the zone has at that instant; tzdata\'s digits for a zone without letters; the name asked for when it is GMT; never Intl\'s GMT+9', () => {
+	const at = (name, ms) => { zone.setZone(name); try { return zone.abbreviation(ms); } finally { zone.setZone(undefined); } };
+	const jan = Date.UTC(2020, 0, 15);
+	const jul = Date.UTC(2020, 6, 15);
+	assert.deepStrictEqual(['Asia/Tokyo', 'Asia/Seoul', 'Asia/Kolkata', 'Asia/Shanghai', 'Asia/Hong_Kong'].map((z) => at(z, jan)), ['JST', 'KST', 'IST', 'CST', 'HKT']);
+	assert.deepStrictEqual(['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Phoenix', 'America/Anchorage', 'Pacific/Honolulu'].map((z) => at(z, jan)), ['EST', 'CST', 'MST', 'PST', 'MST', 'AKST', 'HST']);
+	assert.deepStrictEqual(['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Phoenix', 'America/Anchorage'].map((z) => at(z, jul)), ['EDT', 'CDT', 'MDT', 'PDT', 'MST', 'AKDT']);
+	assert.deepStrictEqual([at('Europe/London', jan), at('Europe/London', jul), at('Europe/Dublin', jul), at('Europe/Paris', jan), at('Europe/Paris', jul), at('Europe/Athens', jul), at('Europe/Moscow', jul)], ['GMT', 'BST', 'IST', 'CET', 'CEST', 'EEST', 'MSK']);
+	assert.deepStrictEqual([at('Australia/Sydney', jan), at('Australia/Sydney', jul), at('Australia/Perth', jan), at('Pacific/Auckland', jan), at('Pacific/Auckland', jul)], ['AEDT', 'AEST', 'AWST', 'NZDT', 'NZST']);
+	assert.deepStrictEqual([at('Asia/Dubai', jan), at('America/Sao_Paulo', jan), at('Asia/Singapore', jan), at('Asia/Kathmandu', jul), at('Etc/GMT-9', jan), at('Asia/Colombo', jul)], ['+04', '-03', '+08', '+0545', '+09', '+0530']);
+	assert.strictEqual(at('JST-9', jan), 'JST', 'the name a POSIX TZ was given');
+	assert.strictEqual(at('<+0530>-5:30', jan), '+0530');
+	assert.strictEqual(at('UTC', jan), 'UTC');
+	assert.strictEqual(at('GMT', jan), 'GMT');
+	assert.strictEqual(at(':Etc/GMT', jan), 'GMT');
+	assert.strictEqual(at('Nowhere/Land', jan), 'UTC');
+	assert.strictEqual(at(undefined, jan), 'UTC');
+	zone.setZone('Asia/Tokyo');
+	assert.strictEqual(zone.abbreviation(jan, 'America/New_York'), 'EST', 'a zone named is the zone');
+	assert.strictEqual(zone.abbreviation(jan, 'UTC'), 'UTC');
+	zone.setZone(undefined);
+	for (const z of ['Asia/Tokyo', 'Europe/Paris', 'Asia/Kolkata', 'Australia/Adelaide', 'America/St_Johns']) { assert.ok(!/GMT[+-]/.test(at(z, jan)), z); }
+});
+
 (async () => {
 	for (const t of tests) {
 		await t.fn();

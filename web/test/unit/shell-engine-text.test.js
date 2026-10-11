@@ -11,7 +11,7 @@
 const assert = require('assert');
 const path = require('path');
 
-const { decodeBytes, encodeText, decodeByteString, decodeIfBytes, displayText } = require(path.join(__dirname, '..', '..', 'shell', 'engine', 'text.js'));
+const { decodeBytes, encodeText, decodeByteString, decodeIfBytes, displayText, hasLoneSurrogate } = require(path.join(__dirname, '..', '..', 'shell', 'engine', 'text.js'));
 
 /** @type {Array<{ name: string, fn: () => Promise<void> | void }>} */
 const tests = [];
@@ -126,6 +126,26 @@ test('what is shown: an escape is U+FFFD, a pair is not touched, nothing else ch
 	assert.strictEqual(displayText('plain é 日'), 'plain é 日');
 	assert.strictEqual(displayText(''), '');
 	assert.ok(!/[\udc80-\udcff]/.test(displayText(decodeBytes(bytesOf(1, 2, 0xff, 0xfe, 0x80)))));
+});
+
+test('what is shown has NO lone surrogate at all: half of an emoji (awk substr, cut -c) is U+FFFD as an escape is, and a pair is left alone', () => {
+	assert.strictEqual(displayText('\ud83d'), '�', 'a high half');
+	assert.strictEqual(displayText('\ude00'), '�', 'a low half that is not an escape');
+	assert.strictEqual(displayText('a\ud83d'), 'a�', 'a high half at the very end');
+	assert.strictEqual(displayText('\ud83db'), '�b', 'a high half before a character that is not a low one');
+	assert.strictEqual(displayText('\ude00\ud83d'), '��', 'a low one and then a high one are not a pair');
+	assert.strictEqual(displayText('😀\ud83d'), '😀�');
+	assert.strictEqual(displayText('😀 caf\udce9 \ud83d'), '😀 caf� �');
+	for (const s of ['\ud83d', '\ude00', '\udcff', 'a\ud83db', '\ud83d😀']) {
+		assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(displayText(s)), JSON.stringify(s));
+	}
+	// the question the overlay asks of a name
+	assert.strictEqual(hasLoneSurrogate('plain'), false);
+	assert.strictEqual(hasLoneSurrogate('😀'), false);
+	assert.strictEqual(hasLoneSurrogate('a\udcff'), true);
+	assert.strictEqual(hasLoneSurrogate('\ud83d'), true);
+	assert.strictEqual(hasLoneSurrogate('😀\ude00'), true);
+	assert.strictEqual(hasLoneSurrogate(''), false);
 });
 
 (async () => {

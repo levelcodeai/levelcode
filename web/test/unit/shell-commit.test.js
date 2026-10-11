@@ -7,7 +7,12 @@
  *      what the command read means NOTHING is applied and every reason is listed;
  *    - the order cannot lose data: folders, files, deletes deepest first, folders removed deepest first;
  *    - a failure part-way stops there and is reported as "applied N of M", not as success and not as nothing;
- *    - it can be told to stop while the set is being CHECKED (nothing has been written), and not after.
+ *    - it can be told to stop while the set is being CHECKED (nothing has been written), and not after;
+ *    - nothing a provider throws can make it throw: the reason is read totally, so a run is never reported as
+ *      "error, applied 0" over files that landed;
+ *    - an io call that ran out of time ends the CHECK once (the set is refused with how far it got) and, in the
+ *      WRITING, is a stop at that file that says the write may still land;
+ *    - the notes count against the whole command's set when the caller says how much of it was applied already.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -422,6 +427,183 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		assert.strictEqual(d.text('/w/a'), null);
 		const plain = await commitChanges([write('/w/c', 'c', null)], d.io, CAPS, () => false);
 		assert.strictEqual(plain.applied, 1);
+	});
+
+
+	/* ----- what a provider throws -------------------------------------------------------------- */
+
+	/** @returns {Array<[string, any]>} */
+	function hostileThrown() {
+		const revoked = Proxy.revocable({}, {});
+		revoked.revoke();
+		return [
+			['a message getter that throws', Object.defineProperty({}, 'message', { get() { throw new Error('getter-boom'); } })],
+			['a Proxy whose every trap throws', new Proxy({}, new Proxy({}, { get() { throw new Error('trap-boom'); } }))],
+			['a revoked Proxy', revoked.proxy],
+			['an object with no prototype', Object.create(null)],
+			['a Symbol', Symbol('sym')],
+			['a BigInt', 12n],
+			['undefined (a rejection with nothing)', undefined],
+			['null', null],
+			['an object whose toString throws', { toString() { throw new Error('no'); } }],
+		];
+	}
+
+	await test('step() never throws: a hostile thing thrown by a write is a stop at that file, with the files before it counted and on disk', async () => {
+		for (const [what, thrown] of hostileThrown()) {
+			const d = disk({ '/w': null });
+			const real = d.io.writeFile;
+			d.io.writeFile = async (/** @type {string} */ p, /** @type {Uint8Array} */ b) => { if (p === '/w/b') { throw thrown; } return real(p, b); };
+			let r;
+			await assert.doesNotReject(async () => { r = await commitChanges([write('/w/a', 'A', null), write('/w/b', 'B', null), write('/w/c', 'C', null)], d.io, CAPS); }, what);
+			const res = /** @type {any} */ (r);
+			assert.deepStrictEqual({ applied: res.applied, failed: res.failed, refused: res.refused }, { applied: 1, failed: 2, refused: false }, what);
+			assert.ok(/^\[LevelCode Shell: applied 1 of 3 file changes; stopped at \/w\/b: .+\. The rest were not applied\.\]$/.test(res.notes[0]), what + ': ' + res.notes[0]);
+			assert.strictEqual(d.text('/w/a'), 'A', what + ': the file before it landed');
+			assert.strictEqual(d.text('/w/c'), null, what + ': and the one after it was not written');
+		}
+	});
+
+	await test('the same for the other steps: a folder that cannot be made, a delete and a folder removal that throw something hostile', async () => {
+		for (const [what, thrown] of hostileThrown()) {
+			for (const op of ['mkdir', 'remove']) {
+				const d = disk({ '/w': null, '/w/gone': 'x', '/w/dir': null });
+				const real = /** @type {any} */ (d.io)[op === 'mkdir' ? 'createDirectory' : 'remove'];
+				/** @type {any} */ (d.io)[op === 'mkdir' ? 'createDirectory' : 'remove'] = async (/** @type {string} */ p) => { if (/new$|gone$|dir$/.test(p)) { throw thrown; } return real(p); };
+				let r;
+				const set = op === 'mkdir' ? [write('/w/ok.txt', 'ok', null), mkdir('/w/new')] : [write('/w/ok.txt', 'ok', null), del('/w/gone', 'x'), rmdir('/w/dir')];
+				await assert.doesNotReject(async () => { r = await commitChanges(set, d.io, CAPS); }, what + ' ' + op);
+				assert.ok(/stopped at \/w\/(new|gone): /.test(/** @type {any} */ (r).notes[0]), what + ' ' + op + ': ' + /** @type {any} */ (r).notes[0]);
+			}
+		}
+	});
+
+	await test('a hostile thing thrown by a CHECK is a path that could not be checked: refused, with a reason, not an exception', async () => {
+		for (const [what, thrown] of hostileThrown()) {
+			const d = disk({ '/w': null, '/w/a': 'a', '/w/b': 'b' });
+			const real = d.io.stat;
+			d.io.stat = async (/** @type {string} */ p) => { if (p === '/w/a') { throw thrown; } return real(p); };
+			let r;
+			await assert.doesNotReject(async () => { r = await commitChanges([write('/w/a', 'A', 'a'), write('/w/b', 'B', 'b')], d.io, CAPS); }, what);
+			const res = /** @type {any} */ (r);
+			assert.strictEqual(res.refused, true, what);
+			assert.ok(/^\[LevelCode Shell: refused: \/w\/a could not be checked: .+\]$/.test(res.notes[0]), what + ': ' + res.notes[0]);
+			assert.deepStrictEqual(d.writes(), [], what);
+		}
+	});
+
+	await test('a reason that is megabytes long is cut before it is shown, and stays one line', async () => {
+		const d = disk({ '/w': null });
+		d.failing.write = () => 'X'.repeat(160) + 'Y'.repeat(5 * 1024 * 1024);
+		const t0 = Date.now();
+		const r = await commitChanges([write('/w/a', 'A', null)], d.io, CAPS);
+		assert.ok(r.notes[0].includes(': ' + 'X'.repeat(160) + '.'), r.notes[0].slice(0, 300));
+		assert.ok(r.notes[0].length < 400 && Date.now() - t0 < 1000);
+	});
+
+	/* ----- time ----------------------------------------------------------------------------------- */
+
+	/** What the runtime's gate rejects with (its words, written out here: commit.js has no clock). */
+	const late = (/** @type {any} */ extra) => Object.assign(new Error('timed out'), { code: 'ETIMEDOUT', timedOut: true }, extra);
+
+	await test('a check that is out of time ends at the FIRST such call: the set is refused once, with how far it got, and no further path is asked', async () => {
+		const d = disk({ '/w': null, '/w/a': 'a', '/w/b': 'b', '/w/c': 'c', '/w/d': 'd' });
+		const real = d.io.stat;
+		d.io.stat = async (/** @type {string} */ p) => { if (p === '/w/c') { throw late({ mayStillLand: false }); } return real(p); };
+		const set = ['a', 'b', 'c', 'd'].map((f) => write('/w/' + f, f.toUpperCase(), f));
+		const r = await commitChanges(set, d.io, CAPS);
+		assert.deepStrictEqual({ refused: r.refused, applied: r.applied, failed: r.failed }, { refused: true, applied: 0, failed: 4 });
+		assert.strictEqual(r.notes.length, 2, r.notes.join('\n'));
+		assert.strictEqual(r.notes[0], '[LevelCode Shell: refused: the changes could not be checked in time: /w/c: timed out (2 of 4 were checked)]');
+		assert.ok(/NONE of this command's file changes were applied/.test(r.notes[1]));
+		assert.ok(!d.calls.includes('stat /w/d'), 'the path after the one that did not answer was not asked: ' + d.calls.join(','));
+		assert.deepStrictEqual(d.writes(), []);
+	});
+
+	await test('what a check had found before it ran out of time is listed with it', async () => {
+		const d = disk({ '/w': null, '/w/a': 'CHANGED', '/w/b': 'b' });
+		const real = d.io.stat;
+		d.io.stat = async (/** @type {string} */ p) => { if (p === '/w/b') { throw late({}); } return real(p); };
+		const r = await commitChanges([write('/w/a', 'A', 'a'), write('/w/b', 'B', 'b')], d.io, CAPS);
+		assert.ok(/\/w\/a changed while the command ran/.test(r.notes[0]), r.notes.join('\n'));
+		assert.ok(/could not be checked in time: \/w\/b: timed out \(1 of 2 were checked\)/.test(r.notes[1]), r.notes.join('\n'));
+	});
+
+	await test('a Stop that gave up on a read (abandoned) ends the check the same way, and with cancelled() true the answer is the stop, not a refusal', async () => {
+		const d = disk({ '/w': null, '/w/a': 'a', '/w/b': 'b' });
+		let stopped = false;
+		const real = d.io.stat;
+		d.io.stat = async (/** @type {string} */ p) => { if (p === '/w/a') { stopped = true; throw Object.assign(new Error('stopped'), { abandoned: true }); } return real(p); };
+		const r = await commitChanges([write('/w/a', 'A', 'a'), write('/w/b', 'B', 'b')], d.io, CAPS, () => stopped);
+		assert.deepStrictEqual({ cancelled: r.cancelled, refused: r.refused, applied: r.applied, notes: r.notes }, { cancelled: true, refused: false, applied: 0, notes: [] });
+		assert.ok(!d.calls.includes('stat /w/b'));
+		// with no cancelled() at all, the io's word is enough: the check ends there and the set is refused
+		const e = disk({ '/w': null, '/w/a': 'a', '/w/b': 'b' });
+		const real2 = e.io.stat;
+		e.io.stat = async (/** @type {string} */ p) => { if (p === '/w/a') { throw Object.assign(new Error('stopped'), { abandoned: true }); } return real2(p); };
+		const r2 = await commitChanges([write('/w/a', 'A', 'a'), write('/w/b', 'B', 'b')], e.io, CAPS);
+		assert.strictEqual(r2.refused, true);
+		assert.ok(/could not be checked in time: \/w\/a: stopped \(0 of 2 were checked\)/.test(r2.notes[0]), r2.notes[0]);
+		assert.ok(!e.calls.includes('stat /w/b'), 'b was not asked');
+		assert.deepStrictEqual(e.writes(), []);
+	});
+
+	await test('a write that was not answered in time is a stop at that file and says it may still land; one that was never made does not say so', async () => {
+		for (const [mayStillLand, expectLanding] of /** @type {Array<[boolean, boolean]>} */ ([[true, true], [false, false]])) {
+			const d = disk({ '/w': null });
+			const real = d.io.writeFile;
+			d.io.writeFile = async (/** @type {string} */ p, /** @type {Uint8Array} */ b) => { if (p === '/w/b') { throw late({ mayStillLand }); } return real(p, b); };
+			const r = await commitChanges([write('/w/a', 'A', null), write('/w/b', 'B', null), write('/w/c', 'C', null)], d.io, CAPS);
+			assert.strictEqual(r.applied, 1);
+			assert.ok(/^\[LevelCode Shell: applied 1 of 3 file changes; stopped at \/w\/b: timed out\./.test(r.notes[0]), r.notes[0]);
+			assert.strictEqual(/may still land/.test(r.notes[0]), expectLanding, r.notes[0]);
+			assert.ok(/The rest were not applied\.\]$/.test(r.notes[0]), r.notes[0]);
+		}
+	});
+
+	/* ----- progress ------------------------------------------------------------------------------- */
+
+	await test('progress: the phase is what the caller set until the first write, then "write"; applied counts what is confirmed, from where it started', async () => {
+		const d = disk({ '/w': null, '/w/old': 'o', '/w/gone': 'g' });
+		const progress = { phase: 'check', applied: 0, total: 4 };
+		/** @type {string[]} */ const seen = [];
+		for (const op of /** @type {const} */ (['stat', 'readFile', 'writeFile', 'createDirectory', 'remove'])) {
+			const real = /** @type {any} */ (d.io)[op];
+			/** @type {any} */ (d.io)[op] = (/** @type {any[]} */ ...a) => { seen.push(op + ':' + progress.phase + ':' + progress.applied); return real(...a); };
+		}
+		const r = await commitChanges([write('/w/new/a', 'A', null), mkdir('/w/m'), write('/w/old', 'O', 'o'), del('/w/gone', null)], d.io, CAPS, undefined, progress);
+		assert.strictEqual(r.applied, 4);
+		assert.strictEqual(progress.applied, 4);
+		assert.strictEqual(progress.phase, 'write');
+		const phases = seen.map((x) => x.split(':')[1]);
+		const flip = phases.indexOf('write');
+		assert.ok(flip > 0 && phases.slice(0, flip).every((x) => x === 'check') && phases.slice(flip).every((x) => x === 'write'), 'check, then write, never back: ' + seen.join(' '));
+		assert.ok(seen.slice(0, flip).every((x) => /^(stat|readFile):check:0$/.test(x)), 'the check only reads, with nothing applied: ' + seen.join(' '));
+		assert.ok(!seen.slice(0, flip).some((x) => /^(writeFile|createDirectory|remove)/.test(x)), 'no write in the check phase');
+		// the count a caller can read while a write is in flight is what is confirmed so far
+		/** @type {number[]} */ const during = [];
+		const d2 = disk({ '/w': null });
+		const p2 = { phase: 'check', applied: 0, total: 3 };
+		const w2 = d2.io.writeFile;
+		d2.io.writeFile = async (/** @type {string} */ p, /** @type {Uint8Array} */ b) => { during.push(p2.applied); return w2(p, b); };
+		await commitChanges([write('/w/a', 'A', null), write('/w/b', 'B', null), write('/w/c', 'C', null)], d2.io, CAPS, undefined, p2);
+		assert.deepStrictEqual(during, [0, 1, 2]);
+	});
+
+	await test('progress: a commit of what a review left counts against the whole set: "3 of 5", not "0 of 2"; and a refusal says how much had been applied', async () => {
+		const d = disk({ '/w': null, '/w/f': 'a file' });
+		d.failing.mkdir = (p) => (p === '/w/new' ? 'read-only folder' : null);
+		const progress = { phase: 'rest', applied: 3, total: 5 };
+		const r = await commitChanges([mkdir('/w/new'), mkdir('/w/other')], d.io, CAPS, undefined, progress);
+		assert.strictEqual(r.notes[0], '[LevelCode Shell: applied 3 of 5 file changes; stopped at /w/new: read-only folder. The rest were not applied.]');
+		assert.strictEqual(r.applied, 0, 'this call\'s own count is its own');
+		assert.strictEqual(progress.applied, 3);
+		const refused = await commitChanges([mkdir('/w/f'), mkdir('/w/x')], d.io, CAPS, undefined, { phase: 'rest', applied: 3, total: 5 });
+		assert.strictEqual(refused.refused, true);
+		assert.ok(/\/w\/f is a file now/.test(refused.notes[0]), refused.notes[0]);
+		assert.strictEqual(refused.notes[1], '[LevelCode Shell: NONE of the remaining 2 changes were applied (3 of 5 had already been).]');
+		const one = await commitChanges([mkdir('/w/f')], d.io, CAPS, undefined, { phase: 'rest', applied: 1, total: 2 });
+		assert.strictEqual(one.notes[1], '[LevelCode Shell: NONE of the remaining 1 change was applied (1 of 2 had already been).]');
 	});
 
 	/* ----- checkChangeSet alone ---------------------------------------------------------------- */

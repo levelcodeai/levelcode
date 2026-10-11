@@ -36,6 +36,11 @@
  *  A third, forNote, is forDisplay for what is put inside one of the shell's own one-line notes: it also shows the
  *  line break and the tab, so a name cannot add a line to a note.
  *
+ *  And one for what a provider THROWS: safeMessage(e) is what the error says as a note's reason, bounded and on one
+ *  line. `e.message` is read inside it, not at its caller, so an error whose message is a getter that throws (or a
+ *  Proxy that does) is a reason like any other, not an exception raised from the middle of a commit. safeGet is
+ *  the same total read for any other property of something that was thrown (`code`, `name`).
+ *
  *  Pure, no vscode, no I/O. Total: whatever it is given, even an object whose toString throws, it returns a
  *  string. The stream filter of the terminal (escape sequences that straddle chunks) is the terminal's own, in
  *  src/terminal.
@@ -184,4 +189,37 @@ function forNote(text) {
 	return forDisplay(text).replace(/\n/g, '\u{240A}').replace(/\t/g, '\u{2409}');
 }
 
-module.exports = { forTerminal, forDisplay, forNote };
+/**
+ * One property of anything, without being able to throw: a getter that throws, a Proxy whose traps throw and a
+ * revoked Proxy are all `undefined`. A primitive has no properties of its own to offer here, so it is `undefined` too.
+ * @param {unknown} o @param {string} key @returns {any}
+ */
+function safeGet(o, key) {
+	try {
+		return o !== null && (typeof o === 'object' || typeof o === 'function') ? /** @type {any} */ (o)[key] : undefined;
+	} catch { return undefined; }
+}
+
+/** What stands in for a reason when there is none to give: the thrown value was nothing, or no text. */
+const NO_REASON = 'no reason was given';
+
+/**
+ * What a thrown value says, as the reason in a one-line note: its `message` when it has one that can be read, else
+ * its own text; made safe like any name (forNote), cut to `max` UTF-16 units, never empty, never throwing. The cut is
+ * made BEFORE the text is walked, so a provider that throws a multi-megabyte message costs a slice and not a scan.
+ * @param {unknown} e @param {number} [max]
+ * @returns {string}
+ */
+function safeMessage(e, max = 160) {
+	const m = safeGet(e, 'message');
+	// `m ? m : e` is the old `(e && e.message) || e`: a message that is empty or not there falls back to the value.
+	const raw = textOf(m ? m : e);
+	const cut = raw.length > max * 8 ? raw.slice(0, max * 8) : raw;   // forNote can make a character eight long
+	let out = forNote(cut).slice(0, max);
+	// A cut that ends inside a surrogate pair would leave half of one.
+	const last = out.charCodeAt(out.length - 1);
+	if (out.length === max && last >= 0xD800 && last <= 0xDBFF) { out = out.slice(0, -1); }
+	return out === '' ? NO_REASON : out;
+}
+
+module.exports = { forTerminal, forDisplay, forNote, safeMessage, safeGet };

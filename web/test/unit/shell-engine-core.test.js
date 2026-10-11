@@ -887,6 +887,106 @@ async function main() {
 		}
 	});
 
+	test('a redirection whose target the command itself removes or replaces ends the redirection, not the run: the output and what follows are kept (GNU writes to the open descriptor)', async () => {
+		const shapes = [
+			'echo before; { rm -rf d; echo hi; } > d/f; echo "after rc=$?"',
+			'f() { rm -rf d; echo hi; }; f > d/log; echo "after rc=$?"',
+			'( rm -rf d; echo hi ) > d/f 2>&1; echo "after rc=$?"',
+			'for i in 1 2; do rm -rf d; echo $i; done > d/f; echo "after rc=$?"',
+			'{ rm -rf d; echo hi; } >> d/f; echo "after rc=$?"',
+			'{ rm -rf d; echo hi; echo there; } > d/f 2> d/e; echo "after rc=$?"',
+			'exec > d/log; rm -rf d; echo hi; echo there',
+		];
+		for (const script of shapes) {
+			const h = await host({ '/w/d/x': 'x\n', '/w/keep': 'k\n' });
+			const r = await h.run(script);
+			assert.strictEqual(r.how, 'exit', script + ' -> ' + r.how + ' ' + r.stderr);
+			assert.strictEqual(r.stderr, '', script);
+			assert.ok(r.stdout.endsWith('after rc=0\n') || script.startsWith('exec'), script + ' -> ' + JSON.stringify(r.stdout));
+			assert.deepStrictEqual(r.done.denied, [], script);
+			assert.strictEqual(r.done.stats.withheld, null, script);
+			assert.deepStrictEqual(kinds(r).sort(), ['delete:/w/d/x', 'rmdir:/w/d'], 'the folder is gone and nothing was written to it: ' + script);
+		}
+		// the folder the command made again is a new folder: the descriptor was the old one's, and its name is the new one's
+		const h = await host({ '/w/d/x': 'x\n' });
+		const r = await h.run('{ rm -rf d; mkdir d; echo hi; } > d/f; echo "after rc=$?"');
+		assert.strictEqual(r.how, 'exit');
+		assert.ok(r.stdout.endsWith('after rc=0\n'), r.stdout);
+		// a file replaced by a folder: the shell cannot say that in one change set, and says so (the run is not lost)
+		const g = await host({ '/w/f': 'old\n' });
+		const q = await g.run('{ rm f; mkdir f; echo hi; } > f; echo "after rc=$?"');
+		assert.strictEqual(q.how, 'exit');
+		assert.strictEqual(q.stdout, 'after rc=0\n');
+		assert.strictEqual(q.stderr, '');
+	});
+
+	test('a program that writes with no opening still gets the errno of a real file system, whatever the redirection before it did', async () => {
+		const h = await host({ '/w/d/x': 'x\n' });
+		const r = await h.run('{ rm -rf d; echo hi; } > d/f; echo "rc=$?"; touch d/t; echo "touch=$?"; echo y | tee d/u > /dev/null; echo "tee=$?"; echo end');
+		assert.strictEqual(r.how, 'exit');
+		assert.strictEqual(r.stdout, 'rc=0\ntouch=1\ntee=1\nend\n');
+		assert.ok(/touch: cannot touch 'd\/t'/.test(r.stderr) && /tee: d\/u: No such file or directory/.test(r.stderr), r.stderr);
+	});
+
+	test('a name made of bytes that are not UTF-8 refuses the change set with the name shown as U+FFFD; no lone surrogate is in anything the host is told', async () => {
+		const bin = (...b) => Uint8Array.from(b);
+		const files = { '/w/x': bin(0xff), '/w/names': bin(0x61, 0xe9, 0x0a) };
+		const scripts = [
+			'touch "$(cat x)"; echo ok',
+			'cat names | xargs touch; ls',
+			'mkdir "d$(cat x)"; echo done',
+			'echo hi | tee "/etc/$(cat x)"; echo after',
+			'echo hi > "/etc/$(cat x)"; echo after',
+			"echo '😀' | awk '{print substr($0,1,1)}'",
+		];
+		for (const script of scripts) {
+			const h = await host(files);
+			const r = await h.run(script);
+			const everything = [r.stdout, r.stderr, ...r.done.notes, ...r.done.denied.flatMap((d) => [d.path, d.message, d.reason]), ...r.done.changes.map((c) => c.path), ...r.outs.map((m) => m.text)].join('\n');
+			assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(everything), 'a lone surrogate in the output of: ' + script);
+			assert.strictEqual(r.how, 'exit', script);
+		}
+		const h = await host(files);
+		const r = await h.run('touch "ok$(cat x)b"; echo ok');
+		assert.deepStrictEqual(r.done.changes, []);
+		assert.strictEqual(r.done.stats.withheld, 'incomplete');
+		assert.strictEqual(r.exitCode, 1, 'a script that "succeeded" and changed nothing must not look as if it had');
+		assert.ok(r.done.notes.includes('None of its file changes were applied: /w/ok�b has a name that is not valid UTF-8, which the editor cannot address.'), JSON.stringify(r.done.notes));
+		const a = await (await host(files)).run('echo hi | tee "/etc/$(cat x)"');
+		assert.strictEqual(a.stderr, 'bash: /etc/�: Permission denied\n');
+		assert.deepStrictEqual(a.done.denied.map((d) => d.path), ['/etc/�']);
+		const e = await (await host(files)).run("echo '😀' | awk '{print substr($0,1,1)}'");
+		assert.strictEqual(e.stdout, '�\n', 'half of an emoji is U+FFFD, not a lone surrogate');
+	});
+
+	test('du is bounded like find: past maxTraversalEntries the script ends as a limit, with the engine\'s wording; exactly the limit is fine', async () => {
+		const files = { '/w/big': null };
+		for (let i = 0; i < 19; i++) { files['/w/big/f' + i] = 'x'; }
+		const init = async (f) => {
+			const h = await host(f, { start: false });
+			await h.core.handle({ t: 'init', gen: 1, folders: [{ id: 'f', path: '/w', name: 'w' }], limits: { maxTraversalEntries: 20 } });
+			return h;
+		};
+		// the folder and its 19 files are 20 entries
+		const ok = await (await init(files)).run('du -s big; du -a big | wc -l');
+		assert.strictEqual(ok.how, 'exit');
+		assert.strictEqual(ok.stdout, '80\tbig\n20\n');
+		files['/w/big/one-more'] = 'x';
+		for (const script of ['du -s big', 'du -a big | wc -l', 'du big; echo after', 'cd big; du .']) {
+			const h = await init(files);
+			const r = await h.run('echo started; ' + script);
+			assert.strictEqual(r.how, 'limit', script + ' -> ' + r.how + ' ' + r.stderr);
+			assert.strictEqual(r.exitCode, 126);
+			assert.ok(/(^|\n)bash: stopped by a limit of this shell: du: filesystem traversal entry limit exceeded \(20\)\n/.test(r.stderr), r.stderr);
+			assert.ok(!/after/.test(r.stdout), 'the script ended there');
+			assert.ok(r.stdout.startsWith('started\n'));
+		}
+		// the same bound for cp -u of a tree
+		const c = await (await init(files)).run('cp -ru big copy; echo after');
+		assert.strictEqual(c.how, 'limit');
+		assert.ok(/cp: filesystem traversal entry limit exceeded \(20\)/.test(c.stderr), c.stderr);
+	});
+
 	for (const t of tests) {
 		await t.fn();
 		console.log('  ok - ' + t.name);

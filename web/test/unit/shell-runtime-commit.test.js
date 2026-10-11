@@ -11,10 +11,17 @@
  *  then 'close'), the exit status that is raised when something could not be applied, and what happens when the
  *  review itself throws or is handed something it must not be - or hands back something it must not.
  *
- *  And what is never said falsely while a commit is going on: a worker that dies, a dispose() and a Stop that
- *  arrive after the engine said `done` do not settle the run with "nothing was applied" over files that land;
- *  a Stop that arrives while the set is only being CHECKED applies nothing; a folder that gained a file after
- *  the command ran is not removed with it.
+ *  And what is never said falsely while a commit is going on: a worker that dies does not settle the run with
+ *  "nothing was applied" over files that land; a folder that gained a file after the command ran is not removed
+ *  with it. A commit is BOUNDED, in both routes, and a Stop does not wait for it:
+ *
+ *    - a call to the file system is waited for fsMs at most, the read-only CHECK of a set checkMs in all (refused
+ *      whole, once, with how far it got), the part that WRITES commitMs in all (the agent's review and the
+ *      folders it leaves share one budget);
+ *    - a Stop or a dispose() ends the run AT ONCE: a set that was only being checked applied nothing, one that
+ *      was being written says how many changes are confirmed, that the write in flight cannot be cancelled and
+ *      may still land, and nothing more is started;
+ *    - what a provider throws is never able to turn a commit into "error, applied 0" over files that landed.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -412,27 +419,33 @@ async function agent(rig, command, opts) {
 		}
 	});
 
-	await test('Stop while the changes are being applied does not leave half of them: they finish, and the run says it was stopped', async () => {
+	await test('Stop while the agent\'s review is going on ends the run AT ONCE: a review cannot be interrupted, so it is given up on, and what it answers later is not applied', async () => {
 		const r = createRig();
-		ending(r, { exitCode: 0, changes: [wr('/scratch/a', 'a', null), wr('/scratch/b', 'b', null)] });
+		ending(r, { exitCode: 0, changes: [wr('/scratch/a', 'a', null), mkdir('/scratch/d')] });
 		/** @type {any} */ let child;
 		let release = () => { };
 		const hold = new Promise((res) => { release = () => res(undefined); });
 		const killed = new Promise((res) => {
 			child = r.rt.spawnAgent('x', {
 				cwd: '/scratch',
-				commit: async (/** @type {any[]} */ changes) => { res(undefined); await hold; return { rest: [], notes: ['[LevelCode Shell: 2 files changed]'], failed: 0 }; },
+				commit: async (/** @type {any[]} */ changes) => { res(undefined); await hold; return { rest: [mkdir('/scratch/d')], notes: ['[LevelCode Shell: 2 files changed]'], failed: 0 }; },
 			});
 		});
 		const obs = observe(child, 3000);
 		await killed;
 		assert.strictEqual(child.kill('SIGTERM'), true);
-		release();
-		await obs.closed;
+		await obs.closed;                       // before the review has answered
 		const close = /** @type {any} */ (obs.events.find((e) => e.type === 'close'));
 		assert.strictEqual(close.code, 130);
-		assert.ok(/stopped while its file changes were being applied; 2 of them were applied/.test(obs.stderr), obs.stderr);
+		assert.ok(/stopped while the review of its file changes was going on\. A review cannot be interrupted: it may still apply some of them, and how many it applied is not known\./.test(obs.stderr), obs.stderr);
+		assert.ok(!/were NOT applied/.test(obs.stderr), 'it does not say nothing was applied: it does not know');
+		release();
+		await flush();
+		await flush();
+		assert.strictEqual(r.ws.exists('/scratch/d'), false, 'the folders the late review leaves are not made');
+		assert.strictEqual(obs.events.filter((e) => e.type === 'close').length, 1);
 		r.rt.dispose();
+		assert.strictEqual(r.clock.pending, 0, 'no timer is left behind');
 	});
 
 	await test('a read that arrives while the change set is being applied is not answered and does not touch the workspace', async () => {
@@ -463,11 +476,11 @@ async function agent(rig, command, opts) {
 		await r.clock.advance(1);
 		const res = await p;
 		assert.deepStrictEqual({ exit: res.exitCode, applied: res.applied }, { exit: 1, applied: 0 });
-		assert.ok(/stopped at \/scratch\/a: timed out/.test(res.notes.join('')), res.notes.join(''));
+		assert.ok(/stopped at \/scratch\/a: timed out\. That call was not answered and cannot be cancelled: it may still land\. The rest were not applied\./.test(res.notes.join('')), res.notes.join(''));
 		r.rt.dispose();
 	});
 
-	await test('a stat that never answers while the change set is checked is a conflict after 60 s, not a hang', async () => {
+	await test('a stat that never answers while the change set is checked refuses the set after 60 s ("could not be checked in time"), not a hang', async () => {
 		const r = createRig();
 		r.ws.put('/scratch/a', 'a');
 		let hung = false;
@@ -478,7 +491,7 @@ async function agent(rig, command, opts) {
 		await r.clock.advance(60000);
 		const res = await p;
 		assert.deepStrictEqual({ exit: res.exitCode, applied: res.applied }, { exit: 1, applied: 0 });
-		assert.ok(/could not be checked: timed out/.test(res.notes.join('')), res.notes.join(''));
+		assert.ok(/could not be checked in time: \/scratch\/a: timed out \(0 of 1 were checked\)/.test(res.notes.join('')), res.notes.join(''));
 		assert.strictEqual(r.ws.text('/scratch/a'), 'a');
 		r.rt.dispose();
 	});
@@ -584,32 +597,62 @@ async function agent(rig, command, opts) {
 		r.rt.dispose();
 	});
 
-	await test('dispose() while the changes are being written: the run ends when the writes do, "stopped while ... 2 of them were applied", and the files are there', async () => {
+	await test('Stop and dispose() while the changes are being written end the run AT ONCE: what is confirmed is counted, the write in flight may still land, and nothing more is started', async () => {
 		for (const what of ['runtime.dispose', 'session.dispose', 'session.stop']) {
 			const r = createRig();
 			const g = gatedWrites(r);
 			r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', changes: TWO }); };
 			const s = r.rt.createSession();
 			const p = watch(s.run('x'));
-			await g.reached;
+			await g.reached;                   // a.txt is being written and has not been answered
 			if (what === 'runtime.dispose') { r.rt.dispose(); } else if (what === 'session.dispose') { s.dispose(); } else { s.stop(); }
 			await flush();
-			assert.strictEqual(p.done, false, what + ': settled while writing');
-			g.open();
-			await until(() => p.done);
+			assert.strictEqual(p.done, true, what + ': the run did not wait for the write');
 			const res = p.value;
 			assert.strictEqual(res.how, 'aborted', what);
 			assert.strictEqual(res.exitCode, what === 'session.stop' ? 130 : 137, what);
-			assert.strictEqual(res.applied, 2, what);
-			assert.ok(/stopped while its file changes were being applied; 2 of them were applied/.test(res.notes.join('\n')), what + ': ' + res.notes.join('\n'));
-			assert.ok(!/were NOT applied|Any file changes .* NOT applied/.test(res.notes.join('\n')), what);
-			assert.deepStrictEqual(r.ws.list('/scratch'), ['a.txt', 'b.txt'], what);
+			assert.strictEqual(res.applied, 0, what + ': nothing is CONFIRMED');
+			assert.deepStrictEqual(res.notes, ['[LevelCode Shell: stopped while its file changes were being applied: 0 of 2 were applied. The change being made at that moment cannot be cancelled and may still land; nothing more was started.]'], what);
+			g.open();                           // the write the provider was holding now lands
+			await flush();
+			await flush();
+			assert.deepStrictEqual(r.ws.list('/scratch'), ['a.txt'], what + ': the one in flight landed (it cannot be taken back), the second was never started');
+			assert.deepStrictEqual(r.ws.calls.filter((c) => /^(writeFile|createDirectory|delete) /.test(c)), ['writeFile levelcode-scratch:/scratch/a.txt'], what + ': no write was started after the stop');
+			assert.strictEqual(p.value, res, what + ': and the result does not change');
 			r.rt.dispose();
 			assert.strictEqual(r.clock.pending, 0, what + ': a timer was left behind');
 		}
 	});
 
-	await test('dispose() of the runtime while an agent\'s review is going on: close (137) comes when the review is done, with its count', async () => {
+	await test('a Stop after some writes were answered counts them: "1 of 3 were applied", and the session is free at once', async () => {
+		const r = createRig();
+		const real = r.ws.fs.writeFile.bind(r.ws.fs);
+		/** @type {() => void} */ let release = () => { };
+		let writes = 0;
+		r.ws.fs.writeFile = async (/** @type {any} */ u, /** @type {Uint8Array} */ b) => {
+			writes++;
+			if (writes === 2) { await new Promise((res) => { release = () => res(undefined); }); }
+			return real(u, b);
+		};
+		const three = [wr('/scratch/a.txt', 'A', null), wr('/scratch/b.txt', 'B', null), wr('/scratch/c.txt', 'C', null)];
+		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', changes: run.script === 'again' ? [] : three }); };
+		const s = r.rt.createSession();
+		const p = watch(s.run('x'));
+		await until(() => writes === 2);
+		s.stop();
+		await flush();
+		assert.strictEqual(p.done, true);
+		assert.strictEqual(p.value.applied, 1);
+		assert.ok(/stopped while its file changes were being applied: 1 of 3 were applied\./.test(p.value.notes[0]), p.value.notes[0]);
+		const again = await s.run('again');        // not 'busy': the line is free
+		assert.strictEqual(again.how, 'exit');
+		release();
+		await flush();
+		assert.deepStrictEqual(r.ws.list('/scratch'), ['a.txt', 'b.txt']);
+		r.rt.dispose();
+	});
+
+	await test('dispose() of the runtime while an agent\'s review is going on: close (137) comes at once, and the review\'s late answer changes nothing', async () => {
 		const r = createRig();
 		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', changes: [wr('/scratch/a', 'a', null), mkdir('/scratch/d')] }); };
 		let release = () => { };
@@ -620,14 +663,15 @@ async function agent(rig, command, opts) {
 		const o = observe(child, 3000);
 		await reviewed;
 		r.rt.dispose();
-		await flush();
-		assert.strictEqual(o.events.some((e) => e.type === 'close'), false);
-		release();
-		await o.closed;
+		await o.closed;                        // not waiting for the review
 		assert.strictEqual(/** @type {any} */ (o.events[o.events.length - 1]).code, 137);
-		assert.ok(/stopped while its file changes were being applied; 1 of them were applied/.test(o.stderr), o.stderr);
+		assert.ok(/stopped while the review of its file changes was going on/.test(o.stderr), o.stderr);
+		release();
+		await flush();
+		await flush();
 		assert.strictEqual(r.ws.exists('/scratch/d'), false, 'the folders are not made after a stop: the review\'s file change was its own');
 		assert.ok(!/NOT applied\.$/m.test(o.stderr));
+		assert.strictEqual(o.events.filter((e) => e.type === 'close').length, 1);
 	});
 
 	/** Hold every stat of a path until released. */
@@ -651,9 +695,9 @@ async function agent(rig, command, opts) {
 		await g.reached;                    // the conflict check is reading old.txt
 		s.stop();
 		await flush();
-		assert.strictEqual(p.done, false, 'the check is not interrupted mid-read; the answer is waited for');
+		assert.strictEqual(p.done, true, 'a read is harmless to give up on: the Stop does not wait for it');
 		g.open();
-		await until(() => p.done);
+		await flush();
 		const res = p.value;
 		assert.deepStrictEqual({ how: res.how, exitCode: res.exitCode, applied: res.applied }, { how: 'aborted', exitCode: 130, applied: 0 });
 		assert.ok(/stopped before anything was applied/.test(res.notes.join('\n')), res.notes.join('\n'));
@@ -675,12 +719,13 @@ async function agent(rig, command, opts) {
 		s.stop();
 		g.open();
 		await until(() => p.done);
+		await flush();
 		assert.strictEqual(p.value.applied, 0);
 		assert.ok(!r.ws.calls.some((c) => c === 'stat levelcode-scratch:/scratch/b'), 'b was not even looked at: ' + r.ws.calls.join(','));
 		r.rt.dispose();
 	});
 
-	await test('an agent\'s SIGKILL during the review: the review finishes, the folders it left are NOT made, and the status is 137', async () => {
+	await test('an agent\'s SIGKILL during the review: close (137) at once, the folders the review leaves later are NOT made, and the review can see it was stopped', async () => {
 		const r = createRig();
 		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', changes: [wr('/scratch/a', 'a', null), mkdir('/scratch/d')] }); };
 		let release = () => { };
@@ -695,11 +740,13 @@ async function agent(rig, command, opts) {
 		const o = observe(child, 3000);
 		await reviewed;
 		assert.strictEqual(child.kill('SIGKILL'), true);
-		release();
-		await o.closed;
+		await o.closed;                        // the review has not answered
 		assert.strictEqual(/** @type {any} */ (o.events[o.events.length - 1]).code, 137);
+		assert.ok(/stopped while the review of its file changes was going on/.test(o.stderr), o.stderr);
+		release();
+		await flush();
+		await flush();
 		assert.strictEqual(r.ws.exists('/scratch/d'), false);
-		assert.ok(/1 of them were applied/.test(o.stderr), o.stderr);
 		assert.deepStrictEqual(asks, [false, true], 'the review can ask whether the command was stopped: no before, yes after');
 		r.rt.dispose();
 	});
@@ -740,6 +787,378 @@ async function agent(rig, command, opts) {
 		await r.rt.createSession().run('rm gone.txt');
 		assert.deepStrictEqual(opts, [{ recursive: false, useTrash: false }]);
 		r.rt.dispose();
+	});
+
+
+	/* ===== a commit is bounded, and a Stop does not wait for it ======================================== */
+
+	/** Every `op` of the workspace answers after `ms` of the rig's own clock (the paths `only` says yes to). */
+	function slow(/** @type {any} */ r, /** @type {string} */ op, /** @type {number} */ ms, /** @type {(p: string) => boolean} */ only) {
+		const real = r.ws.fs[op].bind(r.ws.fs);
+		r.ws.fs[op] = async (/** @type {any} */ ...a) => {
+			if (!only || only(a[0].path)) { await new Promise((res) => r.clock.setTimeout(() => res(undefined), ms)); }
+			return real(...a);
+		};
+	}
+	/** Let a run get as far as it can without the clock moving: the fake engine's own turns are macrotasks. */
+	async function settle() { for (let i = 0; i < 5; i++) { await flush(); } }
+	const FIVE = ['a', 'b', 'c', 'd', 'e'];
+	const checkFive = (/** @type {any} */ r) => { for (const f of FIVE) { r.ws.put('/scratch/' + f, f); } return FIVE.map((f) => wr('/scratch/' + f, f.toUpperCase(), f)); };
+	const writes = (/** @type {any} */ r) => r.ws.calls.filter((/** @type {string} */ c) => /^(writeFile|createDirectory|delete) /.test(c));
+
+	await test('a provider that never answers costs ONE wait for the whole check, not one per file: five files, refused at 60 s (not 300), one stat asked, how far it got', async () => {
+		const r = createRig();
+		const changes = checkFive(r);
+		r.ws.hang('stat', (k) => /\/scratch\/[a-e]$/.test(k));
+		ending(r, { changes });
+		const p = watch(r.rt.createSession().run('x'));
+		await until(() => r.ws.calls.some((c) => /^stat .*\/scratch\/a$/.test(c)));
+		await r.clock.advance(59999);
+		assert.strictEqual(p.done, false);
+		await r.clock.advance(1);
+		assert.strictEqual(p.done, true, 'settled at 60 s');
+		assert.deepStrictEqual({ how: p.value.how, exit: p.value.exitCode, applied: p.value.applied }, { how: 'exit', exit: 1, applied: 0 });
+		assert.deepStrictEqual(p.value.notes, [
+			'[LevelCode Shell: refused: the changes could not be checked in time: /scratch/a: timed out (0 of 5 were checked)]',
+			'[LevelCode Shell: NONE of this command\'s file changes were applied.]',
+		]);
+		assert.deepStrictEqual(r.ws.calls.filter((c) => /^stat .*\/scratch\/[a-e]$/.test(c)), ['stat levelcode-scratch:/scratch/a'], 'the other four were not asked');
+		assert.deepStrictEqual(writes(r), []);
+		r.rt.dispose();
+		assert.strictEqual(r.clock.pending, 0);
+	});
+
+	await test('a provider that is slow but alive has checkMs IN ALL: 25 s a file, five files, refused at 60 s (not 125 s) after two were checked', async () => {
+		const r = createRig();
+		const changes = checkFive(r);
+		slow(r, 'stat', 25000, (p) => /\/scratch\/[a-e]$/.test(p));
+		ending(r, { changes });
+		const p = watch(r.rt.createSession().run('x'));
+		await settle();                       // the run has reached its first stat (the clock does not move before it)
+		await r.clock.advance(59999);
+		assert.strictEqual(p.done, false);
+		await r.clock.advance(1);
+		assert.strictEqual(p.done, true, 'at 60 s: ' + r.clock.now());
+		assert.strictEqual(p.value.notes[0], '[LevelCode Shell: refused: the changes could not be checked in time: /scratch/c: ran out of time: the check gets 60 s in all (2 of 5 were checked)]');
+		assert.deepStrictEqual(writes(r), []);
+		assert.strictEqual(r.ws.text('/scratch/a'), 'a');
+		r.rt.dispose();
+	});
+
+	await test('the check budget is exact: four 25 ms files fit in 100 ms and the fifth is refused before it is asked', async () => {
+		for (const [count, ok] of /** @type {Array<[number, boolean]>} */ ([[4, true], [5, false]])) {
+			const r = createRig({ limits: { workers: { checkMs: 100, fsMs: 1000 } } });
+			const names = FIVE.slice(0, count);
+			for (const f of names) { r.ws.put('/scratch/' + f, f); }
+			slow(r, 'stat', 25, (p) => /\/scratch\/[a-e]$/.test(p));
+			// (existed, nothing read of it: the check is one stat a file)
+			ending(r, { changes: names.map((f) => ({ kind: 'write', path: '/scratch/' + f, existed: true, before: null, after: te.encode(f.toUpperCase()) })) });
+			const p = watch(r.rt.createSession().run('x'));
+			await settle();
+			await r.clock.advance(200);
+			assert.strictEqual(p.done, true, count + ' files');
+			if (ok) {
+				assert.deepStrictEqual({ exit: p.value.exitCode, applied: p.value.applied }, { exit: 0, applied: 4 }, 'exactly the budget passes');
+				assert.strictEqual(r.ws.text('/scratch/d'), 'D');
+			} else {
+				assert.strictEqual(p.value.applied, 0);
+				assert.ok(/could not be checked in time: \/scratch\/e: ran out of time: the check gets 100 ms in all \(4 of 5 were checked\)/.test(p.value.notes[0]), p.value.notes[0]);
+				assert.strictEqual(r.ws.calls.filter((c) => c === 'stat levelcode-scratch:/scratch/e').length, 0, 'the fifth was never asked: the budget was spent');
+			}
+			r.rt.dispose();
+		}
+	});
+
+	await test('Stop while a provider that never answers is being asked in the check: the run ends AT ONCE, nothing is written, and the line is free', async () => {
+		const r = createRig();
+		const changes = checkFive(r);
+		r.ws.hang('stat', (k) => /\/scratch\/[a-e]$/.test(k));
+		let first = true;
+		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', changes: first ? changes : [] }); first = false; };
+		const s = r.rt.createSession();
+		const p = watch(s.run('x'));
+		await until(() => r.ws.calls.some((c) => /^stat .*\/scratch\/a$/.test(c)));
+		await r.clock.advance(1000);
+		s.stop();
+		await flush();
+		assert.strictEqual(p.done, true, 'one second after the run started: the Stop did not wait for the 60 s');
+		assert.deepStrictEqual({ how: p.value.how, exit: p.value.exitCode, applied: p.value.applied }, { how: 'aborted', exit: 130, applied: 0 });
+		assert.deepStrictEqual(p.value.notes, ['[LevelCode Shell: stopped before anything was applied: the command\'s file changes were being checked, and were NOT applied.]']);
+		assert.deepStrictEqual(writes(r), []);
+		assert.strictEqual((await s.run('again')).how, 'exit', 'not busy');
+		r.rt.dispose();
+		assert.strictEqual(r.clock.pending, 0, 'the 60 s timer of the call that was given up on is gone');
+	});
+
+	await test('a write that never answers: stopped at 60 s with the count that is confirmed, "may still land", the line is free; the same through the rig the terminal used', async () => {
+		const r = createRig();
+		const two = [wr('/scratch/a', 'A', null), wr('/scratch/b', 'B', null)];
+		r.ws.hang('writeFile', (k) => k.endsWith('/b'));
+		let n = 0;
+		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', changes: n++ === 0 ? two : [] }); };
+		const s = r.rt.createSession();
+		const p = watch(s.run('x'));
+		await until(() => r.ws.calls.some((c) => /^writeFile .*\/scratch\/b$/.test(c)));
+		await r.clock.advance(59999);
+		assert.strictEqual(p.done, false);
+		await r.clock.advance(1);
+		assert.strictEqual(p.done, true, 'settled at 60 s, not "busy for ever"');
+		assert.deepStrictEqual({ how: p.value.how, exit: p.value.exitCode, applied: p.value.applied }, { how: 'exit', exit: 1, applied: 1 });
+		assert.strictEqual(p.value.notes[0], '[LevelCode Shell: applied 1 of 2 file changes; stopped at /scratch/b: timed out. That call was not answered and cannot be cancelled: it may still land. The rest were not applied.]');
+		assert.strictEqual(r.ws.text('/scratch/a'), 'A');
+		assert.strictEqual((await s.run('next')).how, 'exit', 'the session is free');
+		r.rt.dispose();
+	});
+
+	await test('a hung folder removal or creation of the terminal commit is bounded the same way', async () => {
+		for (const [op, change, setup] of /** @type {Array<[string, any, (r: any) => void]>} */ ([
+			['delete', rmdir('/scratch/d'), (r) => { r.ws.mkdir('/scratch/d'); }],
+			['createDirectory', mkdir('/scratch/e'), () => { }],
+		])) {
+			const r = createRig();
+			setup(r);
+			r.ws.hang(op, () => true);
+			ending(r, { changes: [change] });
+			const p = watch(r.rt.createSession().run('x'));
+			await until(() => r.ws.calls.some((c) => c.startsWith(op + ' ')));
+			await r.clock.advance(60000);
+			assert.strictEqual(p.done, true, op);
+			assert.ok(/applied 0 of 1 file changes; stopped at \/scratch\/[de]: timed out\. That call was not answered and cannot be cancelled: it may still land\./.test(p.value.notes[0]), op + ': ' + p.value.notes[0]);
+			r.rt.dispose();
+		}
+	});
+
+	await test('a READ that never answers in the writing phase (the stat of the folder a file goes into) is a stop at that folder - and does not claim it may still land', async () => {
+		const r = createRig();
+		r.ws.hang('stat', (k) => k.endsWith('/scratch/sub'));
+		ending(r, { changes: [wr('/scratch/sub/a', 'A', null)] });
+		const p = watch(r.rt.createSession().run('x'));
+		await until(() => r.ws.calls.some((c) => /^stat .*\/scratch\/sub$/.test(c)));
+		await r.clock.advance(60000);
+		assert.strictEqual(p.done, true);
+		assert.strictEqual(p.value.notes[0], '[LevelCode Shell: applied 0 of 1 file changes; stopped at /scratch/sub: timed out. The rest were not applied.]');
+		assert.deepStrictEqual(writes(r), []);
+		r.rt.dispose();
+	});
+
+	await test('a Stop while only a READ is in flight in the writing phase counts what is applied and says nothing may land; so does one in the check of the folders a review left', async () => {
+		// the terminal: the read of the folder is in flight, the first file is not written yet
+		const r = createRig();
+		r.ws.hang('stat', (k) => k.endsWith('/scratch/sub'));
+		ending(r, { changes: [wr('/scratch/sub/a', 'A', null)] });
+		const s = r.rt.createSession();
+		const p = watch(s.run('x'));
+		await until(() => r.ws.calls.some((c) => /^stat .*\/scratch\/sub$/.test(c)));
+		s.stop();
+		await flush();
+		assert.deepStrictEqual(p.value.notes, ['[LevelCode Shell: stopped while its file changes were being applied: 0 of 1 were applied. Nothing more was started.]']);
+		r.rt.dispose();
+		// the agent: the review applied n.txt, and the shell is checking the folder it left
+		const q = createRig();
+		q.ws.mkdir('/scratch/d');
+		q.ws.hang('stat', (k) => k.endsWith('/scratch/d'));
+		ending(q, { changes: [wr('/scratch/n.txt', 'N', null), rmdir('/scratch/d')] });
+		/** @type {string[]} */ const out = [];
+		let code = null;
+		const child = q.rt.spawnAgent('x', { cwd: '/scratch', commit: async (/** @type {any[]} */ cs) => ({ rest: cs.filter((c) => c.kind === 'rmdir'), notes: [], failed: 0 }) });
+		child.stderr.on('data', (/** @type {string} */ t) => out.push(t));
+		child.on('close', (/** @type {number} */ c) => { code = c; });
+		await until(() => q.ws.calls.some((c) => /^stat .*\/scratch\/d$/.test(c)));
+		child.kill('SIGTERM');
+		await flush();
+		assert.strictEqual(code, 130);
+		assert.strictEqual(out.join(''), '[LevelCode Shell: stopped while its file changes were being applied: 1 of 2 were applied. Nothing more was started.]\n', 'the review\'s count, and no write in flight');
+		q.rt.dispose();
+	});
+
+	await test('the writing has commitMs IN ALL too: five writes answered after 50 s each end at 120 s with two confirmed, the third in flight, the rest not started', async () => {
+		const r = createRig();
+		const five = FIVE.map((f) => wr('/scratch/' + f, f.toUpperCase(), null));
+		slow(r, 'writeFile', 50000, (p) => /\/scratch\/[a-e]$/.test(p));
+		ending(r, { changes: five });
+		const p = watch(r.rt.createSession().run('x'));
+		await settle();
+		await r.clock.advance(119999);
+		assert.strictEqual(p.done, false);
+		await r.clock.advance(1);
+		assert.strictEqual(p.done, true, 'at 120 s, not at 250 s');
+		assert.deepStrictEqual({ exit: p.value.exitCode, applied: p.value.applied }, { exit: 1, applied: 2 });
+		assert.strictEqual(p.value.notes[0], '[LevelCode Shell: applied 2 of 5 file changes; stopped at /scratch/c: ran out of time: the changes get 120 s in all. That call was not answered and cannot be cancelled: it may still land. The rest were not applied.]');
+		await r.clock.advance(60000);
+		assert.deepStrictEqual(r.ws.list('/scratch').filter((n) => FIVE.includes(n)), ['a', 'b', 'c'], 'the one in flight did land, and d and e were never started');
+		r.rt.dispose();
+		assert.strictEqual(r.clock.pending, 0);
+	});
+
+	await test('a Stop in the writing with a write that never answers: at once, "1 of 2", and the write may still land; a late landing changes nothing', async () => {
+		const r = createRig();
+		const two = [wr('/scratch/a', 'A', null), wr('/scratch/b', 'B', null)];
+		r.ws.hang('writeFile', (k) => k.endsWith('/b'));
+		ending(r, { changes: two });
+		const s = r.rt.createSession();
+		const p = watch(s.run('x'));
+		await until(() => r.ws.calls.some((c) => /^writeFile .*\/scratch\/b$/.test(c)));
+		await r.clock.advance(2000);
+		s.stop();
+		await flush();
+		assert.strictEqual(p.done, true);
+		assert.deepStrictEqual({ how: p.value.how, exit: p.value.exitCode, applied: p.value.applied }, { how: 'aborted', exit: 130, applied: 1 });
+		assert.deepStrictEqual(p.value.notes, ['[LevelCode Shell: stopped while its file changes were being applied: 1 of 2 were applied. The change being made at that moment cannot be cancelled and may still land; nothing more was started.]']);
+		await r.clock.advance(120000);
+		assert.deepStrictEqual(r.ws.list('/scratch'), ['a'], 'nothing happened after the stop');
+		r.rt.dispose();
+		assert.strictEqual(r.clock.pending, 0);
+	});
+
+	await test('the agent: a review that takes 119 s and then a folder that never answers - one budget, the run ends at 120 s, not at 179', async () => {
+		const r = createRig();
+		r.ws.hang('createDirectory', () => true);
+		ending(r, { changes: [wr('/scratch/a', 'A', null), mkdir('/scratch/d')] });
+		/** @type {string[]} */ let out = [];
+		let code = null;
+		const child = r.rt.spawnAgent('x', {
+			cwd: '/scratch',
+			commit: () => new Promise((res) => r.clock.setTimeout(() => res({ rest: [mkdir('/scratch/d')], notes: [], failed: 0 }), 119000)),
+		});
+		child.stderr.on('data', (/** @type {string} */ t) => out.push(t));
+		child.on('close', (/** @type {number} */ c) => { code = c; });
+		await settle();
+		await r.clock.advance(119999);
+		assert.strictEqual(code, null);
+		await r.clock.advance(1);
+		assert.strictEqual(code, 1, 'at 120 s in all');
+		assert.strictEqual(out.join(''), '[LevelCode Shell: applied 1 of 2 file changes; stopped at /scratch/d: ran out of time: the changes get 120 s in all. That call was not answered and cannot be cancelled: it may still land. The rest were not applied.]\n');
+		r.rt.dispose();
+	});
+
+	await test('the agent: a hung rmdir of `rest` is bounded by fsMs, and a Stop in it ends the run at once with what the review applied', async () => {
+		for (const stop of [false, true]) {
+			const r = createRig();
+			r.ws.mkdir('/scratch/d');
+			r.ws.hang('delete', () => true);
+			ending(r, { changes: [wr('/scratch/n.txt', 'N', null), rmdir('/scratch/d')] });
+			/** @type {string[]} */ const out = [];
+			let code = null;
+			const child = r.rt.spawnAgent('x', {
+				cwd: '/scratch',
+				commit: async (/** @type {any[]} */ cs) => { await r.ws.fs.writeFile(r.ws.vscode.Uri.parse('levelcode-scratch:///scratch/n.txt'), te.encode('N')); return { rest: cs.filter((c) => c.kind === 'rmdir'), notes: ['[LevelCode Shell: 1 file changed]'], failed: 0 }; },
+			});
+			child.stderr.on('data', (/** @type {string} */ t) => out.push(t));
+			child.on('close', (/** @type {number} */ c) => { code = c; });
+			await until(() => r.ws.calls.some((c) => c.startsWith('delete ')));
+			if (stop) {
+				await r.clock.advance(1000);
+				assert.strictEqual(child.kill('SIGTERM'), true);
+				await flush();
+				assert.strictEqual(code, 130, 'at once');
+				assert.ok(out.join('').includes('stopped while its file changes were being applied: 1 of 2 were applied. The change being made at that moment cannot be cancelled and may still land; nothing more was started.'), out.join(''));
+			} else {
+				await r.clock.advance(60000);
+				assert.strictEqual(code, 1);
+				// the number is the whole command's: the review applied n.txt and the rmdir is the second change
+				assert.ok(out.join('').includes('applied 1 of 2 file changes; stopped at /scratch/d: timed out. That call was not answered and cannot be cancelled: it may still land. The rest were not applied.'), out.join(''));
+			}
+			assert.strictEqual(r.ws.text('/scratch/n.txt'), 'N');
+			r.rt.dispose();
+		}
+	});
+
+	await test('the agent: what the shell cannot do of `rest` is counted against the WHOLE set, not only the folders ("applied 0 of 1" over a file the review wrote)', async () => {
+		const r = createRig();
+		r.ws.mkdir('/scratch/d');
+		r.ws.put('/scratch/d/late.txt', 'a file that appeared after the command ran');
+		ending(r, { changes: [wr('/scratch/n.txt', 'N', null), rmdir('/scratch/d')] });
+		const x = await agent(r, 'x', { commit: async (/** @type {any[]} */ cs) => ({ rest: cs.filter((c) => c.kind === 'rmdir'), notes: [], failed: 0 }) });
+		assert.strictEqual(x.code, 1);
+		assert.ok(/applied 1 of 2 file changes; stopped at \/scratch\/d: /.test(x.stderr) && !/applied 0 of 1/.test(x.stderr), x.stderr);
+		assert.strictEqual(r.ws.text('/scratch/d/late.txt'), 'a file that appeared after the command ran');
+		// and a refusal of what is left says how much had been applied
+		const q = createRig();
+		q.ws.put('/scratch/e', 'a file where the command made a folder');
+		ending(q, { changes: [wr('/scratch/n.txt', 'N', null), mkdir('/scratch/e')] });
+		const y = await agent(q, 'x', { commit: async (/** @type {any[]} */ cs) => ({ rest: cs.filter((c) => c.kind === 'mkdir'), notes: [], failed: 0 }) });
+		assert.ok(/\/scratch\/e is a file now/.test(y.stderr), y.stderr);
+		assert.ok(/NONE of the remaining 1 change was applied \(1 of 2 had already been\)\./.test(y.stderr) && !/NONE of this command's file changes were applied/.test(y.stderr), y.stderr);
+		r.rt.dispose();
+		q.rt.dispose();
+	});
+
+	/* ===== what a provider throws cannot change what a commit reports ============================== */
+
+	/**
+	 * What a provider can throw that has broken a naive `e.message` / `e.code`; the third is what the reason must say.
+	 * @returns {Array<[string, any, RegExp]>}
+	 */
+	function hostile() {
+		const revoked = Proxy.revocable({}, {});
+		revoked.revoke();
+		return [
+			['a message getter that throws', Object.defineProperty({}, 'message', { get() { throw new Error('getter-boom'); } }), /\[object Object\]/],
+			['a Proxy that throws on every read', new Proxy({}, new Proxy({}, { get() { throw new Error('trap-boom'); } })), /\[unprintable value\]/],
+			['a revoked Proxy', revoked.proxy, /\[unprintable value\]/],
+			['an object with no prototype', Object.create(null), /\[unprintable value\]/],
+			['a Symbol', Symbol('s'), /Symbol\(s\)/],
+			['a BigInt', 7n, /\b7\b/],
+			['undefined', undefined, /no reason was given/],
+			['an Error whose `code` getter throws', Object.defineProperty(new Error('code-boom'), 'code', { get() { throw new Error('inner'); } }), /code-boom/],
+			['an Error whose `name` getter throws', Object.defineProperty(new Error('name-boom'), 'name', { get() { throw new Error('inner'); } }), /name-boom/],
+		];
+	}
+
+	await test('the terminal: whatever a write throws, the run says "applied 1 of 3, stopped at b" and exits 1 - never "error, applied 0" over the file that landed', async () => {
+		for (const [what, thrown, said] of hostile()) {
+			const r = createRig();
+			r.ws.fail('writeFile', (k) => k.endsWith('/b.txt'), thrown);
+			ending(r, { changes: [wr('/scratch/a.txt', 'A', null), wr('/scratch/b.txt', 'B', null), wr('/scratch/c.txt', 'C', null)] });
+			const res = await r.rt.createSession().run('x');
+			assert.deepStrictEqual({ how: res.how, exit: res.exitCode, applied: res.applied }, { how: 'exit', exit: 1, applied: 1 }, what);
+			assert.ok(/^\[LevelCode Shell: applied 1 of 3 file changes; stopped at \/scratch\/b\.txt: .+\. The rest were not applied\.\]$/.test(res.notes[0]), what + ': ' + res.notes[0]);
+			assert.ok(said.test(res.notes[0]), what + ': the reason is what the thing says (' + said + '): ' + res.notes[0]);
+			assert.ok(!/could not finish the command/.test(res.notes.join('')), what);
+			assert.strictEqual(r.ws.text('/scratch/a.txt'), 'A', what);
+			r.rt.dispose();
+		}
+	});
+
+	await test('the terminal: a check that throws something hostile is a refusal with a reason; so is a stat in the folder step', async () => {
+		for (const [what, thrown, said] of hostile()) {
+			const r = createRig();
+			r.ws.put('/scratch/a.txt', 'a');
+			r.ws.fail('stat', (k) => k.endsWith('/a.txt'), thrown);
+			ending(r, { changes: [wr('/scratch/a.txt', 'A', 'a')] });
+			const res = await r.rt.createSession().run('x');
+			assert.deepStrictEqual({ how: res.how, applied: res.applied }, { how: 'exit', applied: 0 }, what);
+			assert.ok(/refused: \/scratch\/a\.txt could not be checked: .+/.test(res.notes[0]), what + ': ' + res.notes[0]);
+			assert.ok(said.test(res.notes[0]), what + ': ' + res.notes[0]);
+			r.rt.dispose();
+		}
+	});
+
+	await test('the agent: a review that throws or rejects with something hostile is "could not be applied (...); some of them may have been", and the shell goes on', async () => {
+		for (const [what, thrown, said] of hostile()) {
+			for (const how of ['throws', 'rejects']) {
+				const r = createRig();
+				ending(r, { changes: [wr('/scratch/a', 'A', null)] });
+				const res = await agent(r, 'x', { commit: how === 'throws' ? () => { throw thrown; } : () => Promise.reject(thrown) });
+				assert.strictEqual(res.code, 1, what + ' ' + how);
+				assert.ok(/^\[LevelCode Shell: the command's file changes could not be applied \(.+\); some of them may have been\]\n$/.test(res.stderr), what + ' ' + how + ': ' + JSON.stringify(res.stderr));
+				assert.ok(said.test(res.stderr), what + ' ' + how + ': ' + res.stderr);
+				r.rt.dispose();
+			}
+		}
+	});
+
+	await test('the agent: the folders the review leaves are applied by the same step(): a hostile throw there is a stop at that folder with the review\'s count', async () => {
+		for (const [what, thrown, said] of hostile()) {
+			const r = createRig();
+			r.ws.fail('createDirectory', () => true, thrown);
+			ending(r, { changes: [wr('/scratch/a', 'A', null), mkdir('/scratch/d')] });
+			const res = await agent(r, 'x', { commit: async (/** @type {any[]} */ cs) => ({ rest: cs.filter((c) => c.kind === 'mkdir'), notes: [], failed: 0 }) });
+			assert.strictEqual(res.code, 1, what);
+			assert.ok(/applied 1 of 2 file changes; stopped at \/scratch\/d: /.test(res.stderr), what + ': ' + res.stderr);
+			assert.ok(said.test(res.stderr), what + ': ' + res.stderr);
+			r.rt.dispose();
+		}
 	});
 
 	/* ===== what the review hands back is not believed beyond the contract ================================== */

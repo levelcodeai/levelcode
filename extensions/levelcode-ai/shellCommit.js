@@ -124,8 +124,9 @@ function isProtected(rel) { return PROTECTED.some((re) => re.test(rel)); }
  * @param {Change[]} changes
  * @param {{ applyEdit?: Function, applyDelete?: Function, touched?: Set<string>, editCount?: number }} ctx
  * @param {{ folders: () => Array<{name:string, root:string}>, readNow: (abs: string) => Promise<Uint8Array|null>, isDirty?: (abs: string) => boolean, cancelled?: () => boolean }} io
- *   `cancelled` is asked between the read-only checks and once more before the first write: a Stop that arrives
- *   while the files are being compared applies nothing. Once the first write has begun nothing interrupts it.
+ *   `cancelled` is asked between the read-only checks, once more before the first write, and before each change
+ *   after it: a Stop while the files are being compared applies nothing; a Stop while they are being applied leaves
+ *   what is already in the review and starts nothing more (a change in flight is never interrupted).
  * @returns {Promise<{ rest: Change[], applied: Change[], failed: Refusal[], notes: string[], refused: boolean }>}
  *   `rest` is what the SHELL itself still has to do (create and remove directories). `refused` is true when
  *   nothing was applied because the set as a whole was refused.
@@ -217,7 +218,12 @@ async function commitShellChanges(changes, ctx, io) {
 	const bump = () => { ctx.editCount = (ctx.editCount || 0) + 1; };
 	/** @param {{c: Change}} a @param {{c: Change}} b */
 	const byPath = (a, b) => (a.c.path < b.c.path ? -1 : a.c.path > b.c.path ? 1 : 0);
+	// A Stop that arrives while the review is applying is honoured BETWEEN changes: what is already in the review stays
+	// (and can be undone), nothing further is started. The shell has already told the model and the user that the
+	// command was stopped and that a review cannot be interrupted mid-change.
+	const stoppedWhy = 'the command was stopped before this change was applied';
 	for (const { c, review } of plan.filter((x) => x.c.kind === 'write').sort(byPath)) {
+		if (isCancelled()) { failed.push({ c, why: stoppedWhy }); continue; }
 		try {
 			if (typeof ctx.applyEdit !== 'function') { throw new Error('this host has no review'); }
 			const ok = await ctx.applyEdit({ path: review, exists: !!c.existed, proposed: utf8.decode(/** @type {Uint8Array} */ (c.after)) });
@@ -226,6 +232,7 @@ async function commitShellChanges(changes, ctx, io) {
 		} catch (e) { failed.push({ c, why: 'the editor failed: ' + String((e && /** @type {any} */ (e).message) || e).slice(0, 120) }); }
 	}
 	for (const { c, review } of plan.filter((x) => x.c.kind === 'delete').sort(byPath)) {
+		if (isCancelled()) { failed.push({ c, why: stoppedWhy }); continue; }
 		try {
 			if (typeof ctx.applyDelete !== 'function') { throw new Error('this host has no review'); }
 			const ok = await ctx.applyDelete({ path: review });

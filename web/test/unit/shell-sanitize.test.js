@@ -12,7 +12,7 @@
 const assert = require('assert');
 const path = require('path');
 
-const { forTerminal, forDisplay, forNote } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'sanitize.js'));
+const { forTerminal, forDisplay, forNote, safeMessage, safeGet } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'sanitize.js'));
 
 let n = 0;
 function test(/** @type {string} */ name, /** @type {() => void} */ fn) { fn(); n++; console.log('  ok - ' + name); }
@@ -294,6 +294,83 @@ test('a long input with every class in it is handled, and nothing invisible is l
 	}
 	const big = 'line of text with \x1b[0m and \u{202E}\n'.repeat(40000);
 	assert.ok(forTerminal(big).length > big.length - 1);
+});
+
+/* ----- what an error says -------------------------------------------------------------------------- */
+
+/**
+ * What a hostile or merely careless provider can throw. Each is a value that has broken a naive `e.message`: a
+ * getter that throws, a Proxy whose every trap throws (and one that was revoked), an object with no prototype,
+ * a Symbol and a BigInt (`'' + x` throws for the first), a thrown nothing, an object whose toString throws.
+ * @returns {Array<[string, any]>}
+ */
+function hostileThrown() {
+	const revocable = Proxy.revocable({}, {});
+	revocable.revoke();
+	return [
+		['a message getter that throws', Object.defineProperty({}, 'message', { get() { throw new Error('getter-boom'); } })],
+		['a Proxy whose every trap throws', new Proxy({}, new Proxy({}, { get() { throw new Error('trap-boom'); } }))],
+		['a revoked Proxy', revocable.proxy],
+		['an object with no prototype', Object.create(null)],
+		['a Symbol', Symbol('sym')],
+		['a BigInt', 12n],
+		['undefined', undefined],
+		['null', null],
+		['an object whose toString throws', { toString() { throw new Error('no'); } }],
+		['a message that is an object with no text', { message: Object.create(null) }],
+		['a function with a throwing name', Object.defineProperty(() => 0, 'message', { get() { throw new Error('fn-boom'); } })],
+		['an Error whose message getter throws', Object.defineProperty(new Error('x'), 'message', { get() { throw new Error('inner'); } })],
+	];
+}
+
+test('safeMessage is total: whatever was thrown, it returns one line of text and never throws', () => {
+	for (const [what, v] of hostileThrown()) {
+		let out = '';
+		assert.doesNotThrow(() => { out = safeMessage(v); }, what);
+		assert.strictEqual(typeof out, 'string', what);
+		assert.ok(out.length > 0, what + ': a reason is never empty');
+		assert.ok(!/[\n\t]/.test(out), what);
+	}
+	assert.strictEqual(safeMessage(undefined), 'no reason was given');
+	assert.strictEqual(safeMessage(null), 'no reason was given');
+	assert.strictEqual(safeMessage(Object.create(null)), '[unprintable value]');
+});
+
+test('safeMessage says what the error says: its message, else its text, one line, made visible', () => {
+	assert.strictEqual(safeMessage(new Error('quota exceeded')), 'quota exceeded');
+	assert.strictEqual(safeMessage('a plain string'), 'a plain string');
+	assert.strictEqual(safeMessage(42), '42');
+	assert.strictEqual(safeMessage({ message: 'from an object' }), 'from an object');
+	assert.strictEqual(safeMessage(new Error('')), 'Error', 'an empty message falls back to the error\'s own text');
+	assert.strictEqual(safeMessage(Symbol('s')), 'Symbol(s)');
+	assert.strictEqual(safeMessage(5n), '5');
+	assert.strictEqual(safeMessage(new Error('bad \x1b[31m reason\nsecond line\there')), 'bad \u{241B}[31m reason\u{240A}second line\u{2409}here');
+	assert.strictEqual(safeMessage(Object.defineProperty({ toString() { return 'its text'; } }, 'message', { get() { throw new Error('x'); } })), 'its text', 'a message that cannot be read falls back to the text');
+});
+
+test('safeMessage is bounded before it is shown: exactly the limit passes, one over is cut, and a megabyte is not walked', () => {
+	assert.strictEqual(safeMessage('x'.repeat(160)), 'x'.repeat(160));
+	assert.strictEqual(safeMessage('x'.repeat(161)), 'x'.repeat(160));
+	assert.strictEqual(safeMessage('x'.repeat(201), 200), 'x'.repeat(200));
+	assert.strictEqual(safeMessage('x'.repeat(200), 200), 'x'.repeat(200));
+	// ...and what is walked is the cut text, not the megabytes: every string handed to replace() is short
+	const realReplace = String.prototype.replace;
+	let widest = 0;
+	/** @type {any} */ (String.prototype).replace = function (/** @type {any[]} */ ...a) { widest = Math.max(widest, this.length); return realReplace.apply(this, /** @type {any} */ (a)); };
+	let huge = '';
+	try { huge = safeMessage(new Error('\x1b'.repeat(5 * 1024 * 1024))); } finally { String.prototype.replace = realReplace; }
+	assert.ok(huge.length <= 160, String(huge.length));
+	assert.ok(widest > 0 && widest <= 160 * 8, 'a 5 MiB message was cut before it was looked at: the widest text walked was ' + widest);
+	// the cut does not leave half of a surrogate pair at the end
+	assert.ok(!/[\uD800-\uDBFF]$/.test(safeMessage('x'.repeat(159) + '\u{1F600}')), 'no lone high surrogate');
+});
+
+test('safeGet reads a property of anything without being able to throw: a getter, a Proxy, a primitive, nothing', () => {
+	assert.strictEqual(safeGet({ code: 'ENOENT' }, 'code'), 'ENOENT');
+	for (const [what, v] of hostileThrown()) { assert.doesNotThrow(() => safeGet(v, 'code'), what); assert.doesNotThrow(() => safeGet(v, 'message'), what); }
+	assert.strictEqual(safeGet(Object.defineProperty({}, 'code', { get() { throw new Error('x'); } }), 'code'), undefined);
+	assert.strictEqual(safeGet(undefined, 'code'), undefined);
+	assert.strictEqual(safeGet('text', 'length'), undefined, 'a primitive has no properties of its own to offer');
 });
 
 console.log(`\n${n} tests passed`);

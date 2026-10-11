@@ -29,7 +29,7 @@ test('the limits are the ones of README section 7, number for number', () => {
 		read: { file: 4 * MiB, run: 16 * MiB, served: 32 * MiB },
 		agent: { writeFile: 1 * MiB, writeRun: 8 * MiB, entries: 2000 },
 		terminal: { writeFile: 8 * MiB, writeRun: 32 * MiB, entries: 2000 },
-		workers: { max: 4, idleMs: 60000, readyMs: 20000, fsMs: 60000, commitMs: 120000, deadlineGraceMs: 15000, completeMax: 200, completeMs: 2000 },
+		workers: { max: 4, idleMs: 60000, readyMs: 20000, fsMs: 60000, checkMs: 60000, commitMs: 120000, deadlineGraceMs: 15000, completeMax: 200, completeMs: 2000 },
 	});
 });
 

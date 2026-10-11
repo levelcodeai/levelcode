@@ -14,7 +14,7 @@
 
 const vscode = require('vscode');
 const { createRuntime } = require('./runtime');
-const { forDisplay } = require('./sanitize');
+const { forDisplay, safeMessage } = require('./sanitize');
 
 /** The engine worker's script, next to this extension's package.json (the build puts it there). */
 const ENGINE_ASSET = 'engine.worker.js';
@@ -57,7 +57,7 @@ function createProductionDeps(context, log) {
 					// provider for it (not measured: only the scratch scheme was driven), it is still a static
 					// file of this origin, and fetch reads it. Both reasons are kept when both fail.
 					if (typeof fetch !== 'function') { throw e; }
-					const said = (/** @type {any} */ x) => String((x && x.message) || x);
+					const said = (/** @type {any} */ x) => safeMessage(x, 300);
 					try {
 						const r = await fetch(uri.toString());
 						if (!r.ok) { throw new Error('status ' + r.status); }
@@ -110,7 +110,7 @@ function activate(context) {
 			vscode, runtime, context, config: { info: runtime.info, limits: runtime.limits },
 		});
 	} catch (e) {
-		log('terminal-unavailable', { message: String((e && /** @type {any} */ (e).message) || e) });
+		log('terminal-unavailable', { message: safeMessage(e, 300) });
 	}
 
 	const disposable = {

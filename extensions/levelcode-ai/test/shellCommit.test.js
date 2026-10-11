@@ -85,6 +85,22 @@ const ids = (out) => out.failed.map((f) => f.c.path).sort();
 		assert.deepStrictEqual(r.edits, []);
 	});
 
+	await test('a Stop while the review is applying leaves what is in it and starts nothing more; the rest are named', async () => {
+		const r = rig({ '/ws/a.txt': 'old', '/ws/b.txt': 'old', '/ws/c.txt': 'old', '/ws/gone.txt': 'bye' });
+		let stopped = false;
+		const applyEdit = r.ctx.applyEdit;
+		r.ctx.applyEdit = async (req) => { const ok = await applyEdit(req); stopped = true; return ok; };   // the Stop arrives during the first
+		const io = Object.assign({}, r.io, { cancelled: () => stopped });
+		const out = await commitShellChanges([W('/ws/a.txt', 'new', 'old'), W('/ws/b.txt', 'new', 'old'), W('/ws/c.txt', 'new', 'old'), D('/ws/gone.txt', 'bye'), { kind: 'mkdir', path: '/ws/d' }], r.ctx, io);
+		assert.deepStrictEqual(r.edits.map((e) => e.path), ['a.txt'], 'only the change in flight landed');
+		assert.deepStrictEqual(r.deletes, []);
+		assert.strictEqual(out.refused, false);
+		assert.deepStrictEqual(ids(out), ['/ws/b.txt', '/ws/c.txt', '/ws/gone.txt']);
+		assert.match(out.failed[0].why, /stopped before this change/);
+		assert.match(out.notes.join('\n'), /PARTLY applied — 1 of 4 file changes/);
+		assert.deepStrictEqual(out.rest.map((c) => c.kind), ['mkdir'], 'the folder stays in the answer; the shell, which has closed the stopped run, does not make it');
+	});
+
 	await test('a cancelled() that throws, or an io without one, is "not cancelled"', async () => {
 		const r1 = rig({ '/ws/a.txt': 'old' });
 		const o1 = await commitShellChanges([W('/ws/a.txt', 'new', 'old')], r1.ctx, Object.assign({}, r1.io, { cancelled: () => { throw new Error('boom'); } }));

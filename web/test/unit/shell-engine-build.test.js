@@ -191,7 +191,7 @@ async function main() {
 				answer();
 				const ready = seen.find((m) => m.t === 'ready');
 				assert.ok(ready && ready.gen === 3 && ready.commands.includes('grep') && ready.commands.includes('od') && !ready.commands.includes('gzip'));
-				deliver({ t: 'run', id: 1, script: "cat a.txt | wc -l; printf 'gP8=' | base64 -d | od -An -tu1; read x <<< 'café'; echo \"$x\" > out.txt; echo $(( $ )); ls", cwd: '/w', env: {}, stdin: '' });
+				deliver({ t: 'run', id: 1, script: "cat a.txt | wc -l; printf 'gP8=' | base64 -d | od -An -tu1; read x <<< 'café'; echo \"$x\" > out.txt; echo $(( $ )); ls; printf '%(%F %T %Z)T\\n' 1600000000; TZ=Asia/Tokyo date -d @0 '+%F %T %Z'; printf 'a b\\nc\\n' | xargs -L1 echo; echo abc | grep -o '[a-b]\\+' | tr '\\n' ' '; echo; printf 'b 1\\nb 2\\n' | sort -u -k1,1; du -s . | cut -f1", cwd: '/w', env: {}, stdin: '' });
 				for (let i = 0; i < 200 && !seen.some((m) => m.t === 'done'); i++) { await new Promise((r) => setTimeout(r, 10)); answer(); }
 				const done = seen.find((m) => m.t === 'done');
 				assert.ok(done, 'the run ended');
@@ -199,9 +199,24 @@ async function main() {
 				assert.ok(out.includes('2\n'), out);
 				assert.ok(out.includes(' 128 255\n'), 'base64 -d: ' + out);
 				assert.ok(out.includes('a.txt\nout.txt\n') || out.includes('a.txt\nout.txt'), out);
+				// what the third round added, in the bundle and not only in node: the command's zone, a table of zone names,
+				// xargs read by lines, a basic expression's \\+, sort -u keeping the first line, du's size
+				assert.ok(out.includes('2020-09-13 12:26:40 UTC\n1970-01-01 09:00:00 JST\na b\nc\nab \nb 1\n12\n'), out);
 				assert.deepStrictEqual([done.id, done.how], [1, 'exit']);
 				const w = done.changes.find((c) => c.path === '/w/out.txt');
 				assert.ok(w && new TextDecoder().decode(w.after) === 'café\n', 'read gives UTF-8 text in the bundle too');
+				// the engine's own limit error is exported by the bundle: du ends a script at the traversal limit
+				seen.length = 0;
+				deliver({ t: 'init', gen: 4, folders: [{ id: 'f', path: '/w', name: 'w' }], limits: { maxTraversalEntries: 1 } });
+				await new Promise((r) => setTimeout(r, 30));
+				answer();
+				deliver({ t: 'run', id: 2, script: 'echo started; du -s .; echo after', cwd: '/w', env: {}, stdin: '' });
+				for (let i = 0; i < 200 && !seen.some((m) => m.t === 'done'); i++) { await new Promise((r) => setTimeout(r, 10)); answer(); }
+				const limited = seen.find((m) => m.t === 'done');
+				assert.ok(limited, 'the second run ended');
+				assert.deepStrictEqual([limited.how, limited.exitCode], ['limit', 126]);
+				const lout = seen.filter((m) => m.t === 'out').map((m) => m.text).join('');
+				assert.ok(lout.startsWith('started\n') && /du: filesystem traversal entry limit exceeded \(1\)/.test(lout) && !lout.includes('after'), lout);
 			} finally {
 				clearInterval(pump);
 				for (const t of timers) { clearTimeout(t); }

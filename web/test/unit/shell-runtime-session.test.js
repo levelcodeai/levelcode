@@ -183,6 +183,28 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		r.rt.dispose();
 	});
 
+	await test('the terminal\'s size is a fact of ONE run: the engine hands COLUMNS and LINES back in the env, and they are not carried to a run that is not told its own', async () => {
+		const r = createRig();
+		/** @type {Array<[string|undefined, string|undefined]>} */ const seen = [];
+		r.engines.state.onRun = async (run, w, h) => {
+			seen.push([run.env.COLUMNS, run.env.LINES]);
+			h.done({ env: Object.assign({}, run.env, run.script === 'export COLUMNS=50' ? { COLUMNS: '50' } : {}) });   // what the real engine returns: the whole env
+		};
+		const s = r.rt.createSession();
+		await s.run('a', { cols: 100, rows: 30 });
+		assert.strictEqual('COLUMNS' in s.env || 'LINES' in s.env, false, 'not state of the session');
+		await s.run('b');
+		await s.run('c', { cols: 120 });
+		await s.run('d');
+		assert.deepStrictEqual(seen, [['100', '30'], [undefined, undefined], ['120', undefined], [undefined, undefined]]);
+		// a value the script itself set is the script's, and stays (the same as in bash)
+		await s.run('export COLUMNS=50', { cols: 100 });
+		assert.strictEqual(s.env.COLUMNS, '50');
+		await s.run('e');
+		assert.deepStrictEqual(seen[seen.length - 1], ['50', undefined]);
+		r.rt.dispose();
+	});
+
 	await test('run() never throws: a script that is not text, a disposed or busy session are rejections, whatever the script is', async () => {
 		const r = createRig();
 		r.engines.state.onRun = async () => { await new Promise(() => { }); };
@@ -367,6 +389,49 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		assert.strictEqual(r.engines.workers[r.engines.workers.length - 1].terminated, true, 'with nothing in /tmp the usual minute is enough');
 		assert.deepStrictEqual((await s.run('x')).notes, []);
 		r.rt.dispose();
+	});
+
+	await test('the /tmp note comes FIRST among a run\'s notes: before the folder that was moved and before what the engine said', async () => {
+		const r = createRig({ workspace: { folders: [{ name: 'home', uri: 'file:///home' }, { name: 'scratch', uri: 'levelcode-scratch:///scratch' }] } });
+		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', cwd: run.cwd, notes: ['from the engine'], stats: { tmpFiles: 2 } }); };
+		const s = r.rt.createSession();
+		const first = await s.run('echo x > /tmp/a');
+		assert.deepStrictEqual(first.notes, ['[LevelCode Shell: The folder "home" is mounted at /mnt/home, not at /home: that path is one the shell uses for itself.]', '[LevelCode Shell: from the engine]']);
+		await r.clock.advance(120000);
+		const after = await s.run('ls /tmp');
+		assert.strictEqual(after.notes.length, 3, after.notes.join('\n'));
+		assert.ok(EMPTIED.test(after.notes[0]), 'first: ' + after.notes[0]);
+		assert.ok(/is mounted at \/mnt\/home/.test(after.notes[1]) && /from the engine/.test(after.notes[2]), after.notes.join('\n'));
+		r.rt.dispose();
+	});
+
+	await test('at the worker cap the one replaced is the least recently used idle worker WITHOUT /tmp files: the files are the one thing that cannot be made again', async () => {
+		const r = createRig({ limits: { workers: { max: 2 } } });
+		/** @type {Record<string, number>} */ const files = { keeper: 3, plain: 0 };
+		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', cwd: run.cwd, stats: { tmpFiles: files[run.script.split(' ')[0]] || 0 } }); };
+		const keeper = r.rt.createSession();
+		const plain = r.rt.createSession();
+		await keeper.run('keeper');                  // the older one, and it holds files
+		await r.clock.advance(1000);
+		await plain.run('plain');                    // the newer one, holding none
+		await r.clock.advance(1000);
+		const third = r.rt.createSession();
+		await third.run('plain');
+		assert.deepStrictEqual(r.engines.workers.map((w) => w.terminated), [false, true, false], 'the newer, empty one was replaced; the older one that holds files was not');
+		assert.deepStrictEqual((await keeper.run('keeper')).notes, [], 'its /tmp is there');
+		// when every idle worker holds files, it is the least recently used after all
+		const q = createRig({ limits: { workers: { max: 2 } } });
+		q.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', cwd: run.cwd, stats: { tmpFiles: 1 } }); };
+		const a = q.rt.createSession();
+		const b = q.rt.createSession();
+		await a.run('x');
+		await q.clock.advance(1000);
+		await b.run('x');
+		await q.clock.advance(1000);
+		await q.rt.createSession().run('x');
+		assert.deepStrictEqual(q.engines.workers.map((w) => w.terminated), [true, false, false]);
+		r.rt.dispose();
+		q.rt.dispose();
 	});
 
 	await test('a worker that holds /tmp files is kept for TWICE the idle time; one that holds none, for once', async () => {

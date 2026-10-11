@@ -13,11 +13,17 @@
 // left and what the base held, minimal (a rewrite with the same bytes is nothing; create-then-delete is nothing).
 //
 // What the engine forces on this file:
-//   * A write's CONTENT can never throw: just-bash rejects the whole exec() for an error from the write at the end of
-//     a redirection, and the script's output is lost. A refused content write is dropped and recorded in `denied`.
+//   * The content write at the end of a REDIRECTION can never throw: just-bash rejects the whole exec() for an error
+//     from it, and the script's output is lost. The redirection OPENED its target first (an empty write, encoding
+//     'binary'); this file remembers which paths it opened in the run, and when the command itself then removed or
+//     replaced the parent or the target (`{ rm -rf d; echo hi; } > d/f`) the content is dropped without a word,
+//     because in GNU the open descriptor outlives the name and the write succeeds. A content write that the SHELL
+//     refuses (outside the folders, a protected path, a cap) is dropped and recorded in `denied`.
 //   * The OPENING of a redirection (`writeFile(p, '', 'binary')`) can throw, and patch LC-5 makes the engine answer
 //     `bash: p: <reason>` with status 1 and not run the command, exactly as bash does. So a redirection to a missing
 //     folder or to /etc fails the way it would in a real shell, visibly, and is not a silent drop.
+//   * A write that had NO opening (`touch`, `tee`, `sort -o`, `split`, cp) is a call the command made itself and gets
+//     the errno of a real file system, thrown: those programs report it the way GNU's do.
 //   * Every thrown error has a message that STARTS with '<CODE>: ' and a `.code` (the engine tests both).
 //   * Which of them are `denied`: only what the shell REFUSES (a path outside the folders, a protected path, a cap).
 //     An ordinary failure of the same call (the parent is missing or is a file, the target is a directory) is what
@@ -32,7 +38,7 @@
 'use strict';
 // @ts-check
 
-const { decodeBytes: decodeText, encodeText } = require('./text.js');
+const { decodeBytes: decodeText, encodeText, displayText, hasLoneSurrogate } = require('./text.js');
 /** the times a stat hands out are Dates whose local fields are the shell's zone (engine/zone.js), not the visitor's */
 const { LcDate } = require('./zone.js');
 
@@ -408,6 +414,8 @@ function createOverlay(o) {
 	/** @type {string[]} */
 	const notes = [];
 	const noted = new Set();
+	/** the paths a redirection opened in this run: the content written to one later never throws (see writeOrAppend) */
+	const opened = new Set();
 	const device = { stdout: '', stderr: '' };
 	const stats = { filesRead: 0, bytesRead: 0, probes: 0, statCalls: 0, readCalls: 0, listCalls: 0, stagedBytes: 0, stagedEntries: 0, memoryBytesAtStart: memory.bytes };
 	let probes = 0;
@@ -804,11 +812,14 @@ function createOverlay(o) {
 
 	/**
 	 * writeFile / appendFile as the engine calls them. The OPENING of a redirection is `writeFile(p, '', 'binary')` (or
-	 * appendFile): a refusal throws, and patch LC-5 turns that into bash's own `bash: p: Permission denied`. Any other
-	 * call is a content write: when the SHELL refuses it (outside the folders, a protected path, a cap) it is dropped
-	 * and recorded, because a throw from the end of a redirection loses the whole script's output; when the file
-	 * system would have said no to anybody (the parent is missing or a file, the target is a directory) it throws, as
-	 * a real one does, and `touch`, `tee`, `sort -o`, `split` report it the way GNU's do.
+	 * appendFile): a refusal throws, and patch LC-5 turns that into bash's own `bash: p: Permission denied`. The write
+	 * of the CONTENT comes later, at the end of the redirected command, and never rejects exec() (a throw there loses
+	 * the whole script's output):
+	 *   * the shell refuses it (outside the folders, a protected path, a cap): dropped and recorded in `denied`;
+	 *   * the path was opened by this run and the command has since removed or replaced its parent or the file itself
+	 *     (`{ rm -rf d; echo hi; } > d/f`): dropped silently, as GNU's write to an unlinked descriptor is;
+	 *   * the call had no opening (`touch`, `tee`, `sort -o`, `split`, cp): the errno of a real file system is thrown,
+	 *     and the command reports it the way GNU's does.
 	 */
 	async function writeOrAppend(path, content, encoding, append) {
 		const p = norm(path);
@@ -818,10 +829,15 @@ function createOverlay(o) {
 		const t = await writeTarget(p);
 		if ('error' in t) {
 			if (t.error.policy) { explainPolicy(p); }
-			if (opening || !t.error.policy) { throw fsError(t.error.code, 'open', p, t.error.text); }
+			if (opening) { throw fsError(t.error.code, 'open', p, t.error.text); }
+			if (!t.error.policy) {
+				if (opened.has(p)) { return; }
+				throw fsError(t.error.code, 'open', p, t.error.text);
+			}
 			deny(p, op, t.error.reason, t.error.code, `${p}: ${t.error.text}`);
 			return;
 		}
+		if (opening) { opened.add(p); }
 		if (opening && append && t.cur) { return; }          // `>>` of nothing onto what is there
 		const refused = await put(t, p, bytes, append, undefined);
 		if (refused) { deny(p, op, refused.reason, refused.code, refused.message); }
@@ -1157,6 +1173,13 @@ function createOverlay(o) {
 			const p = c.p;
 			const r = mountOf(p);
 			if (!r) { continue; }
+			// A name made of bytes that are not UTF-8 (`touch "$(cat latin1)"`) is a string with a lone surrogate in it: no
+			// editor path or URI can hold it, and a rewritten name would be a different file. The whole set is refused, and
+			// the command is told which name it was.
+			if (hasLoneSurrogate(p)) {
+				refused = `${displayText(p)} has a name that is not valid UTF-8, which the editor cannot address`;
+				break;
+			}
 			const info = await lookup(r.m, p, r.host);           // what the command left
 			const bs = p === r.m.at ? { type: /** @type {'dir'} */ ('dir'), size: 0, mtime: 0 } : await baseStat(p, r.host);   // what was there
 			const hp = r.host;

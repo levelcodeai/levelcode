@@ -108,7 +108,7 @@ function humaniseLimit(line) {
 
 /**
  * @param {object} deps
- * @param {{ Bash: any, defineCommand: any, getCommandNames: () => string[] }} deps.Engine the patched just-bash
+ * @param {{ Bash: any, defineCommand: any, getCommandNames: () => string[], LimitError?: any }} deps.Engine the patched just-bash
  * @param {(message: any, transfer?: ArrayBuffer[]) => void} deps.post
  * @param {() => number} [deps.now]
  */
@@ -174,7 +174,7 @@ function createCore(deps) {
 		// wraps is, and a program compat.js adds (cmp, id ...) only when it was named
 		const named = Array.isArray(msg.commands) && msg.commands.length ? new Set(msg.commands) : null;
 		const have = allowed;
-		customNames = new Set(compat.commands(Engine.defineCommand).map((c) => c.name).filter((n) => (
+		customNames = new Set(compat.commands(Engine.defineCommand, Engine.LimitError).map((c) => c.name).filter((n) => (
 			compat.WRAPPED.includes(n) ? have.includes(n) : (!named || named.has(n))
 		)));
 		started = true;
@@ -287,7 +287,7 @@ function createCore(deps) {
 			env,
 			executionLimits: limits,
 			commands: allowed,
-			customCommands: compat.commands(Engine.defineCommand).filter((c) => customNames.has(c.name)),
+			customCommands: compat.commands(Engine.defineCommand, Engine.LimitError).filter((c) => customNames.has(c.name)),
 			defenseInDepth: false,
 		});
 
@@ -297,7 +297,7 @@ function createCore(deps) {
 		let lastYield = now();
 		let shownDenied = 0;
 		const flushDenied = () => {
-			for (; shownDenied < overlay.denied.length; shownDenied++) { say('stderr', 'bash: ' + overlay.denied[shownDenied].message + '\n'); }
+			for (; shownDenied < overlay.denied.length; shownDenied++) { say('stderr', displayText('bash: ' + overlay.denied[shownDenied].message + '\n')); }
 		};
 		const flushDevices = () => {
 			if (overlay.device.stdout) { say('stdout', overlay.device.stdout); overlay.device.stdout = ''; }
@@ -372,7 +372,8 @@ function createCore(deps) {
 		let changes = [];
 		let discarded = 0;
 		let withheld = null;
-		const denied = overlay.denied.slice();
+		// what the overlay says about a path may hold the escape of a byte that is not UTF-8: shown as U+FFFD, like the output
+		const denied = overlay.denied.map((d) => Object.assign({}, d, { path: displayText(d.path), message: displayText(d.message) }));
 		if (how === 'exit') {
 			if (denied.length) {
 				withheld = 'denied';
@@ -391,6 +392,7 @@ function createCore(deps) {
 		// a script that "succeeded" and changed nothing must not look as if it had: the status says so
 		if (how === 'exit' && exitCode === 0 && withheld) { exitCode = 1; }
 		for (const n of overlay.notes) { notes.push(n); }
+		for (let i = 0; i < notes.length; i++) { notes[i] = displayText(notes[i]); }
 
 		// carried to the next line of a terminal session
 		const outEnv = {};
