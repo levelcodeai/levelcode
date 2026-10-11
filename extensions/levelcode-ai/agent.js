@@ -395,6 +395,25 @@ function inputPreview(input, redact) {
 /** Cheap binary sniff — a NUL byte in the first 8KB means it isn't text we should round-trip as UTF-8. */
 function isBinaryFile(abs) { return host.isBinary(abs); }
 
+/**
+ * What the model is told about a finished command: its output and its status line, in at most `max` characters.
+ * Output that fits is returned exactly as it always was. Output that does not keeps its START and its END with
+ * the gap said out loud, and the status line (`[exit 1]`, `[timed out]`, `[stopped by user]`) is never what is cut:
+ * it used to be, because it sits at the end and the whole thing was sliced from the front.
+ * @param {string} out
+ * @param {string} note
+ * @param {number} [max]
+ */
+function commandResult(out, note, max) {
+	max = max || 8000;
+	if (out.length + note.length <= max) { return out + note; }
+	const gapText = (n) => '\n… [' + n + ' characters of output omitted] …\n';
+	const room = max - note.length - gapText(out.length).length;
+	const head = Math.max(0, Math.floor(room / 4));      // a quarter for the start, the rest for the end — where the failure is
+	const tail = Math.max(0, room - head);
+	return out.slice(0, head) + gapText(out.length - head - tail) + out.slice(out.length - tail) + note;
+}
+
 // Run a shell command, STREAMING its output: onChunk(text, 'stdout'|'stderr') fires as it runs (live
 // terminal in the chat), onExit(code, ms, how) at the end. onStart(child, stop) exposes a stop() that
 // kills the whole process GROUP (server + children) — needed because a server is a child of the shell.
@@ -436,7 +455,7 @@ function runCommand(root, command, onChunk, onExit, onStart, timeoutMs, opts) {
 			const exit = stopped ? 130 : (timedOut ? 124 : (code == null ? -1 : code));
 			if (onExit) { onExit(exit, ms, how); }
 			const note = stopped ? '\n[stopped by user]' : timedOut ? '\n[timed out]' : (exit !== 0 ? '\n[exit ' + exit + ']' : '');
-			resolve((out + note).slice(0, 8000) || '(no output)');
+			resolve(commandResult(out, note) || '(no output)');
 		};
 		child.on('close', (code) => finish(code));
 		child.on('error', (e) => { cap('\n' + ((e && e.message) || e), 'stderr'); finish(1); });
