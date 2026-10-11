@@ -56,6 +56,8 @@ const { forNote, safeMessage, safeGet } = require('./sanitize');
 
 /** vscode.FileType.Directory (a stable bit of the API). */
 const DIR = 2;
+/** vscode.FileType.File. */
+const FILE = 1;
 const HOWS = new Set(['exit', 'limit', 'deadline', 'aborted', 'error']);
 /** The exit status of a run that did not run to its end, by how it ended. */
 const EXIT_FOR_HOW = /** @type {Record<string, number>} */ ({ limit: 126, deadline: 124, aborted: 130, error: 1 });
@@ -1133,11 +1135,13 @@ function createRuntime(deps) {
 	function resolve(p) { return resolveIn(currentMounts(), p); }
 
 	/**
-	 * What is at an engine path: { type: 'file'|'dir', size } - or null when nothing is, when it is in no mount, or when
-	 * the file system did not say in `workers.fsMs` or failed. Never throws and never waits longer: a caller that
-	 * cannot wait that long (a link under the mouse) races its own timer, as the answer is cheap to drop.
+	 * What is at an engine path: { type: 'file'|'dir'|'other', size } - or null when nothing is, when it is in no mount,
+	 * or when the file system did not say in `workers.fsMs` or failed. 'other' is what a provider that does not say
+	 * (FileType.Unknown) or a link to nothing answers: the engine reads it as a file (kindOf), a link is not made to it.
+	 * Never throws and never waits longer: a caller that cannot wait that long (a link under the mouse) races its own
+	 * timer, as the answer is cheap to drop.
 	 * @param {string} p
-	 * @returns {Promise<{ type: 'file'|'dir', size: number } | null>}
+	 * @returns {Promise<{ type: 'file'|'dir'|'other', size: number } | null>}
 	 */
 	async function stat(p) {
 		try {
@@ -1145,7 +1149,8 @@ function createRuntime(deps) {
 			if (!uri) { return null; }
 			const s = await withTimeout(vscode.workspace.fs.stat(uri), limits.workers.fsMs);
 			const size = sizeOf(s);
-			return { type: kindOf(s.type), size: size === null ? 0 : size };
+			const type = (s.type & DIR) !== 0 ? 'dir' : (s.type & FILE) !== 0 ? 'file' : 'other';
+			return { type, size: size === null ? 0 : size };
 		} catch { return null; }
 	}
 

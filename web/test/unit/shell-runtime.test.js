@@ -1227,6 +1227,13 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		const real = r.ws.fs.stat.bind(r.ws.fs);
 		r.ws.fs.stat = async (/** @type {any} */ u) => { const x = await real(u); return /a\.txt$/.test(u.path) ? { type: x.type, mtime: x.mtime } : x; };
 		assert.deepStrictEqual(await r.rt.stat('/mnt/home/a.txt'), { type: 'file', size: 0 });
+		// a provider that answers FileType.Unknown (0), or a link to nothing (64): not a file a link may be made to
+		r.ws.fs.stat = async (/** @type {any} */ u) => { const x = await real(u); return /a\.txt$/.test(u.path) ? { type: 0, size: x.size, mtime: x.mtime } : x; };
+		assert.deepStrictEqual(await r.rt.stat('/mnt/home/a.txt'), { type: 'other', size: 3 });
+		r.ws.fs.stat = async (/** @type {any} */ u) => { const x = await real(u); return /a\.txt$/.test(u.path) ? { type: 64, size: x.size, mtime: x.mtime } : x; };
+		assert.deepStrictEqual(await r.rt.stat('/mnt/home/a.txt'), { type: 'other', size: 3 });
+		r.ws.fs.stat = async (/** @type {any} */ u) => { const x = await real(u); return /a\.txt$/.test(u.path) ? { type: 65, size: x.size, mtime: x.mtime } : x; };
+		assert.deepStrictEqual(await r.rt.stat('/mnt/home/a.txt'), { type: 'file', size: 3 }, 'a link to a file is a file');
 		r.ws.fs.stat = real;
 		assert.strictEqual(await r.rt.stat('/mnt/home/missing'), null);
 		assert.strictEqual(await r.rt.stat('/mnt/home/a.txt/under'), null, 'ENOTDIR is nothing too');
