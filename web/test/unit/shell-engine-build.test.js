@@ -9,6 +9,9 @@
 // @ts-check
 'use strict';
 
+// A test that waits for something that never happens must fail the suite, not end it silently with status 0.
+require('../helpers/shell-exit-guard.js');
+
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -100,6 +103,8 @@ async function main() {
 			fs.mkdirSync(path.join(root, 'web', 'test', 'unit'), { recursive: true });
 			fs.cpSync(ENGINE, path.join(root, 'web', 'shell', 'engine'), { recursive: true });
 			fs.copyFileSync(__filename, path.join(root, 'web', 'test', 'unit', 'shell-engine-build.test.js'));
+			fs.mkdirSync(path.join(root, 'web', 'test', 'helpers'), { recursive: true });
+			fs.copyFileSync(path.join(__dirname, '..', 'helpers', 'shell-exit-guard.js'), path.join(root, 'web', 'test', 'helpers', 'shell-exit-guard.js'));
 			const run = (env) => spawnSync(process.execPath, [path.join(root, 'web', 'test', 'unit', 'shell-engine-build.test.js')], { encoding: 'utf8', env: Object.assign({}, process.env, { LEVELCODE_VSCODE: '', LEVELCODE_REQUIRE_BUILD: '', LC_BUILD_TEST_COPY: '1' }, env) });
 			const quiet = run({});
 			assert.strictEqual(quiet.status, 0, quiet.stdout + quiet.stderr);

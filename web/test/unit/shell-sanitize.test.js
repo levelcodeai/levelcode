@@ -9,6 +9,9 @@
 // @ts-check
 'use strict';
 
+// A test that waits for something that never happens must fail the suite, not end it silently with status 0.
+require('../helpers/shell-exit-guard.js');
+
 const assert = require('assert');
 const path = require('path');
 

@@ -16,6 +16,9 @@
 // @ts-check
 'use strict';
 
+// A test that waits for something that never happens must fail the suite, not end it silently with status 0.
+require('../helpers/shell-exit-guard.js');
+
 // The reference ran with TZ unset, which is UTC, and so does the shell: whatever zone the process (the visitor's
 // browser) is in is never asked. Every case is run under three of them and must give the same answer.
 const ZONES = ['UTC', 'America/New_York', 'Asia/Tokyo'];

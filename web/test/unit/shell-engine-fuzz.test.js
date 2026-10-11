@@ -10,6 +10,9 @@
 // @ts-check
 'use strict';
 
+// A test that waits for something that never happens must fail the suite, not end it silently with status 0.
+require('../helpers/shell-exit-guard.js');
+
 // the zone of the process is the visitor's, and the shell does not ask it: the first run is in UTC, the others in two
 // that are not (a smaller count each, from other seeds)
 const ZONES = [['UTC', 3000, 20261011], ['America/New_York', 800, 20261012], ['Asia/Tokyo', 800, 20261013]];
