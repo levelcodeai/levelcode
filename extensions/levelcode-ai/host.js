@@ -22,15 +22,23 @@
 
 const vscode = require('vscode');
 const nodeFs = require('fs');
+const nodeCp = require('child_process');   // the desktop's spawn; in the browser build this is a shim that always throws ENOSYS
 const path = require('path');
 
 /** True in the browser build (web/ai-extension/entry.js sets the flag before anything else loads). */
 const isBrowser = !!globalThis.__LEVELCODE_BROWSER_HOST__;
 
+/**
+ * A shell the browser build can borrow: a LevelCode-owned extension (web/shell) that exports one. It is
+ * connected lazily (connectShell), once, the first time a run needs to know whether there is one.
+ * @type {{ info: ShellInfo, spawn: (command: string, opts: SpawnOptions) => ChildLike } | null}
+ */
+let shell = null;
+
 /** What this host can do. Tools and prompt text that need a capability are withheld without it. */
 const caps = Object.freeze({
-	/** Start programs: run_command, background commands, verify commands. */
-	shell: !isBrowser,
+	/** Run command lines: run_command and verify commands. A real shell on the desktop; a registered one in the browser. */
+	get shell() { return !isBrowser || shell !== null; },
 	/** Start MCP servers as local processes (stdio). */
 	mcpStdio: !isBrowser,
 	/** Search file contents with the ripgrep binary the editor ships. */
@@ -141,6 +149,95 @@ async function withReads(run) {
 	return result;
 }
 
+/* ----- running a command line ---------------------------------------------------------------- */
+
+/** The extension (browser build) that provides the shell, and the export agent.js reads from it. */
+const SHELL_EXTENSION_ID = 'levelcode.levelcode-shell';
+const SHELL_API_VERSION = 1;
+
+/**
+ * @typedef {object} ShellInfo  What a shell says about itself; the prompt and the tool list are built from it.
+ * @property {string} label           shown on the command's card instead of "zsh"
+ * @property {boolean} background     run_command background:true works (a command that outlives its tool call)
+ * @property {boolean} programs       real programs (node, npm, git, python …) can be started
+ * @property {boolean} network        the network is reachable from a command
+ * @property {string[]} commands      command names, for the prompt
+ * @property {string[]} [missing]     commands the model is likely to try that are NOT here (node, npm, git …)
+ *
+ * @typedef {{ name: string, root: string, uri: string }} WorkspaceFolderRef
+ * @typedef {{ kind: 'write'|'delete'|'mkdir'|'rmdir', path: string, existed?: boolean, before?: Uint8Array|null, after?: Uint8Array, viaDir?: string }} Change
+ *
+ * @typedef {object} SpawnOptions
+ * @property {string} cwd                       absolute path of a workspace folder, or inside one
+ * @property {WorkspaceFolderRef[]} [folders]   the workspace folders, live and in order (a shell mounts each at its root)
+ * @property {Record<string,string>} [env]      extra environment
+ * @property {(changes: Change[]) => Promise<{ rest: Change[], notes: string[] }>} [commit]
+ *     Agent runs only. Called once, after the command has ended (also after Stop or a timeout) and BEFORE 'close',
+ *     with the files the command left changed. The caller reviews the ones it can and returns the rest, which the
+ *     shell applies itself, plus lines to append to the command's output. Without it the shell writes them straight
+ *     to the workspace (the user's own terminal).
+ *
+ * @typedef {object} ChildLike  The part of a Node ChildProcess that agent.js's runCommand uses.
+ * @property {number} [pid]     leave undefined: agent.js then kills with child.kill(signal)
+ * @property {{ on: (ev: 'data', cb: (chunk: string|Uint8Array) => void) => any }} stdout   strings (or Buffers)
+ * @property {{ on: (ev: 'data', cb: (chunk: string|Uint8Array) => void) => any }} stderr
+ * @property {(ev: 'close'|'error', cb: Function) => any} on   'close'(code) once, after every 'data'
+ * @property {(signal?: string) => boolean} kill
+ */
+
+/**
+ * Start a command line. The desktop does what runCommand always did — a `sh -c` in its own process group — and
+ * nothing else; the browser hands the line to the shell that registered itself. With none registered the browser's
+ * child_process shim throws ENOSYS, as it did before there was a shell (callers withhold the tool first: caps.shell).
+ * @param {string} command
+ * @param {SpawnOptions} opts
+ * @returns {ChildLike}
+ */
+function spawn(command, opts) {
+	if (shell !== null) { return shell.spawn(command, opts); }
+	return nodeCp.spawn(command, { cwd: opts.cwd, shell: true, detached: true });
+}
+
+/** The registered shell's description, or null (always null on the desktop: its shell is the user's own). */
+function shellInfo() { return shell ? shell.info : null; }
+
+/**
+ * Register a shell. Called by connectShell; exported so a test (or a later in-process engine) can register one.
+ * @param {{ info: ShellInfo, spawn: Function }} impl
+ * @returns {{ dispose(): void }}
+ */
+function registerShell(impl) {
+	if (!impl || typeof impl.spawn !== 'function' || !impl.info) { throw new Error('a shell needs info and spawn'); }
+	shell = impl;
+	return { dispose() { if (shell === impl) { shell = null; } } };
+}
+
+/** @type {Promise<boolean> | null} */
+let connecting = null;
+/**
+ * Browser only: find the LevelCode Shell extension, activate it (it is lazily activated, so this is where it
+ * first loads), and register what it exports. Idempotent; resolves true when a shell is now available. Never
+ * throws: a missing or broken shell is "no shell", which is what the browser build was before it existed.
+ * @returns {Promise<boolean>}
+ */
+function connectShell() {
+	if (!isBrowser) { return Promise.resolve(false); }
+	if (shell !== null) { return Promise.resolve(true); }
+	if (connecting) { return connecting; }
+	connecting = (async () => {
+		try {
+			const ext = vscode.extensions.getExtension(SHELL_EXTENSION_ID);
+			if (!ext) { return false; }
+			const api = ext.isActive ? ext.exports : await ext.activate();
+			if (!api || api.apiVersion !== SHELL_API_VERSION || !api.agent) { return false; }
+			registerShell(api.agent);
+			return true;
+		} catch { return false; }
+		finally { connecting = null; }
+	})();
+	return connecting;
+}
+
 /* ----- sending the user to sign in ------------------------------------------------------------- */
 
 /** Registered by the page (web/main.js); it takes the tab to the account site and the sign-in comes back to it. */
@@ -185,6 +282,7 @@ function findFiles(glob, exclude, max) {
 
 module.exports = {
 	isBrowser, caps,
+	spawn, shellInfo, registerShell, connectShell,
 	uriFor, readBytes, readText, readTextOrNull, stat, exists, isBinary, withReads, findFiles, openAuth,
 	// For tests.
 	_path: path,

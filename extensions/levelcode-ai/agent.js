@@ -18,6 +18,7 @@ const host = require('./host');   // the machine we run on: workspace I/O is asy
 const providers = require('./providers/index');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
+const { commitShellChanges } = require('./shellCommit');
 const { loadProjectRules } = require('./projectRules');
 const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
 	isLaunchTrusted, rememberLaunchTrust, describeMcpLaunch } = require('./mcpConfig');
@@ -62,7 +63,28 @@ function browserLines(lines) {
 			.replace(' run_command accepts an optional "folder" to pick which folder it runs in.', ''))
 		.concat([BROWSER_NOTE]);
 }
-const SYSTEM_BASE_HOST = host.caps.shell ? SYSTEM_BASE : browserLines(SYSTEM_LINES).join('\n');
+// A host whose shell is SIMULATED (LevelCode in the browser, with the LevelCode Shell extension): run_command is
+// offered and the prompt says what it is. Derived from SYSTEM_LINES like browserLines, for the same reason.
+function shellNote(info) {
+	return '- run_command runs ONE command line in ' + info.label + ': a bash-compatible shell over the workspace files, not a real computer. '
+		+ 'It has ' + (info.commands && info.commands.length ? 'the usual file and text commands (' + info.commands.slice(0, 24).join(', ') + ', …)' : 'the usual file and text commands') + '. '
+		+ 'It does NOT start programs: ' + ((info.missing && info.missing.length ? info.missing.join(', ') : 'node, npm, git, python') + ' and the like are not here')
+		+ (info.network ? '' : ', there is no network')
+		+ (info.background ? '' : ', and nothing runs in the background (no servers, no watchers)') + '. '
+		+ 'Every call is a fresh shell — cd and exports do not carry over — that ends when the command ends. '
+		+ 'Use it to inspect, search and reshape files and to run shell scripts you wrote; the files a command changes are reviewable with Keep/Undo like your edits. '
+		+ 'When something genuinely has to be executed (tests, a build, a server), say so in one line and give the user the exact command to run on their own computer.';
+}
+function shellLines(lines, info) {
+	return lines.map((l) => (/run_command background:true/.test(l) ? shellNote(info) : l));
+}
+// The base prompt for a run on THIS host. Not a module constant: whether there is a shell in the browser is only
+// known once the shell extension has been asked (host.connectShell), at the start of each run.
+const SYSTEM_BASE_BROWSER = browserLines(SYSTEM_LINES).join('\n');
+function systemBaseFor(shellOn, info) {
+	if (!shellOn) { return SYSTEM_BASE_BROWSER; }               // a host with no shell at all
+	return info ? shellLines(SYSTEM_LINES, info).join('\n') : SYSTEM_BASE;   // a simulated shell / the desktop's own
+}
 
 const TOOLS = [
 	{ name: 'list_files', description: 'List workspace files (optional glob like "**/*.js"). Excludes node_modules/.git/build dirs.', input_schema: { type: 'object', properties: { glob: { type: 'string' } } } },
@@ -78,16 +100,12 @@ const TOOLS = [
 	{ name: 'use_skill', description: 'Load an expert playbook (SKILL.md) for a task type, chosen from the "Available skills" list in your system prompt. Returns the skill\'s step-by-step instructions as the tool result — then follow them. Read-only and instant (no approval). Call it once, early, when the goal matches a skill\'s description.', input_schema: { type: 'object', properties: { name: { type: 'string', description: 'the exact skill name from the Available skills list' } }, required: ['name'] } }
 ];
 
-// Rough token estimates (chars/4) for the static prompt segments, so the context popover can break
-// down "what's filling the window" — system + tools are sent on every request, the rest is messages.
-const SYSTEM_TOKENS_EST = Math.round(SYSTEM_BASE_HOST.length / 4);
-
-/** Append an "Available skills" name+description menu to the base prompt. Bodies NEVER go here —
- *  progressive disclosure means only name+description are ever in the prompt (~100 words for a dozen). */
-function buildSystem(menu) {
-	if (!menu || !menu.length) { return SYSTEM_BASE_HOST; }
+/** Append an "Available skills" name+description menu to the base prompt of this run's host. Bodies NEVER go
+ *  here — progressive disclosure means only name+description are ever in the prompt (~100 words for a dozen). */
+function buildSystem(menu, base) {
+	if (!menu || !menu.length) { return base; }
 	const list = menu.map((s) => '- ' + s.name + ': ' + s.description).join('\n');
-	return SYSTEM_BASE_HOST + '\n\nAvailable skills (call use_skill with the name):\n' + list;
+	return base + '\n\nAvailable skills (call use_skill with the name):\n' + list;
 }
 // The tools that resolve a PATH or a CWD against the workspace root. With no folder open they have
 // nothing to resolve against, so they are withheld from the model rather than offered and left to fail
@@ -110,7 +128,23 @@ const PORTABLE_TOOLS = TOOLS.filter((t) => !NEEDS_ROOT.has(t.name));
 // a run assembles it (see `withheld` in runAgent); this is the estimate for the list that is sent.
 // PORTABLE_TOOLS never contains them, since both are in NEEDS_ROOT.
 const NEEDS_SHELL = new Set(['run_command', 'read_command_output']);
-const TOOLS_TOKENS_EST = Math.round(JSON.stringify(host.caps.shell ? TOOLS : TOOLS.filter((t) => !NEEDS_SHELL.has(t.name))).length / 4);
+// …and a shell that cannot keep a command running after its tool call returns (a simulated one) has no use for the
+// tool that reads such a command's output either, nor for the `background` argument of the one that starts it.
+const NEEDS_BACKGROUND = new Set(['read_command_output']);
+const TOOLS_TOKENS_EST = Math.round(JSON.stringify(TOOLS).length / 4);
+/** run_command as a simulated shell offers it: said plainly, and without `background` when it cannot be honoured. */
+function shellTool(t, info) {
+	if (t.name !== 'run_command') { return t; }
+	const props = Object.assign({}, t.input_schema.properties);
+	if (!info.background) { delete props.background; }
+	return Object.assign({}, t, {
+		description: 'Run one shell command line in ' + info.label + ' — a bash-compatible shell over the workspace files (no node, npm, git or python; no network)'
+			+ (info.background ? '' : '; it runs to completion and returns its output')
+			+ '. Starts in the workspace root, or in a named workspace folder via "folder" in multi-root workspaces. Requires approval. '
+			+ 'The files it changes are reviewable with Keep/Undo like your edits.',
+		input_schema: Object.assign({}, t.input_schema, { properties: props }),
+	});
+}
 // The same estimate for the rootless list, and it has to exist separately rather than be derived at
 // call time: the plain path deliberately never re-stringifies (see toolsTokensEst below), so without a
 // second constant a rootless run reports the FULL schema cost for a list it never sent — about 1000
@@ -245,6 +279,25 @@ function makeDiff(oldStr, newStr) {
 function workspaceFolderList() {
 	return (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath }));
 }
+/**
+ * What a simulated shell needs besides the command line (host.spawn): the workspace folders to mount, and — for
+ * an AGENT run — where to send the files the command changed. Nothing for the desktop's shell, which writes to
+ * disk itself and has never been asked for either.
+ */
+function shellSpawnOpts(ctx, info) {
+	if (!info) { return {}; }
+	const folders = (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath, uri: f.uri.toString() }));
+	return {
+		folders,
+		commit: async (changes) => {
+			const r = await commitShellChanges(changes, ctx, {
+				folders: () => workspaceFolderList(),
+				readNow: async (abs) => { try { return await host.readBytes(abs); } catch { return null; } }
+			});
+			return { rest: r.rest, notes: r.notes };
+		}
+	};
+}
 function workspaceRoot() {
 	const f = vscode.workspace.workspaceFolders;
 	return f && f.length ? f[0].uri.fsPath : null;
@@ -346,7 +399,9 @@ function isBinaryFile(abs) { return host.isBinary(abs); }
 // terminal in the chat), onExit(code, ms, how) at the end. onStart(child, stop) exposes a stop() that
 // kills the whole process GROUP (server + children) — needed because a server is a child of the shell.
 // Returns the (capped) full output for the model.
-function runCommand(root, command, onChunk, onExit, onStart, timeoutMs) {
+//
+// opts.folders / opts.commit are for a host whose shell is simulated (host.spawn); the desktop's spawn ignores them.
+function runCommand(root, command, onChunk, onExit, onStart, timeoutMs, opts) {
 	return new Promise((resolve) => {
 		let out = '', streamed = 0, settled = false, timedOut = false, stopped = false;
 		const STREAM_CAP = 100000;            // max we push to the live terminal view
@@ -365,7 +420,7 @@ function runCommand(root, command, onChunk, onExit, onStart, timeoutMs) {
 		let child;
 		// detached:true → the shell becomes its own process-group leader, so process.kill(-pid) kills the
 		// whole tree (the shell AND the server/children it spawned), not just the shell (which orphans the server).
-		try { child = cp.spawn(command, { cwd: root, shell: true, detached: true }); }
+		try { child = host.spawn(command, { cwd: root, folders: opts && opts.folders, commit: opts && opts.commit }); }
 		catch (e) { if (onExit) { onExit(-1, 0, 'error'); } resolve('ERROR: ' + ((e && e.message) || e)); return; }
 		const killGroup = (sig) => { try { if (child.pid) { process.kill(-child.pid, sig); } else { child.kill(sig); } } catch (e) { try { child.kill(sig); } catch (e2) { /* already gone */ } } };
 		const stop = () => { if (settled || stopped) { return; } stopped = true; killGroup('SIGTERM'); setTimeout(() => { if (!settled) { killGroup('SIGKILL'); } }, 1500); };
@@ -490,6 +545,14 @@ async function runTool(tu, ctx) {
 		if (tu.name === 'run_command') {
 			const cmd = String(input.command || '');
 			const bg = input.background === true;
+			const sh = host.shellInfo();   // null on the desktop (its shell is the user's own) and where there is no shell
+			// A shell that cannot keep a command running after this call returns says so BEFORE anyone is asked to
+			// approve something that cannot happen. The tool is not even offered with the argument (see shellTool);
+			// this is for the model that remembers it from an earlier turn.
+			if (bg && sh && !sh.background) {
+				return 'ERROR: background commands are not available in ' + sh.label + ' — every command runs to completion and returns its output, and nothing keeps running afterwards. '
+					+ 'Run it in the foreground (without background:true). For a server or a watcher, tell the user the command to run on their own computer.';
+			}
 			// Multi-root: optional input.folder picks WHICH workspace folder the command runs in.
 			let cwdRoot = root;
 			if (input.folder) {
@@ -546,14 +609,15 @@ async function runTool(tu, ctx) {
 				ctx.post({ type: 'termExit', id: runId, code: code, ms: ms, how: how });
 			};
 			const onStart = (child, stop) => { if (stops) { stops.set(runId, stop); } };
+			const spawnOpts = shellSpawnOpts(ctx, sh);
 			if (bg) {
 				// Fire-and-forget: keep streaming + tracking, but return NOW so the agent loop isn't blocked.
 				// No timeout — a background server is meant to run long (Stop / New Chat reap it).
 				ctx.post({ type: 'bgTask', id: runId, command: cmd, status: 'running' });   // add to the Background tasks tray
-				(async () => { try { await runCommand(cwdRoot, cmd, onChunk, onExit, onStart, 0); } catch (e) { entry.status = 'error'; entry.how = 'error'; ctx.post({ type: 'bgTask', id: runId, status: 'error', done: true }); dbg('bg.error', { id: runId, msg: String((e && e.message) || e) }); } })();
+				(async () => { try { await runCommand(cwdRoot, cmd, onChunk, onExit, onStart, 0, spawnOpts); } catch (e) { entry.status = 'error'; entry.how = 'error'; ctx.post({ type: 'bgTask', id: runId, status: 'error', done: true }); dbg('bg.error', { id: runId, msg: String((e && e.message) || e) }); } })();
 				return 'Started in the background as id "' + runId + '" — it keeps running while you continue. Use read_command_output with this id to watch its output; wait for a readiness/port line before testing against it. Do not start it again.';
 			}
-			return await runCommand(cwdRoot, cmd, onChunk, onExit, onStart, ctx.commandTimeout);
+			return await runCommand(cwdRoot, cmd, onChunk, onExit, onStart, ctx.commandTimeout, spawnOpts);
 		}
 		if (tu.name === 'read_command_output') {
 			const runs = ctx.commandRuns;
@@ -858,11 +922,17 @@ async function runAgent(ctx) {
 	// still gates those tools (see NEEDS_ROOT); it no longer gates the agent.
 	const root = workspaceRoot();
 	ctx.root = root;
+	// The browser build's shell is another extension, activated on first need; ask it now so that the prompt, the
+	// tool list and the verify step below all see the same answer for this whole run. (Resolved at once on the
+	// desktop, which has its own shell.)
+	await host.connectShell();
+	const shellOn = host.caps.shell;
+	const sh = host.shellInfo();       // null on the desktop and where there is no shell
 	// M6.5 implicit skills: build the system prompt ONCE per run — append the tiny name+description menu.
 	// Multi-root: name every workspace folder so the model addresses them by prefix from turn one.
 	const wsFolders = workspaceFolderList();
 	const multiRootNote = wsFolders.length > 1
-		? '\n\nWorkspace folders (multi-root — prefix paths with the folder name): ' + wsFolders.map((f) => f.name).join(', ') + '. The first folder ("' + wsFolders[0].name + '") is the default for unprefixed paths' + (host.caps.shell ? ' and run_command.' : '.')
+		? '\n\nWorkspace folders (multi-root — prefix paths with the folder name): ' + wsFolders.map((f) => f.name).join(', ') + '. The first folder ("' + wsFolders[0].name + '") is the default for unprefixed paths' + (shellOn ? ' and run_command.' : '.')
 		: '';
 	// Rootless: say so plainly. Without this the model sees a tool list with no read_file and improvises —
 	// answering about files it cannot see, or apologising for a limit it cannot name. Telling it WHY the
@@ -878,9 +948,12 @@ async function runAgent(ctx) {
 	// Autopilot: act decisively and self-verify rather than pausing. Commands run without approval (the
 	// host still gates the danger set — deletion, sudo, force-push, remote|shell, publish, system writes),
 	// so the model should lean on verification, not on asking, when it's unsure.
-	const autopilotNote = ctx.autopilot && host.caps.shell
+	const autopilotNote = ctx.autopilot && shellOn && !sh
 		? '\n\nAUTOPILOT IS ON. Work end-to-end without pausing for confirmation. Your run_command calls execute immediately (only irreversible ones — deleting files, sudo, force-push, piping a remote script to a shell, publishing — still ask the user). Do NOT call ask_user for anything you can reasonably decide; pick a sensible default and proceed. When you are unsure whether a change is correct, do not stop to ask — verify it: run the build/tests/linters via run_command and read editor diagnostics, then fix and re-verify until clean, and only then move on. Prefer doing and checking over asking.'
-		: '';
+		: (ctx.autopilot && sh
+			// A simulated shell has no build, no tests, no sudo and no network to be careful about: say what is true of it.
+			? '\n\nAUTOPILOT IS ON. Work end-to-end without pausing for confirmation. Your run_command calls execute immediately (only deleting files still asks the user). Do NOT call ask_user for anything you can reasonably decide; pick a sensible default and proceed. When you are unsure whether a change is correct, verify it — read the file back, search it, diff it, and read editor diagnostics — then fix and re-verify until clean.'
+			: '');
 	// Project rules: fold a repo's own AGENTS.md (or CLAUDE.md / .cursorrules) into the cached system
 	// block so the agent follows the project's conventions from turn one. Read once per run — an edit is
 	// picked up on the next run.
@@ -894,10 +967,9 @@ async function runAgent(ctx) {
 	// told about a tool it does not have. The block goes straight after the base prompt — it is the
 	// same text for every run, so it belongs with the part of the prompt that never changes.
 	const rich = richClient(ctx);
-	// buildSystem already answers a run with no skills menu with the HOST's base prompt. Falling back to SYSTEM_BASE
-	// here sent the desktop prompt — run_command, background:true, "EVERY run_command" — to a tab, whenever
-	// levelcode.ai.skills.enabled was off, while run_command itself was withheld.
-	const system = buildSystem(ctx.skills ? ctx.skills.menu() : null) + (rich ? '\n\n' + diagramTool.PROMPT : '')
+	// buildSystem answers with the base itself when there is no menu — which is also what a run with skills switched off
+	// gets. It used to fall back to SYSTEM_BASE there: the desktop's text, promising run_command to a host with none.
+	const system = buildSystem(ctx.skills ? ctx.skills.menu() : null, systemBaseFor(shellOn, sh)) + (rich ? '\n\n' + diagramTool.PROMPT : '')
 		+ multiRootNote + noWorkspaceNote + autopilotNote + rules.text
 		+ (ctx.projectMemory ? '\n\n' + ctx.projectMemory : '');
 	const systemTokensEst = Math.round(system.length / 4);
@@ -944,15 +1016,23 @@ async function runAgent(ctx) {
 	if (ctx.recallSessions) { extras.push(RECALL_TOOL); }
 	if (rich) { extras.push(diagramTool.RENDER_DIAGRAM); if (ctx.diagramsStubbed) { extras.push(diagramTool.GET_DIAGRAM); } }
 	if (extras.length) { tools = tools.concat(extras); }
-	// Withhold what this host cannot do: no shell, no run_command, no read_command_output.
-	if (!host.caps.shell) { tools = tools.filter((t) => !NEEDS_SHELL.has(t.name)); }
+	// Withhold what this host cannot do: no shell, no run_command, no read_command_output — and for a shell that
+	// cannot keep a command running, no read_command_output and no `background` argument.
+	let reshaped = false;
+	if (!shellOn) { tools = tools.filter((t) => !NEEDS_SHELL.has(t.name)); reshaped = true; }
+	else if (sh) {
+		tools = tools.filter((t) => sh.background || !NEEDS_BACKGROUND.has(t.name)).map((t) => shellTool(t, sh));
+		reshaped = true;
+	}
 	const baseTools = extras.length ? builtins.concat(extras) : builtins;   // built-ins + extras; MCP is the rest
 	// Recomputed only when MCP or a host-gated extra actually contributed tools, so the plain path keeps the module
 	// constant and pays nothing for a feature it isn't using — but there are now TWO plain paths, and the
 	// constant has to match the list that was actually sent. Reporting the full cost for a rootless run
 	// was the same mistake as leaving baseTools on TOOLS, one line further down.
 	const builtinsTokensEst = root ? TOOLS_TOKENS_EST : PORTABLE_TOOLS_TOKENS_EST;
-	const toolsTokensEst = (mcp.tools.length || extras.length) ? Math.round(JSON.stringify(tools).length / 4) : builtinsTokensEst;
+	// `reshaped`: this host's shell tools differ from TOOLS (withheld, or described for a simulated shell), so the
+	// module constants no longer describe the list that is sent.
+	const toolsTokensEst = (mcp.tools.length || extras.length || reshaped) ? Math.round(JSON.stringify(tools).length / 4) : builtinsTokensEst;
 	// The MCP SHARE of that, reported separately so the context popover can show what these servers cost
 	// (docs/MCP.md S5). Every tool schema rides EVERY turn, so a chatty server is a standing tax on the
 	// window rather than a one-off — and until it has its own segment, that cost is invisible.
@@ -991,7 +1071,7 @@ async function runAgent(ctx) {
 	let feedbackUsed = 0, verifySeq = 0;
 	async function runVerifyOnce() {
 		const id = 'verify-' + (++verifySeq);
-		const cmd = host.caps.shell ? ((ctx.verify && ctx.verify.command) || '').trim() : '';
+		const cmd = shellOn ? ((ctx.verify && ctx.verify.command) || '').trim() : '';
 		ctx.post({ type: 'verifyRun', id, command: cmd });
 		let ran = false, exitCode = 0, cmdTail = '';
 		if (cmd) {
@@ -1000,7 +1080,7 @@ async function runAgent(ctx) {
 				(chunk, stream) => ctx.post({ type: 'verifyOutput', id, chunk, stream }),
 				(code) => { if (ctx.commandStops) { ctx.commandStops.delete(id); } exitCode = (code == null ? -1 : code); },
 				(child, stop) => { if (ctx.commandStops) { ctx.commandStops.set(id, stop); } },
-				ctx.commandTimeout);
+				ctx.commandTimeout, shellSpawnOpts(ctx, sh));
 		}
 		// A command that couldn't even start (missing npm script / command-not-found) is a CONFIG problem,
 		// not the agent's code — flag it as unrunnable so we warn the user instead of looping the agent on it.
@@ -1016,7 +1096,7 @@ async function runAgent(ctx) {
 		if (!v || !v.enabled) { return false; }
 		if (ctx.signal.aborted) { return false; }
 		if (!(ctx.editCount > 0)) { return false; }                       // no edits this run → nothing to verify
-		const cmd = host.caps.shell ? (v.command || '').trim() : '';
+		const cmd = shellOn ? (v.command || '').trim() : '';
 		const touchedCount = ctx.getTouchedUris ? ctx.getTouchedUris().length : 0;
 		if (!cmd && !touchedCount) { return false; }                      // nothing to check
 		const max = Math.max(0, v.maxRounds || 0);

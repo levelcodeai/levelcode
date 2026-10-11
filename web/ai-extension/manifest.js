@@ -17,10 +17,8 @@ const REMOVED_COMMANDS = new Set([
 	'levelcode.ai.sketch',          // Agent Sketch has not been run in the browser
 ]);
 
-/** Settings that only mean something with a shell, a local disk or a local model server. */
+/** Settings that only mean something with a local disk, a local model server or a program that serves a page. */
 const REMOVED_SETTINGS = new Set([
-	'levelcode.ai.commandTimeout',
-	'levelcode.ai.verify.command',
 	'levelcode.ai.preview.autoOpen',
 	'levelcode.ai.mcp.servers',
 	'levelcode.ai.mcp.toolPolicy',
@@ -58,6 +56,22 @@ const WORKSPACE_SETTINGS_OK = new Set([
 	'levelcode.ai.diagrams.enabled',
 ]);
 
+/**
+ * Settings the browser keeps, whose desktop description names things a tab does not have (npm, sudo, a process
+ * group). Only the text differs; the setting, its type and its default are the desktop's.
+ */
+const DESCRIPTION_OVERRIDES = {
+	'levelcode.ai.commandTimeout': {
+		description: 'Backstop timeout in milliseconds before a command in LevelCode Shell is stopped. The Stop button on the command\'s card is the primary control; set 0 to disable the backstop.',
+	},
+	'levelcode.ai.verify.command': {
+		markdownDescription: 'Optional one-shot command run in **LevelCode Shell** to verify the agent\'s edits (e.g. `grep -rn TODO src && exit 1`, or `sh check.sh` for a script of your own). It must exit on its own. Leave empty to verify with editor diagnostics only.',
+	},
+	'levelcode.ai.agent.autopilot': {
+		description: 'Autopilot: let the agent run commands without asking, and prefer verifying its own work over pausing to ask you. It still stops and asks before deleting files. File edits stay reviewable with Keep/Undo either way. Off by default.',
+	},
+};
+
 const WELCOME = {
 	id: 'welcome',
 	title: 'Welcome to LevelCode',
@@ -66,7 +80,7 @@ const WELCOME = {
 		{
 			id: 'ai',
 			title: 'Connect your AI',
-			description: 'Chat with your files as context, get inline completions as you type, and let the agent read, search, create and edit files in your workspace. **Sign in and you are on your plan**, with no API key to manage. Prefer your own? Bring a key for Claude, OpenAI, Groq, Mistral and more.\n[Sign in to LevelCode](command:levelcode.ai.account)\n[Use your own key (BYOK)](command:levelcode.ai.setApiKey)\n[Pick a model](command:levelcode.ai.pickModel)\n[Open the chat](command:levelcode.ai.focus)',
+			description: 'Chat with your files as context, get inline completions as you type, and let the agent read, search, create and edit files in your workspace and run shell commands over them. **Sign in and you are on your plan**, with no API key to manage. Prefer your own? Bring a key for Claude, OpenAI, Groq, Mistral and more.\n[Sign in to LevelCode](command:levelcode.ai.account)\n[Use your own key (BYOK)](command:levelcode.ai.setApiKey)\n[Pick a model](command:levelcode.ai.pickModel)\n[Open the chat](command:levelcode.ai.focus)',
 			media: { svg: 'media/walkthrough/ai.svg', altText: 'Chat, inline completions and an agent built into the editor' },
 			completionEvents: ['onCommand:levelcode.ai.setApiKey', 'onCommand:levelcode.ai.account'],
 		},
@@ -80,7 +94,7 @@ const WELCOME = {
 		{
 			id: 'limits',
 			title: 'What stays in the Mac app',
-			description: 'The browser edition has no terminal, runs no commands, and starts no local MCP servers. The agent can read, search, create, edit and delete files. For the rest, [get the Mac app](https://levelcode.ai/download).',
+			description: 'The browser edition has a shell over your workspace files (cat, grep, sed, find, jq and the like), but it starts no programs: no node, npm, git or python, no servers, and no local MCP servers. The agent can read, search, create, edit and delete files, and run shell commands over them. For the rest, [get the Mac app](https://levelcode.ai/download).',
 			media: { svg: 'media/walkthrough/updates.svg', altText: 'LevelCode for Mac' },
 		},
 	],
@@ -109,6 +123,7 @@ function toWebManifest(pkg, opts) {
 		const sections = Array.isArray(c.configuration) ? c.configuration : [c.configuration];
 		for (const s of sections) {
 			for (const k of Object.keys(s.properties || {})) { if (REMOVED_SETTINGS.has(k)) { delete s.properties[k]; } }
+			for (const [k, o] of Object.entries(DESCRIPTION_OVERRIDES)) { if (s.properties && s.properties[k]) { Object.assign(s.properties[k], o); } }
 			for (const [k, def] of Object.entries(s.properties || {})) {
 				if (!WORKSPACE_SETTINGS_OK.has(k) && def && typeof def === 'object' && !def.scope) { def.scope = 'application'; }
 			}
@@ -121,4 +136,4 @@ function toWebManifest(pkg, opts) {
 	return out;
 }
 
-module.exports = { toWebManifest, REMOVED_COMMANDS, REMOVED_SETTINGS, WORKSPACE_SETTINGS_OK, WELCOME };
+module.exports = { toWebManifest, REMOVED_COMMANDS, REMOVED_SETTINGS, WORKSPACE_SETTINGS_OK, DESCRIPTION_OVERRIDES, WELCOME };
