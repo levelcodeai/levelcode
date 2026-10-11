@@ -274,6 +274,13 @@ causing the effect). Use another registrable domain.
 - **Keys of the user's own** (BYOK) are stored the same way and used from the tab to the provider the
   user chose; no LevelCode call is involved (the end-to-end check asserts it). The provider must
   accept requests from a web page; Anthropic's is called with its browser-access header.
+- **A folder does not configure the editor.** Workspace Trust is off in a tab, so a setting with no scope is read
+  from the folder's `.vscode/settings.json` as if the user had written it. That would let a folder name the account
+  host the session token is sent to (`levelcode.cloud.endpoint`), the provider's base URL, Autopilot, or the budgets.
+  The browser manifest makes every `levelcode.*` setting `application`-scoped except an explicit list of display
+  preferences (`WORKSPACE_SETTINGS_OK` in `web/ai-extension/manifest.js`, double-entered in `manifest.test.js`).
+  The desktop manifest is untouched. Measured in the real workbench 2026-10-11 (unscoped: all three came back as the
+  folder's values; `application`-scoped: the defaults).
 - **The scratch workspace and the extension's private state are on the extension host's origin**, in
   IndexedDB. With the host isolated they are not readable from the editor's page, by design.
 

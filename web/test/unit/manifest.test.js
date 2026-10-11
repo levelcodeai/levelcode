@@ -85,6 +85,28 @@ test('settings that need a shell, a disk or a local model server are not offered
 	assert.ok('levelcode.cloud.endpoint' in props && 'levelcode.ai.providerMode' in props, 'the settings the sign-in depends on are still here');
 });
 
+test('no setting a folder can set decides where the session goes, what runs, or how much is spent', () => {
+	// Workspace Trust is off in the tab, so a folder's .vscode/settings.json is read as if the user wrote it, unless the
+	// setting is application-scoped. Default-deny: everything is, except an explicit list of display preferences.
+	const props = Object.assign({}, ...(Array.isArray(m.contributes.configuration) ? m.contributes.configuration : [m.contributes.configuration]).map((s) => s.properties));
+	const open = Object.keys(props).filter((k) => !props[k].scope).sort();
+	assert.deepStrictEqual(open, [...web.WORKSPACE_SETTINGS_OK].sort(), 'a setting a folder can set that is not on the list: ' + open.filter((k) => !web.WORKSPACE_SETTINGS_OK.has(k)).join(', '));
+	for (const k of web.WORKSPACE_SETTINGS_OK) { assert.ok(k in props, k + ' is on the workspace list but is not a browser setting: stale entry'); }
+	// The list is written out here as well on purpose: opening a setting to folders is a decision, made in two places.
+	assert.deepStrictEqual([...web.WORKSPACE_SETTINGS_OK].sort(), [
+		'levelcode.ai.chat.autoContext', 'levelcode.ai.chat.autoContextMaxFiles', 'levelcode.ai.chat.fontSize', 'levelcode.ai.chat.groupActivity',
+		'levelcode.ai.chat.maxImagesPerMessage', 'levelcode.ai.chat.proseWidth', 'levelcode.ai.chat.scopeToActiveProject', 'levelcode.ai.chat.startLocation',
+		'levelcode.ai.chat.workspaceMap', 'levelcode.ai.diagrams.enabled', 'levelcode.ai.includeActiveFile',
+	]);
+	for (const k of ['levelcode.cloud.endpoint', 'levelcode.cloud.apiUrl', 'levelcode.ai.baseURL', 'levelcode.ai.provider', 'levelcode.ai.providerMode',
+		'levelcode.ai.agent.autopilot', 'levelcode.ai.agent.maxSteps', 'levelcode.ai.agent.maxTokens', 'levelcode.ai.skills.enabled']) {
+		assert.strictEqual(props[k].scope, 'application', k);
+	}
+	// the desktop manifest is not touched by any of it
+	const dprops = Object.assign({}, ...(Array.isArray(desktop.contributes.configuration) ? desktop.contributes.configuration : [desktop.contributes.configuration]).map((s) => s.properties));
+	assert.strictEqual(dprops['levelcode.cloud.endpoint'].scope, undefined);
+});
+
 test('the browser binds a key the browser lets through', () => {
 	assert.ok(m.contributes.keybindings.some((k) => k.command === 'levelcode.ai.focus' && k.key === 'ctrl+alt+i' && /isWeb/.test(k.when)));
 });

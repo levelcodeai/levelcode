@@ -29,6 +29,35 @@ const REMOVED_SETTINGS = new Set([
 	'levelcode.ai.ollama.model',
 ]);
 
+/**
+ * The settings a FOLDER may set. Everything else is application-scoped in the browser edition.
+ *
+ * The workbench in a tab runs with Workspace Trust off (web/lib/config.mjs), and a setting with no scope is read from the
+ * workspace's .vscode/settings.json when there is one. A folder opened from the computer, or a project the agent was
+ * asked to read, could then set the account host (levelcode.cloud.endpoint: the session token goes to whatever https
+ * host that names), the provider's base URL, Autopilot, the step and token budgets, the verify command. Measured in
+ * the real workbench by the shell review (2026-10-11). 'application' scope makes the workbench ignore the workspace's
+ * value, so only the user's own settings count.
+ *
+ * Default-deny: a setting added to the desktop manifest later is application-scoped here until someone puts it on
+ * this list, and web/test/unit/manifest.test.js fails if one is on it that does not exist.
+ *
+ * Only things that change what is shown, or which of the open files are offered as context, are listed.
+ */
+const WORKSPACE_SETTINGS_OK = new Set([
+	'levelcode.ai.includeActiveFile',
+	'levelcode.ai.chat.autoContext',
+	'levelcode.ai.chat.autoContextMaxFiles',
+	'levelcode.ai.chat.scopeToActiveProject',
+	'levelcode.ai.chat.workspaceMap',
+	'levelcode.ai.chat.startLocation',
+	'levelcode.ai.chat.fontSize',
+	'levelcode.ai.chat.maxImagesPerMessage',
+	'levelcode.ai.chat.proseWidth',
+	'levelcode.ai.chat.groupActivity',
+	'levelcode.ai.diagrams.enabled',
+]);
+
 const WELCOME = {
 	id: 'welcome',
 	title: 'Welcome to LevelCode',
@@ -80,6 +109,9 @@ function toWebManifest(pkg, opts) {
 		const sections = Array.isArray(c.configuration) ? c.configuration : [c.configuration];
 		for (const s of sections) {
 			for (const k of Object.keys(s.properties || {})) { if (REMOVED_SETTINGS.has(k)) { delete s.properties[k]; } }
+			for (const [k, def] of Object.entries(s.properties || {})) {
+				if (!WORKSPACE_SETTINGS_OK.has(k) && def && typeof def === 'object' && !def.scope) { def.scope = 'application'; }
+			}
 		}
 	}
 	c.walkthroughs = [JSON.parse(JSON.stringify(WELCOME))];
@@ -89,4 +121,4 @@ function toWebManifest(pkg, opts) {
 	return out;
 }
 
-module.exports = { toWebManifest, REMOVED_COMMANDS, REMOVED_SETTINGS, WELCOME };
+module.exports = { toWebManifest, REMOVED_COMMANDS, REMOVED_SETTINGS, WORKSPACE_SETTINGS_OK, WELCOME };
