@@ -4,8 +4,9 @@
  *  README section 3b: what the terminal consumes. A session keeps what must survive a worker's death (cwd,
  *  env), runs one script at a time, stops with Ctrl+C, and completes for Tab from the workspace itself.
  *
- *  What it cannot keep it says: when a terminal's engine is replaced and its /tmp held files, the next line
- *  carries one note that /tmp was emptied; variables over the bounds are named, not silently lost.
+ *  What it cannot keep it says: when a terminal's engine is replaced and its /tmp held anything (files, or only
+ *  folders: stats.tmpEntries), the next line carries one note that /tmp was emptied; variables over the bounds
+ *  are named, not silently lost.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -405,6 +406,24 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		r.rt.dispose();
 	});
 
+	await test('the /tmp note comes before what the commit says too: a replaced worker, then a line whose changes are refused', async () => {
+		const r = createRig();
+		const te = new TextEncoder();
+		/** @type {any[]} */ let changes = [];
+		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', cwd: run.cwd, changes, stats: { tmpFiles: 2 } }); };
+		const s = r.rt.createSession();
+		await s.run('echo x > /tmp/a');
+		await r.clock.advance(120000);
+		r.ws.put('/scratch/a.txt', 'changed meanwhile');
+		changes = [{ kind: 'write', path: '/scratch/a.txt', existed: true, before: te.encode('old'), after: te.encode('new') }];
+		const res = await s.run('sed -i s/old/new/ a.txt');
+		assert.strictEqual(res.notes.length, 3, res.notes.join('\n'));
+		assert.ok(EMPTIED.test(res.notes[0]), 'first: ' + res.notes[0]);
+		assert.ok(/refused: \/scratch\/a\.txt changed while the command ran/.test(res.notes[1]), res.notes[1]);
+		assert.ok(/NONE of this command's file changes were applied/.test(res.notes[2]), res.notes[2]);
+		r.rt.dispose();
+	});
+
 	await test('at the worker cap the one replaced is the least recently used idle worker WITHOUT /tmp files: the files are the one thing that cannot be made again', async () => {
 		const r = createRig({ limits: { workers: { max: 2 } } });
 		/** @type {Record<string, number>} */ const files = { keeper: 3, plain: 0 };
@@ -553,6 +572,128 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		r.rt.dispose();
 		rr.rt.dispose();
 		nonsense.rt.dispose();
+	});
+
+	/* ===== fix round 3: what /tmp holds is files AND folders ================================================ */
+
+	/**
+	 * The engine's side as the current one reports it for a terminal run: `stats` exactly as given (tmpFiles, and
+	 * tmpEntries: the files and the folders). It is read at every run, so a test can change what /tmp "holds".
+	 * @param {any} r @param {() => any} stats
+	 */
+	function reports(r, stats) {
+		r.engines.state.onRun = async (/** @type {any} */ run, /** @type {any} */ w, /** @type {any} */ h) => {
+			if (run.script === 'hang') { await new Promise(() => { }); }
+			h.done({ exitCode: 0, how: 'exit', cwd: run.cwd, stats: stats() });
+		};
+	}
+	/** Every note about /tmp in `notes`. @param {string[]} notes */
+	const tmpNotes = (notes) => notes.filter((t) => /\/tmp was emptied/.test(t)).map((t) => (/\(it held ([^)]*)\)/.exec(t) || [])[1]);
+
+	await test('a /tmp that holds only an empty folder is something: the worker is kept twice as long, and the loss is said, as "1 file or folder"', async () => {
+		const r = createRig();
+		reports(r, () => ({ tmpFiles: 0, tmpEntries: 1 }));
+		const s = r.rt.createSession();
+		await s.run('mkdir /tmp/emptydir');
+		await r.clock.advance(60000);
+		assert.strictEqual(r.engines.workers[0].terminated, false, 'a minute is not enough for a /tmp that holds a folder');
+		await r.clock.advance(59999);
+		assert.strictEqual(r.engines.workers[0].terminated, false);
+		await r.clock.advance(1);
+		assert.strictEqual(r.engines.workers[0].terminated, true, 'two minutes are');
+		const after = await s.run('ls /tmp');
+		assert.deepStrictEqual(tmpNotes(after.notes), ['1 file or folder']);
+		assert.deepStrictEqual(tmpNotes((await s.run('ls /tmp')).notes), [], 'said once');
+		r.rt.dispose();
+	});
+
+	await test('the note says "N files and folders" with the engine\'s own number: five entries of which two are files', async () => {
+		const r = createRig();
+		reports(r, () => ({ tmpFiles: 2, tmpEntries: 5 }));
+		const s = r.rt.createSession();
+		await s.run('x');
+		await r.clock.advance(120000);
+		const after = await s.run('ls /tmp');
+		assert.strictEqual(after.notes.length, 1, after.notes.join('\n'));
+		assert.ok(/^\[LevelCode Shell: \/tmp was emptied when the shell restarted \(it held 5 files and folders\): /.test(after.notes[0]), after.notes[0]);
+		assert.ok(/Keep what matters in a workspace folder\]$/.test(after.notes[0]), after.notes[0]);
+		r.rt.dispose();
+	});
+
+	await test('an engine that reports only stats.tmpFiles is believed as before: files, and the old wording', async () => {
+		for (const [files, said] of /** @type {Array<[number, string]>} */ ([[3, '3 files'], [1, '1 file']])) {
+			const r = createRig();
+			reports(r, () => ({ tmpFiles: files }));
+			const s = r.rt.createSession();
+			await s.run('x');
+			await r.clock.advance(120000);
+			assert.deepStrictEqual(tmpNotes((await s.run('x')).notes), [said]);
+			r.rt.dispose();
+		}
+	});
+
+	await test('a tmpEntries that is not a count is as good as none: the files count is used, with the wording of files', async () => {
+		for (const bad of [-1, NaN, Infinity, '3', null, {}, true]) {
+			const r = createRig();
+			reports(r, () => ({ tmpFiles: 3, tmpEntries: bad }));
+			const s = r.rt.createSession();
+			await s.run('x');
+			await r.clock.advance(120000);
+			assert.deepStrictEqual(tmpNotes((await s.run('x')).notes), ['3 files'], JSON.stringify(bad));
+			r.rt.dispose();
+		}
+	});
+
+	await test('both counts present and in disagreement (fewer entries than files): the larger is believed - a loss of files is not to go unsaid', async () => {
+		const r = createRig();
+		reports(r, () => ({ tmpFiles: 4, tmpEntries: 1 }));
+		const s = r.rt.createSession();
+		await s.run('x');
+		await r.clock.advance(120000);
+		assert.deepStrictEqual(tmpNotes((await s.run('x')).notes), ['4 files and folders']);
+		r.rt.dispose();
+	});
+
+	await test('an empty /tmp, or counts that are not counts, say nothing and keep the worker for the usual minute', async () => {
+		for (const stats of [{ tmpFiles: 0, tmpEntries: 0 }, { tmpEntries: 0 }, { tmpEntries: -3, tmpFiles: NaN }, { tmpEntries: '2' }, { tmpEntries: 0.4 }, {}]) {
+			const r = createRig();
+			reports(r, () => stats);
+			const s = r.rt.createSession();
+			await s.run('x');
+			await r.clock.advance(60000);
+			assert.strictEqual(r.engines.workers[0].terminated, true, JSON.stringify(stats) + ': the usual minute');
+			assert.deepStrictEqual((await s.run('x')).notes, [], JSON.stringify(stats));
+			r.rt.dispose();
+		}
+	});
+
+	await test('at the worker cap a worker whose /tmp holds only a folder is kept in preference to an empty one, like one that holds files', async () => {
+		const r = createRig({ limits: { workers: { max: 2 } } });
+		/** @type {Record<string, any>} */ const by = { keeper: { tmpFiles: 0, tmpEntries: 1 }, plain: { tmpFiles: 0, tmpEntries: 0 } };
+		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', cwd: run.cwd, stats: by[run.script.split(' ')[0]] || {} }); };
+		const keeper = r.rt.createSession();
+		const plain = r.rt.createSession();
+		await keeper.run('keeper');                  // the older one, and it holds a folder
+		await r.clock.advance(1000);
+		await plain.run('plain');
+		await r.clock.advance(1000);
+		await r.rt.createSession().run('plain');
+		assert.deepStrictEqual(r.engines.workers.map((w) => w.terminated), [false, true, false], 'the newer, empty one was replaced');
+		assert.deepStrictEqual((await keeper.run('keeper')).notes, [], 'its /tmp is there');
+		r.rt.dispose();
+	});
+
+	await test('an agent\'s worker never remembers its /tmp, folders or not: the usual minute, and no note', async () => {
+		const r = createRig();
+		reports(r, () => ({ tmpFiles: 2, tmpEntries: 9 }));
+		for (let i = 0; i < 2; i++) {
+			const o = observe(r.rt.spawnAgent('x', { cwd: '/scratch' }), 3000);
+			await o.closed;
+			await r.clock.advance(60000);
+			assert.strictEqual(r.engines.workers[r.engines.workers.length - 1].terminated, true);
+			assert.ok(!/\/tmp was emptied/.test(o.stderr), o.stderr);
+		}
+		r.rt.dispose();
 	});
 
 	/* ===== completion =============================================================================== */

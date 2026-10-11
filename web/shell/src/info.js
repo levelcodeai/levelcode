@@ -46,12 +46,15 @@ const LIMITS = deepFreeze({
 		fsMs: 60000,
 		/**
 		 * How long the read-only check of a change set may take in all (the terminal's: has anything changed on disk since
-		 * the command read it?), counted from its first call. It is fsMs on purpose: a provider that does not answer costs
-		 * the visitor one such wait and the set is refused whole ("could not be checked in time"), not one per file, and
-		 * a provider that answers every call just before fsMs is not waited for for 2000 of them. The terminal's cap of
-		 * 2000 entries (a stat and a read each) fits in it at 15 ms a call.
+		 * the command read it?), counted from its first call, and how that grows with the set: `checkMs` is for a set of up
+		 * to `checkEntries` entries, a larger one gets the same time per entry, and no set gets more than `checkMaxMs` (see
+		 * checkBudgetMs). A check is up to two calls an entry (a stat, and the bytes of a file the command read): 60 s is
+		 * 250 ms a call for 120 entries, which is what a slow network folder needs, and 2 minutes are 30 ms a call at the cap
+		 * of 2000 entries. A provider that does not answer is not waited for that long: its first call that is not answered
+		 * in `fsMs` ends the check and the set is refused whole, once ("could not be checked in time"). The budget bounds the
+		 * one that answers every call just before fsMs, and is why it is not "for ever".
 		 */
-		checkMs: 60000,
+		checkMs: 60000, checkEntries: 120, checkMaxMs: 120000,
 		/**
 		 * How long the part of a commit that WRITES may take in all, counted from its first call: levelcode-ai's review
 		 * of a change set and then the folders it left to the shell (one budget, for the agent), or the shell's own
@@ -65,6 +68,19 @@ const LIMITS = deepFreeze({
 		completeMax: 200, completeMs: 2000,
 	},
 });
+
+/**
+ * How long the read-only check of a change set of `entries` entries has in all: `checkMs` for up to `checkEntries` of
+ * them, in proportion above that, never more than `checkMaxMs` - and never less than `checkMs`, whatever the others
+ * say. The budget is a bound on a provider that is slow but alive, so it has to go with the work: a constant that
+ * is right for 20 entries refuses a set of 2000 that a provider answering in 30 ms a call would have had applied.
+ * @param {{ checkMs: number, checkEntries: number, checkMaxMs: number }} w  limits.workers
+ * @param {number} entries
+ */
+function checkBudgetMs(w, entries) {
+	const n = typeof entries === 'number' && Number.isFinite(entries) && entries > 0 ? entries : 0;
+	return Math.max(w.checkMs, Math.min(w.checkMaxMs, Math.ceil(w.checkMs * n / w.checkEntries)));
+}
 
 /** @template T @param {T} o @returns {T} */
 function deepFreeze(o) {
@@ -183,4 +199,4 @@ function createInfo(limitsOver) {
 	};
 }
 
-module.exports = { LIMITS, PROGRAMS, MISSING, BUILTINS, mergeLimits, createInfo };
+module.exports = { LIMITS, PROGRAMS, MISSING, BUILTINS, mergeLimits, createInfo, checkBudgetMs };

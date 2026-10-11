@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const { LIMITS, PROGRAMS, MISSING, BUILTINS, mergeLimits, createInfo } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'info.js'));
+const { LIMITS, PROGRAMS, MISSING, BUILTINS, mergeLimits, createInfo, checkBudgetMs } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'info.js'));
 
 const MiB = 1024 * 1024;
 let n = 0;
@@ -29,8 +29,25 @@ test('the limits are the ones of README section 7, number for number', () => {
 		read: { file: 4 * MiB, run: 16 * MiB, served: 32 * MiB },
 		agent: { writeFile: 1 * MiB, writeRun: 8 * MiB, entries: 2000 },
 		terminal: { writeFile: 8 * MiB, writeRun: 32 * MiB, entries: 2000 },
-		workers: { max: 4, idleMs: 60000, readyMs: 20000, fsMs: 60000, checkMs: 60000, commitMs: 120000, deadlineGraceMs: 15000, completeMax: 200, completeMs: 2000 },
+		workers: { max: 4, idleMs: 60000, readyMs: 20000, fsMs: 60000, checkMs: 60000, checkEntries: 120, checkMaxMs: 120000, commitMs: 120000, deadlineGraceMs: 15000, completeMax: 200, completeMs: 2000 },
 	});
+});
+
+test('checkBudgetMs: checkMs up to checkEntries entries, the same per entry above that, never more than checkMaxMs and never less than checkMs', () => {
+	const w = LIMITS.workers;
+	assert.deepStrictEqual([0, 1, 5, 119, 120].map((n) => checkBudgetMs(w, n)), [60000, 60000, 60000, 60000, 60000], 'a set of up to 120 entries: a minute');
+	assert.strictEqual(checkBudgetMs(w, 121), 60500, 'one more: its share, 500 ms');
+	assert.strictEqual(checkBudgetMs(w, 200), 100000);
+	assert.strictEqual(checkBudgetMs(w, 240), 120000, 'twice 120 entries: the ceiling is reached');
+	assert.deepStrictEqual([241, 1000, 2000, 1e9].map((n) => checkBudgetMs(w, n)), [120000, 120000, 120000, 120000], 'and no more');
+	// what is not a size is no size
+	for (const bad of [undefined, null, NaN, -1, Infinity, '200', {}]) { assert.strictEqual(checkBudgetMs(w, /** @type {any} */ (bad)), 60000, String(bad)); }
+	// the floor wins over a ceiling set below it; the share is a whole number of ms
+	assert.strictEqual(checkBudgetMs({ checkMs: 200000, checkEntries: 10, checkMaxMs: 5000 }, 1000), 200000);
+	assert.strictEqual(checkBudgetMs({ checkMs: 100, checkEntries: 3, checkMaxMs: 1000 }, 4), 134);
+	// a table that was overridden is scaled by its own numbers
+	const m = mergeLimits({ workers: { checkMs: 1000, checkEntries: 10, checkMaxMs: 5000 } });
+	assert.deepStrictEqual([5, 10, 11, 20, 50, 60, 70].map((k) => checkBudgetMs(m.workers, k)), [1000, 1000, 1100, 2000, 5000, 5000, 5000]);
 });
 
 test('the table cannot be edited by whoever holds it: frozen all the way down', () => {
