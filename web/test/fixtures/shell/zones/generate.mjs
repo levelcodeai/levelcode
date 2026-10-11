@@ -1,0 +1,141 @@
+#!/usr/bin/env node
+// Regenerates what the engine knows about time zone names, from the tzdata of the reference container (GNU `date`, the
+// image the golden suite uses, `--network none`):
+//
+//   web/shell/engine/zone-data.js   the names of every zone file (so that a name is a zone only in the case it is written
+//                                   in, as on a file system that has case), and the letters tzdata gives each zone by
+//                                   offset (`%Z`: EST, EDT, CEST, ...; where tzdata has digits, `+04`, nothing is listed)
+//   zones.json                      what `TZ=NAME date -d @T '+%Z|%z'` printed for every name at four instants, so that the
+//                                   test compares the engine with GNU's own words, not with the table it was made from
+//
+//   node web/test/fixtures/shell/zones/generate.mjs        (docker with catthehacker/ubuntu:act-latest already pulled)
+//
+// Review the diff of zone-data.js: a changed row is a new tzdata, not a regression.
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ENGINE = path.join(HERE, '..', '..', '..', '..', 'shell', 'engine');
+const IMAGE = 'catthehacker/ubuntu:act-latest';
+
+/**
+ * The instants zones.json is recorded at: the middle of January and of July of 2015 and of 2020, inside the years the
+ * table is made from (2010-2030). An instant before them can have another abbreviation for the same offset (Indiana/Knox
+ * was EST at -5 in 2001, and is CDT now); one after 2030 can have another rule.
+ */
+const INSTANTS = [1421323200, 1436961600, 1579089600, 1594814400];
+
+const PY = `
+import os, json, datetime, zoneinfo
+root = '/usr/share/zoneinfo'
+SKIP = ('leapseconds', 'SECURITY', 'localtime', 'posixrules', 'Factory')
+names = []
+for dp, dn, fn in os.walk(root):
+    rel = os.path.relpath(dp, root)
+    if rel.split('/')[0] in ('posix', 'right'):
+        continue
+    for f in fn:
+        if f.endswith(('.tab', '.zi', '.list')) or f in SKIP:
+            continue
+        names.append(f if rel == '.' else rel + '/' + f)
+names.sort()
+STEP = 6 * 86400
+start = int(datetime.datetime(2010, 1, 1, tzinfo=datetime.timezone.utc).timestamp())
+end = int(datetime.datetime(2030, 1, 1, tzinfo=datetime.timezone.utc).timestamp())
+
+def at(tz, t):
+    d = datetime.datetime.fromtimestamp(t, tz)
+    a = d.tzname() or ''
+    return int(d.utcoffset().total_seconds() // 60), ('' if (not a or a[0] in '+-' or a[0].isdigit()) else a)
+
+rows = {}
+for n in names:
+    try:
+        tz = zoneinfo.ZoneInfo(n)
+    except Exception:
+        continue
+    eras = {}                     # offset -> [[letters or '', since or None]]
+    prev = None
+    t = start
+    while t < end:
+        off, ab = at(tz, t)
+        lst = eras.setdefault(off, [])
+        if not lst:
+            lst.append([ab, None])
+        elif lst[-1][0] != ab:
+            since = t
+            if prev is not None and prev[1] == off:
+                lo, hi = prev[0], t        # the zone stayed at this offset and changed its name: find the second
+                while hi - lo > 1:
+                    mid = (lo + hi) // 2
+                    if at(tz, mid)[1] == lst[-1][0]:
+                        lo = mid
+                    else:
+                        hi = mid
+                since = hi
+            lst.append([ab, since])
+        prev = (t, off)
+        t += STEP
+    r = []
+    for off in sorted(eras):
+        lst = eras[off]
+        if all(a == '' for a, _ in lst):
+            continue
+        for a, since in lst:
+            r.append([off, a] if since is None else [off, a, since])
+    rows[n] = r
+print(json.dumps({'names': names, 'rows': rows, 'tzdata': open(root + '/tzdata.zi').readline().strip()}))
+`;
+
+const run = (args, input) => {
+	const r = spawnSync('docker', ['run', '--rm', ...(input === undefined ? [] : ['-i']), '--pull', 'never', '--network', 'none', ...args], { encoding: 'utf8', input, maxBuffer: 1 << 28 });
+	if (r.status !== 0) { throw new Error(r.stderr || 'docker failed'); }
+	return r.stdout;
+};
+
+const data = JSON.parse(run([IMAGE, 'python3', '-c', PY]));
+const names = data.names.filter((n) => Object.prototype.hasOwnProperty.call(data.rows, n));
+
+// groups of names that have the same rows
+const groups = new Map();
+for (const n of names) {
+	const rows = data.rows[n];
+	if (!rows.length) { continue; }
+	const key = JSON.stringify(rows);
+	if (!groups.has(key)) { groups.set(key, { rows, names: [] }); }
+	groups.get(key).names.push(n);
+}
+const index = new Map(names.map((n, i) => [n, i]));
+const table = [...groups.values()].sort((a, b) => (a.names[0] < b.names[0] ? -1 : 1)).map((g) => [g.names.map((n) => index.get(n)), ...g.rows]);
+const version = (/version (\S+)/.exec(data.tzdata) || [])[1] || 'unknown';
+const out = `// GENERATED by web/test/fixtures/shell/zones/generate.mjs from tzdata ${version}: do not edit.
+//
+// NAMES: every zone name the reference system has a file for. A TZ is that zone only when it is written in the case
+// the file has (\`TZ=asia/tokyo\` is no zone: GNU says UTC and the name \`asia\`).
+// ABBREVIATIONS: [indexes into NAMES, [offset in minutes, letters, since]...] for the zones whose abbreviation in tzdata is
+// letters at some time of 2010-2030. \`since\` (seconds) is when a zone that kept an offset changed what it calls it
+// (America/Chihuahua: MDT until 2022-10-30, CST from then on); letters '' mean digits (\`+04\`, \`-03\`, \`+0545\`),
+// which zone.js writes itself, as it does for a zone or an offset that is not listed. Before 2010 the first of them is used.
+'use strict';
+
+const VERSION = ${JSON.stringify(version)};
+
+const NAMES = ${JSON.stringify(names.join(' '))}.split(' ');
+
+/** @type {Array<[number[], ...Array<[number, string] | [number, string, number]>]>} */
+const ABBREVIATIONS = ${JSON.stringify(table)};
+
+module.exports = { VERSION, NAMES, ABBREVIATIONS };
+`;
+fs.writeFileSync(path.join(ENGINE, 'zone-data.js'), out);
+
+// what GNU date prints, for every name, at four instants (one container run, every command of it a date)
+const script = names.map((n) => INSTANTS.map((t) => `printf '%s\\n' "$(TZ=${JSON.stringify(n)} date -d @${t} '+%Z|%z')"`).join('\n')).join('\n');
+const lines = run([IMAGE, 'bash', '-s'], script).split('\n').filter((l) => l !== '');
+if (lines.length !== names.length * INSTANTS.length) { throw new Error(`expected ${names.length * INSTANTS.length} lines, got ${lines.length}`); }
+const gnu = {};
+names.forEach((n, i) => { gnu[n] = INSTANTS.map((_t, k) => lines[i * INSTANTS.length + k]); });
+fs.writeFileSync(path.join(HERE, 'zones.json'), JSON.stringify({ reference: `GNU date (coreutils 8.32), tzdata ${version}`, instants: INSTANTS, zones: gnu }) + '\n');
+console.log(`${names.length} zone names, ${table.length} groups of abbreviations, tzdata ${version}`);

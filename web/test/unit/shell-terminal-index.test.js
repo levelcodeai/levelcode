@@ -14,9 +14,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const { fakeVscode, fakeSession, manualTimers, settle, TERMINAL } = require('./helpers/shell-terminal-fakes');
+const { fakeVscode, fakeRuntimeFs, fakeSession, manualTimers, settle, TERMINAL } = require('./helpers/shell-terminal-fakes');
 const { createTerminalSupport, PROFILE_ID } = require(path.join(TERMINAL, 'index.js'));
 const { KEY } = require(path.join(TERMINAL, 'history.js'));
+const { planMounts } = require(path.join(TERMINAL, '..', 'runtime.js'));
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -36,8 +37,13 @@ function setup(o) {
 	const listeners = new Set();
 	/** @type {any[]} */ const sessions = [];
 	const folders = opts.folders || [{ name: 'scratch', root: '/scratch', uri: 'file:///scratch' }];
+	// where a path is and what is at it are the runtime's to say: here, by the mounts the runtime plans for the folders
+	// (the root of a file system is mounted under /mnt) and by the fake file system
+	const rt = fakeRuntimeFs(fv, () => planMounts(folders));
 	const runtime = {
 		folders: () => folders,
+		resolve: rt.resolve,
+		stat: rt.stat,
 		createSession(/** @type {any} */ so) { const s = fakeSession({ cwd: (so && so.cwd) || folders[0].root }); s.created = so; sessions.push(s); return s; },
 		onAgentRun(l) { listeners.add(l); return { dispose() { listeners.delete(l); } }; },
 	};
@@ -458,7 +464,7 @@ test('two workspace folders of one name that the engine had to mount elsewhere a
 
 test('without registerTerminalLinkProvider (an older workbench) nothing is registered and nothing throws', () => {
 	const fv = fakeVscode();
-	delete fv.vscode.window.registerTerminalLinkProvider;
+	delete /** @type {any} */ (fv.vscode.window).registerTerminalLinkProvider;
 	const runtime = { folders: () => [{ name: 'scratch', root: '/scratch', uri: 'file:///scratch' }], createSession: () => fakeSession({}), onAgentRun: () => ({ dispose() { } }) };
 	const support = createTerminalSupport({ vscode: fv.vscode, runtime, context: { globalState: memento(), workspaceState: memento() }, getRandomValues: (a) => crypto.webcrypto.getRandomValues(a), timers: manualTimers() });
 	assert.strictEqual(fv.state.linkProvider, null);
@@ -466,8 +472,12 @@ test('without registerTerminalLinkProvider (an older workbench) nothing is regis
 	support.dispose();
 });
 
+let finished = false;
+// a test that awaits something that never settles leaves nothing to keep the process alive: it would exit 0, silently
+process.on('exit', (code) => { if (code === 0 && !finished) { console.error('the tests did not finish: one of them waits for something that never happens'); process.exitCode = 1; } });
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }
+	finished = true;
 	console.log(`\n${n} tests passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -40,6 +40,7 @@ async function loadCases() {
 	const { CASES: extra } = await import('./cases/extra.mjs');
 	const { CASES: round2 } = await import('./cases/round2.mjs');
 	const { CASES: round3 } = await import('./cases/round3.mjs');
+	const { CASES: round4 } = await import('./cases/round4.mjs');
 	const all = [];
 	const seen = new Set();
 	const add = (list, source, fixture) => {
@@ -55,6 +56,7 @@ async function loadCases() {
 	add(extra, 'extra', false);
 	add(round2, 'round2', false);
 	add(round3, 'round3', false);
+	add(round4, 'round4', false);
 	return { FIXTURE, cases: all };
 }
 
@@ -124,11 +126,13 @@ done
 		const files = {};
 		const dirs = [];
 		for (const [p, v] of a.tree) {
-			const f = fixtureTree.get(p);
+			const f = c.fixture ? fixtureTree.get(p) : undefined;
 			if (v === null) { if (f !== null) { dirs.push(p); } continue; }
 			if (f === undefined || f === null || Buffer.compare(f, v) !== 0) { files[p] = encodeBytes(v); }
 		}
-		const gone = [...fixtureTree.keys()].filter((p) => !a.tree.has(p) || (fixtureTree.get(p) === null) !== (a.tree.get(p) === null));
+		// what it removed from the fixture it started with: a case that has none removed nothing (listing the fixture's
+		// files as gone for every bare-workspace case was a third of the file)
+		const gone = c.fixture ? [...fixtureTree.keys()].filter((p) => !a.tree.has(p) || (fixtureTree.get(p) === null) !== (a.tree.get(p) === null)) : [];
 		out.push({ name: c.name, source: c.source, fixture: c.fixture, script: c.script, stdout: encodeBytes(a.stdout), stderr: a.stderr.toString('utf8'), exit: a.exit, tree: { files, dirs: dirs.sort(), gone: gone.sort() } });
 	}
 	const meta = {

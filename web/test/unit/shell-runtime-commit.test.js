@@ -18,7 +18,10 @@
  *    - a call to the file system is waited for fsMs at most, the read-only CHECK of a set checkMs in all for up to
  *      checkEntries entries and in proportion above that, never more than checkMaxMs (refused whole, once, with how
  *      far it got; a provider that does not answer ends it at fsMs whatever the size of the set), the part that
- *      WRITES commitMs in all (the agent's review and the folders it leaves share one budget);
+ *      WRITES commitMs in all for the agent (its review and the folders it leaves share one budget) and, for the
+ *      terminal's own writes, twice the check's of the same set (never less than commitMs): a folder is one call to
+ *      check and two to write, so what the check lets through the writing can finish - applied whole or refused
+ *      whole, never half a project while the provider keeps answering;
  *    - a Stop or a dispose() ends the run AT ONCE: a set that was only being checked applied nothing, one that
  *      was being written says how many changes are confirmed, that the write in flight cannot be cancelled and
  *      may still land, and nothing more is started - after what the run already knew (a moved folder, the
@@ -975,7 +978,7 @@ async function agent(rig, command, opts) {
 		q.rt.dispose();
 	});
 
-	await test('the writing has commitMs IN ALL too: five writes answered after 50 s each end at 120 s with two confirmed, the third in flight, the rest not started', async () => {
+	await test('the writing has its budget IN ALL too: five writes answered after 50 s each end at 120 s (commitMs, which is twice the check\'s 60 s for five entries) with two confirmed, the third in flight, the rest not started', async () => {
 		const r = createRig();
 		const five = FIVE.map((f) => wr('/scratch/' + f, f.toUpperCase(), null));
 		slow(r, 'writeFile', 50000, (p) => /\/scratch\/[a-e]$/.test(p));
@@ -1527,6 +1530,240 @@ async function agent(rig, command, opts) {
 		assert.deepStrictEqual(writes(x.r), [], 'and the late answer of that call changed nothing');
 		x.r.rt.dispose();
 		assert.strictEqual(x.r.clock.pending, 0, 'the runtime left no timer behind');
+	});
+
+	/* ===== fix round 4: what the check lets through, the writing can finish ================================= */
+
+	// A folder is ONE call to check (a stat) and TWO to write (a stat, then the create); a file is one and one (plus
+	// the stat of its folder, which is shared). So a scaffold needs up to twice the calls to write that it needed to
+	// check, and a check budget that grows with the set while the writing keeps a constant lets through sets that
+	// cannot be written in time: a half-made project where the checkpoint refused the whole set with nothing on disk.
+	// The writing of the terminal's set therefore has twice the check's budget (and never less than commitMs).
+
+	/** The small table of these tests: the check of n entries has clamp(100 ms x n, 1 s, 5 s); commitMs is below what twice that is. */
+	const L4 = { workers: { checkMs: 1000, checkEntries: 10, checkMaxMs: 5000, commitMs: 1000, fsMs: 60000 } };
+
+	/**
+	 * `dirs` new folders and `files` new files spread over them, as a scaffold's change set is, against a provider that
+	 * answers each kind of call after the given time of the rig's clock (a number: every kind).
+	 * @param {number} dirs @param {number} files @param {number|Record<string, number>} latency @param {{ limits?: any }} [o]
+	 */
+	async function scaffold(dirs, files, latency, o) {
+		const r = createRig(o && o.limits ? { limits: o.limits } : undefined);
+		/** @type {any[]} */ const changes = [];
+		for (let i = 0; i < dirs; i++) { changes.push(mkdir('/scratch/d' + i)); }
+		for (let j = 0; j < files; j++) { changes.push(wr('/scratch/d' + (j % dirs) + '/f' + j + '.txt', 'new', null)); }
+		ending(r, { changes });
+		/** @type {Record<string, number>} */
+		const per = typeof latency === 'number' ? { stat: latency, readFile: latency, writeFile: latency, createDirectory: latency } : latency;
+		for (const op of Object.keys(per)) { slow(r, op, per[op], () => true); }
+		const t0 = r.clock.now();
+		const p = watch(r.rt.createSession().run('x'));
+		await settle();
+		for (let i = 0; i < 2000 && !p.done; i++) { await r.clock.advance(1000); }
+		assert.strictEqual(p.done, true, 'the run never ended');
+		let madeDirs = 0, madeFiles = 0;
+		for (let i = 0; i < dirs; i++) { madeDirs += r.ws.isDir('/scratch/d' + i) ? 1 : 0; }
+		for (let j = 0; j < files; j++) { madeFiles += r.ws.exists('/scratch/d' + (j % dirs) + '/f' + j + '.txt') ? 1 : 0; }
+		return { r, res: p.value, took: r.clock.now() - t0, madeDirs, madeFiles };
+	}
+
+	await test('a scaffold the check lets through is WRITTEN whole, and one it does not is refused whole with nothing on disk - never half a project (exactly the check\'s budget passes, a ms a call over is refused)', async () => {
+		// [dirs, files, ms a call, passes?]: n = dirs + files; the check makes n calls (a stat each), the writing 2 x dirs + files
+		/** @type {Array<[number, number, number, boolean]>} */
+		const table = [
+			[40, 0, 100, true], [40, 0, 101, false],        // folders only: n calls to check, 2n to write - exactly twice the budget
+			[20, 20, 100, true], [20, 20, 101, false],      // a scaffold: 40 to check, 60 to write
+			[100, 0, 50, true], [100, 0, 51, false],        // at the ceiling: 5 s to check, 10 s to write
+			[100, 100, 25, true], [100, 100, 26, false],
+			[3, 30, 100, true], [3, 30, 101, false],      // 33 entries: 3.3 s to check, 6.6 s to write
+			[1, 0, 1000, true], [1, 0, 1001, false],        // one folder: checkMs itself
+		];
+		for (const [dirs, files, latency, passes] of table) {
+			const what = dirs + ' folders + ' + files + ' files at ' + latency + ' ms a call';
+			const n = dirs + files;
+			const x = await scaffold(dirs, files, latency, { limits: L4 });
+			if (passes) {
+				assert.deepStrictEqual({ how: x.res.how, exit: x.res.exitCode, applied: x.res.applied, notes: x.res.notes }, { how: 'exit', exit: 0, applied: n, notes: [] }, what);
+				assert.deepStrictEqual([x.madeDirs, x.madeFiles], [dirs, files], what);
+			} else {
+				assert.strictEqual(x.res.applied, 0, what);
+				assert.ok(/could not be checked in time: .*ran out of time: the check gets [\d.]+ s in all \(\d+ of \d+ were checked\)/.test(x.res.notes[0]), what + ': ' + x.res.notes[0]);
+				assert.deepStrictEqual([x.madeDirs, x.madeFiles], [0, 0], what + ': nothing is on disk');
+				assert.deepStrictEqual(writes(x.r), [], what + ': not one write was made');
+			}
+			x.r.rt.dispose();
+		}
+	});
+
+	await test('the same at the default limits: 200 folders + 200 files at 250 ms a call (100 s to check, 150 s to write) is applied whole, as are 400 + 400 at 150 ms; 200 + 200 at 350 ms is refused whole', async () => {
+		/** @type {Array<[number, number, number, boolean]>} */
+		const table = [[200, 200, 250, true], [400, 400, 150, true], [1000, 1000, 60, true], [200, 200, 350, false], [1000, 1000, 61, false]];
+		for (const [dirs, files, latency, passes] of table) {
+			const what = dirs + ' + ' + files + ' at ' + latency + ' ms';
+			const x = await scaffold(dirs, files, latency);
+			if (passes) {
+				assert.deepStrictEqual({ exit: x.res.exitCode, applied: x.res.applied, notes: x.res.notes }, { exit: 0, applied: dirs + files, notes: [] }, what);
+				assert.deepStrictEqual([x.madeDirs, x.madeFiles], [dirs, files], what);
+			} else {
+				assert.strictEqual(x.res.applied, 0, what);
+				assert.deepStrictEqual([x.madeDirs, x.madeFiles], [0, 0], what + ': nothing is on disk');
+			}
+			x.r.rt.dispose();
+		}
+	});
+
+	await test('the writing has TWICE the check\'s budget in all, exactly: 40 folders whose create takes 200 ms fit in 8 s, at 201 ms the last is out of time - "applied 39 of 40"', async () => {
+		for (const [latency, ok] of /** @type {Array<[number, boolean]>} */ ([[200, true], [201, false]])) {
+			const x = await scaffold(40, 0, { createDirectory: latency }, { limits: L4 });    // (the check is instant: the whole of the 4 s is unspent)
+			if (ok) {
+				assert.deepStrictEqual({ exit: x.res.exitCode, applied: x.res.applied, notes: x.res.notes, took: x.took }, { exit: 0, applied: 40, notes: [], took: 8000 }, 'exactly the budget passes');
+			} else {
+				assert.strictEqual(x.res.applied, 39);
+				assert.ok(/^\[LevelCode Shell: applied 39 of 40 file changes; stopped at \/scratch\/d\d+: ran out of time: the changes get 8 s in all\. That call was not answered and cannot be cancelled: it may still land\. The rest were not applied\.\]$/.test(x.res.notes[0]), x.res.notes[0]);
+				assert.strictEqual(x.res.exitCode, 1);
+			}
+			x.r.rt.dispose();
+		}
+	});
+
+	await test('the writing is never given less than commitMs: three files whose write takes 1.6 s fit in a 5 s commitMs although twice the check\'s 1 s is 2 s; at 1.7 s the third is out of time', async () => {
+		const L = { workers: { checkMs: 1000, checkEntries: 10, checkMaxMs: 5000, commitMs: 5000, fsMs: 60000 } };
+		for (const [latency, ok] of /** @type {Array<[number, boolean]>} */ ([[1600, true], [1700, false]])) {
+			const x = await scaffold(1, 3, { writeFile: latency }, { limits: L });
+			if (ok) {
+				assert.deepStrictEqual({ exit: x.res.exitCode, applied: x.res.applied }, { exit: 0, applied: 4 });
+			} else {
+				assert.strictEqual(x.res.applied, 3, 'the folder and two files');
+				assert.ok(/applied 3 of 4 file changes; stopped at \/scratch\/d0\/f\d+\.txt: ran out of time: the changes get 5 s in all\./.test(x.res.notes[0]), x.res.notes[0]);
+			}
+			x.r.rt.dispose();
+		}
+	});
+
+	await test('the writing of a large set is still bounded: 240 folders at the ceiling get 240 s in all - a create answered at 59 s each ends at exactly 240 s, one that never answers at 60 s', async () => {
+		const slowOne = await scaffold(240, 0, { createDirectory: 59000 });
+		assert.strictEqual(slowOne.took, 240000, 'twice the 120 s ceiling of the check');
+		assert.ok(/applied 4 of 240 file changes; stopped at \/scratch\/d\d+: ran out of time: the changes get 240 s in all\./.test(slowOne.res.notes[0]), slowOne.res.notes[0]);
+		slowOne.r.rt.dispose();
+		const r = createRig();
+		/** @type {any[]} */ const changes = [];
+		for (let i = 0; i < 240; i++) { changes.push(mkdir('/scratch/d' + i)); }
+		r.ws.hang('createDirectory', () => true);
+		ending(r, { changes });
+		const p = watch(r.rt.createSession().run('x'));
+		await settle();
+		await r.clock.advance(59999);
+		assert.strictEqual(p.done, false);
+		await r.clock.advance(1);
+		assert.strictEqual(p.done, true, 'at fsMs, whatever the size of the set');
+		assert.ok(/applied 0 of 240 file changes; stopped at \/scratch\/d0: timed out\. That call was not answered and cannot be cancelled: it may still land\./.test(p.value.notes[0]), p.value.notes[0]);
+		r.rt.dispose();
+		assert.strictEqual(r.clock.pending, 0);
+	});
+
+	await test('the agent\'s writing keeps commitMs however large the set is: a review that answers at 119 s with a folder that never answers ends the run at 120 s for 240 entries too', async () => {
+		const r = createRig();
+		r.ws.hang('createDirectory', () => true);
+		/** @type {any[]} */ const many = [mkdir('/scratch/d')];
+		for (let i = 0; i < 239; i++) { many.push(wr('/scratch/f' + i, 'x', null)); }
+		ending(r, { changes: many });
+		/** @type {string[]} */ const out = [];
+		let code = null;
+		const child = r.rt.spawnAgent('x', {
+			cwd: '/scratch',
+			commit: () => new Promise((res) => r.clock.setTimeout(() => res({ rest: [mkdir('/scratch/d')], notes: [], failed: 0 }), 119000)),
+		});
+		child.stderr.on('data', (/** @type {string} */ t) => out.push(t));
+		child.on('close', (/** @type {number} */ c) => { code = c; });
+		await settle();
+		await r.clock.advance(119999);
+		assert.strictEqual(code, null);
+		await r.clock.advance(1);
+		assert.strictEqual(code, 1, 'at 120 s in all - the review\'s answer left it one second, not the 60 s of a call and not 240 s');
+		assert.ok(out.join('').includes('ran out of time: the changes get 120 s in all'), out.join(''));
+		r.rt.dispose();
+	});
+
+	/* ===== fix round 4: two combinations that were pinned by nothing ===================================== */
+
+	await test('a worker that dies after `done` and then a Stop while the set is only being CHECKED: nothing is applied, both are said - the stop first, as the commit\'s own notes come, then the failure', async () => {
+		/** @type {Array<[string, (w: any) => void, string]>} */
+		const deaths = [['an error event', (w) => w.crash('late exception'), 'the shell engine stopped unexpectedly: late exception'],
+			['a messageerror', (w) => w.onmessageerror({}), 'the shell engine sent a message that could not be read']];
+		for (const [death, kill, failure] of deaths) {
+			for (const how of ['session.stop', 'session.dispose', 'runtime.dispose']) {
+				const r = createRig();
+				r.ws.put('/scratch/old.txt', 'old');
+				r.ws.hang('stat', (k) => k.endsWith('/old.txt'));
+				/** @type {any} */ let worker;
+				r.engines.state.onRun = async (run, w, h) => { worker = w; h.done({ exitCode: 0, how: 'exit', changes: [wr('/scratch/old.txt', 'new', 'old')] }); };
+				const s = r.rt.createSession();
+				const p = watch(s.run('x'));
+				await until(() => r.ws.calls.some((c) => /^stat .*old\.txt$/.test(c)));
+				kill(worker);
+				await flush();
+				assert.strictEqual(p.done, false, death + ': the check is still going on');
+				if (how === 'session.stop') { s.stop(); } else if (how === 'session.dispose') { s.dispose(); } else { r.rt.dispose(); }
+				await flush();
+				assert.strictEqual(p.done, true, death + ' / ' + how);
+				assert.deepStrictEqual(p.value.notes, [
+					'[LevelCode Shell: stopped before anything was applied: the command\'s file changes were being checked, and were NOT applied.]',
+					'[LevelCode Shell: ' + failure + ', after the command had finished]',
+				], death + ' / ' + how);
+				assert.strictEqual(r.ws.text('/scratch/old.txt'), 'old');
+				assert.deepStrictEqual(writes(r), [], 'not one write');
+				r.rt.dispose();
+			}
+		}
+	});
+
+	await test('a run stopped BEFORE its engine said done says that it was stopped, and what was true when it began - not the moved folder, not what the engine would have said, not that its output was cut', async () => {
+		const FOLDERS = [{ name: 'scratch', root: '/scratch', uri: 'levelcode-scratch:///scratch' }, { name: 'rootfs', root: '/', uri: 'file:///' }];
+		const STOPPED = '[LevelCode Shell: stopped. Any file changes the command had made were NOT applied.]';
+		const TIMED_OUT = '[LevelCode Shell: the command ran out of time and was stopped. Any file changes it had made were NOT applied.]';
+		/** An engine that writes more than the host's cap and never says `done` (it would have said a moved folder and notes of its own with it). */
+		const hanging = (/** @type {any} */ r) => {
+			r.engines.state.onRun = async (/** @type {any} */ run, /** @type {any} */ w, /** @type {any} */ h) => { h.out(run.id, 'stdout', 'x'.repeat(30)); await flush(); await new Promise(() => { }); };
+		};
+		for (const how of ['session.stop', 'session.dispose', 'runtime.dispose', 'a deadline']) {
+			const r = createRig({ workspace: { folders: TWO_FOLDERS }, limits: TOO_MUCH });
+			hanging(r);
+			const s = r.rt.createSession();
+			const p = watch(s.run('x', how === 'a deadline' ? { timeoutMs: 1000 } : undefined));
+			await until(() => r.engines.workers.length > 0 && r.engines.workers[0].runs.length > 0);
+			await flush();
+			assert.strictEqual(r.rt.mounts().some((m) => m.reason), true, how + ': a folder IS moved');
+			if (how === 'session.stop') { s.stop(); } else if (how === 'session.dispose') { s.dispose(); } else if (how === 'runtime.dispose') { r.rt.dispose(); } else { await r.clock.advance(1000); }
+			await flush();
+			assert.strictEqual(p.done, true, how);
+			assert.deepStrictEqual(p.value.notes, [how === 'a deadline' ? TIMED_OUT : STOPPED], how);
+			r.rt.dispose();
+		}
+		for (const [signal, code] of /** @type {Array<[string, number]>} */ ([['SIGTERM', 130], ['SIGKILL', 137]])) {
+			const r = createRig({ workspace: { folders: TWO_FOLDERS }, limits: TOO_MUCH });
+			hanging(r);
+			const child = r.rt.spawnAgent('x', { cwd: '/scratch', folders: FOLDERS });
+			const o = observe(child, 3000);
+			await until(() => r.engines.workers.length > 0 && r.engines.workers[0].runs.length > 0);
+			await flush();
+			assert.strictEqual(child.kill(signal), true);
+			await o.closed;
+			assert.strictEqual(/** @type {any} */ (o.events[o.events.length - 1]).code, code);
+			assert.strictEqual(o.stderr, STOPPED + '\n', signal);
+			r.rt.dispose();
+		}
+		// What was already true when the run STARTED is the one thing it does carry: variables it was handed that were not kept.
+		const r = createRig({ limits: TOO_MUCH });
+		hanging(r);
+		/** @type {Record<string, string>} */ const env = {};
+		for (let i = 0; i < 513; i++) { env['V' + i] = 'x'; }
+		const o = observe(r.rt.spawnAgent('x', { cwd: '/scratch', env }), 3000);
+		await until(() => r.engines.workers.length > 0 && r.engines.workers[0].runs.length > 0);
+		await flush();
+		r.rt.dispose();
+		await o.closed;
+		assert.strictEqual(o.stderr, NOT_KEPT + '\n' + STOPPED + '\n');
 	});
 
 	finished = true;

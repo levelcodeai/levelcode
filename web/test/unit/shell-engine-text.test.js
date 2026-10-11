@@ -11,7 +11,7 @@
 const assert = require('assert');
 const path = require('path');
 
-const { decodeBytes, encodeText, decodeByteString, decodeIfBytes, displayText, hasLoneSurrogate } = require(path.join(__dirname, '..', '..', 'shell', 'engine', 'text.js'));
+const { decodeBytes, encodeText, decodeByteString, decodeIfBytes, joinEscapes, displayText, hasLoneSurrogate } = require(path.join(__dirname, '..', '..', 'shell', 'engine', 'text.js'));
 
 /** @type {Array<{ name: string, fn: () => Promise<void> | void }>} */
 const tests = [];
@@ -146,6 +146,37 @@ test('what is shown has NO lone surrogate at all: half of an emoji (awk substr, 
 	assert.strictEqual(hasLoneSurrogate('\ud83d'), true);
 	assert.strictEqual(hasLoneSurrogate('😀\ude00'), true);
 	assert.strictEqual(hasLoneSurrogate(''), false);
+});
+
+test('joinEscapes: the escapes of bytes that are UTF-8 together are the character (what printf \\303\\251 makes); a lone byte stays an escape; a surrogate pair is left alone', () => {
+	const esc = (...b) => String.fromCharCode(...b.map((x) => 0xdc00 + x));
+	assert.strictEqual(joinEscapes(esc(0xc3, 0xa9)), 'é');
+	assert.strictEqual(joinEscapes('caf' + esc(0xc3, 0xa9) + ' ' + esc(0xe2, 0x9c, 0x93) + '\n'), 'café ✓\n');
+	assert.strictEqual(joinEscapes(esc(0xf0, 0x9f, 0x98, 0x80)), '😀');
+	assert.strictEqual(joinEscapes(esc(0xff)), esc(0xff), 'a byte that is not UTF-8 stays what it is');
+	assert.strictEqual(joinEscapes(esc(0xc3)), esc(0xc3), 'the first half of a character');
+	assert.strictEqual(joinEscapes(esc(0xc3, 0xa9, 0xff, 0xc3, 0xa9)), 'é' + esc(0xff) + 'é', 'a run of valid and invalid bytes is each where it is');
+	assert.strictEqual(joinEscapes('plain'), 'plain');
+	assert.strictEqual(joinEscapes(''), '');
+	// a pair is a character: the low half of U+1F480 is U+DC80 and of U+1F4C3 is U+DCC3, which look like escapes of the
+	// bytes 0x80 and 0xC3 when they stand alone, and are not when a high surrogate is in front of them
+	assert.strictEqual(joinEscapes('\u{1F480}'), '\u{1F480}');
+	assert.strictEqual(joinEscapes('x\u{1F4C3}y' + esc(0xc3, 0xa9)), 'x\u{1F4C3}yé');
+	assert.strictEqual(joinEscapes('\u{1F4C3}' + esc(0xa9)), '\u{1F4C3}' + esc(0xa9), 'the byte after a pair is a byte');
+	assert.strictEqual(joinEscapes('\u{1F4C3}' + esc(0xc3, 0xa9)), '\u{1F4C3}é', 'and valid ones after it are the character');
+	// U+1F4A9 is D83D DCA9: DCA9 lies in the escape range and is half of a character, not a byte
+	assert.strictEqual(joinEscapes('💩'), '💩');
+	assert.strictEqual(joinEscapes('💩' + esc(0xc3, 0xa9)), '💩é');
+	assert.strictEqual(joinEscapes(esc(0xc3) + '💩' + esc(0xa9)), esc(0xc3) + '💩' + esc(0xa9), 'a pair between two halves joins nothing');
+	// it is what encodeText would have written, as text: encode(join(s)) is encode(s)
+	const r = rng(7);
+	for (let i = 0; i < 300; i++) {
+		const b = new Uint8Array(1 + Math.floor(r() * 12));
+		for (let k = 0; k < b.length; k++) { b[k] = r() < 0.5 ? 0x80 + Math.floor(r() * 128) : Math.floor(r() * 128); }
+		const escaped = [...b].map((x) => (x < 0x80 ? String.fromCharCode(x) : String.fromCharCode(0xdc00 + x))).join('');
+		assert.deepStrictEqual([...encodeText(joinEscapes(escaped))], [...b]);
+		assert.strictEqual(decodeBytes(b), joinEscapes(escaped));
+	}
 });
 
 (async () => {

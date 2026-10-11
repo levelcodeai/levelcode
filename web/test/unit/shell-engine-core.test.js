@@ -784,6 +784,19 @@ async function main() {
 		assert.deepStrictEqual([c.done.stats.tmpFiles, c.done.stats.homeFiles], [0, 0], 'nothing is kept: nothing to lose');
 	});
 
+	test('the same session is told how many files AND folders it holds (tmpEntries, homeEntries): a /tmp that holds only empty folders is lost as well', async () => {
+		const h = await host();
+		const a = await h.run('echo 1 > /tmp/a; mkdir -p /tmp/d/e; echo 3 > /tmp/d/e/c; mkdir /tmp/empty; mkdir -p /home/user/x/y', { keepTmp: true });
+		const s = a.done.stats;
+		assert.deepStrictEqual([s.tmpFiles, s.tmpEntries, s.homeFiles, s.homeEntries], [2, 5, 0, 2], 'a, d, d/e, d/e/c, empty; x, x/y');
+		const b = await h.run('rm -r /tmp/d /tmp/a; rmdir /home/user/x/y /home/user/x', { keepTmp: true });
+		assert.deepStrictEqual([b.done.stats.tmpFiles, b.done.stats.tmpEntries, b.done.stats.homeEntries], [0, 1, 0], 'only the empty folder is left, and it is something to lose');
+		const c = await h.run('mkdir /tmp/z');
+		assert.deepStrictEqual([c.done.stats.tmpEntries, c.done.stats.homeEntries], [0, 0], 'nothing is kept: nothing to lose');
+		const d = await h.run('echo hi', { keepTmp: true });
+		assert.deepStrictEqual([d.done.stats.tmpEntries, d.done.stats.homeEntries], [0, 0], 'a fresh /tmp is empty: /tmp itself is not an entry');
+	});
+
 	test('text that is not UTF-8 goes through the engine untouched, and what is shown is U+FFFD, never a lone surrogate', async () => {
 		const bin = (...b) => Uint8Array.from(b);
 		const h = await host({ '/w/lat': bin(0x63, 0x61, 0x66, 0xe9, 0x0a), '/w/two': bin(0xc3, 0xa9, 0xff, 0x0a), '/w/bom': bin(0xef, 0xbb, 0xbf, 0x68, 0x69, 0x0a), '/w/utf': 'café ñ ü 日本\n' });
@@ -798,6 +811,12 @@ async function main() {
 		assert.strictEqual(r.stdout, 'caf\ufffd\ncaf\u00e9 \u00f1 \u00fc \u65e5\u672c\ncaf\u00e9 \u00f1 \u00fc \u65e5\u672c\n');
 		assert.ok(!/[\udc80-\udcff]/.test(r.stdout + r.stderr), 'no lone surrogate reaches the host');
 		for (const m of r.outs) { assert.ok(!/[\udc80-\udcff]/.test(m.text)); }
+		// two commands that each print half of a character, in ONE statement (one chunk): what is shown is the character
+		// (the halves are escapes in the engine, joined for the eye), in stdout and in stderr; a lone half is U+FFFD. Two
+		// statements are two chunks, each shown as it arrives, and cannot be joined
+		const j = await (await host({})).run("{ printf '\\303'; printf '\\251\\n'; }; { printf '\\303' >&2; printf '\\251\\n' >&2; }; printf '\\303\\n'; printf 'a\\251b\\n'");
+		assert.strictEqual(j.stdout, '\u00e9\n\ufffd\na\ufffdb\n');
+		assert.strictEqual(j.stderr, '\u00e9\n');
 	});
 
 	test('a host that cannot list or stat something below a removed folder: the run is withheld as incomplete with a reason, status 1, nothing after the output', async () => {
@@ -920,12 +939,45 @@ async function main() {
 		assert.strictEqual(q.stderr, '');
 	});
 
-	test('a program that writes with no opening still gets the errno of a real file system, whatever the redirection before it did', async () => {
+	test('a program that writes with no redirection of its own gets the errno of a real file system, whatever a redirection did to the SAME path before it', async () => {
 		const h = await host({ '/w/d/x': 'x\n' });
 		const r = await h.run('{ rm -rf d; echo hi; } > d/f; echo "rc=$?"; touch d/t; echo "touch=$?"; echo y | tee d/u > /dev/null; echo "tee=$?"; echo end');
 		assert.strictEqual(r.how, 'exit');
 		assert.strictEqual(r.stdout, 'rc=0\ntouch=1\ntee=1\nend\n');
 		assert.ok(/touch: cannot touch 'd\/t'/.test(r.stderr) && /tee: d\/u: No such file or directory/.test(r.stderr), r.stderr);
+		// the same paths: a redirection wrote d/f, the folder is removed, and then a program writes d/f (the path-keyed
+		// memory of an opened path made all of these silent, with status 0)
+		const same = await h.run([
+			'mkdir e; echo a > e/f; rm -rf e',
+			'echo b | tee e/f; echo "tee=$?"',
+			'echo b | tee -a e/f; echo "teea=$?"',
+			`awk 'BEGIN { print "x" > "e/f" }' 2>/dev/null; echo "awk=$?"`,
+			'echo b | sort -o e/f; echo "sort=$?"',
+			'touch e/f; echo "touch=$?"',
+			'echo a > g; rm g; mkdir g; echo b | tee g; echo "teedir=$?"',
+			'mkdir q; { rm -rf q; echo hi; } > q/z; echo "redir=$?"; echo c | tee q/z; echo "tee2=$?"',
+		].join('\n'), { apply: false });
+		assert.strictEqual(same.stdout, 'b\ntee=1\nb\nteea=1\nawk=2\nsort=2\ntouch=1\nb\nteedir=1\nredir=0\nc\ntee2=1\n');
+		assert.ok(/tee: e\/f: No such file or directory/.test(same.stderr) && /tee: g: Is a directory/.test(same.stderr) && /sort: open failed: e\/f: No such file or directory/.test(same.stderr) && /touch: cannot touch 'e\/f': No such file or directory/.test(same.stderr), same.stderr);
+		assert.strictEqual(same.how, 'exit');
+		assert.deepStrictEqual(same.done.denied, [], 'a failed write of a program is its own error, not a refusal by the shell');
+	});
+
+	test('cd up to the root and down again, `.` and `..` in a path: the working directory is a canonical path (it was `//w`), for pwd, PWD, OLDPWD, cd -, and what the host is told', async () => {
+		const h = await host({ '/w/src/a': 'x\n' });
+		const r = await h.run('cd /w/../w/./src && pwd; echo $PWD; cd /; cd /w/../w; pwd; echo "$OLDPWD"; cd /w/./src/..; pwd; cd - >/dev/null; pwd; cd /w/src/../src/.; pwd; echo "$PWD|$OLDPWD"; pushd /w/../w/src > /dev/null; pwd; realpath /w/../w//src/./a; readlink -f ../src/a');
+		assert.strictEqual(r.stdout, '/w/src\n/w/src\n/w\n/\n/w\n/w\n/w/src\n/w/src|/w\n/w/src\n/w/src/a\n/w/src/a\n');
+		assert.strictEqual(r.done.cwd, '/w/src');
+		assert.strictEqual(r.done.env.PWD, '/w/src');
+		// a script that assigns PWD a path with dots: what the host is told is canonical
+		const p = await h.run('PWD=/w/./src/../src; echo hi');
+		assert.strictEqual(p.done.cwd, '/w/src');
+		assert.strictEqual(p.done.env.PWD, '/w/src');
+		// the next line starts there
+		const next = await host({ '/w/src/a': 'x\n' });
+		const first = await next.run('cd /w/../w/src');
+		const second = await next.run('pwd', { cwd: first.done.cwd, env: first.done.env });
+		assert.strictEqual(second.stdout, '/w/src\n');
 	});
 
 	test('a name made of bytes that are not UTF-8 refuses the change set with the name shown as U+FFFD; no lone surrogate is in anything the host is told', async () => {
@@ -938,11 +990,17 @@ async function main() {
 			'echo hi | tee "/etc/$(cat x)"; echo after',
 			'echo hi > "/etc/$(cat x)"; echo after',
 			"echo '😀' | awk '{print substr($0,1,1)}'",
+			'mkdir "d$(cat x)"; cd "d$(cat x)"; pwd',
+			'mkdir -p "d$(cat x)/sub"; cd "d$(cat x)/sub"; echo ok',
+			'mkdir "d$(cat x)"; cd "d$(cat x)"; cd ..; cd - > /dev/null; echo ok',
 		];
 		for (const script of scripts) {
 			const h = await host(files);
 			const r = await h.run(script);
-			const everything = [r.stdout, r.stderr, ...r.done.notes, ...r.done.denied.flatMap((d) => [d.path, d.message, d.reason]), ...r.done.changes.map((c) => c.path), ...r.outs.map((m) => m.text)].join('\n');
+			// everything the host is told, as strings: the output, the notes, what was denied, the paths of the changes, the
+			// working directory, the names of the variables it keeps (the VALUES of done.env may hold an escape: bytes it
+			// carries to the next line, which nothing shows)
+			const everything = [r.stdout, r.stderr, r.done.cwd, ...Object.keys(r.done.env), ...Object.values(r.done.stats).filter((v) => typeof v === 'string'), r.done.how, ...r.done.notes, ...r.done.denied.flatMap((d) => [d.path, d.message, d.reason]), ...r.done.changes.map((c) => c.path), ...r.outs.map((m) => m.text)].join('\n');
 			assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(everything), 'a lone surrogate in the output of: ' + script);
 			assert.strictEqual(r.how, 'exit', script);
 		}
@@ -957,6 +1015,22 @@ async function main() {
 		assert.deepStrictEqual(a.done.denied.map((d) => d.path), ['/etc/�']);
 		const e = await (await host(files)).run("echo '😀' | awk '{print substr($0,1,1)}'");
 		assert.strictEqual(e.stdout, '�\n', 'half of an emoji is U+FFFD, not a lone surrogate');
+		// a script that ends inside a folder whose name is not UTF-8 (its change set is refused): the session is handed the
+		// nearest folder above it that has a name, not '/w/\udcff'
+		const d = await (await host(files)).run('mkdir "d$(cat x)"; cd "d$(cat x)"; pwd');
+		assert.strictEqual(d.exitCode, 1);
+		assert.strictEqual(d.done.cwd, '/w');
+		assert.strictEqual(d.done.env.PWD, '/w');
+		assert.ok(d.done.notes.includes('The directory /w/d� has a name that is not valid UTF-8, which the editor cannot address; the session stays in /w.'), JSON.stringify(d.done.notes));
+		const deep = await (await host(files)).run('mkdir -p ok/"$(cat x)"/sub; cd ok/"$(cat x)"/sub; pwd');
+		assert.strictEqual(deep.done.cwd, '/w/ok', 'the nearest folder above that has a name');
+		// bytes that ARE UTF-8 (printf '\303\251' is the two bytes of é) make that name: the folder, the change and the
+		// working directory the host is told are `dé`, and the session is in it (it is not one of the names above)
+		const utf8 = await (await host({})).run('mkdir "d$(printf \'\\303\\251\')"; cd "d$(printf \'\\303\\251\')"; pwd; echo hi > f');
+		assert.strictEqual(utf8.stdout, '/w/dé\n');
+		assert.strictEqual(utf8.done.cwd, '/w/dé');
+		assert.deepStrictEqual(utf8.done.changes.map((c) => c.path).sort(), ['/w/dé', '/w/dé/f']);
+		assert.deepStrictEqual(utf8.done.notes, []);
 	});
 
 	test('du is bounded like find: past maxTraversalEntries the script ends as a limit, with the engine\'s wording; exactly the limit is fine', async () => {

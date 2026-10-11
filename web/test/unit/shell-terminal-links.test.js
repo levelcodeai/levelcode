@@ -7,7 +7,8 @@
  *    - what makes a candidate, as a table, with the false positives a terminal full of output has (URLs, `a:b`,
  *      times, drive letters, a sentence's last dot);
  *    - a candidate is a link only when the file exists, as a file, under a mount, relative to the terminal's folder;
- *    - the check is bounded: 5 stats per line, one per distinct path, 500 ms in all;
+ *    - the check is bounded: 5 distinct paths per line (each in the folder the line was printed in, and in the folder
+ *      the command began in only if it is not there), 500 ms in all;
  *    - a terminal that is not ours is not looked at; the tooltip is a constant; the file is opened at line and column.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
@@ -16,7 +17,7 @@
 const assert = require('assert');
 const path = require('path');
 
-const { fakeVscode, manualTimers, TERMINAL } = require('./helpers/shell-terminal-fakes');
+const { fakeVscode, fakeRuntimeFs, manualTimers, TERMINAL } = require('./helpers/shell-terminal-fakes');
 const { createLinkProvider, findCandidates, resolvePath, MAX_STATS, STAT_MS, MAX_LINE } = require(path.join(TERMINAL, 'links.js'));
 const { everyShape } = require('./helpers/shell-terminal-timing');
 
@@ -79,16 +80,21 @@ test('paths are resolved against the folder of the terminal, with .. first, and 
 	assert.strictEqual(resolvePath('/scratch', 'a//b/./c'), '/scratch/a/b/c');
 });
 
-/** A provider on a fake file system and a fake clock. `files` maps uri strings to a FileType. */
+/**
+ * A provider on a fake file system and a fake clock. `files` maps uri strings to a FileType. The runtime's answers
+ * (where a path is, what is at it) come from the fake file system, through the mounts.
+ */
 function setup(files, o) {
 	const opts = o || {};
 	const fv = fakeVscode();
 	Object.assign(fv.state.files, files);
 	const timers = manualTimers();
 	const terminal = { name: 'LevelCode Shell' };
+	const rt = fakeRuntimeFs(fv, () => opts.mounts || [{ mount: '/scratch', uri: 'file:///scratch' }, { mount: '/mnt/site', uri: 'file:///' }]);
 	const provider = createLinkProvider({
 		vscode: fv.vscode,
-		mounts: () => opts.mounts || [{ mount: '/scratch', uri: 'file:///scratch' }, { mount: '/mnt/site', uri: 'file:///' }],
+		resolve: (p) => rt.resolve(p),
+		stat: (p) => (opts.stat ? opts.stat(p, rt) : rt.stat(p)),
 		// the folders the line was printed in: the likeliest first
 		cwdsOf: (t, line) => (t === terminal ? (opts.cwds ? (typeof opts.cwds === 'function' ? opts.cwds(line) : opts.cwds) : [opts.cwd || '/scratch']) : undefined),
 		setTimeout: timers.setTimeout,
@@ -110,7 +116,7 @@ test('a candidate is a link when its file exists, as a file, under a mount; not 
 	assert.ok(!t.fv.state.stats.some((u) => u.startsWith('file:///etc')), 'nothing outside the mounts is ever asked');
 });
 
-test('a mount that is not at its folder (the root of a file system under /mnt) is found through its uri', async () => {
+test('the uri of a link is what the runtime resolves the engine path to (a mount that is not at its folder: the root of a file system under /mnt)', async () => {
 	const t = setup({ 'file:///src/app.js': 1 }, { cwd: '/mnt/site' });
 	const links = await t.provider.provideTerminalLinks({ line: 'src/app.js:3', terminal: t.terminal }, token);
 	assert.deepStrictEqual(links.map((l) => String(l.uri)), ['file:///src/app.js']);
@@ -146,7 +152,7 @@ test('the answers are waited for 500 ms, and a line that is not answered in time
 	assert.strictEqual(done, null, 'at 499 ms');
 	t.timers.advance(1);
 	await pending;
-	assert.deepStrictEqual(done.map((l) => line.slice(l.startIndex, l.startIndex + l.length)), ['fast.js']);
+	assert.deepStrictEqual(/** @type {any} */ (done).map((l) => line.slice(l.startIndex, l.startIndex + l.length)), ['fast.js']);
 });
 
 test('a terminal that is not one of ours is not looked at: no scan, no stat', async () => {
@@ -216,12 +222,75 @@ test('a line is resolved against the folder it was printed in; the folder the co
 	const none = setup({ 'file:///scratch/a.js': 1 }, { cwds: [] });
 	assert.deepStrictEqual(await none.provider.provideTerminalLinks({ line: 'a.js', terminal: none.terminal }, token), []);
 	assert.deepStrictEqual(none.fv.state.stats, []);
-	// the budget is for paths, not for folders: two folders of one name are two paths
-	const many = {};
-	for (let i = 0; i < 5; i++) { many['file:///scratch/b/f' + i + '.js'] = 1; }
-	const m = setup(many, { cwds: ['/scratch/a', '/scratch/b'] });
-	await m.provider.provideTerminalLinks({ line: 'f0.js f1.js f2.js f3.js f4.js', terminal: m.terminal }, token);
-	assert.strictEqual(m.fv.state.stats.length, MAX_STATS);
+});
+
+test('the budget is for distinct paths, not for the places they are looked for in: after a cd, five names of one line are five links and five stats', async () => {
+	// a.js ... e.js are all in the folder the command ended in (src), which is not the folder it began in (the root):
+	// each is asked for in src first, and found there, so the folder it began in is never asked
+	const files = {};
+	for (const n of ['a', 'b', 'c', 'd', 'e']) { files['file:///scratch/src/' + n + '.js'] = 1; }
+	const t = setup(files, { cwds: ['/scratch/src', '/scratch'] });
+	const line = 'a.js  b.js  c.js  d.js  e.js';
+	const links = await t.provider.provideTerminalLinks({ line, terminal: t.terminal }, token);
+	assert.deepStrictEqual(links.map((l) => line.slice(l.startIndex, l.startIndex + l.length)), ['a.js', 'b.js', 'c.js', 'd.js', 'e.js']);
+	assert.strictEqual(t.fv.state.stats.length, 5);
+	assert.ok(t.fv.state.stats.every((u) => u.startsWith('file:///scratch/src/')), 'only the folder it ended in');
+});
+
+test('the folder the command began in is asked only about what the folder it ended in did not have, and the total stays bounded', async () => {
+	const t = setup({ 'file:///scratch/a/early.js': 1, 'file:///scratch/b/x.js': 1 }, { cwds: ['/scratch/b', '/scratch/a'] });
+	const line = 'x.js early.js nowhere.js';
+	const links = await t.provider.provideTerminalLinks({ line, terminal: t.terminal }, token);
+	assert.deepStrictEqual(links.map((l) => String(l.uri)), ['file:///scratch/b/x.js', 'file:///scratch/a/early.js']);
+	// round one: three paths in b; round two: the two that were not there, in a
+	assert.deepStrictEqual(t.fv.state.stats, [
+		'file:///scratch/b/x.js', 'file:///scratch/b/early.js', 'file:///scratch/b/nowhere.js',
+		'file:///scratch/a/early.js', 'file:///scratch/a/nowhere.js',
+	]);
+	// five paths that are in neither folder: five in each, ten in all, and no more however many are on the line
+	const many = setup({}, { cwds: ['/scratch/b', '/scratch/a'] });
+	await many.provider.provideTerminalLinks({ line: Array.from({ length: 12 }, (_, i) => 'f' + i + '.js').join(' '), terminal: many.terminal }, token);
+	assert.strictEqual(many.fv.state.stats.length, 2 * MAX_STATS);
+	assert.strictEqual(new Set(many.fv.state.stats.map((u) => u.split('/').pop())).size, MAX_STATS, 'the same five paths in both');
+	// a spelling of the same file is the same path, and a place that was asked for already is not asked for again
+	const same = setup({ 'file:///scratch/a/q.js': 1 }, { cwds: ['/scratch/b', '/scratch/a'] });
+	await same.provider.provideTerminalLinks({ line: 'q.js ./q.js /scratch/a/q.js', terminal: same.terminal }, token);
+	assert.deepStrictEqual(same.fv.state.stats, ['file:///scratch/b/q.js', 'file:///scratch/a/q.js'], 'q.js and ./q.js are one path, and a place that was asked for is not asked again');
+});
+
+test('the 500 ms are for all the rounds together, not for each', async () => {
+	// the first folder answers (it has nothing) after 300 ms, and the second never does: the line is given up at 500 ms
+	// of the one clock, not 500 ms after the second round began
+	/** @type {Array<() => void>} */
+	const release = [];
+	const t = setup({ 'file:///scratch/a/late.js': 1 }, {
+		cwds: ['/scratch/b', '/scratch/a'],
+		stat: (p, rt) => (p.startsWith('/scratch/a/') ? new Promise(() => { }) : new Promise((resolve) => { release.push(() => resolve(rt.stat(p))); })),
+	});
+	/** @type {any} */
+	let done = null;
+	const pending = t.provider.provideTerminalLinks({ line: 'late.js', terminal: t.terminal }, token).then((l) => { done = l; });
+	const tick = () => new Promise((r) => setTimeout(r, 5));
+	await tick();
+	t.timers.advance(300);
+	assert.strictEqual(release.length, 1, 'the first folder is asked');
+	release[0]();
+	await tick();
+	assert.deepStrictEqual(t.fv.state.stats, ['file:///scratch/b/late.js'], 'it had nothing; the second folder is being asked');
+	t.timers.advance(199);
+	await tick();
+	assert.strictEqual(done, null, 'the second folder is being waited for at 499 ms of the one clock');
+	t.timers.advance(1);
+	await pending;
+	assert.deepStrictEqual(done, []);
+});
+
+test('a path that is in no mount costs nothing: five of them on a line do not use up the budget of the one that is', async () => {
+	const t = setup({ 'file:///scratch/x.js': 1 });
+	const line = '/etc/a.js /etc/b.js /etc/c.js /etc/d.js /etc/e.js x.js';
+	const links = await t.provider.provideTerminalLinks({ line, terminal: t.terminal }, token);
+	assert.deepStrictEqual(links.map((l) => line.slice(l.startIndex, l.startIndex + l.length)), ['x.js']);
+	assert.deepStrictEqual(t.fv.state.stats, ['file:///scratch/x.js'], 'and none of them was asked about');
 });
 
 test('a terminal that is not ours is not scanned at all, even where a path that is nobody\'s would resolve (a mount at the root)', async () => {
@@ -253,8 +322,12 @@ test('clicking a link opens the file at its line and column, 0-based for the edi
 	assert.deepStrictEqual(t.fv.state.executed, ['vscode.open file:///scratch/a.js']);
 });
 
+let finished = false;
+// a test that awaits something that never settles leaves nothing to keep the process alive: it would exit 0, silently
+process.on('exit', (code) => { if (code === 0 && !finished) { console.error('the tests did not finish: one of them waits for something that never happens'); process.exitCode = 1; } });
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }
+	finished = true;
 	console.log(`\n${n} tests passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

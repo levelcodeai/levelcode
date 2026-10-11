@@ -15,10 +15,11 @@
 // What the engine forces on this file:
 //   * The content write at the end of a REDIRECTION can never throw: just-bash rejects the whole exec() for an error
 //     from it, and the script's output is lost. The redirection OPENED its target first (an empty write, encoding
-//     'binary'); this file remembers which paths it opened in the run, and when the command itself then removed or
-//     replaced the parent or the target (`{ rm -rf d; echo hi; } > d/f`) the content is dropped without a word,
-//     because in GNU the open descriptor outlives the name and the write succeeds. A content write that the SHELL
-//     refuses (outside the folders, a protected path, a cap) is dropped and recorded in `denied`.
+//     'binary'), and patch LC-26 marks the content write that follows it (`{ encoding, lcRedirect: true }`: the one
+//     call that is a redirection's own and no program's). When the command itself removed or replaced the parent or
+//     the target meanwhile (`{ rm -rf d; echo hi; } > d/f`) that write is dropped without a word, because in GNU the
+//     open descriptor outlives the name and the write succeeds. A content write that the SHELL refuses (outside the
+//     folders, a protected path, a cap) is dropped and recorded in `denied`.
 //   * The OPENING of a redirection (`writeFile(p, '', 'binary')`) can throw, and patch LC-5 makes the engine answer
 //     `bash: p: <reason>` with status 1 and not run the command, exactly as bash does. So a redirection to a missing
 //     folder or to /etc fails the way it would in a real shell, visibly, and is not a silent drop.
@@ -306,6 +307,12 @@ class MemoryFs {
 		for (const [k, v] of this.nodes) { if (v.k === 'file' && isSelfOrUnder(k, p)) { n++; } }
 		return n;
 	}
+	/** How many files AND folders are under p (p itself is not one): what a worker that is lost takes with it. */
+	countEntries(p) {
+		let n = 0;
+		for (const k of this.nodes.keys()) { if (isUnder(k, p)) { n++; } }
+		return n;
+	}
 }
 
 /* ------------------------------------------------------------------------------------------------------------ */
@@ -414,8 +421,6 @@ function createOverlay(o) {
 	/** @type {string[]} */
 	const notes = [];
 	const noted = new Set();
-	/** the paths a redirection opened in this run: the content written to one later never throws (see writeOrAppend) */
-	const opened = new Set();
 	const device = { stdout: '', stderr: '' };
 	const stats = { filesRead: 0, bytesRead: 0, probes: 0, statCalls: 0, readCalls: 0, listCalls: 0, stagedBytes: 0, stagedEntries: 0, memoryBytesAtStart: memory.bytes };
 	let probes = 0;
@@ -816,14 +821,17 @@ function createOverlay(o) {
 	 * of the CONTENT comes later, at the end of the redirected command, and never rejects exec() (a throw there loses
 	 * the whole script's output):
 	 *   * the shell refuses it (outside the folders, a protected path, a cap): dropped and recorded in `denied`;
-	 *   * the path was opened by this run and the command has since removed or replaced its parent or the file itself
-	 *     (`{ rm -rf d; echo hi; } > d/f`): dropped silently, as GNU's write to an unlinked descriptor is;
-	 *   * the call had no opening (`touch`, `tee`, `sort -o`, `split`, cp): the errno of a real file system is thrown,
-	 *     and the command reports it the way GNU's does.
+	 *   * it is a redirection's own write (the engine marks it, patch LC-26) and the command has since removed or
+	 *     replaced the parent or the file itself (`{ rm -rf d; echo hi; } > d/f`): dropped silently, as GNU's write to
+	 *     an unlinked descriptor is;
+	 *   * it is a program's own call (`touch`, `tee`, `sort -o`, `split`, `awk '>'`, cp, whatever the path was a
+	 *     redirection's target before): the errno of a real file system is thrown, and the command reports it the way
+	 *     GNU's does. That is by what the call IS, not by what happened to the path earlier in the run.
 	 */
 	async function writeOrAppend(path, content, encoding, append) {
 		const p = norm(path);
 		const bytes = toBytes(content, encoding);
+		const redirected = !!(encoding && typeof encoding === 'object' && encoding.lcRedirect);
 		const opening = bytes.length === 0 && encoding === 'binary';
 		const op = append ? 'append' : 'write';
 		const t = await writeTarget(p);
@@ -831,13 +839,12 @@ function createOverlay(o) {
 			if (t.error.policy) { explainPolicy(p); }
 			if (opening) { throw fsError(t.error.code, 'open', p, t.error.text); }
 			if (!t.error.policy) {
-				if (opened.has(p)) { return; }
+				if (redirected) { return; }
 				throw fsError(t.error.code, 'open', p, t.error.text);
 			}
 			deny(p, op, t.error.reason, t.error.code, `${p}: ${t.error.text}`);
 			return;
 		}
-		if (opening) { opened.add(p); }
 		if (opening && append && t.cur) { return; }          // `>>` of nothing onto what is there
 		const refused = await put(t, p, bytes, append, undefined);
 		if (refused) { deny(p, op, refused.reason, refused.code, refused.message); }

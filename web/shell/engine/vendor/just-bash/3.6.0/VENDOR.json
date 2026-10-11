@@ -11,10 +11,10 @@
 	"fileSha256": "38f1ad1e3283980ecdf68cede8a4eed028c6dff6e8c31793dec1e0af529c446e",
 	"patched": {
 		"by": "apply-patches.mjs (in memory: load.mjs for tests, build.mjs for the worker); the patched text is never committed",
-		"sha256": "ae641743bbc6fabe3fb94232f07275d5c22c4f4379ead77cbbb609ad39f063fc",
-		"bytes": 1265738,
-		"patches": 25,
-		"edits": 70
+		"sha256": "16121431664eb7448cc1beb7459bab25d6316df5f06deef730579972a6dc8971",
+		"bytes": 1268344,
+		"patches": 31,
+		"edits": 91
 	},
 	"externals": {
 		"diff": {

@@ -39,7 +39,7 @@ const REFOCUS_MS = 250;
  *   vscode: any,
  *   runtime: any,
  *   context: any,
- *   config?: { info?: { commands: string[] } },
+ *   config?: { info?: { commands: string[] }, limits?: object },
  *   getRandomValues?: (a: Uint8Array) => Uint8Array,
  *   timers?: { setTimeout(fn: () => void, ms: number): any, clearTimeout(h: any): void, now(): number },
  * }} opts
@@ -184,7 +184,9 @@ function createTerminalSupport(opts) {
 	if (typeof vscode.window.registerTerminalLinkProvider === 'function') {
 		disposables.push(vscode.window.registerTerminalLinkProvider(createLinkProvider({
 			vscode,
-			mounts: () => { try { return planMounts(runtime.folders()); } catch (e) { return []; } },
+			// where a path is and whether there is a file at it are the runtime's to say (it owns the mounts and the bound)
+			resolve: (/** @type {string} */ p) => runtime.resolve(p),
+			stat: (/** @type {string} */ p) => runtime.stat(p),
 			// The folder a line was printed in, which is not the folder the terminal is in now: after `cd`, older output is
 			// about the folder it was printed in (the terminals recorded it). A line that was not recorded is taken to be
 			// about the folder the terminal has when the question is asked, which is the best that can be known of it.

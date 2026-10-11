@@ -140,6 +140,23 @@ function decodeIfBytes(s) {
 }
 
 /**
+ * The escapes of bytes that are valid UTF-8 together, joined into the characters they are: `printf '\303\251'` makes
+ * the two escapes of C3 and A9 (each a byte), which a person is shown as "é" and `${#x}` counts as one. A run that is not
+ * valid stays escapes, byte by byte; a surrogate PAIR whose low half happens to lie in the escape range is a character
+ * and is left alone.
+ * @param {string} s
+ * @returns {string}
+ */
+function joinEscapes(s) {
+	if (!/[\udc80-\udcff]/.test(s)) { return s; }
+	return s.replace(/(?<![\ud800-\udbff])[\udc80-\udcff]+/g, (run) => {
+		const b = new Uint8Array(run.length);
+		for (let i = 0; i < run.length; i++) { b[i] = run.charCodeAt(i) & 0xff; }
+		return decodeBytes(b);
+	});
+}
+
+/**
  * What a person or a model is shown: an escaped byte is U+FFFD, the one character a terminal could draw for it, and so
  * is any other lone surrogate (half of a character that something cut, such as awk's `substr` through an emoji): a lone
  * surrogate in a JSON string is something an API may refuse, and in a URI something that cannot be encoded. A surrogate
@@ -179,4 +196,4 @@ function hasLoneSurrogate(s) {
 	return false;
 }
 
-module.exports = { decodeBytes, encodeText, decodeByteString, decodeIfBytes, displayText, hasLoneSurrogate };
+module.exports = { decodeBytes, encodeText, decodeByteString, decodeIfBytes, joinEscapes, displayText, hasLoneSurrogate };

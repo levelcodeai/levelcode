@@ -4,9 +4,9 @@
  *  README section 3b: what the terminal consumes. A session keeps what must survive a worker's death (cwd,
  *  env), runs one script at a time, stops with Ctrl+C, and completes for Tab from the workspace itself.
  *
- *  What it cannot keep it says: when a terminal's engine is replaced and its /tmp held anything (files, or only
- *  folders: stats.tmpEntries), the next line carries one note that /tmp was emptied; variables over the bounds
- *  are named, not silently lost.
+ *  What it cannot keep it says: when a terminal's engine is replaced and its /tmp or its /home/user held anything
+ *  (files, or only folders: stats.tmpEntries, stats.homeEntries), the next line carries one note that says which was
+ *  emptied; variables over the bounds are named, not silently lost.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -692,6 +692,106 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 			await r.clock.advance(60000);
 			assert.strictEqual(r.engines.workers[r.engines.workers.length - 1].terminated, true);
 			assert.ok(!/\/tmp was emptied/.test(o.stderr), o.stderr);
+		}
+		r.rt.dispose();
+	});
+
+	/* ===== fix round 4: /home/user is in the engine's memory too ============================================ */
+
+	// A terminal's engine keeps /home/user as well as /tmp (the visitor reaches it by ~, $HOME, a bare cd), and loses it
+	// the same way. Its count is folded into what the worker is held to hold: the same note, the same kept-twice idle
+	// time, the same preference at the cap - and the note names the place.
+	/** Every note that says something was emptied, whole. @param {string[]} notes */
+	const emptiedNotes = (notes) => notes.filter((t) => /(was|were) emptied when the shell restarted/.test(t));
+	const KEEP = ' Keep what matters in a workspace folder]';
+
+	await test('a /home/user that held something is said, by name: "/home/user was emptied ... (it held 3 files and folders)", and the worker is kept twice as long for it', async () => {
+		const r = createRig();
+		reports(r, () => ({ tmpFiles: 0, tmpEntries: 0, homeFiles: 1, homeEntries: 3 }));
+		const s = r.rt.createSession();
+		await s.run('echo secret > ~/notes.txt; mkdir ~/proj ~/proj/src');
+		await r.clock.advance(60000);
+		assert.strictEqual(r.engines.workers[0].terminated, false, 'a minute is not enough for a /home/user that holds anything');
+		await r.clock.advance(59999);
+		assert.strictEqual(r.engines.workers[0].terminated, false);
+		await r.clock.advance(1);
+		assert.strictEqual(r.engines.workers[0].terminated, true, 'two minutes are');
+		const after = await s.run('cat ~/notes.txt');
+		assert.deepStrictEqual(emptiedNotes(after.notes), [
+			'[LevelCode Shell: /home/user was emptied when the shell restarted (it held 3 files and folders): /home/user lives in the engine\'s memory, which a minute or two of idle time, Ctrl+C or a timeout ends.' + KEEP,
+		]);
+		assert.deepStrictEqual(emptiedNotes((await s.run('ls ~')).notes), [], 'said once');
+		r.rt.dispose();
+	});
+
+	await test('both held something: ONE note names both places and what each held; only /tmp held something: the /tmp note as it was', async () => {
+		const r = createRig();
+		reports(r, () => ({ tmpFiles: 2, tmpEntries: 5, homeFiles: 0, homeEntries: 1 }));
+		const s = r.rt.createSession();
+		await s.run('x');
+		await r.clock.advance(120000);
+		assert.deepStrictEqual(emptiedNotes((await s.run('x')).notes), [
+			'[LevelCode Shell: /tmp and /home/user were emptied when the shell restarted (/tmp held 5 files and folders, /home/user held 1 file or folder): they live in the engine\'s memory, which a minute or two of idle time, Ctrl+C or a timeout ends.' + KEEP,
+		]);
+		const only = createRig();
+		reports(only, () => ({ tmpFiles: 2, tmpEntries: 2, homeFiles: 0, homeEntries: 0 }));
+		const t = only.rt.createSession();
+		await t.run('x');
+		await only.clock.advance(120000);
+		assert.deepStrictEqual(emptiedNotes((await t.run('x')).notes), [
+			'[LevelCode Shell: /tmp was emptied when the shell restarted (it held 2 files and folders): /tmp lives in the engine\'s memory, which a minute or two of idle time, Ctrl+C or a timeout ends.' + KEEP,
+		]);
+		r.rt.dispose();
+		only.rt.dispose();
+	});
+
+	await test('an engine that reports only stats.homeFiles is believed for /home/user as for /tmp: files; a count that is not one, or the smaller of two, is handled the same way', async () => {
+		/** @type {Array<[string, any, string[]]>} */
+		const cases = [
+			['homeFiles only', { homeFiles: 3 }, ['/home/user was emptied when the shell restarted (it held 3 files)']],
+			['one file', { homeFiles: 1 }, ['/home/user was emptied when the shell restarted (it held 1 file)']],
+			['homeEntries not a count', { homeFiles: 3, homeEntries: '9' }, ['/home/user was emptied when the shell restarted (it held 3 files)']],
+			['fewer entries than files', { homeFiles: 4, homeEntries: 1 }, ['/home/user was emptied when the shell restarted (it held 4 files and folders)']],
+			['nothing', { homeFiles: 0, homeEntries: 0 }, []],
+			['counts that are not counts', { homeFiles: NaN, homeEntries: -2 }, []],
+		];
+		for (const [name, stats, said] of cases) {
+			const r = createRig();
+			reports(r, () => stats);
+			const s = r.rt.createSession();
+			await s.run('x');
+			await r.clock.advance(120000);
+			const got = emptiedNotes((await s.run('x')).notes).map((t) => t.replace(/\): .*$/, ')').replace('[LevelCode Shell: ', ''));
+			assert.deepStrictEqual(got, said, name);
+			r.rt.dispose();
+		}
+	});
+
+	await test('at the worker cap a worker whose /home/user holds something is kept in preference to an empty one, as one whose /tmp does', async () => {
+		const r = createRig({ limits: { workers: { max: 2 } } });
+		/** @type {Record<string, any>} */ const by = { keeper: { homeEntries: 1 }, plain: { tmpEntries: 0, homeEntries: 0 } };
+		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit', cwd: run.cwd, stats: by[run.script.split(' ')[0]] || {} }); };
+		const keeper = r.rt.createSession();
+		const plain = r.rt.createSession();
+		await keeper.run('keeper');                  // the older one, and it holds something in /home/user
+		await r.clock.advance(1000);
+		await plain.run('plain');
+		await r.clock.advance(1000);
+		await r.rt.createSession().run('plain');
+		assert.deepStrictEqual(r.engines.workers.map((w) => w.terminated), [false, true, false], 'the newer, empty one was replaced');
+		assert.deepStrictEqual((await keeper.run('keeper')).notes, [], 'its /home/user is there');
+		r.rt.dispose();
+	});
+
+	await test('an agent\'s worker never remembers its /home/user either: the usual minute, and no note', async () => {
+		const r = createRig();
+		reports(r, () => ({ tmpFiles: 0, tmpEntries: 0, homeFiles: 2, homeEntries: 4 }));
+		for (let i = 0; i < 2; i++) {
+			const o = observe(r.rt.spawnAgent('x', { cwd: '/scratch' }), 3000);
+			await o.closed;
+			await r.clock.advance(60000);
+			assert.strictEqual(r.engines.workers[r.engines.workers.length - 1].terminated, true);
+			assert.ok(!/emptied/.test(o.stderr), o.stderr);
 		}
 		r.rt.dispose();
 	});

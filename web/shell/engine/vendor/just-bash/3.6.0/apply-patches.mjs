@@ -26,7 +26,7 @@ export const UNPATCHED_SHA256 = '38f1ad1e3283980ecdf68cede8a4eed028c6dff6e8c3179
  * file can collide with one. `Nu` is the file's own function (a sed range's key), a hoisted declaration, so it is there.
  */
 export const HEADER = `/*! LevelCode: this is just-bash@3.6.0 dist/bundle/browser.js (Apache-2.0, Copyright 2025 Vercel Inc.) MODIFIED by LevelCode:
- *  patches LC-1 .. LC-25 of web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs (Apache-2.0 section 4(b)).
+ *  patches LC-1 .. LC-31 of web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs (Apache-2.0 section 4(b)).
  *  Unmodified input sha256 ${UNPATCHED_SHA256}. */
 import __lcText from"lc-text";
 import __lcZone from"lc-zone";
@@ -39,7 +39,14 @@ var __lcRangeOpen=(a,l,n,st)=>{if(!a||a.negated||a.start===void 0||a.end===void 
 var __lcBuiltinNames=new Set(["alias","echo","history","printf","pwd","unalias"]);
 var __lcNoBuiltin=new Set(["bg","caller","disown","enable","fc","fg","jobs","kill","suspend","times","trap","ulimit","umask"]);
 var __lcWordB=e=>{if(!e.includes("\\\\<")&&!e.includes("\\\\>"))return e;let t="",n=!1;for(let r=0;r<e.length;r++){let s=e[r];if(s==="\\\\"&&r+1<e.length){let i=e[++r];t+=!n&&(i==="<"||i===">")?"\\\\b":s+i;continue}if(n)s==="]"&&(n=!1);else if(s==="["){n=!0,t+=s,e[r+1]==="^"&&(t+="^",r++),e[r+1]==="]"&&(t+="]",r++);continue}t+=s}return t};
-var __lcKey=(e,t,n,g)=>{let l=e.length,a=n===null?null:n[0],b=c=>c===" "||c==="\\t",f=(p,k)=>{if(a!==null){for(;p<l&&k--;){for(;p<l&&e[p]!==a;)p++;p<l&&p++}}else{for(;p<l&&k--;){for(;p<l&&b(e[p]);)p++;for(;p<l&&!b(e[p]);)p++}}return p},sb=t.ignoreLeading||g,s=f(0,t.startField-1);if(sb)for(;s<l&&b(e[s]);)s++;if(s=Math.min(l,s+(t.startChar===void 0?0:t.startChar-1)),t.endField===void 0)return e.slice(s);let w=t.endField-1,c=t.endChar===void 0?0:t.endChar,p=0;if(c===0&&w++,a!==null){for(;p<l&&w--;){for(;p<l&&e[p]!==a;)p++;p<l&&(w||c)&&p++}}else{for(;p<l&&w--;){for(;p<l&&b(e[p]);)p++;for(;p<l&&!b(e[p]);)p++}}if(c!==0){if(sb)for(;p<l&&b(e[p]);)p++;p=Math.min(l,p+c)}return e.slice(s,Math.max(s,p))};
+var __lcQuant=e=>{if(!/[*+?}][*+?{]/.test(e))return e;let o="",at=-1,q=!1,st=[],i=0;for(;i<e.length;){let c=e[i];if(c==="\\\\"){o+=c+(e[i+1]===void 0?"":e[i+1]),at=o.length-(e[i+1]===void 0?1:2),q=!1,i+=2;continue}if(c==="["){let j=i+1;for(e[j]==="^"&&j++,e[j]==="]"&&j++;j<e.length&&e[j]!=="]";){if(e[j]==="["&&(e[j+1]===":"||e[j+1]==="."||e[j+1]==="=")){let k=e.indexOf(e[j+1]+"]",j+2);j=k<0?e.length:k+2}else e[j]==="\\\\"?j+=2:j++}let w=e.slice(i,j+1);at=o.length,o+=w,q=!1,i=j+1;continue}if(c==="("){if(st.push(o.length),o+=c,i++,e[i]==="?"){for(;i<e.length&&e[i]!==":"&&e[i]!==")"&&e[i]!==">";)o+=e[i++];i<e.length&&(o+=e[i++])}at=-1,q=!1;continue}if(c===")"){o+=c,at=st.length?st.pop():-1,q=!1,i++;continue}if(c==="|"||c==="^"||c==="$"){o+=c,at=-1,q=!1,i++;continue}let m=c==="{"?/^\\{\\d+(?:,\\d*)?\\}/.exec(e.slice(i)):null;if(c==="*"||c==="+"||c==="?"||m){let t=m?m[0]:c;at>=0&&q&&(o=o.slice(0,at)+"(?:"+o.slice(at)+")"),o+=t,at>=0&&(q=!0),i+=t.length;continue}at=o.length,o+=c,q=!1,i++}return o};
+var __lcRe=e=>__lcQuant(__lcWordB(e));
+var __lcKey=(e,t,n,g)=>{let l=e.length,a=n===null?null:n[0],b=c=>c===" "||c==="\\t",f=(p,k)=>{if(a!==null){for(;p<l&&k--;){for(;p<l&&e[p]!==a;)p++;p<l&&p++}}else{for(;p<l&&k--;){for(;p<l&&b(e[p]);)p++;for(;p<l&&!b(e[p]);)p++}}return p},sb=t.ignoreLeading||g,eb=t.ignoreLeadingEnd||g,s=f(0,t.startField-1);if(sb)for(;s<l&&b(e[s]);)s++;if(s=Math.min(l,s+(t.startChar===void 0?0:t.startChar-1)),t.endField===void 0)return e.slice(s);let w=t.endField-1,c=t.endChar===void 0?0:t.endChar,p=0;if(c===0&&w++,a!==null){for(;p<l&&w--;){for(;p<l&&e[p]!==a;)p++;p<l&&(w||c)&&p++}}else{for(;p<l&&w--;){for(;p<l&&b(e[p]);)p++;for(;p<l&&!b(e[p]);)p++}}if(c!==0){if(eb)for(;p<l&&b(e[p]);)p++;p=Math.min(l,p+c)}return e.slice(s,Math.max(s,p))};
+var __lcKeySpec=e=>{let t={},p=e.split(","),fl=(f,end)=>{f.includes("n")&&(t.numeric=!0),f.includes("r")&&(t.reverse=!0),f.includes("f")&&(t.ignoreCase=!0),f.includes("b")&&(t[end?"ignoreLeadingEnd":"ignoreLeading"]=!0),f.includes("h")&&(t.humanNumeric=!0),f.includes("V")&&(t.versionSort=!0),f.includes("d")&&(t.dictionaryOrder=!0),f.includes("M")&&(t.monthSort=!0)},pos=s=>{let m=/^(\\d*)(?:\\.(\\d*))?([A-Za-z]*)$/.exec(s);return m?{f:m[1]===""?NaN:parseInt(m[1],10),c:m[2]?parseInt(m[2],10):void 0,o:m[3]}:null},a=pos(p[0]);if(p.length>2||!a||!(a.f>=1))return null;if(t.startField=a.f,a.c>=1&&(t.startChar=a.c),fl(a.o,!1),p.length>1&&p[1]!==""){let b=pos(p[1]);if(!b)return null;b.f>=1&&(t.endField=b.f,b.c>=1&&(t.endChar=b.c)),fl(b.o,!0)}return t};
+var __lcBytes=a=>__lcText.decodeBytes(Uint8Array.from(a));
+var __lcByte=v=>{v&=255;return v<128?String.fromCharCode(v):String.fromCharCode(56320+v)};
+var __lcHeal=s=>__lcText.joinEscapes(s);
+var __lcErrno=l=>{let c=l&&l.code;return c==="ENOENT"?"No such file or directory":c==="EACCES"||c==="EPERM"?"Permission denied":c==="EISDIR"?"Is a directory":c==="ENOTDIR"?"Not a directory":c==="EROFS"?"Read-only file system":c==="ENOSPC"?"No space left on device":null};
 var __lcInherit=(h,e)=>{let q={...h};delete q.PWD;delete q.OLDPWD;return{...q,...e}};
 var __lcIso=(p,u,a,d)=>{let f=p==="date"?"%Y-%m-%d":p==="hours"?"%Y-%m-%dT%H":p==="minutes"?"%Y-%m-%dT%H:%M":p==="ns"?"%Y-%m-%dT%H:%M:%S,000000000":"%Y-%m-%dT%H:%M:%S",s=As(f,u,a,d);if(p==="date")return s;let z=As("%z",u,a,d);return s+z.slice(0,3)+":"+z.slice(3)};
 `;
@@ -458,19 +465,19 @@ export const PATCHES = [
 		title: 'regular expressions of grep and sed, GNU escapes the translation left as literal characters: in a basic expression `\\+` and `\\?` are quantifiers (`grep -o \'[0-9]\\+\'` printed nothing, `colou\\?r` found no colour), `\\<` and `\\>` are word boundaries (grep and sed, basic and extended; they matched a literal `<`); and `grep -c -o` counts LINES (it counted matches)',
 		edits: [
 			{
-				name: 'grep, basic expression: \\+ and \\? after an atom are quantifiers (at the start they stay literal, as in GNU)',
+				name: 'grep, basic expression: \\+ and \\? after an atom are quantifiers (at the start, and after \\b \\< \\> \\B, they stay literal, as in GNU)',
 				from: 'if(o==="}"){t+="\\\\}",n+=2,r=!1;continue}t+=i+o,n+=2,r=!1;continue}',
-				to: 'if(o==="}"){t+="\\\\}",n+=2,r=!1;continue}if((o==="+"||o==="?")&&!r){t+=o,n+=2;continue}t+=i+o,n+=2,r=!1;continue}',
+				to: 'if(o==="}"){t+="\\\\}",n+=2,r=!1;continue}if((o==="+"||o==="?")&&!r){t+=o,n+=2;continue}t+=i+o,n+=2,r=o==="b"||o==="B"||o==="<"||o===">"||o==="`"||o==="\'";continue}',
 			},
 			{
 				name: 'grep, basic and extended: \\< and \\> outside a bracket expression are word boundaries',
 				from: 't.wholeWord&&(n=`\\\\b(?:${n})\\\\b`),t.lineRegexp&&(n=`^(?:${n})$`);let s=',
-				to: 't.mode!=="fixed"&&t.mode!=="perl"&&(n=__lcWordB(n)),t.wholeWord&&(n=`\\\\b(?:${n})\\\\b`),t.lineRegexp&&(n=`^(?:${n})$`);let s=',
+				to: 't.mode!=="fixed"&&t.mode!=="perl"&&(n=__lcRe(n)),t.wholeWord&&(n=`\\\\b(?:${n})\\\\b`),t.lineRegexp&&(n=`^(?:${n})$`);let s=',
 			},
 			{
 				name: 'sed, basic and extended (the substitution and its addresses): the same word boundaries',
 				from: 'function ku(e){let t="",n=!1;for(let r=0;r<e.length;r++)',
-				to: 'function ku(e){return __lcWordB(__lcKu(e))}function __lcKu(e){let t="",n=!1;for(let r=0;r<e.length;r++)',
+				to: 'function ku(e){return __lcRe(__lcKu(e))}function __lcKu(e){let t="",n=!1;for(let r=0;r<e.length;r++)',
 			},
 			{
 				name: 'grep -c -o, standard input: the count is of lines',
@@ -547,6 +554,147 @@ export const PATCHES = [
 				name: 'the export list',
 				from: 'export{ch as Bash,ir as InMemoryFs,',
 				to: 'export{C as LimitError,ch as Bash,ir as InMemoryFs,',
+			},
+		],
+	},
+	{
+		id: 'LC-26',
+		title: 'the content write of a redirection is marked (`{ encoding, lcRedirect: true }` where the encoding was): the file system cannot tell it from `tee`\'s or `sort -o`\'s own write to the same path by its arguments (`tee f` and `echo x > f` both end in `writeFile(f, text, \'binary\')`), and a write that is a redirection\'s must never throw (it would reject the whole exec() and lose the output) while a program\'s must (`tee`, `awk \'>\'` and `sort -o` report the errno as GNU\'s do)',
+		edits: [
+			{
+				name: 'the content write of a file redirection',
+				from: 'let E=async(A,I,R)=>{A.append?await e.fs.appendFile(A.path,I,R):await e.fs.writeFile(A.path,I,R)};',
+				to: 'let E=async(A,I,R)=>{R={encoding:R,lcRedirect:!0};A.append?await e.fs.appendFile(A.path,I,R):await e.fs.writeFile(A.path,I,R)};',
+			},
+			{
+				name: 'the content write to a descriptor that a redirection opened (`exec 3> f; echo x >&3`)',
+				from: 'async function lp(e,t,n,r,s){if(t.kind==="output")return',
+				to: 'async function lp(e,t,n,r,s){s={encoding:s,lcRedirect:!0};if(t.kind==="output")return',
+			},
+		],
+	},
+	{
+		id: 'LC-27',
+		title: 'cd: going up (`..`) to the root and down again made `//name` (`cd /w/../w` set PWD to `//w`, which `pwd` printed and the next line was handed as its working directory); the path is built from "/" and a component, and "/" is not a prefix to which another "/" is added',
+		edits: [
+			{
+				name: 'the walk of the components: `..` leaves "" at the root, which the first name below it starts again as "/name"',
+				from: 'for(let f of a)if(f==="..")c=c.split("/").slice(0,-1).join("/")||"/";else{',
+				to: 'for(let f of a)if(f==="..")c=c.split("/").slice(0,-1).join("/");else{',
+			},
+		],
+	},
+	{
+		id: 'LC-28',
+		title: 'sort -k: the letters of a key are read where they are written: a `b` after the START position (`-k2b,3`) skips the blanks in front of the start field and one after the END position (`-k1.1,1b`, `-k2.3,3.0bn`) in front of the end field only, as in coreutils (skipsblanks, skipeblanks). The parser took the letters at the very end of the whole specification as the START\'s and lost the ones after the start position, so lines with a different number of leading blanks sorted another way',
+		edits: [
+			{
+				name: 'the key specification: its letters are read where they are written (after the start position, after the end position)',
+				from: 'function za(e){let t={startField:1},n="",r=e,s=r.match(/([bdfhMnrV]+)$/);',
+				to: 'function za(e){return __lcKeySpec(e)}function __lcZa(e){let t={startField:1},n="",r=e,s=r.match(/([bdfhMnrV]+)$/);',
+			},
+		],
+	},
+	{
+		id: 'LC-29',
+		title: 'a byte that is not ASCII, written as an escape (printf \'\\377\', printf \'\\xff\', echo -e \'\\xff\', $\'\\xff\'), is that byte: the escapes made the character U+00FF (so `printf \'\\xff\' > f` wrote the two bytes of "ÿ", and `wc -c` said 2 for one byte of GNU\'s output). A run of them that is UTF-8 (`\\303\\251`) is the character, an invalid byte is held as the escape of text.js (U+DC80..U+DCFF), which goes back to the byte wherever the text becomes bytes (a file, a pipe)',
+		edits: [
+			{
+				name: 'echo -e / printf %b (the escape processor of the shared helper): an octal escape is one byte',
+				from: 'n+=String.fromCharCode(parseInt(i,8)),r=o;break}case"x":{let i=[],o=r;for(;o+3<e.length',
+				to: 'n+=__lcByte(parseInt(i,8)),r=o;break}case"x":{let i=[],o=r;for(;o+3<e.length',
+			},
+			{
+				name: 'the same helper: a run of \\xHH is decoded as UTF-8 where it is, and an invalid byte is kept as the byte',
+				from: 'try{let l=new TextDecoder("utf-8",{fatal:!0});n+=l.decode(new Uint8Array(i))}catch{for(let l of i)n+=String.fromCharCode(l)}',
+				to: 'n+=__lcBytes(i);',
+			},
+			{
+				name: 'the same helper: what it returns has its escapes joined where they make UTF-8',
+				from: ';return n}var zc,At=F(',
+				to: ';return __lcHeal(n)}var zc,At=F(',
+			},
+			{
+				name: 'echo -e: \\0NNN is a byte',
+				from: 'let o=parseInt(s,8)%256;t+=String.fromCharCode(o)',
+				to: 'let o=parseInt(s,8)%256;t+=__lcByte(o)',
+			},
+			{
+				name: 'echo -e: \\xHH is a byte',
+				from: 'let o=parseInt(s,16);t+=String.fromCharCode(o),n=i}break}case"u":',
+				to: 'let o=parseInt(s,16);t+=__lcByte(o),n=i}break}case"u":',
+			},
+			{
+				name: 'echo -e: what it prints has its escapes joined (the end of the text, and \\c)',
+				from: 'return{output:t,stop:!1}',
+				to: 'return{output:__lcHeal(t),stop:!1}',
+			},
+			{
+				name: 'echo -e: \\c ends the text, with its escapes joined',
+				from: 'return{output:t,stop:!0}',
+				to: 'return{output:__lcHeal(t),stop:!0}',
+			},
+			{
+				name: 'printf: a run of \\xHH is decoded as UTF-8 where it is, an invalid byte is kept as the byte',
+				from: 'n+=tb(i),r=o',
+				to: 'n+=__lcBytes(i),r=o',
+			},
+			{
+				name: 'printf: \\0NNN is a byte',
+				from: 'i?n+=String.fromCharCode(parseInt(i,8)):n+="\\0",r=o;break}',
+				to: 'i?n+=__lcByte(parseInt(i,8)):n+="\\0",r=o;break}',
+			},
+			{
+				name: 'printf: \\NNN is a byte, and what the format makes has its escapes joined',
+				from: 'n+=String.fromCharCode(parseInt(i,8)),r=o;break}default:n+=e[r],r++}else n+=e[r],r++;return{value:n,stopped:!1}}',
+				to: 'n+=__lcByte(parseInt(i,8)),r=o;break}default:n+=e[r],r++}else n+=e[r],r++;return{value:__lcHeal(n),stopped:!1}}',
+			},
+			{
+				name: 'printf: \\c ends the output, with its escapes joined',
+				from: 'case"c":return{value:n,stopped:!0};case"x":{let i=[],o=r;for(;o+1<e.length',
+				to: 'case"c":return{value:__lcHeal(n),stopped:!0};case"x":{let i=[],o=r;for(;o+1<e.length',
+			},
+			{
+				name: '$\'...\': a run of \\xHH is decoded as UTF-8 where it is, an invalid byte is kept as the byte',
+				from: 'r+=FN(l),s=a',
+				to: 'r+=__lcBytes(l),s=a',
+			},
+			{
+				name: '$\'...\': \\NNN is a byte, and the word has its escapes joined',
+				from: 'let c=parseInt(l,8);r+=String.fromCharCode(c),s=a;break}default:r+=i,s++}else r+=i,s++}return s<t.length&&t[s]==="\'"&&s++,{part:J.literal(r),endIndex:s}}',
+				to: 'let c=parseInt(l,8);r+=__lcByte(c),s=a;break}default:r+=i,s++}else r+=i,s++}return s<t.length&&t[s]==="\'"&&s++,{part:J.literal(__lcHeal(r)),endIndex:s}}',
+			},
+		],
+	},
+	{
+		id: 'LC-30',
+		title: 'tee and touch say why in GNU\'s words when a write fails (`tee: d/f: Is a directory`, `touch: cannot touch \'d/f\': No such file or directory`): tee said "No such file or directory" for every reason, and touch printed the error as the engine raised it (`ENOENT: No such file or directory, open \'/w/d/f\'`)',
+		edits: [
+			{
+				name: 'tee: the reason of the failed write',
+				from: 'catch{o+=`tee: ${a}: No such file or directory\n`,l=1}',
+				to: 'catch(__e){o+=`tee: ${a}: ${__lcErrno(__e)||"No such file or directory"}\n`,l=1}',
+			},
+			{
+				name: 'touch: the reason of the failed write',
+				from: 'catch(c){o+=`touch: cannot touch \'${a}\': ${lt(c)}\n`,l=1}',
+				to: 'catch(c){o+=`touch: cannot touch \'${a}\': ${__lcErrno(c)||lt(c)}\n`,l=1}',
+			},
+		],
+	},
+	{
+		id: 'LC-31',
+		title: 'a command word that is an unquoted expansion is split into words (and globbed) as bash splits it (`c="ls -l"; $c` ran a command named "ls -l" and said "command not found"): the first word is the command and the rest are its first arguments',
+		edits: [
+			{
+				name: 'simple command: the command name is expanded with field splitting when it is only expansions',
+				from: 'let u=await Be(this.ctx,t.name),f=[],d=[],p=(N,$)=>{',
+				to: 'let __nm=t.name.parts.every(N=>N.type==="CommandSubstitution"||N.type==="ParameterExpansion"||N.type==="ArithmeticExpansion"),__ex=__nm?await dr(this.ctx,t.name):null,u=__ex?__ex.values[0]??"":await Be(this.ctx,t.name),f=[],d=[],p=(N,$)=>{',
+			},
+			{
+				name: 'simple command: the words after the first one of such a name are the first arguments',
+				from: 'f.push(N),d.push($)};if(Jp(t.name,["local","declare","typeset","export","readonly"])&&(u==="local"',
+				to: 'f.push(N),d.push($)};if(__ex)for(let __x of __ex.values.slice(1))p(__x,__ex.quoted);if(Jp(t.name,["local","declare","typeset","export","readonly"])&&(u==="local"',
 			},
 		],
 	},

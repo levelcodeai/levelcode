@@ -48,6 +48,8 @@ function disk(files) {
 		async createDirectory(/** @type {string} */ p) { calls.push('mkdir ' + p); guard('mkdir', p); nodes.set(p, { dir: true, data: new Uint8Array(0) }); },
 		async remove(/** @type {string} */ p) {
 			calls.push('remove ' + p); guard('remove', p);
+			// vscode's fs.delete of a path that is not there is FileNotFound, not a no-op: the stat guard before a rmdir matters.
+			if (!nodes.has(p)) { throw new Error('FileNotFound: ' + p); }
 			if ([...nodes.keys()].some((k) => k.startsWith(p + '/'))) { throw new Error('not empty: ' + p); }
 			nodes.delete(p);
 		},

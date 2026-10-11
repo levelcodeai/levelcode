@@ -38,7 +38,7 @@ check it in a real browser).
   out or hits an engine limit applies **nothing**: its staged writes are discarded and the result says so
   ("none of its file changes were applied"). Atomic and explainable; the output it had already printed stays.
 * The host owns everything that must survive a kill: cwd/env of a terminal session, history, the commit. The engine
-  owns nothing that has to survive it — with one exception the visitor is told about (§6, `/tmp`).
+  owns nothing that has to survive it — with one exception the visitor is told about (§6, `/tmp` and `/home/user`).
 
 ## 2. Names and files
 
@@ -53,8 +53,9 @@ check it in a real browser).
 | `web/shell/src/terminal/output-filter.js` | the allow-list filter every byte of a command's output passes before it reaches a terminal (§8) |
 | `web/shell/src/terminal/links.js` | the only file-link path of our terminals (`terminal.integrated.enableFileLinks` is `off`) |
 | `web/shell/src/terminal/*` | pty, line editor, input parser, history, completion, shell integration, agent tab |
-| `web/shell/engine/*` | worker entry, `core.js`, `overlay-fs.js`, `compat.js` (wrappers), `text.js` (the byte/text domain), `zone.js` (time zones), vendoring, build |
+| `web/shell/engine/*` | worker entry, `core.js`, `overlay-fs.js`, `compat.js` (wrappers), `text.js` (the byte/text domain), `zone.js` and `zone-data.js` (time zones; the data is generated from tzdata by `web/test/fixtures/shell/zones/generate.mjs`), vendoring, build |
 | `web/test/unit/shell-*.test.js` | unit tests (found by `scripts/test-extensions.sh`, which globs `web/test/unit/*.test.js`) |
+| `web/test/fixtures/shell/` | the engine's differential against GNU bash 5.1: `golden/` (cases, `generate.mjs` in docker, the shrink-only table of known differences), `consistency/`, `cpmv/`, `xargs/`, `zones/` |
 | `web/test/helpers/mutation/` | the mutation runner and its table (a tool, not a suite) |
 | `web/test/e2e-shell.mjs` | the end-to-end run in a real Chrome (a tool, not part of the unit gate) |
 
@@ -165,8 +166,8 @@ type AgentRunEvent =
 A session runs **one script at a time** (a second `run` while one is pending rejects with `Error('busy')`; a `script`
 that is not text rejects with `Error('script must be text')`). `rows`/`cols` become `LINES`/`COLUMNS` (whole numbers
 1..9999, else absent). `complete()` asks the engine worker's file system through the same read RPC, with a cap of 200
-names and 2 s. Every string in `notes` is one line and already safe to print; a run's first note may be the `/tmp`
-note (§6) or the "environment variables not kept" note.
+names and 2 s. Every string in `notes` is one line and already safe to print; a run's first note may be the "emptied"
+note for `/tmp` and/or `/home/user` (§6) or the "environment variables not kept" note.
 
 ## 4. Engine worker protocol
 
@@ -188,7 +189,7 @@ engine → host
 | `{ t:'ready', gen, commands }` | the program list that really exists; it is what `ShellInfo.commands` becomes |
 | `{ t:'fs', rid, op:'stat'\|'readFile'\|'readDir', path }` | **reads only**. `stat` → `{type:'file'\|'dir', size, mtime}`; `readFile` → `Uint8Array`; `readDir` → `[name, 'file'\|'dir'][]`; errors carry a POSIX `code`. A `size` that is not a finite number ≥ 0 is `EIO` |
 | `{ t:'out', id, stream:'stdout'\|'stderr', text }` | after each completed top-level statement |
-| `{ t:'done', id, exitCode, how, cwd, env, changes, denied, notes, stats }` | exactly once per run. `how`: `exit` `limit` `deadline` `aborted` `error`. `stats.tmpFiles` and `stats.homeFiles` count what a `keepTmp` run left in `/tmp` and `/home/user` |
+| `{ t:'done', id, exitCode, how, cwd, env, changes, denied, notes, stats }` | exactly once per run. `how`: `exit` `limit` `deadline` `aborted` `error`. `stats.tmpFiles` and `stats.homeFiles` count the FILES a `keepTmp` run left in `/tmp` and `/home/user`; `stats.tmpEntries` and `stats.homeEntries` count files AND folders (an empty folder is lost too). The host believes the larger of the two for a place and treats a value that is not a count as absent |
 
 The host checks that every `fs` path is inside a mounted folder and that the generation is current; a read the engine
 sends after `done`, or from a terminated generation, is dropped.
@@ -207,7 +208,7 @@ another folder is **relocated** by the host (`planMounts`, in `runtime.js`) to `
 The plan always terminates, never nests mounts, and is the **engine's own algorithm**: the host hands it over in `init`
 and the engine never moves a mount a second time (a fuzz test pins that the two agree). A run that gets a result from
 the engine names every relocation once on stderr, with the folder's name and path made safe; a run that was stopped
-before the engine said `done` says only that it was stopped. `Change` paths are translated back (§3).
+before the engine said `done` says that it was stopped (or ran out of time) and what was already true when it began — a `/tmp` or `/home/user` that was emptied when its worker was replaced, variables that were not kept — and nothing of what the engine's result carries: no relocation note, no engine note, no "output was cut". `Change` paths are translated back (§3).
 
 The messages beyond the tables above — `ready.mounts`, `ready.error`, `init.commands` filtering (a wrapper is offered
 only when its original is), cap validation, `done.stats` and the rest — are additive and listed in `engine/NOTES.md` §6.
@@ -233,9 +234,12 @@ script that ran to its end, whatever its status; otherwise nothing is applied):
 **The commit is bounded.** Every provider call has a deadline (`workers.fsMs`). The terminal's read-only check has one
 budget in all (`workers.checkMs`, which grows with the set: 60 s up to 120 entries, 500 ms an entry above, at most 120 s;
 the first call that is not answered in `fsMs` ends it): a set that could not be checked in time is **refused whole**
-and nothing is applied. The part that writes — levelcode-ai's review and then the folders it leaves to the shell, or the
-terminal's own writes — has `workers.commitMs` in all. A call that outlives its deadline is reported (`stopped at`);
-a write that completes later still lands — a provider call cannot be cancelled, and the result says so.
+and nothing is applied. The part that writes has a budget in all, counted from its first call: levelcode-ai's review and
+then the folders it leaves to the shell share `workers.commitMs`; the terminal's own writes have twice the check's
+budget of the same set and never less than `commitMs` — so a set the check lets through is a set the writing can
+finish (a folder is one call to check and two to write). The worst case of a terminal commit is 120 s of checking and
+240 s of writing; Ctrl+C ends it at once. A call that outlives its deadline is reported (`stopped at`); a write that
+completes later still lands — a provider call cannot be cancelled, and the result says so.
 
 **A Stop ends a commit at once.** Stop, Ctrl+C, a kill and `dispose()` during the commit give up every wait and start
 nothing more: a set that was only being checked applies nothing (`stopped before anything was applied`); one that was
@@ -245,9 +249,18 @@ worker that dies *after* `done` changes the wording of the result ("…, after t
 is on disk.
 
 Every write the engine attempts outside a mount, to a protected path or past a cap is **dropped and recorded** in
-`denied` (never thrown: just-bash rejects `exec()` for any error from a write in a redirection and loses all output);
-the run's exit status becomes 1 if it was 0. An ordinary failure (a missing folder, a directory where a file was
-meant) is the errno `bash` itself would print, not a `denied`.
+`denied` — a *refusal by the shell*, never an exception — and the run's exit status becomes 1 if it was 0. A
+redirection's **content** write never rejects `exec()` (just-bash would lose every line of output): a shell refusal is
+`denied`, and a path the redirection had opened that the command then removed or replaced is dropped without a word
+(GNU keeps writing to the unlinked descriptor). The writes that have no opening of their own (`touch`, `tee`, `sort -o`,
+`split`, `awk '>'`, `cp`, `mv`) get the errno of a real file system and report it as the program's own error; the
+*opening* of a redirection is `bash: f: <reason>`, status 1, the command not run. An ordinary failure (a missing folder,
+a directory where a file was meant) is therefore the errno `bash` itself would print, never a `denied`.
+
+`done.cwd` is the canonical working folder (a walk up to the last one that is valid text when a name is not UTF-8);
+`done.env` **values** may hold U+DC80..U+DCFF (bytes that are not UTF-8, carried to the next line unchanged and never
+shown) — every other string the host is told (keys, `cwd`, `notes`, `denied`, stats) has no lone surrogate, and a change
+set with a path that has one is refused whole.
 
 ## 6. The terminal
 
@@ -258,11 +271,11 @@ the history, and one engine worker created on first use. Functions and shell opt
 an unterminated quote / here-doc / trailing `\`, `|` or `&&` continues on the next line (the editor decides; there is
 no parser export in the browser build). A pasted chunk with a line end is inserted, never executed.
 
-**`/tmp` belongs to a terminal's worker.** It survives from one line to the next, and is lost when that worker is
-replaced (idle for 60 s — twice that when `/tmp` holds anything, folders included —, Ctrl+C, a deadline, a crash,
-eviction; at the worker cap the least recently used idle worker *without* `/tmp` content goes first). The next line says
-so once, with the number of files and folders it held (`done.stats.tmpEntries`, else `tmpFiles`). An agent run never
-keeps `/tmp`.
+**`/tmp` and `/home/user` belong to a terminal's worker** (`~` and `$HOME` are in its memory). They survive from one line
+to the next and are lost when that worker is replaced (idle for 60 s — twice that when either holds anything, folders
+included —, Ctrl+C, a deadline, a crash, eviction; at the worker cap the least recently used idle worker holding
+nothing there goes first). The next line says so once, naming the place and the number of files and folders it held
+(`done.stats.tmpEntries` / `homeEntries`, else the file counts). An agent run never keeps either.
 
 Output to the terminal goes through the allow-list filter of `src/terminal/output-filter.js`, and **every** string that
 did not come from this extension's own constants is untrusted and goes through `src/sanitize.js` (§8). File
@@ -271,6 +284,15 @@ line, 500 ms in all. A link is about the folder the line was **printed in** (the
 run in the agent's tab): `src/terminal/line-log.js` remembers what a terminal printed — 400 lines of at most 4,000
 characters, memory only — so a `cd` does not move older links. Two identical lines printed in two folders cannot be
 told apart (the later wins): the workbench hands the provider a line's text, not its row.
+
+**Resize.** The editor redraws its region when the panel changes size by emulating xterm's own reflow (the line editor is
+tested against real xterm.js 6.1). The rule is *never write over a row that is not the editor's own*: where the
+emulation is unsure it leaves a stale copy of the prompt's first rows instead (visible in 138 of 2,400 sessions that
+change width and height at once, a copy in the scrollback in more). The one case it cannot do exactly is a widening that
+reaches the top of the whole buffer (about 3 of 100 realistic sessions); `src/terminal/NOTES.md` has the table.
+
+**Typing.** A joiner (ZWNJ/ZWJ) typed key by key is dropped silently; a pasted or completed one is kept where it joins
+letters of its script or an emoji sequence, and anything else that is not typed is said once under the line.
 
 The agent's commands are mirrored into one read-only tab "LevelCode Agent" without taking the focus.
 
@@ -289,7 +311,7 @@ The agent's commands are mirrored into one read-only tab "LevelCode Agent" witho
 | files a reviewed commit may change | 300 | 2000 |
 | a file call to the provider | 60 s | 60 s |
 | the read-only check of a set (all of it) | – | 60 s up to 120 entries, 500 ms an entry above, at most 120 s |
-| the part of a commit that writes (all of it) | 120 s (the review, then the folders it leaves) | 120 s |
+| the part of a commit that writes (all of it) | 120 s (the review, then the folders it leaves) | max(120 s, 2 × the check's budget of the set) |
 | live engine workers / idle before terminate | 4 / 60 s | same |
 | output returned to the model | head+tail window of 8000 chars with the status line last | n/a |
 | output shown in a terminal tab per run | 1 MiB, in 16 KiB macrotask chunks | same |
@@ -326,23 +348,20 @@ own values the rest.
 then writes the patched file at build time (`node apply-patches.mjs --check` verifies the anchors without writing).
 The patched file is modified by LevelCode (Apache-2.0 §4(b): the build output carries a notice).
 
-Patches (18, 47 anchor edits; the title of each is next to it in `apply-patches.mjs`):
+Patches (31, 91 anchor edits; `engine/NOTES.md` §2 has one row for each, with where it anchors and what pins it, and
+`node apply-patches.mjs --check` says the count):
 
 | | |
 | --- | --- |
 | LC-1 | the per-top-level-statement hook (`onStatement`: live output, what ran before a deadline survives) |
-| LC-2 | glob `*/` matches directories only |
-| LC-3 | arithmetic `$` followed by a non-name character no longer loops forever |
-| LC-4 | `read` / `mapfile` assign UTF-8 text |
-| LC-5 | a redirection whose target cannot be opened is `bash: f: <reason>`, status 1, the command not run |
-| LC-6 | the result of `exec()` keeps raw bytes (`lcRaw`) |
-| LC-7 | an honest 127 for the programs the engine knows it lacks |
-| LC-8 | `ls -l` shows the real mode |
+| LC-2 – LC-8 | glob `*/` matches directories only; arithmetic `$` loop guard; `read` / `mapfile` UTF-8; a redirection whose target cannot be opened is `bash: f: <reason>`; raw bytes kept (`lcRaw`); an honest 127; `ls -l` shows the real mode |
 | LC-9 | every ordering comparison is by code point (`sort`, `jq`, `tree`…) |
 | LC-10 | bytes that are not UTF-8 survive a round trip (surrogate-escape domain, `engine/text.js`) |
 | LC-11 – LC-15 | `sed` `a\ i\ c\` and `c` on a range; `awk` bare `length`; `grep -o` with empty matches; `cut` without a delimiter |
-| LC-16 | `Date` is the command's `TZ` (UTC when none), `engine/zone.js` |
-| LC-17 – LC-18 | builtins resolved without `PATH`; builtins the engine does not implement are not listed |
+| LC-16, LC-19, LC-20 | `Date`, `printf '%(…)T'` and `date` follow the command's `TZ` (UTC when none), `engine/zone.js`, `engine/zone-data.js` (tzdata 2024a abbreviations, generated) |
+| LC-17, LC-18 | builtins resolved without `PATH`; builtins the engine does not implement are not listed |
+| LC-21 – LC-25 | exported variables reach what `xargs`/`timeout`/`find -exec` start; grep/sed BRE `\+ \? \< \>`; `sort -k` and `-u`; `sed s///w`; `LimitError` exported |
+| LC-26 – LC-31 | a redirection's content write is told from `tee`'s (the content write of an opened path never rejects `exec()`); `cd` through `..`; `sort -k` flags; `printf '\xHH'` makes a byte; `tee`/`touch` errors; `$cmd` is split into words |
 
 `legalComments` are kept in the bundle (re2js MIT, ieee754 BSD-3-Clause); `diff` 8.0.4 and `sprintf-js` 1.1.3 are
 vendored beside it. Never vendor `node-liblzma` (LGPL), the zstd native module, `typescript`, `sql.js`. `turndown`,

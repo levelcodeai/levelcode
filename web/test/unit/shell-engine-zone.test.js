@@ -9,6 +9,7 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 
 const zone = require(path.join(__dirname, '..', '..', 'shell', 'engine', 'zone.js'));
@@ -33,17 +34,25 @@ function underProcessZones(fn) {
 	}
 }
 
-test('which names are zones: IANA names, UTC and its spellings; anything else is UTC (TZ is a variable people type anything in)', () => {
+test('which names are zones: the files of tzdata, in the case they are written in; the files that are UTC are UTC; what is not a string, empty, or an offset alone is UTC (TZ is a variable people type anything in)', () => {
 	assert.strictEqual(zone.validZone('America/New_York'), 'America/New_York');
 	assert.strictEqual(zone.validZone('Asia/Kolkata'), 'Asia/Kolkata');
-	for (const u of ['UTC', 'utc', 'GMT', 'Z', 'UT', 'Etc/UTC', 'Zulu']) { assert.strictEqual(zone.validZone(u), 'UTC', u); }
-	for (const bad of ['', 'Nowhere/Land', 'EST5EDT-x', ' ', 42, null, undefined, {}]) { assert.strictEqual(zone.validZone(/** @type {any} */ (bad)), null, String(bad)); }
+	assert.strictEqual(zone.validZone('US/Eastern'), 'US/Eastern', 'an alias is a file too');
+	for (const u of ['UTC', 'GMT', 'Etc/UTC', 'Etc/GMT', 'Zulu', 'UCT', 'Universal', 'GMT0', 'GMT+0', 'GMT-0', 'Greenwich']) { assert.strictEqual(zone.validZone(u), 'UTC', u); }
+	for (const bad of ['', ' \u0000'.slice(2), '+09:00', '-0500', ':', 42, null, undefined, {}]) { assert.strictEqual(zone.validZone(/** @type {any} */ (bad)), null, String(bad)); }
+	// a file system has case: Intl takes `asia/tokyo`, `est`, `us/eastern`, GNU does not (it keeps the letters as a name)
+	for (const mis of ['asia/tokyo', 'ASIA/TOKYO', 'Asia/tokyo', 'us/eastern', 'america/new_york', 'est', 'utc', 'gmt']) {
+		const key = /** @type {string} */ (zone.validZone(mis));
+		assert.ok(key.startsWith('posix:'), mis + ' is no zone file: ' + key);
+		assert.strictEqual(zone.offsetAt(key, 1600000000000), 0, mis);
+	}
 	zone.setZone('Asia/Tokyo');
 	assert.strictEqual(zone.getZone(), 'Asia/Tokyo');
-	zone.setZone('Nowhere/Land');
-	assert.strictEqual(zone.getZone(), 'UTC', 'a bad TZ is UTC, not the previous command\'s zone');
 	zone.setZone(undefined);
 	assert.strictEqual(zone.getZone(), 'UTC');
+	zone.setZone('asia/tokyo');
+	assert.strictEqual(zone.partsAt(0).hour, 0, 'a mis-cased name is not Tokyo');
+	zone.setZone(undefined);
 });
 
 test('offsets, including both sides of a daylight saving change and a zone that is not a whole hour', () => {
@@ -162,7 +171,7 @@ test('a Date made elsewhere is still a Date of this class, and the class keeps w
 	assert.strictEqual(JSON.stringify({ t: new D(0) }), '{"t":"1970-01-01T00:00:00.000Z"}');
 });
 
-test('what a TZ may be: an IANA name (with glibc\'s colon too), UTC, or POSIX NAME+offset in hours WEST (JST-9 is UTC+9); with a daylight rule, or anything else, it is UTC', () => {
+test('what a TZ may be: an IANA name (with glibc\'s colon too), UTC, or POSIX NAME+offset in hours WEST (JST-9 is UTC+9); with a daylight rule the standard time; anything else the letters it starts with and offset 0', () => {
 	const offsetOf = (name, at = 0) => zone.offsetAt(/** @type {string} */ (zone.validZone(name)), at) / 60000;
 	assert.strictEqual(zone.validZone(':America/New_York'), 'America/New_York');
 	assert.strictEqual(zone.validZone(':UTC'), 'UTC');
@@ -173,7 +182,13 @@ test('what a TZ may be: an IANA name (with glibc\'s colon too), UTC, or POSIX NA
 	assert.strictEqual(offsetOf('<-03>3'), -180);
 	assert.strictEqual(offsetOf('ABC-1:30:15'), 90 + 0.25);
 	assert.strictEqual(offsetOf('EST5EDT', Date.UTC(2020, 6, 1)), -240, 'a name Intl knows has its rules');
-	for (const bad of ['EST5EDT,M3.2.0,M11.1.0', 'JST-25', 'AB-9', '+09:00', '-0500', '9', 'JST-', ':', 'a/b/c', 'JST-9x']) { assert.strictEqual(zone.validZone(bad), null, bad); }
+	assert.strictEqual(offsetOf('EST5EDT,M3.2.0,M11.1.0', Date.UTC(2020, 6, 1)), -300, 'a daylight saving rule is not applied: standard time');
+	assert.strictEqual(offsetOf('JST-9x'), 540, 'what follows the offset is not read');
+	assert.strictEqual(offsetOf('JST-25'), 0, 'an offset over 24 hours is none');
+	for (const none of ['+09:00', '-0500', ':']) { assert.strictEqual(zone.validZone(none), null, none); }
+	// no zone: the letters it starts with are the name (three or more), the offset is 0
+	const named = (name) => { zone.setZone(name); try { return zone.abbreviation(1600000000000); } finally { zone.setZone(undefined); } };
+	assert.deepStrictEqual(['Nowhere', 'Nowhere/Land', 'asia/tokyo', 'est', 'ab', 'us/eastern', 'a/b/c', '9'].map(named), ['Nowhere', 'Nowhere', 'asia', 'est', '', '', '', '']);
 	underProcessZones((proc) => {
 		zone.setZone('JST-9');
 		assert.strictEqual(new D(2020, 1, 29, 12).toISOString(), '2020-02-29T03:00:00.000Z', proc);
@@ -198,13 +213,49 @@ test('%Z: the short name by the offset the zone has at that instant; tzdata\'s d
 	assert.strictEqual(at('UTC', jan), 'UTC');
 	assert.strictEqual(at('GMT', jan), 'GMT');
 	assert.strictEqual(at(':Etc/GMT', jan), 'GMT');
-	assert.strictEqual(at('Nowhere/Land', jan), 'UTC');
+	assert.strictEqual(at('GMT0', jan), 'GMT');
+	assert.strictEqual(at('Universal', jan), 'UTC');
+	assert.strictEqual(at('Etc/UTC', jan), 'UTC');
+	assert.strictEqual(at('Nowhere/Land', jan), 'Nowhere', 'what glibc does with a name that is no file: its letters');
 	assert.strictEqual(at(undefined, jan), 'UTC');
 	zone.setZone('Asia/Tokyo');
 	assert.strictEqual(zone.abbreviation(jan, 'America/New_York'), 'EST', 'a zone named is the zone');
 	assert.strictEqual(zone.abbreviation(jan, 'UTC'), 'UTC');
 	zone.setZone(undefined);
 	for (const z of ['Asia/Tokyo', 'Europe/Paris', 'Asia/Kolkata', 'Australia/Adelaide', 'America/St_Johns']) { assert.ok(!/GMT[+-]/.test(at(z, jan)), z); }
+});
+
+test('every zone file of the reference system, at four instants: %Z and %z are what GNU date printed (zones.json, recorded by the generator, not read back from zone-data.js)', () => {
+	const rec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'shell', 'zones', 'zones.json'), 'utf8'));
+	const names = Object.keys(rec.zones);
+	assert.ok(names.length > 550, 'the names recorded: ' + names.length);
+	const wrong = [];
+	for (const name of names) {
+		zone.setZone(name);
+		rec.instants.forEach((t, k) => {
+			const minutes = Math.trunc(zone.offsetAt(zone.getZone(), t * 1000) / 60000);
+			const a = Math.abs(minutes);
+			const z = (minutes < 0 ? '-' : '+') + String(Math.floor(a / 60)).padStart(2, '0') + String(a % 60).padStart(2, '0');
+			const got = `${zone.abbreviation(t * 1000)}|${z}`;
+			if (got !== rec.zones[name][k]) { wrong.push(`${name} @${t}: ${got} (GNU ${rec.zones[name][k]})`); }
+		});
+	}
+	zone.setZone(undefined);
+	assert.deepStrictEqual(wrong.slice(0, 20), [], `${wrong.length} of ${names.length * rec.instants.length} differ`);
+	// the data names exactly the files the recording has
+	const data = require(path.join(__dirname, '..', '..', 'shell', 'engine', 'zone-data.js'));
+	assert.deepStrictEqual([...data.NAMES].sort(), [...names].sort());
+	assert.ok(data.NAMES.length < 700);
+});
+
+test('a time zone with seconds in its offset prints %z without them, as strftime does (the engine printed +0930.25)', () => {
+	zone.setZone('XXX-9:30:15');
+	const d = new D(0);
+	assert.strictEqual(d.getTimezoneOffset(), -570);
+	assert.strictEqual(zone.offsetAt(zone.getZone(), 0), 34215000, 'the instants keep the seconds');
+	zone.setZone('XXX+9:30:15');
+	assert.strictEqual(new D(0).getTimezoneOffset(), 570);
+	zone.setZone(undefined);
 });
 
 (async () => {

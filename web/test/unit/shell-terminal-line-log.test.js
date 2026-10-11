@@ -200,8 +200,12 @@ test('the text of a line is what xterm.js has in the row: seeded lines of text, 
 	assert.ok(compared > 100, 'rows compared: ' + compared);
 });
 
+let finished = false;
+// a test that awaits something that never settles leaves nothing to keep the process alive: it would exit 0, silently
+process.on('exit', (code) => { if (code === 0 && !finished) { console.error('the tests did not finish: one of them waits for something that never happens'); process.exitCode = 1; } });
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }
+	finished = true;
 	console.log(`\n${n} tests passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

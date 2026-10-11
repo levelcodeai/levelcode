@@ -88,9 +88,9 @@ async function main() {
 
 	/* ------------------------------------------------------------------------------------------ the patches */
 
-	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9', 'LC-10', 'LC-11', 'LC-12', 'LC-13', 'LC-14', 'LC-15', 'LC-16', 'LC-17', 'LC-18', 'LC-19', 'LC-20', 'LC-21', 'LC-22', 'LC-23', 'LC-24', 'LC-25'];
+	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9', 'LC-10', 'LC-11', 'LC-12', 'LC-13', 'LC-14', 'LC-15', 'LC-16', 'LC-17', 'LC-18', 'LC-19', 'LC-20', 'LC-21', 'LC-22', 'LC-23', 'LC-24', 'LC-25', 'LC-26', 'LC-27', 'LC-28', 'LC-29', 'LC-30', 'LC-31'];
 
-	test('there are twenty-five patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
+	test('there are thirty-one patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
 		assert.deepStrictEqual(patchMod.PATCHES.map((p) => p.id), IDS);
 		let edits = 0;
 		for (const p of patchMod.PATCHES) {
@@ -114,7 +114,7 @@ async function main() {
 		assert.ok(r.text.includes('MODIFIED by LevelCode'));
 		assert.ok(r.text.includes('Apache-2.0'));
 		assert.ok(r.text.includes('section 4(b)'));
-		assert.ok(r.text.includes('LC-1 .. LC-25'), 'the notice says how many patches there are');
+		assert.ok(r.text.includes('LC-1 .. LC-31'), 'the notice says how many patches there are');
 		assert.deepStrictEqual(r.patches.map((p) => p.id), IDS);
 	});
 
@@ -334,9 +334,11 @@ async function main() {
 	/* ------------------------------------------------------------------------------------------ LC-6 */
 
 	test('LC-6: the result keeps the raw bytes the statement hook saw, which the final stdout has decoded', async () => {
-		const { sh } = bash({});
+		// a command that returns BYTES, one character each (the UTF-8 of "é"): printf and the rest make the character itself
+		// since LC-29, so one is made here, the way a program of a later version might
+		const { sh } = bash({}, { customCommands: [E.defineCommand('rawbytes', async () => ({ stdout: 'caf\u00c3\u00a9\n', stderr: '', exitCode: 0 }))] });
 		const seen = [];
-		const r = await sh.exec("printf 'caf\\303\\251\\n'; echo plain", { onStatement: async (res) => { seen.push(res.stdout); } });
+		const r = await sh.exec('rawbytes; echo plain', { onStatement: async (res) => { seen.push(res.stdout); } });
 		assert.strictEqual(r.stdout, 'caf\u00e9\nplain\n', 'the final stdout is decoded UTF-8 text');
 		assert.strictEqual(r.lcRaw.stdout, 'caf\u00c3\u00a9\nplain\n', 'the raw string is one character per byte');
 		assert.strictEqual(seen.join(''), r.lcRaw.stdout, 'what the hook saw, joined, is the raw string');
@@ -404,8 +406,10 @@ async function main() {
 		const r = patchMod.applyPatches(original);
 		// a BOM is kept by the decoder of byte strings (M8), by that of a command's result (h$), and by curl's, which had it
 		assert.strictEqual(count(r.text, 'ignoreBOM:!0'), 3);
-		// the uses of the module: the byte-string decoder, the encoder, and `__lcUtf8` of `read` and `mapfile` in the header
-		assert.strictEqual(count(r.text, '__lcText.'), 3);
+		// the uses of the module: the byte-string decoder (`__lcUtf8` of `read` and `mapfile`), the lossless decoder and the
+		// encoder of the patched `fe` and `Pn`, and in the header what LC-29 added: `__lcBytes` (a run of escaped bytes) and
+		// `__lcHeal` (the escapes of one string that are UTF-8 together)
+		assert.strictEqual(count(r.text, '__lcText.'), 5);
 	});
 
 	test('LC-9: the patched file has no localeCompare left at all (a new one in a bumped file fails here)', () => {
@@ -754,6 +758,126 @@ async function main() {
 		assert.strictEqual(e.name, 'ExecutionLimitError');
 		assert.strictEqual(E.LimitError.EXIT_CODE, 126);
 		assert.ok(e instanceof Error && e.stderr.startsWith('bash: du: filesystem'));
+	});
+
+	test('LC-22 (the second half): a quantifier after a quantifier is GNU\'s `(a*)+` (`a*\\+` was an error), and after an assertion (`\\b`, `\\<`) it is a plain character', async () => {
+		const { sh } = bash({ '/w/f': 'aaa b\nx+y a+\nab\naaab\n' });
+		const r = await sh.exec(`grep -o 'a*\\+' f | head -1; grep -c 'a*\\+' f; grep -o 'a\\+\\?' f | head -2 | tr '\\n' ' '; echo; grep -o '\\b\\+' f; sed 's/a*\\+/X/' f | tail -1; sed -E 's/a*+/X/' f | tail -1; sed -E 's/a+?/X/' f | tail -1; grep -oE 'a*?' f | head -1; grep -o '\\(ab\\)*\\+' f | head -1; printf 'a{2}b\\n' | grep -o 'a{2}'; printf 'aab\\n' | grep -oE 'a{2}*'; printf 'a.b\\n' | grep -o '[a.]*\\+'`);
+		assert.strictEqual(r.stderr, '');
+		assert.strictEqual(r.stdout, ['aaa', '4', 'aaa a ', '+', '+', 'Xb', 'Xb', 'Xb', 'aaa', 'ab', 'a{2}', 'aa', 'a.'].join('\n') + '\n');
+	});
+
+	test('LC-26: the content write of a redirection is marked, a program\'s own write to the same path is not: tee, awk >, sort -o after `> f` and `rm -rf` report the error GNU does, a redirection of a path that was taken away still writes nothing and says nothing', async () => {
+		const { ov, sh } = overlayBash({});
+		const seen = [];
+		const raw = ov.fs.writeFile.bind(ov.fs);
+		ov.fs.writeFile = async (p, c, e) => { seen.push([p, typeof c === 'string' ? c.slice(0, 6) : '', e && typeof e === 'object' ? JSON.stringify(e) : String(e)]); return raw(p, c, e); };
+		const r = await sh.exec(`echo hi > f; echo b | tee g > /dev/null; { rm -rf d; echo x; } > d/z; echo "rc=$?"`);
+		// the opening is `writeFile(p, '', 'binary')`, the content of a redirection carries { encoding, lcRedirect }, tee's does not
+		assert.deepStrictEqual(seen.filter((x) => x[0] === '/w/f'), [['/w/f', '', 'binary'], ['/w/f', 'hi\n', '{"encoding":"utf8","lcRedirect":true}']]);
+		assert.deepStrictEqual(seen.filter((x) => x[0] === '/w/g'), [['/w/g', 'b\n', 'binary']], 'tee: a plain encoding');
+		assert.strictEqual(r.stdout, 'rc=1\n', 'the opening of d/z failed: bash: d/z: No such file or directory');
+		const q = overlayBash({});
+		const r2 = await q.sh.exec(`mkdir d; echo a > d/f; rm -rf d; echo b | tee d/f; echo "tee=$?"; echo b | tee -a d/f; echo "teea=$?"; mkdir e; { rm -rf e; echo hi; } > e/f; echo "redir=$?"; ls`);
+		assert.strictEqual(r2.stdout, 'b\ntee=1\nb\nteea=1\nredir=0\nd\n'.replace('\nd\n', '\n') + (await q.sh.exec('ls')).stdout);
+		assert.ok(/tee: d\/f: No such file or directory/.test(r2.stderr), r2.stderr);
+	});
+
+	test('LC-27: cd through `..` to the root and back down is /w/src, not //w/src (pwd, PWD, OLDPWD, cd -)', async () => {
+		const { sh } = bash({ '/w/src/a': 'x\n', '/w2/q': 'y\n' });
+		const r = await sh.exec('cd /w/../w/./src && pwd; echo $PWD; cd /; cd /w/../w2; pwd; echo "$OLDPWD"; cd ..; pwd; cd ../w/src; pwd; cd -; cd /w/src/../src; pwd; cd /..; pwd; cd /w/../..//w; pwd');
+		assert.strictEqual(r.stderr, '');
+		assert.strictEqual(r.stdout, '/w/src\n/w/src\n/w2\n/\n/\n/w/src\n/\n/w/src\n/\n/w\n');
+	});
+
+	test('LC-28: sort -k reads its letters where they are written: a b after the end position is the end\'s, after the start position the start\'s; the start character of -kF.C counts', async () => {
+		const { sh } = bash({});
+		const r = await sh.exec(`printf '   c,FOO,0,foo\\naa,Foo,007\\n9,Foo,é,B\\n' | sort -k1.1,1b -k3,4; echo -; printf 'xb\\nya\\nzc\\n' | sort -k1.2; echo -; printf ' b\\na\\n  c\\n' | sort -k1b; echo -; printf 'b  x\\na  y\\n c z\\n' | sort -k2b; echo -; printf 'a b\\n c\\n' | sort -k1.1b,1.1; echo -; printf '10\\n9\\n 8\\n' | sort -k1,1bn`);
+		assert.strictEqual(r.stderr, '');
+		assert.strictEqual(r.stdout, ['   c,FOO,0,foo', '9,Foo,é,B', 'aa,Foo,007', '-', 'ya', 'xb', 'zc', '-', 'a', ' b', '  c', '-', 'b  x', 'a  y', ' c z', '-', ' c', 'a b', '-', ' 8', '9', '10'].join('\n') + '\n');
+	});
+
+	test('LC-29: an escape that is not ASCII is that byte: printf \\xff, printf \\377, echo -e \\xff and $\'\\xff\' write one byte; a run that is UTF-8 is the character; the text round-trips a file, cat, od, base64, wc -c', async () => {
+		const { fs: fsys, sh } = overlayBash({});
+		const r = await sh.exec(`printf '\\xff\\xfe' > f; wc -c < f; printf '\\377' > g; wc -c < g; echo -e '\\xff' > h; wc -c < h; echo $'\\xff\\xfe' > i; wc -c < i; printf '\\303\\251' > j; wc -c < j; base64 f; printf '\\xe9' | base64; printf '\\xc3\\xa9\\xe2\\x9c\\x93' | base64; x=$(printf '\\303\\251'); echo "\${#x}"; printf '\\000\\001\\377\\376' > b; cp b c; diff b c > /dev/null && echo same; cat b | wc -c; printf '\\xff' | sha256sum | cut -c1-16`);
+		assert.strictEqual(r.stderr, '');
+		assert.strictEqual(r.stdout, ['2', '1', '2', '3', '2', '//4=', '6Q==', 'w6ninJM=', '1', 'same', '4', 'a8100ae6aa1940d0'].join('\n') + '\n');
+		assert.deepStrictEqual([...(await fsys.readFileBuffer('/w/f'))], [0xff, 0xfe]);
+		assert.deepStrictEqual([...(await fsys.readFileBuffer('/w/j'))], [0xc3, 0xa9]);
+		assert.deepStrictEqual([...(await fsys.readFileBuffer('/w/b'))], [0, 1, 0xff, 0xfe]);
+		// the escapes in text that is shown or compared: a run is joined, a lone byte stays an escape
+		const t = await sh.exec(`printf '\\xc3'; printf '\\xa9\\n'; printf '\\xff\\n' | base64; [ "$(printf '\\xc3\\xa9')" = "é" ] && echo equal`);
+		assert.strictEqual(t.stdout, '\udcc3\udca9\n/wo=\nequal\n', 'two statements that each printed half a character: the engine leaves the escapes, the core joins them for what is shown');
+	});
+
+	test('LC-29: every place that makes an escape makes the same bytes: echo -e, printf %b (\\NNN, \\0NNN, \\xHH, \\c) and $\'\\NNN\' (a lone byte is one byte, a run that is UTF-8 is the character, in a variable too)', async () => {
+		const { sh } = overlayBash({});
+		/** [script, stdout]: `wc -c` of what a form makes, and `${#x}` of what it is as a value */
+		const cases = [
+			// echo -e: \xHH, \0NNN, \NNN; a stop with \c; the end of the text
+			["echo -ne '\\xff' | wc -c; echo -ne '\\0377' | wc -c; echo -e '\\xc3\\xa9' | wc -c; x=$(echo -e '\\xc3\\xa9'); echo ${#x}", '1\n1\n3\n1\n'],
+			["x=$(echo -ne '\\xc3\\xa9\\c'); echo ${#x}; echo -ne '\\xff\\c' | wc -c; x=$(echo -ne '\\0303\\0251\\cignored'); echo ${#x}", '1\n1\n1\n'],
+			// printf %b: the same escapes in an argument
+			["printf %b '\\xff' | wc -c; printf %b '\\xc3\\xa9' | wc -c; x=$(printf %b '\\xc3\\xa9'); echo ${#x}; x=$(printf %b 'a\\xc3\\xa9b'); echo ${#x}", '1\n2\n1\n3\n'],
+			["printf %b '\\0377' | wc -c; printf %b '\\0303\\0251' | wc -c; x=$(printf %b '\\0303\\0251'); echo ${#x}", '1\n2\n1\n'],
+			["printf %b '\\377' | wc -c; printf %b '\\303\\251' | wc -c; x=$(printf %b '\\303\\251'); echo ${#x}; x=$(printf %b 'a\\303\\251'); echo ${#x}", '1\n2\n1\n2\n'],
+			["x=$(printf %b '\\303\\251\\c'); echo ${#x}; x=$(printf %b '\\xc3\\xa9\\cabc'); echo ${#x}; printf %b '\\xff\\c' | wc -c", '1\n1\n1\n'],
+			// $'..'
+			["x=$'\\303\\251'; echo ${#x}; printf %s $'\\377' | wc -c; x=$'\\xc3\\xa9'; echo ${#x}; printf %s $'a\\303\\251b' | wc -c", '1\n1\n1\n4\n'],
+			// the format of printf itself (`\\c` is not special there: it is two characters, as in bash)
+			["printf '\\303\\251' | wc -c; x=$(printf '\\303\\251'); echo ${#x}; x=$(printf 'a\\xc3\\xa9\\cb'); echo ${#x}; printf '\\xff\\c' | wc -c", '2\n1\n5\n3\n'],
+		];
+		for (const [script, want] of cases) {
+			const r = await sh.exec(script);
+			assert.strictEqual(r.stderr, '', script);
+			assert.strictEqual(r.stdout, want, script);
+		}
+	});
+
+	test('LC-31: a command word that is only expansions is split into words and globbed as bash does: `c="ls -l"; $c`, `$(echo echo hi)`, `${c} arg`; a quoted one is one word; a variable that is only blanks is no command', async () => {
+		const { sh } = overlayBash({ '/w/a.txt': 'x\n', '/w/b.txt': 'y\n' });
+		/** [script, stdout, stderr]: each recorded from bash 5.1 (docker, LC_ALL=C.UTF-8) */
+		const cases = [
+			["c='echo a b'; $c", 'a b\n', ''],
+			["c='echo a'; $c b c", 'a b c\n', ''],
+			["c=' echo  a   b '; $c", 'a b\n', ''],
+			["c='printf %s-%s\\n x y'; $c", 'x-y\n', ''],
+			["x=' '; $x echo hi", 'hi\n', ''],
+			["x=''; $x echo hi", 'hi\n', ''],
+			["c='echo a'; ${c} z", 'a z\n', ''],
+			['$(echo echo hi from sub)', 'hi from sub\n', ''],
+			["c='exit 3'; ($c); echo \"rc=$?\"", 'rc=3\n', ''],
+			["c='cd /tmp'; $c; pwd", '/tmp\n', ''],
+			["c='echo'; $c -n x; echo", 'x\n', ''],
+			["c='true && echo no'; $c; echo \"rc=$?\"", 'rc=0\n', ''],
+			["c='echo *.txt'; $c", 'a.txt b.txt\n', ''],
+			["c='echo *.nothing'; $c", '*.nothing\n', ''],
+			["c=$'echo x\\ny'; $c", 'x y\n', ''],
+			["c='echo \"a b\"'; $c", '\"a b\"\n', ''],
+			['c="echo \'a b\'"; $c', "'a b'\n", ''],
+			["c='echo $HOME'; $c", '$HOME\n', ''],
+			["c='echo a'; for i in 1 2; do $c $i; done", 'a 1\na 2\n', ''],
+			["f() { echo \"f:$*\"; }; c='f 1 2'; $c", 'f:1 2\n', ''],
+			["c='echo a'; \"$c\"; echo \"rc=$?\"", 'rc=127\n', 'bash: echo a: command not found\n'],
+			["c='FOO=1 env'; $c; echo \"rc=$?\"", 'rc=127\n', 'bash: FOO=1: command not found\n'],
+		];
+		for (const [script, stdout, stderr] of cases) {
+			const r = await sh.exec(script);
+			assert.strictEqual(r.stdout, stdout, script);
+			assert.strictEqual(r.stderr, stderr, script);
+		}
+		// the IFS in force splits it (the same expansion as for arguments): `:` makes `echo:a:b` three words, an empty IFS makes
+		// `echo a` one
+		const odd = await sh.exec("IFS=:; c='echo:a:b'; $c; echo \"rc=$?\"; IFS=; c='echo a'; $c; echo \"rc=$?\"");
+		assert.strictEqual(odd.stdout, 'a b\nrc=0\nrc=127\n');
+		assert.strictEqual(odd.stderr, 'bash: echo a: command not found\n');
+	});
+
+	test('LC-30: tee and touch say why a write failed in GNU\'s words (tee said "No such file or directory" for everything; touch said ENOENT: ..., open \'/w/d/f\')', async () => {
+		const { sh } = overlayBash({});
+		const r = await sh.exec(`mkdir g; echo b | tee g; echo "rc=$?"; echo b | tee nodir/x; echo "rc=$?"; touch nodir/y; echo "rc=$?"; echo a > f; touch f/y; echo "rc=$?"`);
+		assert.strictEqual(r.stderr, "tee: g: Is a directory\ntee: nodir/x: No such file or directory\ntouch: cannot touch 'nodir/y': No such file or directory\ntouch: cannot touch 'f/y': Not a directory\n");
+		assert.strictEqual(r.stdout, 'b\nrc=1\nb\nrc=1\nrc=1\nrc=1\n');
 	});
 
 	for (const t of tests) {

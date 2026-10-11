@@ -59,7 +59,9 @@ const LIMITS = deepFreeze({
 		 * How long the part of a commit that WRITES may take in all, counted from its first call: levelcode-ai's review
 		 * of a change set and then the folders it left to the shell (one budget, for the agent), or the shell's own
 		 * writes (the terminal, after its check, which has checkMs). Each call is also bound by fsMs. What is not done
-		 * when this runs out is not started, and the one call in flight may still land: the result says so.
+		 * when this runs out is not started, and the one call in flight may still land: the result says so. The
+		 * terminal's writing has twice the check's budget for the same set when that is more (writeBudgetMs): what the
+		 * check let through is then something the writing can finish. The agent's has this and no more.
 		 */
 		commitMs: 120000,
 		/** The host's deadline for a run is the engine's backstop plus this. */
@@ -80,6 +82,23 @@ const LIMITS = deepFreeze({
 function checkBudgetMs(w, entries) {
 	const n = typeof entries === 'number' && Number.isFinite(entries) && entries > 0 ? entries : 0;
 	return Math.max(w.checkMs, Math.min(w.checkMaxMs, Math.ceil(w.checkMs * n / w.checkEntries)));
+}
+
+/**
+ * How long the terminal's own WRITING of a change set of `entries` entries has in all: twice the check's budget for the
+ * same set, and never less than `commitMs`. The two budgets must not cross. A new folder costs the check one call (a
+ * stat) and the writing two (the stat of whether it is there, then the create); every other entry costs the writing one
+ * call, or two where a file goes into a folder that is not one of the set's own. So a set that a provider answered at
+ * some speed in the check's budget - at least one call an entry - is a set the writing needs at most twice that for at
+ * that speed. With less, a slow-but-alive provider that passed the check would end in a half-made project where the
+ * check would have refused the whole set with nothing written (at 250 ms a call, 200 folders and 200 files: 100 s to
+ * check, 150 s to write). The agent's writing is not this: its review is ONE call given `commitMs`, and the folders it
+ * leaves are written from what is left of that.
+ * @param {{ checkMs: number, checkEntries: number, checkMaxMs: number, commitMs: number }} w  limits.workers
+ * @param {number} entries
+ */
+function writeBudgetMs(w, entries) {
+	return Math.max(w.commitMs, 2 * checkBudgetMs(w, entries));
 }
 
 /** @template T @param {T} o @returns {T} */
@@ -199,4 +218,4 @@ function createInfo(limitsOver) {
 	};
 }
 
-module.exports = { LIMITS, PROGRAMS, MISSING, BUILTINS, mergeLimits, createInfo, checkBudgetMs };
+module.exports = { LIMITS, PROGRAMS, MISSING, BUILTINS, mergeLimits, createInfo, checkBudgetMs, writeBudgetMs };

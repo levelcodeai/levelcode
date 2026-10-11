@@ -26,8 +26,10 @@
  *    - once the engine has said `done`, the commit is what ends the run, with the count of what it really
  *      applied, and it is BOUNDED: a provider call by fsMs, the read-only check by checkMs for a set of up to
  *      checkEntries entries and in proportion above that (at most checkMaxMs; refused whole when it runs out,
- *      nothing applied), the writing - or the agent's review - by commitMs; a worker that dies changes the
- *      wording of the result and never what is on disk;
+ *      nothing applied), the writing by twice that and never less than commitMs - the agent's review, and the
+ *      folders it leaves, by commitMs - so that what the check lets through can be written (never a set half
+ *      applied while the provider keeps answering); a worker that dies changes the wording of the result and
+ *      never what is on disk;
  *    - a Stop or a dispose() during the commit ends it AT ONCE: every wait is given up and no further call is
  *      made, a set that was only being checked applies nothing, and one that was being written says how many
  *      changes were confirmed and that the one in flight cannot be cancelled and may still land - after
@@ -39,16 +41,16 @@
  *    - every read of the engine is answered, whatever the provider threw, and a size that is not a number
  *      is an error, never "no limit";
  *    - a message from a terminated worker is dropped (the generation guard);
- *    - a terminal's /tmp lives in its engine's memory and dies with it: the line after a replaced engine says
- *      so, once, and an engine whose /tmp holds anything - an empty folder is something - is kept twice as long
- *      when idle;
+ *    - a terminal's /tmp and /home/user live in its engine's memory and die with it: the line after a replaced
+ *      engine says so, once, naming the place that held something, and an engine that holds anything there - an
+ *      empty folder is something - is kept twice as long when idle;
  *    - planMounts returns for any set of folders (one rooted at /mnt included), and what it returns is what the
  *      engine would plan for the same folders: mounts that are normalised paths the engine never moves again.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
 
-const { PROGRAMS, BUILTINS, createInfo, checkBudgetMs } = require('./info');
+const { PROGRAMS, BUILTINS, createInfo, checkBudgetMs, writeBudgetMs } = require('./info');
 const { commitChanges, checkChangeSet, note } = require('./commit');
 const { forNote, safeMessage, safeGet } = require('./sanitize');
 
@@ -298,28 +300,54 @@ function sizeVar(n) {
 function countOf(n) { return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.trunc(n) : null; }
 
 /**
- * What the `done` of an engine that was asked to keep /tmp says it holds: how many, and whether the count has FOLDERS
- * in it. `stats.tmpEntries` is files and folders (an empty folder is something that cannot be made again too);
- * `stats.tmpFiles` is what an engine that does not say that reports, and is files only. The larger of the two is
- * believed when both are there (a count of entries below the count of files cannot be true, and the loss of files is
+ * What one of the engine's in-memory folders holds, from the two counts its `done` gives for it: how many, and whether
+ * the count has FOLDERS in it. `<name>Entries` is files and folders (an empty folder is something that cannot be made
+ * again too); `<name>Files` is what an engine that does not say that reports, and is files only. The larger of the two
+ * is believed when both are there (a count of entries below the count of files cannot be true, and the loss of files is
  * the thing that must not go unsaid); one that is not a count is the same as one that is not there.
- * @param {any} msg
+ * @param {any} stats @param {'tmp'|'home'} name
  * @returns {{ n: number, folders: boolean }}
  */
-function tmpHeldOf(msg) {
-	const stats = msg && msg.stats && typeof msg.stats === 'object' ? msg.stats : null;
-	if (!stats) { return { n: 0, folders: false }; }
-	const entries = countOf(stats.tmpEntries);
-	const files = countOf(stats.tmpFiles) || 0;
+function heldIn(stats, name) {
+	const entries = countOf(stats[name + 'Entries']);
+	const files = countOf(stats[name + 'Files']) || 0;
 	const n = entries === null ? files : Math.max(entries, files);
 	return { n, folders: entries !== null && n > 0 };
 }
 
-/** @param {{ n: number, folders: boolean }} held */
-function emptiedTmpNote(held) {
-	const n = held.n;
-	const what = held.folders ? (n === 1 ? '1 file or folder' : n + ' files and folders') : n + ' file' + (n === 1 ? '' : 's');
-	return note('/tmp was emptied when the shell restarted (it held ' + what + '): /tmp lives in the engine\'s memory, which a minute or two of idle time, Ctrl+C or a timeout ends. Keep what matters in a workspace folder');
+/**
+ * What the `done` of an engine that was asked to keep a terminal's memory says it holds there: /tmp and /home/user - the
+ * visitor reaches the second by `~`, `$HOME` or a bare `cd` - and both go with the engine. `n` is the two together: what
+ * the idle time and the choice of the worker to replace are decided by.
+ * @param {any} msg
+ * @returns {Held}
+ */
+function heldOf(msg) {
+	const stats = msg && msg.stats && typeof msg.stats === 'object' ? msg.stats : null;
+	if (!stats) { return NOTHING_HELD; }
+	const tmp = heldIn(stats, 'tmp');
+	const home = heldIn(stats, 'home');
+	return { n: tmp.n + home.n, tmp, home };
+}
+
+/** @param {{ n: number, folders: boolean }} h  '1 file or folder', '5 files and folders', '3 files', '1 file' */
+function countText(h) {
+	const n = h.n;
+	return h.folders ? (n === 1 ? '1 file or folder' : n + ' files and folders') : n + ' file' + (n === 1 ? '' : 's');
+}
+
+/**
+ * The note for an engine that was replaced while it held something: what, and where. Only the place that held something
+ * is named (a /tmp that was empty is not "emptied"), and when both did there is one note, not two.
+ * @param {Held} held  with n > 0
+ */
+function emptiedNote(held) {
+	const keep = 'which a minute or two of idle time, Ctrl+C or a timeout ends. Keep what matters in a workspace folder';
+	if (held.tmp.n > 0 && held.home.n > 0) {
+		return note('/tmp and /home/user were emptied when the shell restarted (/tmp held ' + countText(held.tmp) + ', /home/user held ' + countText(held.home) + '): they live in the engine\'s memory, ' + keep);
+	}
+	const where = held.tmp.n > 0 ? '/tmp' : '/home/user';
+	return note(where + ' was emptied when the shell restarted (it held ' + countText(held.tmp.n > 0 ? held.tmp : held.home) + '): ' + where + ' lives in the engine\'s memory, ' + keep);
 }
 
 /** @param {unknown} list @returns {string[]} */
@@ -330,6 +358,15 @@ function cleanNotes(list) {
 		return t[0] === '[' ? t : note(t);
 	});
 }
+
+/**
+ * @typedef {{ n: number, tmp: { n: number, folders: boolean }, home: { n: number, folders: boolean } }} Held
+ *   what a terminal's engine holds in its own memory, which is lost with it: `n` the two together, `folders`: that count
+ *   has folders in it (not only files)
+ */
+
+/** @type {Held} */
+const NOTHING_HELD = Object.freeze({ n: 0, tmp: Object.freeze({ n: 0, folders: false }), home: Object.freeze({ n: 0, folders: false }) });
 
 /**
  * @typedef {object} Run  one script, from the moment it was asked for to the moment it was settled
@@ -353,7 +390,7 @@ function cleanNotes(list) {
  * @property {boolean} outCapped
  * @property {number} t0
  * @property {any} deadlineTimer
- * @property {string[]} lead                 notes that go first in whatever ends the run (a /tmp that was emptied, variables left out; from the engine's `done`
+ * @property {string[]} lead                 notes that go first in whatever ends the run (a /tmp or /home/user that was emptied, variables left out; from the engine's `done`
  *     on, what that result already says - a moved folder, the engine's notes, output cut - so that a Stop which does not wait for the commit says it too)
  * @property {boolean} reviewGivenUp         the shell stopped waiting for the agent's review (commitMs): what control.cancelled() answers from then on
  * @property {string|null} workerFailure     why the engine's worker died after it had said `done`, while the commit was going on
@@ -384,7 +421,7 @@ function cleanNotes(list) {
  * @property {Run|null} run                  the run that has it (from the moment it is taken)
  * @property {any} idleTimer
  * @property {number} lastUsed
- * @property {{ n: number, folders: boolean }} tmp   what the last `done` of a terminal run said its /tmp holds (n 0: nothing, or not said); `folders`: n counts folders too
+ * @property {Held} held                     what the last `done` of a terminal run said its /tmp and /home/user hold (n 0: nothing, or not said)
  * @property {Promise<void>} ready
  * @property {(e?: Error) => void} readyOk @property {(e: Error) => void} readyFail
  * @property {any} readyTimer
@@ -453,19 +490,21 @@ function createRuntime(deps) {
 	 *
 	 *    - a call is waited for at most `fsMs` (`within`: the review, which is one call that does a lot, is given the
 	 *      whole budget instead);
-	 *    - the read-only CHECK of a change set has checkBudgetMs(its size) in all - `checkMs` up to `checkEntries`
-	 *      entries, in proportion above, at most `checkMaxMs` -, the part that WRITES (the agent's review, then the
-	 *      folders it left; or the shell's own writes) has `commitMs` in all, each counted from the first call made
-	 *      in it: a provider that answers every call just before fsMs is not waited for for N x fsMs;
+	 *    - the read-only CHECK of a change set has `budgets.check` in all (checkBudgetMs(its size): `checkMs` up to
+	 *      `checkEntries` entries, in proportion above, at most `checkMaxMs`), the part that WRITES has `budgets.write`
+	 *      (the agent's review, then the folders it left: commitMs; the shell's own writes: twice the check's, and
+	 *      never less than commitMs, so that what the check let through can be written - writeBudgetMs), each counted
+	 *      from the first call made in it: a provider that answers every call just before fsMs is not waited for for
+	 *      N x fsMs;
 	 *    - abandon() ends every wait at once and no call is made after it: a Stop is not an in-flight read's time out.
 	 *
 	 * A call that is given up on is NOT cancelled - a provider has no way to - it is only no longer waited for, and
 	 * if it changes things it may still land; the error says so (`mayStillLand`) and commit.js puts that in the
 	 * note. A call that was never made cannot land, and its error says that too. `progress.phase` says which budget
 	 * a call is in ('check' is the check's, any other the writing's).
-	 * @param {Progress} progress @returns {Gate}
+	 * @param {Progress} progress @param {{ check: number, write: number }} budgets @returns {Gate}
 	 */
-	function createGate(progress) {
+	function createGate(progress, budgets) {
 		/** @type {Map<(e: Error) => void, boolean>} every wait there is, and whether it is for a call that changes things */
 		const waiting = new Map();
 		let abandoned = false;
@@ -480,7 +519,7 @@ function createRuntime(deps) {
 				// "no call is made after a Stop" is the gate's own rule and not a consequence of how it is scheduled)
 				if (abandoned) { return Promise.reject(stopped()); }
 				const family = progress.phase === 'check' ? 'check' : 'apply';
-				const budget = family === 'check' ? checkBudgetMs(limits.workers, progress.total) : limits.workers.commitMs;
+				const budget = family === 'check' ? budgets.check : budgets.write;
 				const now = deps.now();
 				if (began[family] === null) { began[family] = now; }
 				const left = /** @type {number} */ (began[family]) + budget - now;
@@ -689,14 +728,14 @@ function createRuntime(deps) {
 	}
 
 	/**
-	 * An idle worker is terminated after idleMs - twice that when it is a terminal's and its /tmp holds anything (files,
-	 * or folders only): an idle engine costs only memory (and there are four at most), what is in its /tmp is the one
-	 * thing that cannot be made again, and the next line says so when it is gone anyway.
+	 * An idle worker is terminated after idleMs - twice that when it is a terminal's and its /tmp or /home/user holds
+	 * anything (files, or folders only): an idle engine costs only memory (and there are four at most), what is in
+	 * them is the one thing that cannot be made again, and the next line says so when it is gone anyway.
 	 * @param {Rec} rec
 	 */
 	function armIdle(rec) {
 		deps.clearTimeout(rec.idleTimer);
-		const ms = limits.workers.idleMs * (rec.tmp.n > 0 ? 2 : 1);
+		const ms = limits.workers.idleMs * (rec.held.n > 0 ? 2 : 1);
 		rec.idleTimer = deps.setTimeout(() => { if (!rec.dead && !rec.run) { terminateRec(rec, 'idle'); } }, ms);
 	}
 
@@ -707,7 +746,7 @@ function createRuntime(deps) {
 	function spawnRec(kind, mounts, source) {
 		const gen = ++nextGen;
 		const worker = deps.createWorker(source);
-		/** @type {any} */ const rec = { gen, worker, key: keyOf(mounts), kind, dead: false, run: null, idleTimer: null, lastUsed: deps.now(), tmp: { n: 0, folders: false }, readyTimer: null };
+		/** @type {any} */ const rec = { gen, worker, key: keyOf(mounts), kind, dead: false, run: null, idleTimer: null, lastUsed: deps.now(), held: NOTHING_HELD, readyTimer: null };
 		rec.ready = new Promise((resolve, reject) => { rec.readyOk = resolve; rec.readyFail = reject; });
 		rec.ready.catch(() => { /* surfaced by whoever awaits it */ });
 		workers.add(rec);
@@ -850,19 +889,19 @@ function createRuntime(deps) {
 		if (rec && rec.key !== key) { terminateRec(rec, 'folders changed'); rec = null; }
 		if (!rec) {
 			if (workers.size >= limits.workers.max) {
-				// The one to replace: the least recently used idle worker - but one whose /tmp holds anything only when every
-				// idle one does (what is in /tmp is the one thing that cannot be made again; an agent's worker holds none).
+				// The one to replace: the least recently used idle worker - but one that holds anything in /tmp or /home/user
+				// only when every idle one does (it is the one thing that cannot be made again; an agent's worker holds none).
 				/** @type {Rec|null} */ let lru = null;
-				const before = (/** @type {Rec} */ a, /** @type {Rec} */ b) => ((a.tmp.n > 0) !== (b.tmp.n > 0) ? b.tmp.n > 0 : a.lastUsed < b.lastUsed);
+				const before = (/** @type {Rec} */ a, /** @type {Rec} */ b) => ((a.held.n > 0) !== (b.held.n > 0) ? b.held.n > 0 : a.lastUsed < b.lastUsed);
 				for (const r of workers) { if (idle(r) && (!lru || before(r, lru))) { lru = r; } }
 				if (!lru) { throw new Error('too many commands are running at once (' + limits.workers.max + '); try again when one has finished'); }
 				terminateRec(lru, 'evicted');
 			}
-			// This terminal had an engine, with something in its /tmp, and it is gone (idle, Ctrl+C, a deadline, a crash, an
-			// eviction, other folders): the new one starts with an empty /tmp, and the visitor is told once. (Only a
-			// terminal's worker remembers its /tmp: an agent's command starts from nothing, and so does every worker's.)
+			// This terminal had an engine, with something in its /tmp or /home/user, and it is gone (idle, Ctrl+C, a deadline,
+			// a crash, an eviction, other folders): the new one starts with both empty, and the visitor is told once. (Only a
+			// terminal's worker remembers them: an agent's command starts from nothing, and so does every worker's.)
 			const before = run.owner.rec;
-			if (before && before.tmp.n > 0) { run.lead.push(emptiedTmpNote(before.tmp)); }
+			if (before && before.held.n > 0) { run.lead.push(emptiedNote(before.held)); }
 			rec = spawnRec(run.kind, run.mounts, source);
 			run.owner.rec = rec;
 		}
@@ -908,9 +947,18 @@ function createRuntime(deps) {
 		run.state = 'committing';
 		deps.clearTimeout(run.deadlineTimer);
 		// From here the run is ended by its commit, which is bounded (the gate) and which a Stop gives up on at once.
-		run.progress = { phase: 'check', applied: 0, total: Array.isArray(msg.changes) ? msg.changes.length : 0 };
-		run.gate = createGate(run.progress);
-		if (run.kind === 'terminal') { rec.tmp = tmpHeldOf(msg); }
+		const total = Array.isArray(msg.changes) ? msg.changes.length : 0;
+		run.progress = { phase: 'check', applied: 0, total };
+		// Both budgets go with the set. The writing of the terminal's own commit is given twice the check's: what passed the
+		// check at some speed a call needs up to twice the calls to write (a folder: a stat, then the create), so a set that
+		// the check let through is one the writing can finish - never half a project where the check would have refused
+		// the whole set with nothing written. The agent's is its review, one call that is given commitMs, and the folders
+		// it leaves out of what is left of that.
+		run.gate = createGate(run.progress, {
+			check: checkBudgetMs(limits.workers, total),
+			write: run.commit ? limits.workers.commitMs : writeBudgetMs(limits.workers, total),
+		});
+		if (run.kind === 'terminal') { rec.held = heldOf(msg); }
 		outcomeOf(run, rec, msg).then(
 			(o) => settleRun(run, o),
 			(e) => settleRun(run, finish(run, 'error', 1, [note('could not finish the command: ' + messageOf(e))], null, 0, rec.gen)));
@@ -997,10 +1045,12 @@ function createRuntime(deps) {
 	 * more: an entry that is not one of those folders is not applied, an answer that is not that shape is "no
 	 * answer", and a count that is not a count is not believed.
 	 *
-	 * Time is the same in both routes (the gate): a call to the file system is waited for `fsMs` at most and the
-	 * part that writes `commitMs` in all - for the agent the review, then the folders it left, sharing that one
-	 * budget; for the terminal its own writes, after a read-only check that has `checkMs` of its own. Stop
-	 * is not waited for in either (killRun settles the run; what this returns after that is dropped).
+	 * Time is bounded the same way in both routes (the gate): a call to the file system is waited for `fsMs` at most
+	 * and the part that writes has a budget in all - for the agent `commitMs` for the review and then the folders it
+	 * left, sharing that one budget; for the terminal its own writes, after a read-only check that has a budget of its
+	 * own, get twice the check's (and never less than commitMs): the writing of a set must be able to finish whatever
+	 * the check let through (writeBudgetMs). Stop is not waited for in either (killRun settles the run; what this
+	 * returns after that is dropped).
 	 * @param {Run} run @param {Change[]} changes
 	 * @returns {Promise<{ applied: number, failed: number, notes: string[] }>}
 	 */

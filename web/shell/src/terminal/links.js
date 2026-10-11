@@ -15,8 +15,9 @@
 //      does not start with `~` (the shell's HOME is not the workspace);
 //   4. it EXISTS, as a file, relative to the working folder the line was printed in (line-log.js remembers it; a line
 //      it has not seen is resolved against the folder the terminal is in now). That is the check that makes
-//      everything above safe to be generous with, and it is bounded: at most MAX_STATS distinct paths per line, and
-//      the answers are waited for at most STAT_MS. A line that cannot be checked in time has no links.
+//      everything above safe to be generous with, and it is bounded: at most MAX_STATS distinct paths per line, each in
+//      the folder the line was printed in first and in the folder the command began in only if it is not there, and the
+//      answers are waited for at most STAT_MS in all. A line that cannot be checked in time has no links for the rest.
 // Words that are neither (`Makefile`, `LICENSE`) are linked only with a `:line`; a folder is not linked.
 //
 // The text of a link is the terminal's output, so everything about it is untrusted: it is only ever used as a path
@@ -24,7 +25,7 @@
 // @ts-check
 'use strict';
 
-/** At most this many distinct paths of one line are asked for. */
+/** At most this many distinct paths of one line are asked for (each in at most the folders the line may be about). */
 const MAX_STATS = 5;
 /** How long the answers are waited for, in all. */
 const STAT_MS = 500;
@@ -97,12 +98,15 @@ function resolvePath(cwd, p) {
  * The provider for vscode.window.registerTerminalLinkProvider.
  * @param {{
  *   vscode: any,
- *   mounts: () => Array<{ mount: string, uri: string }>,
+ *   resolve: (path: string) => any,
+ *   stat: (path: string) => Promise<{ type: string } | null>,
  *   cwdsOf: (terminal: any, line: string) => string[] | undefined,
  *   setTimeout?: (fn: () => void, ms: number) => any,
  *   clearTimeout?: (h: any) => void,
  * }} deps
- *   mounts: where each workspace folder is in the engine, as runtime.planMounts says;
+ *   resolve, stat: the runtime's own (runtime.resolve, runtime.stat): the workspace Uri behind an engine path, or null
+ *     when it is in no mount; and what is at it, `{ type: 'file' | 'dir', size }`, or null when nothing is, when it is
+ *     in no mount or when the file system did not answer in time. The mounts are the runtime's business;
  *   cwdsOf: the working folders (engine paths, the likeliest first) a line of a terminal that is one of ours was
  *     printed in; undefined for any other terminal, which is not looked at at all.
  */
@@ -112,25 +116,15 @@ function createLinkProvider(deps) {
 	const clearTimer = deps.clearTimeout || ((/** @type {any} */ h) => clearTimeout(h));
 
 	/** The Uri of an engine path, or null when it is in no mount. @param {string} abs */
-	function toUri(abs) {
-		/** @type {{ mount: string, uri: string } | null} */
-		let best = null;
-		for (const m of deps.mounts()) {
-			const inside = abs === m.mount || abs.startsWith(m.mount === '/' ? '/' : m.mount + '/');
-			if (inside && (!best || m.mount.length > best.mount.length)) { best = m; }
-		}
-		if (!best) { return null; }
-		let base;
-		try { base = vscode.Uri.parse(best.uri); } catch (e) { return null; }
-		const bp = base.path.endsWith('/') ? base.path.slice(0, -1) : base.path;
-		return base.with({ path: (bp + (abs === best.mount ? '' : abs.slice(best.mount === '/' ? 0 : best.mount.length))) || '/' });
+	function uriOf(abs) {
+		try { return deps.resolve(abs) || null; } catch (e) { return null; }
 	}
 
-	/** Whether the uri is a file; false for anything else, an error included. @param {any} uri @returns {Promise<boolean>} */
-	async function isFile(uri) {
+	/** Whether there is a file at the path; false for anything else, an error included. @param {string} abs @returns {Promise<boolean>} */
+	async function isFile(abs) {
 		try {
-			const st = await vscode.workspace.fs.stat(uri);
-			return (st.type & FILE) !== 0;
+			const st = await deps.stat(abs);
+			return !!st && st.type === 'file';
 		} catch (e) {
 			return false;
 		}
@@ -149,39 +143,59 @@ function createLinkProvider(deps) {
 			const candidates = findCandidates(context.line);
 			if (candidates.length === 0) { return []; }
 
-			// one stat per distinct path of the line (the first MAX_STATS of them), in the folders the line may be about
-			/** @type {Map<string, { uri: any, ok: Promise<boolean> }>} */
-			const asked = new Map();
+			// Where each candidate may be: in the folder the line was printed in, then in the one the command began in (a
+			// path in no mount is nowhere, and costs nothing). The budget is for DISTINCT paths, not for the places they are
+			// looked for in: two spellings of one file are one path, and so is a path asked for in both folders.
+			/** @type {Map<string, { places: string[] }>} */
+			const paths = new Map();
+			/** @type {Array<{ c: ReturnType<typeof findCandidates>[number], places: string[] }>} */
+			const plan = [];
 			for (const c of candidates) {
+				/** @type {string[]} */
+				const places = [];
 				for (const cwd of cwds) {
 					const abs = resolvePath(cwd, c.path);
-					if (asked.has(abs) || asked.size >= MAX_STATS) { continue; }
-					const uri = toUri(abs);
-					if (uri) { asked.set(abs, { uri, ok: isFile(uri) }); }
+					if (uriOf(abs)) { places.push(abs); }
 				}
+				if (places.length === 0) { continue; }
+				const key = places.join('\0');
+				if (!paths.has(key)) {
+					if (paths.size >= MAX_STATS) { continue; }
+					paths.set(key, { places });
+				}
+				plan.push({ c, places });
 			}
-			if (asked.size === 0) { return []; }
+			if (plan.length === 0) { return []; }
 
+			// One round per folder: every path in the first folder, and then in the next only the ones that were not there.
+			// The answers are waited for STAT_MS in all, whatever the number of rounds.
 			/** @type {Map<string, boolean>} */
 			const exists = new Map();
+			let timedOut = false;
 			let timer;
-			await Promise.race([
-				Promise.all(Array.from(asked, async ([abs, a]) => { exists.set(abs, await a.ok); })),
-				new Promise((resolve) => { timer = setTimer(() => resolve(undefined), STAT_MS); }),
-			]);
+			const clock = new Promise((resolve) => { timer = setTimer(() => { timedOut = true; resolve(undefined); }, STAT_MS); });
+			for (let round = 0; round < cwds.length && !timedOut; round++) {
+				/** @type {Map<string, Promise<void>>} */
+				const asked = new Map();
+				for (const slot of paths.values()) {
+					if (slot.places.some((p) => exists.get(p) === true)) { continue; }
+					const abs = slot.places[round];
+					if (abs === undefined || exists.has(abs) || asked.has(abs)) { continue; }
+					asked.set(abs, isFile(abs).then((ok) => { exists.set(abs, ok); }));
+				}
+				if (asked.size === 0) { break; }
+				await Promise.race([Promise.all(asked.values()), clock]);
+			}
 			clearTimer(timer);
 			if (token && token.isCancellationRequested) { return []; }
 
 			const links = [];
-			for (const c of candidates) {
+			for (const { c, places } of plan) {
 				// the first folder that has it: the folder the line was printed in, then the one the command began in
-				for (const cwd of cwds) {
-					const abs = resolvePath(cwd, c.path);
-					const a = asked.get(abs);
-					if (!a || exists.get(abs) !== true) { continue; }
-					links.push({ startIndex: c.startIndex, length: c.length, tooltip: 'Open in the editor', uri: a.uri, line: c.line, col: c.col });
-					break;
-				}
+				const abs = places.find((p) => exists.get(p) === true);
+				const uri = abs === undefined ? null : uriOf(abs);
+				if (!uri) { continue; }
+				links.push({ startIndex: c.startIndex, length: c.length, tooltip: 'Open in the editor', uri, line: c.line, col: c.col });
 			}
 			return links;
 		},

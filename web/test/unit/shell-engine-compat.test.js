@@ -67,7 +67,10 @@ async function main() {
 			[['echo', '-n', 'is-an-argument-of-echo'], ['echo', '-n', 'is-an-argument-of-echo']],
 			[['--', '-n', 'x'], ['--', '-n', 'x']],
 			[[], []],
-			[['-I'], ['-I', 'undefined']],
+			[['-I'], ['-I']],                                                      // a value that is not there is not the word "undefined"
+			[['-n'], ['-n']],
+			[['--max-args'], ['-n']],
+			[['-d'], ['-d']],
 		];
 		for (const [input, expected] of t) { assert.deepStrictEqual(c.normaliseXargs(input), expected, JSON.stringify(input)); }
 	});
@@ -818,8 +821,10 @@ async function main() {
 	});
 
 	test('touch -r REF takes the time of REF (the engine ignored it); a reference that is not there is an error and nothing is made', async () => {
-		const r = await sh("touch -d '@86400' a; touch -r a b; touch --reference=a c; touch --reference a d; touch -ra e; stat -c '%n %Y' b c d e; touch -r nofile f 2>&1; echo \"rc=$?\"; ls f 2>&1 | head -1; echo x > g; touch -d @5 h; touch -r h g; stat -c %Y g; cat g; touch -c -r a nothere; ls nothere 2>&1 | head -1; touch -t 202001020304 -r a i; stat -c %Y i");
-		assert.strictEqual(r.stdout, "b 86400\nc 86400\nd 86400\ne 86400\ntouch: failed to get attributes of 'nofile': No such file or directory\nrc=1\nls: cannot access 'f': No such file or directory\n5\nx\nls: cannot access 'nothere': No such file or directory\n1577934240\n");
+		const r = await sh("touch -d '@86400' a; touch -r a b; touch --reference=a c; touch --reference a d; touch -ra e; stat -c '%n %Y' b c d e; touch -r nofile f 2>&1; echo \"rc=$?\"; ls f 2>&1 | head -1; echo x > g; touch -d @5 h; touch -r h g; stat -c %Y g; cat g; touch -c -r a nothere; ls nothere 2>&1 | head -1; touch -t 202001020304 -r a i 2>&1 | head -1; ls i 2>&1 | head -1");
+		// -t with -r is GNU's "cannot specify times from more than one source" and nothing is touched (the engine's
+		// first fix combined them: an expectation that was wrong)
+		assert.strictEqual(r.stdout, "b 86400\nc 86400\nd 86400\ne 86400\ntouch: failed to get attributes of 'nofile': No such file or directory\nrc=1\nls: cannot access 'f': No such file or directory\n5\nx\nls: cannot access 'nothere': No such file or directory\ntouch: cannot specify times from more than one source\nls: cannot access 'i': No such file or directory\n");
 	});
 
 	test('tail -c +N starts at byte N (the engine printed the last N bytes), -c -N is -c N, and the other forms are the engine\'s', async () => {
@@ -837,7 +842,7 @@ async function main() {
 		// the parser of the options: every form, the warnings for options that exclude each other, the errors in GNU's words
 		const p = (...a) => c.parseXargs(a);
 		const o = (...a) => /** @type {any} */ (p(...a)).opts;
-		assert.deepStrictEqual(p('-I{}', 'echo', '{}'), { opts: { nul: false, delim: null, replace: '{}', eof: null, maxLines: null, maxArgs: null, verbose: false, noRun: false, argFile: null }, command: ['echo', '{}'], warnings: [] });
+		assert.deepStrictEqual(p('-I{}', 'echo', '{}'), { opts: { nul: false, delim: null, replace: '{}', eof: null, maxLines: null, maxArgs: null, maxChars: null, exitIfExceeded: false, prompt: false, openTty: false, verbose: false, noRun: false, argFile: null }, command: ['echo', '{}'], warnings: [] });
 		assert.strictEqual(o('-I', '@', 'x').replace, '@');
 		assert.strictEqual(o('-i', 'x').replace, '{}');
 		assert.strictEqual(o('-iX', 'x').replace, 'X');
@@ -894,13 +899,14 @@ async function main() {
 		assert.ok(/unmatched double quote/.test(c.xargsInput('"a\n', { nul: false, delim: null, replace: null, eof: null }).error || ''));
 		// the batches
 		const lines = (...ls) => ls.map((l) => Object.assign(l.words, { continued: !!l.cont }));
-		const batches = (ls, o) => c.xargsBatches(lines(...ls), Object.assign({ replace: null, maxLines: null, maxArgs: null }, o));
+		// with -I the command has a word to put the item in (`x {}`); without, the command is nothing and a run is its items
+		const batches = (ls, o) => c.xargsPlan(lines(...ls), Object.assign({ replace: null, maxLines: null, maxArgs: null, noRun: true }, o), o && o.replace ? ['x', '{}'] : []).map((e) => /** @type {any} */ (e).argv);
 		assert.deepStrictEqual(batches([{ words: ['a', 'b'] }, { words: ['c'] }], {}), [['a', 'b', 'c']]);
 		assert.deepStrictEqual(batches([{ words: ['a', 'b'] }, { words: ['c'] }], { maxArgs: 2 }), [['a', 'b'], ['c']]);
 		assert.deepStrictEqual(batches([{ words: ['a', 'b'] }, { words: ['c'] }], { maxLines: 1 }), [['a', 'b'], ['c']]);
 		assert.deepStrictEqual(batches([{ words: ['a'] }, { words: ['b'] }, { words: ['c'] }], { maxLines: 2 }), [['a', 'b'], ['c']]);
 		assert.deepStrictEqual(batches([{ words: ['a'], cont: true }, { words: ['b'] }, { words: ['c'] }], { maxLines: 1 }), [['a', 'b'], ['c']], 'a line that ends in a blank continues');
-		assert.deepStrictEqual(batches([{ words: ['a b'] }, { words: ['c'] }], { replace: '{}' }), [['a b'], ['c']]);
+		assert.deepStrictEqual(batches([{ words: ['a b'] }, { words: ['c'] }], { replace: '{}' }), [['x', 'a b'], ['x', 'c']]);
 		assert.deepStrictEqual(batches([], {}), []);
 		assert.strictEqual(c.xargsQuote('a'), 'a');
 		assert.strictEqual(c.xargsQuote('a b'), "'a b'");
@@ -973,6 +979,232 @@ async function main() {
 		assert.strictEqual(ok.exitCode, 0);
 		const deepIo = { cwd: '/', stat: async () => ({ isFile: false, isDirectory: true, size: 0 }), readdir: async () => ['x'], resolve: (b, p) => b + '/' + p, traversal: { entries: 1000, depth: 3, exceeded: boom } };
 		await assert.rejects(c.du(['d'], deepIo), /du: filesystem traversal depth limit exceeded \(3\)/);
+	});
+
+	/* ------------------------------------------------------------------------------------------ xargs, by size */
+
+	/**
+	 * The two lists the batch counts were recorded with (GNU findutils 4.8, `xargs [opts] echo < list | wc -l`, docker with no
+	 * network): a deterministic 16000-path list, and 4000 lines of letters, blanks and non-ASCII from an LCG. The numbers
+	 * are what GNU printed; the lists are made here the way they were made there.
+	 */
+	const bigList = () => { let t = ''; for (let i = 0; i < 16000; i++) { t += `./src/main/java/com/example/product/module${i % 200}/impl/Service${i}Impl.java\n`; } return t; };
+	const mixedList = () => {
+		let seed = 7;
+		const r = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+		let t = '';
+		for (let i = 0; i < 4000; i++) {
+			const n = 1 + Math.floor(r() * 60);
+			let w = '';
+			for (let k = 0; k < n; k++) { const c = r(); w += c < 0.05 ? 'é' : c < 0.08 ? ' ' : c < 0.1 ? '日' : String.fromCharCode(97 + Math.floor(r() * 26)); }
+			t += w + '\n';
+		}
+		return t;
+	};
+
+	test('xargs builds its command lines by size as GNU does: the number of runs of 16000 paths and of 4000 mixed lines is GNU\'s for each of ten option sets (-s counts every word with its NUL)', async () => {
+		const gnu = [
+			['', 9, 2], ['-s 1000', 1202, 139], ['-s 4096', 284, 34], ['-s 100000', 12, 2], ['-n 100', 160, 76],
+			['-n 7 -s 500', 2640, 1072], ['-L 3', 5334, 1281], ['-L 50 -s 90000', 320, 77], ['-I{} -s 200', 16000, 4000], ['-s 70 -n 3', 1, 184],
+		];
+		const h = await host({ '/w/big': bigList(), '/w/mixed': mixedList() });
+		assert.ok(bigList().length > 1000000, 'more than the parser\'s 1,000,000 bytes: the old command line could not be parsed');
+		for (const [opt, big, mixed] of gnu) {
+			const a = await h.run(`xargs ${opt} echo < big 2>&1 | wc -l`);
+			const b = await h.run(`xargs ${opt} echo < mixed 2>&1 | wc -l`);
+			assert.strictEqual(a.how, 'exit', opt);
+			assert.deepStrictEqual([Number(a.stdout), Number(b.stdout)], [big, mixed], `xargs ${opt}: runs of the big list, of the mixed one`);
+		}
+	});
+
+	test('xargs over more than 1 MB of items runs, by batches, as it did before the commands were built as one string (a parse error under the parser\'s cap)', async () => {
+		const files = {};
+		for (let i = 0; i < 16000; i++) { files[`/w/src/main/java/com/example/product/module${i % 200}/impl/Service${i}Impl.java`] = i % 7 === 0 ? 'TODO\n' : 'x\n'; }
+		const h = await host(files);
+		const r = await h.run("find . -name '*.java' | xargs grep -l TODO | wc -l; find . -type f | xargs wc -l | grep -c total; find . -type f | xargs -n 1000 echo | wc -l");
+		assert.strictEqual(r.stderr, '');
+		assert.strictEqual(r.stdout, '2286\n9\n16\n');
+		// the 40 batches: `seq 1 3000` is 13893 bytes of words; GNU 4.8 made 48, 41, 40 and 36 runs of it for these -s
+		const runs = async (n) => Number((await h.run(`seq 1 3000 | xargs -s ${n} echo | wc -l`)).stdout);
+		assert.deepStrictEqual([await runs(300), await runs(345), await runs(355), await runs(400)], [48, 41, 40, 36]);
+		// every line of -s 350 is at most 344 characters (GNU's longest), and the first one ends where GNU's does
+		const lines = (await h.run('seq 1 3000 | xargs -s 350 echo | awk \'{ if (length($0) > m) m = length($0) } END { print m, NR }\'')).stdout;
+		assert.strictEqual(lines, '344 41\n');
+		const first = (await h.run('seq 1 3000 | xargs -s 350 echo | head -1 | awk \'{ print $NF }\'')).stdout;
+		assert.strictEqual(first, '113\n');
+	});
+
+	test('xargs: -s counts like GNU (words, their NUL, the command and its own arguments, UTF-8 bytes), and what does not fit is GNU\'s error', async () => {
+		/** [stdout, stderr] of the script */
+		const both = async (script) => { const r = await sh(script); return [r.stdout, r.stderr]; };
+		assert.deepStrictEqual(await both("printf 'aa\\nbb\\ncc\\ndd\\n' | xargs -s 12 echo; printf 'aa\\nbb\\ncc\\ndd\\n' | xargs -s 14 echo; printf 'aa\\nbb\\ncc\\ndd\\n' | xargs -s 17 echo"), ['aa bb\ncc dd\naa bb cc\ndd\naa bb cc dd\n', '']);
+		assert.deepStrictEqual(await both("printf 'a b\\n' | xargs -s 10 echo xx; printf 'a b\\n' | xargs -s 12 echo xx"), ['xx a\nxx b\nxx a b\n', '']);
+		assert.deepStrictEqual(await both("printf 'é\\nb\\n' | xargs -s 8 echo; printf '日\\nb\\n' | xargs -s 9 echo"), ['é\nb\n日\nb\n', '']);
+		// an argument that cannot fit at all: what was read before it runs, then GNU's message, status 1
+		assert.deepStrictEqual(await both("printf 'a\\nb\\nzzzzzzzzzzzzzzzzzzzz\\nc\\n' | xargs -s 12 echo; echo \"rc=$?\""), ['a b\nrc=1\n', 'xargs: argument line too long\n']);
+		assert.deepStrictEqual(await both("printf 'abcdefgh\\n' | xargs -s 14 echo aaaa; echo \"rc=$?\""), ['rc=1\n', 'xargs: argument line too long\n']);
+		assert.deepStrictEqual(await both("printf 'a\\n' | xargs -s 5 echo; echo \"rc=$?\"; xargs -s 1 echo </dev/null; echo \"rc=$?\"; xargs -s 5 echo </dev/null; echo \"rc=$?\""), ['rc=1\nrc=1\n\nrc=0\n', 'xargs: argument line too long\nxargs: cannot fit single argument within argument list size limit\n']);
+		// -x with -n, -L (which implies it), -I: the line that is too long is an error and the open batch does not run
+		assert.deepStrictEqual(await both("printf 'a\\nbb\\n' | xargs -n 2 -x -s 8 echo; echo \"rc=$?\"; printf 'a b\\n' | xargs -L 1 -s 7 echo; echo \"rc=$?\"; printf 'a b\\n' | xargs -L 1 -s 9 echo; echo \"rc=$?\""), ['rc=1\nrc=1\na b\nrc=0\n', 'xargs: argument list too long\nxargs: argument list too long\n']);
+		assert.deepStrictEqual(await both("printf 'aaaa\\n' | xargs -s 14 -I{} echo {} {}; echo \"rc=$?\"; printf 'aaaa\\n' | xargs -s 15 -I{} echo {} {}; echo \"rc=$?\""), ['rc=1\naaaa aaaa\nrc=0\n', 'xargs: argument list too long\n']);
+		assert.deepStrictEqual(await both("printf 'aa\\nbb\\ncc\\ndd\\n' | xargs -x -s 12 echo; echo \"rc=$?\""), ['aa bb\ncc dd\nrc=0\n', ''], '-x alone does not stop it: the batches are cut at -s');
+		// -s itself
+		assert.deepStrictEqual(await both("printf 'a\\n' | xargs -s 0 echo; echo \"rc=$?\""), ['rc=1\n', 'xargs: value 0 for -s option should be >= 1\nxargs: cannot fit single argument within argument list size limit\n']);
+		assert.deepStrictEqual(await both("printf 'a\\n' | xargs -s abc echo; echo \"rc=$?\""), ['rc=1\n', "xargs: invalid number \"abc\" for -s option\nTry 'xargs --help' for more information.\n"]);
+		const over = await both('seq 1 2 | xargs -s 99999999 echo');
+		assert.strictEqual(over[0], '1 2\n');
+		assert.ok(/^xargs: value 99999999 for -s option should be <= \d+\n$/.test(over[1]), 'above the limit: a warning, and the limit');
+	});
+
+	test('xargs: a number that is negative or signed is a number (GNU\'s "should be >= 1", not "invalid number"); -s above the limit is the limit; a batch holds at most what one command can take', async () => {
+		const both = async (script) => { const r = await sh(script); return [r.stdout, r.stderr]; };
+		const help = "Try 'xargs --help' for more information.\n";
+		// recorded: printf 'a b\n' | xargs OPT echo, GNU findutils 4.8.0
+		assert.deepStrictEqual(await both("printf 'a b\\n' | xargs -n -1 echo; echo \"rc=$?\""), ['rc=1\n', 'xargs: value -1 for -n option should be >= 1\n' + help]);
+		assert.deepStrictEqual(await both("printf 'a b\\n' | xargs -L -2 echo; echo \"rc=$?\""), ['rc=1\n', 'xargs: value -2 for -L option should be >= 1\n' + help]);
+		assert.deepStrictEqual(await both("printf 'a b\\n' | xargs -n -0 echo; echo \"rc=$?\""), ['rc=1\n', 'xargs: value -0 for -n option should be >= 1\n' + help]);
+		assert.deepStrictEqual(await both("printf 'a b\\n' | xargs -s -5 echo; echo \"rc=$?\""), ['rc=1\n', 'xargs: value -5 for -s option should be >= 1\nxargs: cannot fit single argument within argument list size limit\n']);
+		assert.deepStrictEqual(await both("printf 'a b\\n' | xargs -n +3 echo; echo \"rc=$?\""), ['a b\nrc=0\n', '']);
+		assert.deepStrictEqual(await both("printf 'a b\\n' | xargs -n 1x echo; echo \"rc=$?\"; printf 'a b\\n' | xargs -s 5.5 echo; echo \"rc=$?\""), ['rc=1\nrc=1\n', 'xargs: invalid number "1x" for -n option\n' + help + 'xargs: invalid number "5.5" for -s option\n' + help]);
+		// the most -s can be is what the environment leaves of 2 MiB (GNU's formula; the exact figure is the shell's own
+		// exported variables): above it is a warning and the limit, at it nothing is said
+		const over = await both('seq 1 2 | xargs -s 99999999 echo');
+		const limit = Number(/should be <= (\d+)\n$/.exec(over[1])[1]);
+		assert.ok(limit > 2000000 && limit < 2097152, 'the limit: ' + limit);
+		assert.deepStrictEqual(await both(`seq 1 2 | xargs -s ${limit} echo`), ['1 2\n', '']);
+		assert.deepStrictEqual(await both(`seq 1 2 | xargs -s ${limit + 1} echo`), ['1 2\n', `xargs: value ${limit + 1} for -s option should be <= ${limit}\n`]);
+		assert.deepStrictEqual(await both('seq 1 2 | xargs -s 2200000 echo'), ['1 2\n', `xargs: value 2200000 for -s option should be <= ${limit}\n`]);
+		// and it is the limit that is used: 40000 words of 60 bytes are 2.4 MB, two runs (a larger -s would be one)
+		const words = "awk 'BEGIN { s = sprintf(\"%60s\", \"\"); gsub(/ /, \"x\", s); for (i = 0; i < 40000; i++) print s }'";
+		assert.deepStrictEqual(await both(`${words} | xargs -s 99999999 echo 2>/dev/null | wc -l`), ['2\n', '']);
+		assert.deepStrictEqual(await both(`${words} | xargs -s ${limit} echo | wc -l`), ['2\n', '']);
+		// the shell takes 100,000 words for one command, the command itself among them (GNU has no such limit: one run)
+		const runs = async (n) => (await sh(`awk 'BEGIN { for (i = 0; i < ${n}; i++) print "a" }' | xargs -s 1000000 echo | wc -l`)).stdout;
+		assert.deepStrictEqual([await runs(99999), await runs(100000), await runs(150000)], ['1\n', '2\n', '2\n']);
+	});
+
+	test('xargs -p, --interactive and -o fail closed (GNU, with no terminal, opens /dev/tty, cannot, and runs nothing); an unmatched quote runs only the items before it; -I with nothing to replace is refused', async () => {
+		const both = async (script, files) => { const r = await sh(script, files); return [r.stdout, r.stderr]; };
+		const tty = 'xargs: failed to open /dev/tty for reading: No such device or address\n';
+		const quote = "xargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\n";
+		assert.deepStrictEqual(await both("printf 'a b\\nc d\\n' | xargs -p echo; echo \"rc=$?\""), ['rc=1\n', 'echo a b c d' + tty]);
+		assert.deepStrictEqual(await both("printf 'a b\\n' | xargs --interactive echo; echo \"rc=$?\"; printf '' | xargs -p -r echo; echo \"rc=$?\""), ['rc=1\nrc=0\n', 'echo a b' + tty]);
+		assert.deepStrictEqual(await both("touch f; echo f | xargs -p rm; echo \"rc=$?\"; ls"), ['rc=1\nf\n', 'rm f' + tty], 'nothing was removed');
+		assert.deepStrictEqual(await both("printf 'a b\\n' | xargs -o echo; echo \"rc=$?\"; printf '' | xargs -o -r echo; echo \"rc=$?\""), ['rc=125\nrc=0\n', "xargs: '/dev/tty': No such device or address\n"]);
+		// the items before the quote, not the word it sits in
+		assert.deepStrictEqual(await both("printf \"a b it's c\\n\" | xargs echo; echo \"rc=$?\""), ['a b\nrc=1\n', quote]);
+		assert.deepStrictEqual(await both("printf \"a\\nit's\\n\" | xargs -n1 echo; echo \"rc=$?\""), ['a\nrc=1\n', quote]);
+		assert.deepStrictEqual(await both("printf \"a b c it's d\\n\" | xargs -n 2 echo; echo \"rc=$?\""), ['a b\nc\nrc=1\n', quote]);
+		assert.deepStrictEqual(await both("printf \"a b\\nc d it's\\n\" | xargs -L 1 echo; echo \"rc=$?\""), ['a b\nrc=1\n', quote], 'a line is run whole or not at all');
+		assert.deepStrictEqual(await both("printf \"a\\nb it's\\nc\\n\" | xargs -I{} echo x{}; echo \"rc=$?\""), ['xa\nrc=1\n', quote]);
+		assert.deepStrictEqual(await both("ls | xargs rm; echo \"rc=$?\"; ls", { '/w/a.txt': '1', "/w/don't.txt": '2' }), ["rc=1\ndon't.txt\n", quote], 'rm a.txt, and not rm a.txt don (a path nobody asked for)');
+		assert.deepStrictEqual(await both("ls | xargs rm; echo \"rc=$?\"; ls", { '/w/a.txt': '1', "/w/b'.txt": '2', '/w/c.txt': '3' }), ["rc=1\nb'.txt\nc.txt\n", quote], 'what is before the quote runs, what is after it does not');
+		// a command that failed is 123, whatever stopped the reading
+		assert.deepStrictEqual(await both("printf \"a b it's c\\n\" | xargs sh -c 'echo \"n=$#\"; exit 1' sh; echo \"rc=$?\""), ['n=2\nrc=123\n', quote]);
+		assert.deepStrictEqual(await both("printf 'a\\nb\\n' | xargs -I '' echo x; echo \"rc=$?\"; printf '' | xargs -I '' echo x; echo \"rc=$?\""), ['rc=1\nrc=0\n', 'xargs: command too long\n']);
+		assert.deepStrictEqual(await both("printf 'é.txt\\n' | xargs -n1 echo; echo hi > 'é.txt'; ls | xargs cat"), ['é.txt\nhi\n', ''], 'the items are text: a name with an é is a name');
+	});
+
+	/* ------------------------------------------------------------------------------------------ options that need a value */
+
+	test('every option of every wrapper that needs a value says so in getopt\'s words when it has none (the sweep): nothing leaks `undefined`, nothing runs', async () => {
+		const h = await host({ '/w/f': 'x\n' });
+		let swept = 0;
+		for (const [program, t] of Object.entries(c.OPTION_VALUES)) {
+			const spec = [...[...t.short].map((l) => '-' + l), ...t.long];
+			for (const opt of spec) {
+				const line = program === 'xargs' ? `${opt}` : `${opt}`;
+				const r = await h.run(`${program} ${line}`);
+				const said = (r.stdout + r.stderr);
+				assert.ok(!/undefined|TypeError|Cannot read|\[object/.test(said), `${program} ${opt}: ${said}`);
+				const name = program === 'egrep' || program === 'fgrep' ? 'grep' : program;
+				const wording = opt.startsWith('--') ? `${name}: option '${opt}' requires an argument\n` : `${name}: option requires an argument -- ${t.bare ? opt[1] : `'${opt[1]}'`}\n`;
+				assert.ok(r.stderr.startsWith(wording), `${program} ${opt}: ${JSON.stringify(r.stderr)}`);
+				assert.strictEqual(r.exitCode, t.status || 1, `${program} ${opt}`);
+				swept++;
+			}
+		}
+		assert.ok(swept > 200, 'options swept: ' + swept);
+		// a value that is there, whatever it looks like, is the value; `--` ends the options; a cluster takes the rest of itself
+		const quiet = async (script) => { const r = await h.run(script); return r.stderr; };
+		assert.ok(!/requires an argument/.test(await quiet('printf "a\\n" | sort -k 1,1 -o /dev/null; head -n -1 f; cp -rt . f 2>&1; echo x | xargs -I {} -n 1 echo {}')));
+		assert.ok(!/requires an argument/.test(await quiet('touch -- -r; printf "a\\n" | grep -e a -- -n; sed -ne p f')));
+		assert.ok(/option requires an argument -- 't'/.test(await quiet('cp -rt')));
+	});
+
+	test('the guard is one reader: missingOptionValue answers for the program it is given and for nothing else', () => {
+		const m = c.missingOptionValue;
+		assert.strictEqual(m('cp', ['-t', 'dir', 'f']), null);
+		assert.strictEqual(m('cp', ['f', '-t']).exitCode, 1);
+		assert.strictEqual(m('cp', ['--', '-t']), null, 'after -- they are operands');
+		assert.strictEqual(m('sort', ['-k']).exitCode, 2);
+		assert.strictEqual(m('grep', ['-e']).stderr, "grep: option requires an argument -- 'e'\nUsage: grep [OPTION]... PATTERNS [FILE]...\nTry 'grep --help' for more information.\n");
+		assert.strictEqual(m('egrep', ['--regexp']).stderr, "grep: option '--regexp' requires an argument\nUsage: grep [OPTION]... PATTERNS [FILE]...\nTry 'grep --help' for more information.\n");
+		assert.strictEqual(m('awk', ['-f']).stderr, 'awk: option requires an argument -- f\nUsage: awk [POSIX or GNU style options] -f progfile [--] file ...\n');
+		assert.strictEqual(m('sed', ['-n', '-e']).stderr.split('\n')[0], "sed: option requires an argument -- 'e'");
+		assert.strictEqual(m('sed', ['-ie']), null, '-i takes the rest of the cluster as its suffix');
+		assert.strictEqual(m('xargs', ['echo', '-n']), null, 'the command starts at the first operand: -n is its argument');
+		assert.strictEqual(m('xargs', ['-n']).stderr, "xargs: option requires an argument -- 'n'\nTry 'xargs --help' for more information.\n");
+		assert.strictEqual(m('xargs', ['-0rn']).stderr, "xargs: option requires an argument -- 'n'\nTry 'xargs --help' for more information.\n");
+		assert.strictEqual(m('xargs', ['-i']), null, '-i takes an optional string');
+		assert.strictEqual(m('date', ['-I']), null);
+		assert.strictEqual(m('ls', ['-w']).exitCode, 2);
+		assert.strictEqual(m('tr', ['-t']), null, 'a program that is not in the table');
+		assert.deepStrictEqual(c.parseXargs(['-n']), { error: "xargs: option requires an argument -- 'n'\nTry 'xargs --help' for more information.\n" });
+		assert.deepStrictEqual(c.parseXargs(['--arg-file']), { error: "xargs: option '--arg-file' requires an argument\nTry 'xargs --help' for more information.\n" });
+	});
+
+	/* ------------------------------------------------------------------------------------------ smaller things */
+
+	test('touch -r REF -d STRING: -d wins over the time of REF (and so does -d @N); -t with -r or -d is GNU\'s error and touches nothing', async () => {
+		const r = await sh("touch -d '2001-02-03 04:05:06' ref; touch -r ref -d '2010-01-01' a; stat -c '%y' a; touch -r ref a2; stat -c '%y' a2; touch -d '2010-01-01' -r ref a3; stat -c '%y' a3; touch -r ref -d @86400 a4; stat -c %Y a4; touch -r ref -t 202001020304 a5; echo \"rc=$?\"; touch -d 2010-01-01 -t 202001020304 a6; echo \"rc=$?\"; ls a5 a6 2>&1 | head -2");
+		assert.strictEqual(r.stdout, "2010-01-01 00:00:00.000000000 +0000\n2001-02-03 04:05:06.000000000 +0000\n2010-01-01 00:00:00.000000000 +0000\n86400\nrc=1\nrc=1\nls: cannot access 'a5': No such file or directory\nls: cannot access 'a6': No such file or directory\n", 'nothing was touched');
+		assert.strictEqual(r.stderr, "touch: cannot specify times from more than one source\nTry 'touch --help' for more information.\ntouch: cannot specify times from more than one source\nTry 'touch --help' for more information.\n");
+	});
+
+	test('head and tail take --lines and --bytes joined or apart, with the sign: tail --lines=+4 is from line 4 on (the engine took it for the last 4)', async () => {
+		const f = { '/w/f': 'alpha\nbeta\ngamma\ndelta\nepsilon\n' };
+		const r = await sh("tail --lines=+4 f; echo --; tail --lines +4 f; echo --; tail -n +4 f; echo --; tail --lines=2 f; echo --; tail --bytes=6 f; echo --; head --lines 2 f; echo --; head --lines=-3 f; echo --; head --bytes 3 f; echo; echo --; tail --lines=-2 f", f);
+		assert.strictEqual(r.stdout, 'delta\nepsilon\n--\ndelta\nepsilon\n--\ndelta\nepsilon\n--\ndelta\nepsilon\n--\nsilon\n--\nalpha\nbeta\n--\nalpha\nbeta\n--\nalp\n--\ndelta\nepsilon\n');
+		assert.deepStrictEqual(c.parseTailFrom(['--lines=+4', 'f']), null, 'a line count is the engine\'s: the wrapper makes it `-n +4`');
+	});
+
+	test('mkdir -pv names every folder it makes as GNU does (the operand as typed up to that segment, the last one with its slashes) and nothing for `.`, `..` or an empty segment', async () => {
+		const r = await sh("mkdir -pv a//b; mkdir -pv ./c/./d; mkdir -pv /w/g/h/; mkdir -pv a//b ./c; mkdir -pv ../w/i; mkdir -pv j/./k//l/..//m; mkdir -pv ./; mkdir -pv .; mkdir -pv ..//w//n");
+		assert.strictEqual(r.stdout, [
+			"mkdir: created directory 'a'", "mkdir: created directory 'a//b'",
+			"mkdir: created directory './c'", "mkdir: created directory './c/./d'",
+			"mkdir: created directory '/w/g'", "mkdir: created directory '/w/g/h/'",
+			"mkdir: created directory '../w/i'",
+			"mkdir: created directory 'j'", "mkdir: created directory 'j/./k'", "mkdir: created directory 'j/./k//l'", "mkdir: created directory 'j/./k//l/..//m'",
+			"mkdir: created directory '..//w//n'", '',
+		].join('\n'));
+	});
+
+	test('cp -rv of a tree the engine\'s traversal limit allows lists all of it, and one entry over is the engine\'s limit (a limit of the script), with nothing listed', async () => {
+		const files = { '/w/d/a': '1' };
+		for (let i = 0; i < 29; i++) { files[`/w/d/f${String(i).padStart(2, '0')}`] = '1'; }
+		const at = async (limit, script) => {
+			const h = await makeHost({ Engine: E, tree: makeTree(Object.assign({ '/w': null }, files)), start: false });
+			await h.core.handle({ t: 'init', gen: 1, folders: [{ id: 'f', path: '/w', name: 'w' }], limits: { maxTraversalEntries: limit } });
+			return h.run(script);
+		};
+		// the folder and its 30 entries are 31: exactly the limit passes, and every entry has its line
+		const ok = await at(31, 'cp -rv d e | wc -l; cp -rv d e2 | sort | sed -n \'1,3p;$p\'');
+		assert.strictEqual(ok.how, 'exit');
+		assert.strictEqual(ok.stdout, "31\n'd' -> 'e2'\n'd/a' -> 'e2/a'\n'd/f00' -> 'e2/f00'\n'd/f28' -> 'e2/f28'\n");
+		const over = await at(30, 'echo before; cp -rv d e; echo after');
+		assert.strictEqual(over.how, 'limit');
+		assert.ok(/cp: filesystem traversal entry limit exceeded \(30\)/.test(over.stderr), over.stderr);
+		assert.ok(!/after/.test(over.stdout) && !/->/.test(over.stdout));
+	});
+
+	test('sort -k: the letters are read where they are written (a b after the end position is the end\'s), -kF.C starts at the character, an invalid key and a bad -o are GNU\'s errors and status', async () => {
+		const r = await sh("printf '   c,FOO,0,foo\\naa,Foo,007\\n9,Foo,é,B\\n' | sort -k1.1,1b -k3,4; echo --; printf 'xb\\nya\\nzc\\n' | sort -k1.2; echo --; printf 'xb\\nya\\nzc\\n' | sort -k1.2,1.2; echo --; printf ' b\\na\\n  c\\n' | sort -k1b");
+		assert.strictEqual(r.stdout, '   c,FOO,0,foo\n9,Foo,é,B\naa,Foo,007\n--\nya\nxb\nzc\n--\nya\nxb\nzc\n--\na\n b\n  c\n');
+		const e = await sh("printf 'a\\n' | sort -k0; echo \"rc=$?\"; printf 'a\\n' | sort -k1.0; echo \"rc=$?\"; echo b | sort -o nodir/x; echo \"rc=$?\"; mkdir dd; echo b | sort -o dd; echo \"rc=$?\"");
+		assert.strictEqual(e.stdout, 'rc=2\nrc=2\nrc=2\nrc=2\n');
+		assert.strictEqual(e.stderr, "sort: invalid field specification '0'\nsort: invalid field specification '1.0'\nsort: open failed: nodir/x: No such file or directory\nsort: open failed: dd: Is a directory\n");
 	});
 
 	for (const t of tests) {

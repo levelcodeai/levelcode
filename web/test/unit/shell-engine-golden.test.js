@@ -58,10 +58,6 @@ const KNOWN_DIFFERENCES = [
 		cases: { 'c-cp-i': 'stderr', 'c-rm-i': 'stderr', 'c-rm-rI': 'stderr', 'c-cp-i-refused': 'stderr', 'c-rm-i-refused': 'stderr' },
 	},
 	{
-		why: 'wording only: GNU xargs warns that --max-args and --replace exclude each other',
-		cases: { 'c-xargs-long': 'stderr' },
-	},
-	{
 		why: 'regular expressions are RE2 (linear time, no back-references, no lookaround)',
 		cases: { 'grep-backref': 'stdout+stderr', 'x-grep-E-backref': 'stdout+exit+stderr', 'grep-P': 'stdout+stderr', 'sed-backref-pattern': 'stdout', 'x-sed-E-backref': 'stdout' },
 	},
@@ -106,10 +102,6 @@ const KNOWN_DIFFERENCES = [
 		cases: { 'glob-extglob': 'tree+stderr' },
 	},
 	{
-		why: 'engine: printf \\NNN and echo -e \\xHH with a value of 128 or more produce characters, not bytes (a file written that way holds the UTF-8 of those characters). Reading with base64 -d, cp or cat keeps bytes.',
-		cases: { 'unicode': 'stdout', 'u-printf-escapes': 'stdout', 'binary-roundtrip': 'stdout+tree' },
-	},
-	{
 		why: 'engine: the order of standard output and standard error under 2>&1 is the order of statements, not of writes',
 		cases: { 'stderr-ordering': 'stdout', 'r3-gap-xargs-t-order': 'stdout' },
 	},
@@ -134,8 +126,8 @@ const KNOWN_DIFFERENCES = [
 		cases: { 'rm-rv': 'stdout' },
 	},
 	{
-		why: 'engine: cut -c counts characters; coreutils 8.32 counts bytes (here the engine is the better one)',
-		cases: { 'wc-c-utf8-file': 'stdout' },
+		why: 'engine: cut -c and tr work on characters; coreutils 8.32 works on bytes (`cut -c1-2` of "héllo" is "h" and the first byte of "é"; `tr é e` makes "ee" of "é"). Here the engine is the better one',
+		cases: { 'wc-c-utf8-file': 'stdout', 'unicode': 'stdout' },
 	},
 	{
 		why: 'not offered or not possible here: symbolic links (EPERM), tar, gzip, gunzip, shasum, cksum',
@@ -186,10 +178,15 @@ const KNOWN_DIFFERENCES = [
 		why: 'by design: hard links cannot be made (the engine says so in its own words), as symbolic ones cannot',
 		cases: { 'r3-gap-ln-hard': 'stdout+stderr+tree' },
 	},
+	// Found by the fourth round, each with its reason
+	{
+		why: 'wording only: GNU sort says which part of a key is wrong (`field number is zero`, `character offset is zero`, `invalid count at start of`), the engine that the specification is invalid; the status is the same',
+		cases: { 'r4-sort-k-invalid': 'stderr' },
+	},
 ];
 
-/** The most entries the list may have: it can only shrink (73 before the third round, 2 removed, 8 added for what it found). */
-const MAX_DIFFERENCES = 79;
+/** The most entries the list may have: it can only shrink (79 before the fourth round: 3 closed by it, 1 found by it). */
+const MAX_DIFFERENCES = 77;
 
 const INLINE_MAX = golden.meta.inlineMax;
 function encodeBytes(buf) {
@@ -204,9 +201,9 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 /** a line of stderr without the program or script name and "line N:" that bash puts in front */
 const normaliseStderr = (s) => s.split('\n').map((l) => l.replace(/^(\/c\/[^:]+|bash|sh|\/bin\/bash|\/bin\/sh|\/usr\/bin\/bash): (line \d+: )?/, '').replace(/^line \d+: /, '')).join('\n').trim();
 
-/** The tree GNU left for a case: the fixture's tree with the case's delta applied. */
+/** The tree GNU left for a case: the fixture's tree (when the case ran on it) with the case's delta applied. */
 function referenceTree(c) {
-	const t = new Map(Object.entries(golden.fixture.tree));
+	const t = new Map(c.fixture ? Object.entries(golden.fixture.tree) : []);
 	for (const g of c.tree.gone) { t.delete(g); }
 	for (const d of c.tree.dirs) { t.set(d, null); }
 	for (const [p, v] of Object.entries(c.tree.files)) { t.set(p, v); }
@@ -272,9 +269,11 @@ async function main() {
 		assert.deepStrictEqual(golden.meta.flaky, ['patch', 'tar-gz', 'whoami-uname']);
 		assert.strictEqual(golden.meta.cases, golden.cases.length);
 		assert.ok(golden.cases.length >= 500, 'the batteries and the added cases: ' + golden.cases.length);
-		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra', 'round2', 'round3']);
+		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra', 'round2', 'round3', 'round4']);
 		const size = fs.statSync(path.join(REPO, 'web', 'test', 'fixtures', 'shell', 'golden', 'golden.json')).size;
-		assert.ok(size < 480 * 1024, 'fixtures stay small: ' + size);
+		// what grows with the cases is a case's script, its output and the files it left; a case that ran on a bare workspace
+		// lists no `gone` (it used to list the fixture's 18 paths: a third of the file)
+		assert.ok(size < 400 * 1024, 'fixtures stay small: ' + size);
 	});
 
 	test('the list of known differences names only cases that exist, and may only shrink', () => {

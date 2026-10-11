@@ -407,21 +407,29 @@ test('a write a real file system would refuse (no parent, the parent is a file, 
 	assert.deepStrictEqual(await changes(ov), []);
 });
 
-test('the content write of a redirection never throws once the redirection opened its target: the command may have removed the parent or replaced the file (GNU writes to the open descriptor); a write with no opening still does', async () => {
+/** the content write of a redirection as patch LC-26 makes the engine call it: the encoding marked */
+const redirected = (encoding) => ({ encoding, lcRedirect: true });
+
+test('the content write of a redirection never throws once the command has removed the parent or replaced the file (GNU writes to the open descriptor); a program\'s own write to the same path does, whatever the path was before', async () => {
 	const { ov, fs } = setup({ '/w/d/x': 'x', '/w/f': 'old', '/w/g': 'old' });
-	// the engine opens first (an empty write, 'binary'), runs the command, then writes the content
+	// the engine opens first (an empty write, 'binary'), runs the command, then writes the content, marked
 	await fs.writeFile('/w/d/f', '', 'binary');
 	await fs.rm('/w/d', { recursive: true, force: true });
-	await fs.writeFile('/w/d/f', 'hi\n', 'utf8');                  // the parent is gone: no error, nothing written
-	await fs.appendFile('/w/d/f', 'more\n', 'utf8');
+	await fs.writeFile('/w/d/f', 'hi\n', redirected('utf8'));       // the parent is gone: no error, nothing written
+	await fs.appendFile('/w/d/f', 'more\n', redirected('utf8'));
 	assert.strictEqual(await fs.exists('/w/d'), false);
 	// the target itself replaced by a directory
 	await fs.writeFile('/w/f', '', 'binary');
 	await fs.rm('/w/f');
 	await fs.mkdir('/w/f');
-	await fs.writeFile('/w/f', 'hi\n', 'utf8');
+	await fs.writeFile('/w/f', 'hi\n', redirected('binary'));
 	assert.strictEqual((await fs.stat('/w/f')).isDirectory, true, 'the new folder is untouched');
-	// a path that was never opened: the errno, as a real file system answers touch, tee, sort -o
+	// a program's own write: the errno, as a real file system answers touch, tee, sort -o. The paths are the very
+	// ones a redirection used above (the old path-keyed memory made these silent, with status 0)
+	assert.strictEqual(await code(fs.writeFile('/w/d/f', 'data', 'binary')), 'ENOENT', 'tee d/f after `> d/f` and rm -rf d');
+	assert.strictEqual(await code(fs.appendFile('/w/d/f', 'data', 'binary')), 'ENOENT', 'tee -a');
+	assert.strictEqual(await code(fs.writeFile('/w/d/f', 'data', 'utf8')), 'ENOENT', 'sort -o, awk >');
+	assert.strictEqual(await code(fs.writeFile('/w/f', 'data', 'binary')), 'EISDIR', 'tee f after `> f`, rm f, mkdir f');
 	await fs.mkdir('/w/newdir');
 	assert.strictEqual(await code(fs.writeFile('/w/d/never', 'data', 'utf8')), 'ENOENT');
 	assert.strictEqual(await code(fs.writeFile('/w/newdir', 'data', 'binary')), 'EISDIR');
@@ -430,6 +438,17 @@ test('the content write of a redirection never throws once the redirection opene
 	assert.strictEqual(await code(fs.writeFile('/w/d/f', '', 'binary')), 'ENOENT');
 	assert.deepStrictEqual(ov.denied, [], 'a dropped descriptor write is not a refusal by the shell');
 	assert.ok(!(await changes(ov)).some((c) => c.kind === 'write'), 'and nothing was written anywhere');
+});
+
+test('a redirection\'s write that the file system accepts is a write like any other, marked or not; the mark is not an encoding the overlay has to know', async () => {
+	const { fs } = setup({ '/w/d': null });
+	await fs.writeFile('/w/a', '', 'binary');
+	await fs.writeFile('/w/a', 'café\n', redirected('utf8'));
+	await fs.appendFile('/w/a', 'ÿ', redirected('binary'));
+	await fs.appendFile('/w/a', '', redirected('binary'));
+	assert.deepStrictEqual([...(await fs.readFileBuffer('/w/a'))], [...new TextEncoder().encode('café\n'), 0xff]);
+	await fs.writeFile('/w/b', 'plain', 'utf8');
+	assert.strictEqual(await fs.readFile('/w/b'), 'plain');
 });
 
 test('a policy refusal of a content write is still dropped and recorded after its opening was accepted (a cap is not a missing folder)', async () => {

@@ -146,6 +146,44 @@ function fakeVscode(o) {
 }
 
 /**
+ * What the runtime tells of engine paths (runtime.resolve, runtime.stat), over the fake file system of `fv`: `resolve`
+ * is the Uri behind a path (the longest mount that holds it wins; null in no mount) and `stat` is what is at it,
+ * `{ type: 'file' | 'dir', size }` or null, asked of the fake file system (so `state.stats` lists what was asked).
+ * @param {{ vscode: any }} fv
+ * @param {Array<{ mount: string, uri: string }> | (() => Array<{ mount: string, uri: string }>)} mounts
+ */
+function fakeRuntimeFs(fv, mounts) {
+	const list = () => (typeof mounts === 'function' ? mounts() : mounts);
+	/** @param {string} p */
+	const resolve = (p) => {
+		/** @type {{ mount: string, uri: string } | null} */
+		let best = null;
+		for (const m of list()) {
+			const inside = p === m.mount || p.startsWith(m.mount === '/' ? '/' : m.mount + '/');
+			if (inside && (!best || m.mount.length > best.mount.length)) { best = m; }
+		}
+		if (!best) { return null; }
+		const base = Uri.parse(best.uri);
+		const bp = base.path.endsWith('/') ? base.path.slice(0, -1) : base.path;
+		return base.with({ path: (bp + (p === best.mount ? '' : p.slice(best.mount === '/' ? 0 : best.mount.length))) || '/' });
+	};
+	return {
+		resolve,
+		/** @param {string} p */
+		async stat(p) {
+			const uri = resolve(p);
+			if (!uri) { return null; }
+			try {
+				const st = await fv.vscode.workspace.fs.stat(uri);
+				return { type: (st.type & 2) !== 0 ? 'dir' : 'file', size: st.size };
+			} catch (e) {
+				return null;
+			}
+		},
+	};
+}
+
+/**
  * A session the test completes by hand.
  * @param {{ cwd?: string, complete?: (kind: string, prefix: string) => string[] | Promise<string[]>, onRun?: (p: any, s: any) => void }} [o]
  */
@@ -258,4 +296,4 @@ function makePty(o) {
 	};
 }
 
-module.exports = { EventEmitter, Uri, fakeVscode, fakeSession, manualTimers, makePty, settle, VT, TERMINAL };
+module.exports = { EventEmitter, Uri, fakeVscode, fakeRuntimeFs, fakeSession, manualTimers, makePty, settle, VT, TERMINAL };

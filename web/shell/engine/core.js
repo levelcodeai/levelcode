@@ -18,10 +18,10 @@
 'use strict';
 // @ts-check
 
-const { createOverlay, createMemory, planMounts } = require('./overlay-fs.js');
+const { createOverlay, createMemory, planMounts, norm } = require('./overlay-fs.js');
 const compat = require('./compat.js');
 const { LIMITS } = require('./limits.js');
-const { decodeIfBytes, displayText } = require('./text.js');
+const { decodeIfBytes, displayText, joinEscapes, hasLoneSurrogate } = require('./text.js');
 
 /** README §3: what a script starts with, under whatever the host gives. */
 const DEFAULT_ENV = Object.freeze({
@@ -73,11 +73,13 @@ function yieldNow() {
 
 /**
  * What the engine printed, as text for a person (or a model): a string that is the bytes of valid UTF-8 is decoded
- * (the same rule the engine applies to its own final result), and a byte that is not UTF-8, which the engine's text
- * keeps as an escape (that is for files, not for eyes), is shown as U+FFFD.
+ * (the same rule the engine applies to its own final result), escapes of bytes that make UTF-8 together (two
+ * statements that each printed half of a character, `printf '\\303'; printf '\\251'`, in ONE chunk) are the character,
+ * and a byte that is not UTF-8, which the engine's text keeps as an escape (that is for files, not for eyes), is
+ * shown as U+FFFD.
  */
 function decodeBytes(s) {
-	return displayText(decodeIfBytes(s));
+	return displayText(decodeIfBytes(joinEscapes(s)));
 }
 
 /** An exception from the engine, as one line a person can read. Never a stack, never a minified name. */
@@ -401,9 +403,17 @@ function createCore(deps) {
 			if (ENV_DROP.has(k) || typeof src[k] !== 'string') { continue; }
 			outEnv[k] = src[k];
 		}
-		const pwd = typeof outEnv.PWD === 'string' ? outEnv.PWD : cwd;
-		outEnv.PWD = overlay.toHost(pwd);
-		if (typeof outEnv.OLDPWD === 'string') { outEnv.OLDPWD = overlay.toHost(outEnv.OLDPWD); }
+		// where the session is left: a path in canonical form (a script's own `PWD=/a/../b` is not one), and one the host
+		// can address. A directory whose name is not UTF-8 (`cd "$(cat latin1)"`) exists only in this run and its change
+		// set is refused, so the session stays in the nearest directory above it that has a name
+		const settle = (p) => {
+			let q = norm(p);
+			while (q !== '/' && hasLoneSurrogate(q)) { q = norm(q + '/..'); }
+			if (q !== norm(p)) { notes.push(displayText(`The directory ${p} has a name that is not valid UTF-8, which the editor cannot address; the session stays in ${q}.`)); }
+			return q;
+		};
+		outEnv.PWD = overlay.toHost(settle(typeof outEnv.PWD === 'string' ? outEnv.PWD : cwd));
+		if (typeof outEnv.OLDPWD === 'string') { outEnv.OLDPWD = overlay.toHost(settle(outEnv.OLDPWD)); }
 
 		/** @type {ArrayBuffer[]} */
 		const transfer = [];
@@ -430,6 +440,9 @@ function createCore(deps) {
 			// nothing reports none
 			tmpFiles: msg.keepTmp ? overlay.memory.countFiles('/tmp') : 0,
 			homeFiles: msg.keepTmp ? overlay.memory.countFiles('/home/user') : 0,
+			// files AND folders: a /tmp that holds only empty folders is lost as well
+			tmpEntries: msg.keepTmp ? overlay.memory.countEntries('/tmp') : 0,
+			homeEntries: msg.keepTmp ? overlay.memory.countEntries('/home/user') : 0,
 		});
 		if (!msg.keepTmp) { memory = null; }
 		finish({ exitCode, how, cwd: outEnv.PWD, env: outEnv, changes, denied, notes, stats }, transfer);

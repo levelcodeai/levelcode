@@ -76,7 +76,7 @@ test('the checked-in table is what the xterm Unicode 11 addon computes (when an 
 
 test('the invisible characters the editor keeps (variation selectors, ZWNJ, ZWJ, the keycap) take no cell, as in xterm.js: the cursor ends where the width says (when an xterm checkout is found)', async () => {
 	const kept = ['\ufe0f', '\ufe0e', '\u200c', '\u200d', '\u20e3'];
-	for (const ch of kept) { assert.strictEqual(cpWidth(ch.codePointAt(0)), 0, 'U+' + ch.codePointAt(0).toString(16)); }
+	for (const ch of kept) { const cp = /** @type {number} */ (ch.codePointAt(0)); assert.strictEqual(cpWidth(cp), 0, 'U+' + cp.toString(16)); }
 	const xt = needXterm('the kept invisible characters against xterm.js');
 	if (!xt) { return; }
 	const { Terminal } = xt;
@@ -114,8 +114,12 @@ test('without an xterm.js the real-xterm halves say SKIPPED, loudly, and LEVELCO
 	assert.ok(/RESULT null/.test(wrong.stdout));
 });
 
+let finished = false;
+// a test that awaits something that never settles leaves nothing to keep the process alive: it would exit 0, silently
+process.on('exit', (code) => { if (code === 0 && !finished) { console.error('the tests did not finish: one of them waits for something that never happens'); process.exitCode = 1; } });
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }
+	finished = true;
 	console.log(`\n${n} tests passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

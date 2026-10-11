@@ -323,6 +323,35 @@ try {
 	await press('c', { ctrl: true });
 	await sleep(500);
 
+	/* 3f. width AND height change in one event, with earlier output right above the prompt and the cursor on the first line
+	      of a pasted buffer: the last line of that earlier output is still on screen (a resize that guessed the region
+	      one row too high wrote the prompt over it) */
+	await typeLine('echo EARLIER-OUTPUT-MARK');
+	await waitScreen(/EARLIER-OUTPUT-MARK\s*\n.*\$ ?$/m, 'the mark and a fresh prompt').catch(() => null);
+	await page.eval(`(() => {
+		const ta = document.activeElement;
+		const dt = new DataTransfer();
+		dt.setData('text/plain', ${JSON.stringify('echo w-one\necho w-two ' + 'z'.repeat(170) + '\necho w-three')});
+		ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+		return true;
+	})()`);
+	await sleep(600);
+	await press('ArrowUp'); await press('ArrowUp');
+	await sleep(300);
+	const markRows = async () => (await screenText()).split('\n').filter((l) => /^EARLIER-OUTPUT-MARK$/.test(l.trim())).length;
+	const markBefore = await markRows();
+	const wh = await page.eval(`({ w: window.innerWidth, h: window.innerHeight })`);
+	await page.send('Emulation.setDeviceMetricsOverride', { width: Math.max(500, Math.round(wh.w * 0.6)), height: 460, deviceScaleFactor: 1, mobile: false });
+	await sleep(1800);
+	await page.send('Emulation.clearDeviceMetricsOverride');
+	await sleep(1800);
+	const markAfter = await markRows();
+	const promptsAfter = (await screenText()).split('\n').filter((l) => /\$ echo w-one/.test(l)).length;
+	check('a width-and-height resize leaves the earlier output above the prompt in place', markBefore === 1 && markAfter === 1 && promptsAfter <= 2, JSON.stringify({ markBefore, markAfter, promptsAfter }));
+	if (markAfter !== 1) { console.log('  screen after the resize:\n' + (await screenText()).split('\n').filter((l) => l.trim()).map((l) => '    | ' + l.slice(0, 120)).join('\n')); }
+	await press('c', { ctrl: true });
+	await sleep(500);
+
 	/* 4. hostile output must not type into the prompt or change the terminal */
 	await typeLine(`printf 'A\\033[6nB\\033[cC\\033]10;?\\007D\\033]0;pwned\\007E\\033[?1000hF\\033]52;c;ZXZpbA==\\007G\\n' > evil.txt; cat evil.txt; echo clean`);
 	await waitScreen(/clean/, 'the output of the hostile file');

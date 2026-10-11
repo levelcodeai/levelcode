@@ -843,6 +843,14 @@ test('what a terminal printed is remembered with the folder it was printed in, f
 	h.session.finish({});
 	await settle(); h.timers.drain();
 	assert.deepStrictEqual(h.pty.cwdsFor('> cat src/x.js'), ['/scratch']);
+	// what the runtime says about a run (its notes) is about the folder the command ended in, and then the one it began in
+	h.type('cd src && make', '\r');
+	h.session.finish({ cwd: '/scratch/src', notes: ['kept lib/n.js unchanged'] });
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(h.pty.cwdsFor('kept lib/n.js unchanged'), ['/scratch/src', '/scratch']);
+	h.type('cd ..', '\r');
+	h.session.finish({ cwd: '/scratch' });
+	await settle(); h.timers.drain();
 	// a line that is overwritten (a carriage return) is what is left of it on the screen
 	h.type('make', '\r');
 	h.session.pending.o.onStdout('abc src/old.js\rXY\n');
@@ -905,8 +913,12 @@ test('the status the terminal closes with is 0..255, whatever the runtime said',
 	assert.deepStrictEqual(g.closed, [255]);
 });
 
+let finished = false;
+// a test that awaits something that never settles leaves nothing to keep the process alive: it would exit 0, silently
+process.on('exit', (code) => { if (code === 0 && !finished) { console.error('the tests did not finish: one of them waits for something that never happens'); process.exitCode = 1; } });
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }
+	finished = true;
 	console.log(`\n${n} tests passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const { LIMITS, PROGRAMS, MISSING, BUILTINS, mergeLimits, createInfo, checkBudgetMs } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'info.js'));
+const { LIMITS, PROGRAMS, MISSING, BUILTINS, mergeLimits, createInfo, checkBudgetMs, writeBudgetMs } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'info.js'));
 
 const MiB = 1024 * 1024;
 let n = 0;
@@ -48,6 +48,26 @@ test('checkBudgetMs: checkMs up to checkEntries entries, the same per entry abov
 	// a table that was overridden is scaled by its own numbers
 	const m = mergeLimits({ workers: { checkMs: 1000, checkEntries: 10, checkMaxMs: 5000 } });
 	assert.deepStrictEqual([5, 10, 11, 20, 50, 60, 70].map((k) => checkBudgetMs(m.workers, k)), [1000, 1000, 1100, 2000, 5000, 5000, 5000]);
+});
+
+test('writeBudgetMs: twice the check\'s budget of the same set and never less than commitMs - what the check lets through is something the writing can finish', () => {
+	const w = LIMITS.workers;
+	// at the defaults the check's own floor (60 s) is half of commitMs (120 s): up to 120 entries, commitMs itself
+	assert.deepStrictEqual([0, 1, 5, 119, 120].map((n) => writeBudgetMs(w, n)), [120000, 120000, 120000, 120000, 120000]);
+	assert.strictEqual(writeBudgetMs(w, 121), 121000, 'one more entry: twice 60.5 s');
+	assert.strictEqual(writeBudgetMs(w, 200), 200000);
+	assert.strictEqual(writeBudgetMs(w, 240), 240000, 'twice the check\'s ceiling');
+	assert.deepStrictEqual([241, 1000, 2000, 1e9].map((n) => writeBudgetMs(w, n)), [240000, 240000, 240000, 240000], 'and no more');
+	for (const bad of [undefined, null, NaN, -1, Infinity, '200', {}]) { assert.strictEqual(writeBudgetMs(w, /** @type {any} */ (bad)), 120000, String(bad)); }
+	// a table that was overridden: commitMs is the floor, twice the check's the rest
+	const m = mergeLimits({ workers: { checkMs: 1000, checkEntries: 10, checkMaxMs: 5000, commitMs: 3000 } });
+	assert.deepStrictEqual([5, 10, 20, 30, 50, 60].map((k) => writeBudgetMs(m.workers, k)), [3000, 3000, 4000, 6000, 10000, 10000]);
+	// whatever the table: never below twice the check's, never below commitMs
+	for (const t of [w, m.workers, mergeLimits({ workers: { checkMs: 7, checkEntries: 3, checkMaxMs: 40, commitMs: 90 } }).workers]) {
+		for (const k of [0, 1, 2, 3, 10, 100, 1000]) {
+			assert.ok(writeBudgetMs(t, k) >= 2 * checkBudgetMs(t, k) && writeBudgetMs(t, k) >= t.commitMs, k + ' entries');
+		}
+	}
 });
 
 test('the table cannot be edited by whoever holds it: frozen all the way down', () => {

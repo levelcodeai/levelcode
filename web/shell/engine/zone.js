@@ -12,12 +12,20 @@
 // Nothing here reads the host's zone, with one exception that cannot be avoided: a string with no zone that V8's own
 // parser cannot read with " UTC" appended (none of the forms people type) falls back to the host's reading.
 //
-// What a TZ value may be: an IANA name (`Asia/Tokyo`, also with glibc's leading colon, `:America/New_York`), UTC and its
-// spellings, and the POSIX form with a fixed offset and no daylight saving rule (`JST-9`, `UTC+3`, `<+0530>-5:30`: the
-// offset is hours WEST of Greenwich, so `JST-9` is UTC+9). The POSIX form WITH a daylight saving part
-// (`EST5EDT,M3.2.0,M11.1.0`) is not read; a name Intl knows (`EST5EDT`) is. Anything else is UTC.
+// What a TZ value may be, as it is on a system that has the tzdata files and a file system that has case: an IANA name
+// written in the case its file has (`Asia/Tokyo`, also with glibc's leading colon, `:America/New_York`; `asia/tokyo` is
+// no zone), and the POSIX form with a fixed offset (`JST-9`, `UTC+3`, `<+0530>-5:30`: the offset is hours WEST of
+// Greenwich, so `JST-9` is UTC+9). A daylight saving part after it (`EST5EDT,M3.2.0,M11.1.0`) is not applied (standard
+// time all year; a name Intl knows, `EST5EDT`, is the zone and has its rules). Anything else is what glibc makes of it:
+// the letters it starts with (three or more) are the name and the offset is 0 (`Nowhere` says `Nowhere`, `asia/tokyo`
+// says `asia`, `ab` says nothing).
 'use strict';
 // @ts-check
+
+const { NAMES, ABBREVIATIONS } = require('./zone-data.js');
+
+/** every zone file the reference system has, by its exact name */
+const KNOWN = new Set(NAMES);
 
 const HostDate = Date;
 
@@ -31,25 +39,29 @@ const formatters = new Map();
 /** @type {Map<string, { name: string, offsetMs: number }>} */
 const fixedZones = new Map();
 
-/** What `UTC` is called in a zone that has it as its key: GNU prints the name that was asked for (`TZ=GMT` is GMT). */
+/** What `UTC` is called in a zone that has it as its key: the files of GMT say GMT, the others UTC. */
 let utcLabel = 'UTC';
 
-/** UTC and what people write for it. */
-const UTC_NAMES = /^(?:UTC|GMT|UT|Z|Etc\/UTC|Etc\/GMT|UCT|Zulu)$/i;
+/** The zone files that are UTC under another name, and the ones that are the same with the name GMT. */
+const UTC_FILES = new Set(['UTC', 'UCT', 'Zulu', 'Universal', 'Etc/UTC', 'Etc/UCT', 'Etc/Zulu', 'Etc/Universal']);
+const GMT_FILES = new Set(['GMT', 'GMT0', 'GMT+0', 'GMT-0', 'Greenwich', 'Etc/GMT', 'Etc/GMT0', 'Etc/GMT+0', 'Etc/GMT-0', 'Etc/Greenwich']);
 
-/** A POSIX TZ with a fixed offset: a name of three or more letters (or `<...>`), then hours west of Greenwich. */
-const POSIX_FIXED = /^(?:([A-Za-z]{3,})|<([A-Za-z0-9+-]{3,})>)([+-]?)(\d{1,2})(?::([0-5]\d))?(?::([0-5]\d))?$/;
+/**
+ * What a TZ that is no zone file is, as glibc reads it: a name (three or more letters, or `<...>`), then an optional
+ * offset in hours WEST of Greenwich; anything after that (a daylight saving rule) is not applied.
+ */
+const POSIX_PREFIX = /^(?:([A-Za-z]{3,})|<([A-Za-z0-9+-]{3,})>)?(?:([+-]?)(\d{1,2})(?::([0-5]\d))?(?::([0-5]\d))?)?/;
 
 /**
  * @param {string} s
- * @returns {{ key: string, name: string, offsetMs: number } | null}
+ * @returns {{ key: string, name: string, offsetMs: number }}
  */
 function posixFixed(s) {
-	const m = POSIX_FIXED.exec(s);
-	if (!m || Number(m[4]) > 24) { return null; }
-	const west = (m[3] === '-' ? -1 : 1) * (Number(m[4]) * 3600 + Number(m[5] || 0) * 60 + Number(m[6] || 0));
-	const name = m[1] || m[2];
-	return { key: `posix:${name}:${-west}`, name, offsetMs: -west * 1000 };
+	const m = /** @type {RegExpExecArray} */ (POSIX_PREFIX.exec(s));
+	const name = m[1] || m[2] || '';
+	// no name, no zone: what comes after it is not read (glibc says UTC with no name for `ab`, `5`, `us/eastern`)
+	const west = name !== '' && m[4] !== undefined && Number(m[4]) <= 24 ? (m[3] === '-' ? -1 : 1) * (Number(m[4]) * 3600 + Number(m[5] || 0) * 60 + Number(m[6] || 0)) : 0;
+	return { key: `posix:${name}:${-west}`, name, offsetMs: west === 0 ? 0 : -west * 1000 };
 }
 
 /**
@@ -63,18 +75,21 @@ function validZone(name) {
 	if (fixedZones.has(name)) { return name; }
 	const s = name[0] === ':' ? name.slice(1) : name;       // glibc: ":NAME" is the zone file NAME
 	if (s === '' || /^[+-]\d/.test(s)) { return null; }      // an offset alone is no TZ (and a newer ICU would take it)
-	if (UTC_NAMES.test(s)) { return 'UTC'; }
+	if (UTC_FILES.has(s) || GMT_FILES.has(s)) { return 'UTC'; }
 	if (formatters.get(s)) { return s; }
 	if (!formatters.has(s)) {
 		try {
-			formatters.set(s, new Intl.DateTimeFormat('en-US', { timeZone: s, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }));
-			return s;
-		} catch {
-			formatters.set(s, null);
-		}
+			const f = new Intl.DateTimeFormat('en-US', { timeZone: s, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+			// Intl takes a name in any case (`asia/tokyo`, `est`); a file system that has case does not. The name is a zone
+			// when it is one of the files, or is the very name Intl itself calls the zone (a zone newer than the table)
+			if (KNOWN.has(s) || f.resolvedOptions().timeZone === s) {
+				formatters.set(s, f);
+				return s;
+			}
+		} catch { /* not a zone Intl knows */ }
+		formatters.set(s, null);
 	}
 	const fx = posixFixed(s);
-	if (!fx) { return null; }
 	fixedZones.set(fx.key, { name: fx.name, offsetMs: fx.offsetMs });
 	return fx.key;
 }
@@ -82,7 +97,7 @@ function validZone(name) {
 /** @param {unknown} name the value of TZ (anything: a missing or bad one is UTC) */
 function setZone(name) {
 	current = validZone(name) || 'UTC';
-	utcLabel = current === 'UTC' && typeof name === 'string' && /^:?(?:Etc\/)?GMT$/i.test(name) ? 'GMT' : 'UTC';
+	utcLabel = current === 'UTC' && typeof name === 'string' && GMT_FILES.has(name[0] === ':' ? name.slice(1) : name) ? 'GMT' : 'UTC';
 }
 function getZone() { return current; }
 
@@ -156,57 +171,11 @@ function instantOf(wallMs, zone = current) {
 }
 
 /**
- * What GNU prints for `%Z`, for the zones a person is likely to use: [names, [offset in minutes, abbreviation]...]. tzdata
- * has letters for these and digits (`+04`, `-03`) for most of the rest, which is what a zone that is not here prints.
- * The abbreviation is chosen by the offset the zone has at that instant, so no rule of daylight saving is needed.
- * @type {Array<[string[], ...Array<[number, string]>]>}
+ * What GNU prints for `%Z`: tzdata's letters (zone-data.js, generated from the reference container's tzdata: `EST`,
+ * `CEST`, `IST`) by the offset the zone has at that instant, so that no rule of daylight saving is needed; a zone, or an
+ * offset of it, that tzdata gives digits (`+04`, `-03`) is written with them below.
  */
-const ABBREVIATIONS = [
-	[['America/New_York', 'America/Toronto', 'America/Detroit', 'America/Nassau', 'US/Eastern', 'EST5EDT', 'America/Montreal'], [-300, 'EST'], [-240, 'EDT']],
-	[['America/Panama', 'America/Jamaica', 'America/Cancun', 'EST'], [-300, 'EST']],
-	[['America/Chicago', 'America/Winnipeg', 'America/Menominee', 'US/Central', 'CST6CDT'], [-360, 'CST'], [-300, 'CDT']],
-	[['America/Mexico_City', 'America/Monterrey', 'America/Regina', 'America/Guatemala', 'America/Costa_Rica', 'America/El_Salvador', 'America/Belize'], [-360, 'CST'], [-300, 'CDT']],
-	[['America/Denver', 'America/Edmonton', 'America/Boise', 'US/Mountain', 'MST7MDT'], [-420, 'MST'], [-360, 'MDT']],
-	[['America/Phoenix', 'US/Arizona', 'MST'], [-420, 'MST']],
-	[['America/Los_Angeles', 'America/Vancouver', 'America/Tijuana', 'US/Pacific', 'PST8PDT'], [-480, 'PST'], [-420, 'PDT']],
-	[['America/Anchorage', 'America/Juneau', 'America/Sitka', 'America/Nome', 'America/Yakutat'], [-540, 'AKST'], [-480, 'AKDT']],
-	[['Pacific/Honolulu', 'US/Hawaii', 'HST'], [-600, 'HST']],
-	[['America/Halifax', 'America/Glace_Bay', 'America/Moncton', 'Atlantic/Bermuda', 'America/Puerto_Rico'], [-240, 'AST'], [-180, 'ADT']],
-	[['America/St_Johns'], [-210, 'NST'], [-150, 'NDT']],
-	[['Europe/London', 'Europe/Belfast', 'Europe/Jersey', 'Europe/Guernsey', 'Europe/Isle_of_Man', 'GB'], [0, 'GMT'], [60, 'BST']],
-	[['Europe/Dublin', 'Eire'], [0, 'GMT'], [60, 'IST']],
-	[['Europe/Lisbon', 'Atlantic/Canary', 'Atlantic/Faroe', 'Atlantic/Madeira', 'Portugal', 'WET'], [0, 'WET'], [60, 'WEST']],
-	[['Atlantic/Reykjavik', 'Africa/Abidjan', 'Africa/Accra', 'Africa/Dakar', 'Africa/Monrovia', 'Etc/GMT', 'GMT', 'Greenwich'], [0, 'GMT']],
-	[['Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome', 'Europe/Amsterdam', 'Europe/Brussels', 'Europe/Vienna', 'Europe/Zurich', 'Europe/Stockholm', 'Europe/Oslo', 'Europe/Copenhagen', 'Europe/Prague', 'Europe/Warsaw', 'Europe/Budapest', 'Europe/Belgrade', 'Europe/Zagreb', 'Europe/Ljubljana', 'Europe/Bratislava', 'Europe/Luxembourg', 'Europe/Monaco', 'Europe/Malta', 'Europe/Vaduz', 'Europe/Andorra', 'Europe/Sarajevo', 'Europe/Skopje', 'Europe/Tirane', 'Europe/Podgorica', 'Europe/Gibraltar', 'Africa/Ceuta', 'Arctic/Longyearbyen', 'CET', 'MET'], [60, 'CET'], [120, 'CEST']],
-	[['Africa/Tunis', 'Africa/Algiers'], [60, 'CET']],
-	[['Europe/Athens', 'Europe/Helsinki', 'Europe/Kiev', 'Europe/Kyiv', 'Europe/Bucharest', 'Europe/Sofia', 'Europe/Riga', 'Europe/Vilnius', 'Europe/Tallinn', 'Europe/Chisinau', 'Europe/Mariehamn', 'Asia/Nicosia', 'Europe/Nicosia', 'Asia/Beirut', 'Africa/Cairo', 'Egypt', 'EET'], [120, 'EET'], [180, 'EEST']],
-	[['Africa/Tripoli', 'Europe/Kaliningrad'], [120, 'EET']],
-	[['Europe/Moscow', 'Europe/Simferopol', 'Europe/Kirov', 'Europe/Volgograd', 'W-SU'], [180, 'MSK']],
-	[['Asia/Tokyo', 'Japan'], [540, 'JST']],
-	[['Asia/Seoul', 'Asia/Pyongyang', 'ROK'], [540, 'KST']],
-	[['Asia/Shanghai', 'Asia/Chongqing', 'Asia/Harbin', 'Asia/Macau', 'Asia/Taipei', 'PRC', 'ROC'], [480, 'CST']],
-	[['Asia/Hong_Kong', 'Hongkong'], [480, 'HKT']],
-	[['Asia/Manila'], [480, 'PST']],
-	[['Asia/Kolkata', 'Asia/Calcutta'], [330, 'IST']],
-	[['Asia/Karachi'], [300, 'PKT']],
-	[['Asia/Jakarta', 'Asia/Pontianak'], [420, 'WIB']],
-	[['Asia/Makassar'], [480, 'WITA']],
-	[['Asia/Jayapura'], [540, 'WIT']],
-	[['Asia/Jerusalem', 'Asia/Tel_Aviv', 'Israel'], [120, 'IST'], [180, 'IDT']],
-	[['Australia/Sydney', 'Australia/Melbourne', 'Australia/Canberra', 'Australia/Hobart', 'Australia/ACT', 'Australia/NSW', 'Australia/Victoria', 'Australia/Tasmania'], [600, 'AEST'], [660, 'AEDT']],
-	[['Australia/Brisbane', 'Australia/Queensland', 'Australia/Lindeman'], [600, 'AEST']],
-	[['Australia/Adelaide', 'Australia/Broken_Hill', 'Australia/South'], [570, 'ACST'], [630, 'ACDT']],
-	[['Australia/Darwin', 'Australia/North'], [570, 'ACST']],
-	[['Australia/Perth', 'Australia/West'], [480, 'AWST']],
-	[['Pacific/Auckland', 'NZ', 'Antarctica/McMurdo'], [720, 'NZST'], [780, 'NZDT']],
-	[['Pacific/Guam', 'Pacific/Saipan'], [600, 'ChST']],
-	[['Africa/Johannesburg', 'Africa/Maseru', 'Africa/Mbabane'], [120, 'SAST']],
-	[['Africa/Lagos', 'Africa/Kinshasa', 'Africa/Luanda', 'Africa/Douala', 'Africa/Libreville', 'Africa/Niamey', 'Africa/Ndjamena'], [60, 'WAT']],
-	[['Africa/Nairobi', 'Africa/Addis_Ababa', 'Africa/Dar_es_Salaam', 'Africa/Kampala', 'Africa/Mogadishu', 'Africa/Djibouti', 'Africa/Asmara'], [180, 'EAT']],
-	[['Africa/Maputo', 'Africa/Harare', 'Africa/Lusaka', 'Africa/Kigali', 'Africa/Lubumbashi', 'Africa/Gaborone', 'Africa/Windhoek', 'Africa/Khartoum', 'Africa/Blantyre', 'Africa/Bujumbura'], [120, 'CAT']],
-];
-
-/** @type {Map<string, Array<[number, string]>> | null} */
+/** @type {Map<string, Array<[number, string] | [number, string, number]>> | null} */
 let abbreviationIndex = null;
 
 /**
@@ -224,11 +193,14 @@ function abbreviation(ms, zoneName) {
 	if (fx) { return fx.name; }
 	if (!abbreviationIndex) {
 		abbreviationIndex = new Map();
-		for (const [names, ...rows] of ABBREVIATIONS) { for (const n of names) { abbreviationIndex.set(n, rows); } }
+		for (const [names, ...rows] of ABBREVIATIONS) { for (const i of names) { abbreviationIndex.set(NAMES[i], rows); } }
 	}
 	const minutes = Math.round(offsetAt(z, ms) / 60000);
-	const hit = (abbreviationIndex.get(z) || []).find((r) => r[0] === minutes);
-	if (hit) { return hit[1]; }
+	// the rows of this offset are in order of time: the last one that has begun (a zone that kept its offset and changed
+	// what it calls it has two or more), whose letters '' are tzdata's digits
+	let hit = null;
+	for (const r of abbreviationIndex.get(z) || []) { if (r[0] === minutes && (r[2] === undefined || r[2] * 1000 <= ms)) { hit = r; } }
+	if (hit && hit[1] !== '') { return hit[1]; }
 	const a = Math.abs(minutes);
 	const two = (n) => String(n).padStart(2, '0');
 	return (minutes < 0 ? '-' : '+') + two(Math.floor(a / 60)) + (a % 60 ? two(a % 60) : '');
@@ -284,7 +256,7 @@ class LcDate extends HostDate {
 	getMinutes() { return fieldsOf(this).minute; }
 	getSeconds() { return fieldsOf(this).second; }
 	getMilliseconds() { return fieldsOf(this).ms; }
-	getTimezoneOffset() { return (-fieldsOf(this).offsetMs / 60000) || 0; }          // minutes west of UTC, and 0, not -0
+	getTimezoneOffset() { return -Math.trunc(fieldsOf(this).offsetMs / 60000) || 0; }          // whole minutes west of UTC (strftime's %z has no seconds), and 0, not -0
 
 	/**
 	 * Replace some wall-clock fields, in the current zone.

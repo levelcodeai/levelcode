@@ -3,6 +3,8 @@
 // For each entry of mutations.mjs: put ONE defect back (a textual edit of web/shell/src or web/shell/engine in a copy of
 // the tree), run the suites that should notice, and say RED (a suite failed: the behaviour is pinned) or GREEN (it
 // survived: an unpinned property). The repo is never touched: the copy is in the temp dir and removed at the end.
+// An entry may add environment for its suites (`env`): LEVELCODE_REQUIRE_WORKER is cleared otherwise, so that a machine
+// that cannot start a thread gives a skip and not a hundred false RED.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -55,7 +57,7 @@ try {
 		if (!bad) {
 			const list = (m.tests || DEFAULT_SUITES).filter(present);
 			for (const s of list) {
-				const r = spawnSync(process.execPath, [path.join(dir, 'web/test/unit', s + '.test.js')], { encoding: 'utf8', timeout: SUITE_TIMEOUT_MS, env: Object.assign({}, process.env, { LEVELCODE_REQUIRE_WORKER: '' }) });
+				const r = spawnSync(process.execPath, [path.join(dir, 'web/test/unit', s + '.test.js')], { encoding: 'utf8', timeout: SUITE_TIMEOUT_MS, env: Object.assign({}, process.env, { LEVELCODE_REQUIRE_WORKER: '' }, m.env || {}) });
 				if (!(r.status === 0 && /\d+ tests passed/.test(r.stdout))) { red = s + (r.signal ? ' (timeout)' : ''); break; }
 			}
 		}

@@ -371,6 +371,15 @@ test('an explanation is one line: line ends and the blanks around them become on
 	assert.strictEqual(a.screen()[0], 'first second third fourth');
 });
 
+test('the blanks of an explanation that do not hold a line end stay as they were written', () => {
+	const t = setup({ mode: 'never' });
+	t.emit(run(1, 'ls', { explanation: 'a   b  \u00a0 c' }));
+	const a = t.attach();
+	t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: [] });
+	t.timers.drain();
+	assert.strictEqual(a.screen()[0], 'a   b  \u00a0 c');
+});
+
 test('an explanation, a note and the command line take time linear in their length: a long run of blanks does not stall the host', () => {
 	// the first one of these is what a model-written explanation of 100,000 spaces did to the extension host: 5 s, and
 	// 200,000 was 20 s, in a pattern that was quadratic in a run of blanks and ran before the text was cut at 300
@@ -422,6 +431,13 @@ test('an explanation of blank lines before its text shows the text; one that is 
 	const d = w.attach();
 	w.timers.drain();
 	assert.strictEqual(d.screen()[0], ' x', 'inside it');
+	// the scan cut falls inside a pair (an emoji whose first half is the 4,800th character): the half is not kept, and
+	// not written as [U+D83D] either
+	const x = setup({ mode: 'never' });
+	x.emit(run(1, 'ls', { explanation: '\n'.repeat(4799) + '\u{1f600}' + 'tail' }));
+	const e = x.attach();
+	x.timers.drain();
+	assert.ok(!e.all().includes('U+D83D') && !/[\ud800-\udbff](?![\udc00-\udfff])/.test(e.all()), JSON.stringify(e.all().slice(0, 80)));
 	// a cut that falls inside a surrogate pair does not leave half of one
 	const v = setup({ mode: 'never' });
 	v.emit(run(1, 'ls', { explanation: '\n' + '\u{1f600}'.repeat(3000) }));
@@ -455,8 +471,12 @@ test('file links follow the run: two runs in two folders each resolve against th
 	assert.strictEqual(setup().tab.cwdsFor('src/x.js:9'), undefined, 'and with no run at all, about nothing');
 });
 
+let finished = false;
+// a test that awaits something that never settles leaves nothing to keep the process alive: it would exit 0, silently
+process.on('exit', (code) => { if (code === 0 && !finished) { console.error('the tests did not finish: one of them waits for something that never happens'); process.exitCode = 1; } });
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }
+	finished = true;
 	console.log(`\n${n} tests passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

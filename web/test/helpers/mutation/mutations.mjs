@@ -1,8 +1,9 @@
 // One entry = one defect put back (see mutate.mjs). edits: [{ file, find, replace, count? }]; tests: the suites to run
-// (default: `suites`, the cheap ones first). A defect that no suite notices is a property nobody pinned.
+// (default: `suites`, the cheap ones first); env: extra environment for them (LEVELCODE_REQUIRE_WORKER is cleared for every
+// entry unless it says otherwise). A defect that no suite notices is a property nobody pinned.
 export const suites = [
-	'shell-sanitize', 'shell-commit', 'shell-runtime', 'shell-runtime-commit', 'shell-runtime-session', 'shell-runtime-agent',
-	'shell-runtime-info', 'shell-runtime-extension', 'shell-runtime-engine', 'shell-runtime-worker',
+	'shell-sanitize', 'shell-commit', 'shell-runtime', 'shell-runtime-commit', 'shell-runtime-commit-fuzz', 'shell-runtime-session',
+	'shell-runtime-agent', 'shell-runtime-info', 'shell-runtime-extension', 'shell-runtime-engine', 'shell-runtime-worker',
 ];
 const RT = 'web/shell/src/runtime.js';
 const CM = 'web/shell/src/commit.js';
@@ -196,7 +197,7 @@ export const mutations = [
 	{ name: "commit: a write that never answers is waited for for ever", edits: [e(RT, "writeFile: (/** @type {any} */ t, /** @type {Uint8Array} */ b) => gate.call(() => fs.writeFile(t, b), write),", "writeFile: (/** @type {any} */ t, /** @type {Uint8Array} */ b) => fs.writeFile(t, b),")] },
 	{ name: "commit: a stat that never answers is waited for for ever", edits: [e(RT, "try { const s = await gate.call(() => fs.stat(t), read); return", "try { const s = await fs.stat(t); return")] },
 	{ name: "commit: a review that never answers is waited for for ever", edits: [
-		e(RT, "const budget = family === 'check' ? checkBudgetMs(limits.workers, progress.total) : limits.workers.commitMs;", "const budget = Infinity;"),
+		e(RT, "const budget = family === 'check' ? budgets.check : budgets.write;", "const budget = Infinity;"),
 		e(RT, "within: limits.workers.commitMs, onGiveUp:", "within: Infinity, onGiveUp:"),
 	] },
 	{ name: 'read: the served cap is the engine\'s budget', edits: [e(RT, "if (run.readBytes + size > limits.read.served) {", "if (run.readBytes + size > run.caps.readRun) {")] },
@@ -223,11 +224,11 @@ export const mutations = [
 	], tests: ['shell-runtime-commit'] },
 
 	// ---- /tmp
-	{ name: 'tmp: a replaced worker\'s /tmp is never mentioned', edits: [e(RT, "if (before && before.tmp.n > 0) { run.lead.push(emptiedTmpNote(before.tmp)); }", '')], tests: ['shell-runtime-session'] },
-	{ name: 'tmp: an agent worker remembers its /tmp too (and is kept twice as long)', edits: [e(RT, "if (run.kind === 'terminal') { rec.tmp = tmpHeldOf(msg); }", "rec.tmp = tmpHeldOf(msg);")], tests: ['shell-runtime-session'] },
-	{ name: 'tmp: the files of a worker\'s /tmp are never remembered', edits: [e(RT, "if (run.kind === 'terminal') { rec.tmp = tmpHeldOf(msg); }", '')], tests: ['shell-runtime-session'] },
-	{ name: 'tmp: a worker with files in /tmp is idle-terminated after one idle time', edits: [e(RT, "const ms = limits.workers.idleMs * (rec.tmp.n > 0 ? 2 : 1);", "const ms = limits.workers.idleMs;")], tests: ['shell-runtime-session'] },
-	{ name: 'tmp: every worker is kept twice as long', edits: [e(RT, "const ms = limits.workers.idleMs * (rec.tmp.n > 0 ? 2 : 1);", "const ms = limits.workers.idleMs * 2;")], tests: ['shell-runtime', 'shell-runtime-session'] },
+	{ name: 'tmp: a replaced worker\'s /tmp is never mentioned', edits: [e(RT, "if (before && before.held.n > 0) { run.lead.push(emptiedNote(before.held)); }", '')], tests: ['shell-runtime-session'] },
+	{ name: 'tmp: an agent worker remembers its /tmp too (and is kept twice as long)', edits: [e(RT, "if (run.kind === 'terminal') { rec.held = heldOf(msg); }", "rec.held = heldOf(msg);")], tests: ['shell-runtime-session'] },
+	{ name: 'tmp: the files of a worker\'s /tmp are never remembered', edits: [e(RT, "if (run.kind === 'terminal') { rec.held = heldOf(msg); }", '')], tests: ['shell-runtime-session'] },
+	{ name: 'tmp: a worker with files in /tmp is idle-terminated after one idle time', edits: [e(RT, "const ms = limits.workers.idleMs * (rec.held.n > 0 ? 2 : 1);", "const ms = limits.workers.idleMs;")], tests: ['shell-runtime-session'] },
+	{ name: 'tmp: every worker is kept twice as long', edits: [e(RT, "const ms = limits.workers.idleMs * (rec.held.n > 0 ? 2 : 1);", "const ms = limits.workers.idleMs * 2;")], tests: ['shell-runtime', 'shell-runtime-session'] },
 	{ name: 'tmp: notes of the run are not delivered (lead notes dropped)', edits: [e(RT, "if (run.lead.length > 0) { o.notes = run.lead.concat(o.notes); }", '')], tests: ['shell-runtime-session'] },
 	{ name: 'tmp: a count is believed whatever it is', edits: [e(RT, "return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.trunc(n) : null;", "return typeof n === 'number' ? n : null;")], tests: ['shell-runtime-session'] },
 
@@ -365,8 +366,8 @@ export const mutations = [
 	{ name: 'hostile: the terminal\'s failure is written to the log raw', edits: [e(EX, "log('terminal-unavailable', { message: safeMessage(e, 300) });", "log('terminal-unavailable', { message: String((e && /** @type {any} */ (e).message) || e) });")], tests: ['shell-runtime-extension'] },
 
 	// ---- round 2: a commit is bounded, and a Stop does not wait for it
-	{ name: 'gate: the check has no budget of its own', edits: [e(RT, "family === 'check' ? checkBudgetMs(limits.workers, progress.total) : limits.workers.commitMs", "family === 'check' ? Infinity : limits.workers.commitMs")], tests: ['shell-runtime-commit'] },
-	{ name: 'gate: the writing has no budget', edits: [e(RT, "family === 'check' ? checkBudgetMs(limits.workers, progress.total) : limits.workers.commitMs", "family === 'check' ? checkBudgetMs(limits.workers, progress.total) : Infinity")], tests: ['shell-runtime-commit'] },
+	{ name: 'gate: the check has no budget of its own', edits: [e(RT, "family === 'check' ? budgets.check : budgets.write", "family === 'check' ? Infinity : budgets.write")], tests: ['shell-runtime-commit'] },
+	{ name: 'gate: the writing has no budget', edits: [e(RT, "family === 'check' ? budgets.check : budgets.write", "family === 'check' ? budgets.check : Infinity")], tests: ['shell-runtime-commit'] },
 	{ name: 'gate: the budget is counted from the latest call (a provider that answers just before fsMs is waited for for ever)', edits: [e(RT, "if (began[family] === null) { began[family] = now; }", "began[family] = now;")], tests: ['shell-runtime-commit'] },
 	{ name: 'gate: the check and the writing are one budget', edits: [e(RT, "const family = progress.phase === 'check' ? 'check' : 'apply';", "const family = 'apply';")], tests: ['shell-runtime-commit'] },
 	{ name: 'gate: a call has no bound of its own (only the budget)', edits: [e(RT, "const own = o.within === undefined ? limits.workers.fsMs : o.within;", "const own = Infinity;")], tests: ['shell-runtime-commit'] },
@@ -387,8 +388,8 @@ export const mutations = [
 	{ name: 'stop: the review is not marked as the phase', edits: [e(RT, "progress.phase = 'review';", "")], tests: ['shell-runtime-commit'] },
 	{ name: 'stop: the folders left by the review are not marked as the phase', edits: [e(RT, "progress.phase = 'rest';", "")], tests: ['shell-runtime-commit'] },
 	{ name: 'stop: what the review applied is not carried into the progress', edits: [e(RT, "progress.applied = applied;", "")], tests: ['shell-runtime-commit'] },
-	{ name: 'stop: the progress is not started when the engine says done', edits: [e(RT, "run.progress = { phase: 'check', applied: 0, total: Array.isArray(msg.changes) ? msg.changes.length : 0 };", "run.progress = { phase: 'write', applied: 0, total: 0 };")], tests: ['shell-runtime-commit'] },
-	{ name: 'stop: the total of the progress is not the size of the set', edits: [e(RT, "total: Array.isArray(msg.changes) ? msg.changes.length : 0 };", "total: 0 };")], tests: ['shell-runtime-commit'] },
+	{ name: 'stop: the progress is not started when the engine says done', edits: [e(RT, "run.progress = { phase: 'check', applied: 0, total };", "run.progress = { phase: 'write', applied: 0, total: 0 };")], tests: ['shell-runtime-commit'] },
+	{ name: 'stop: the total of the progress is not the size of the set', edits: [e(RT, "run.progress = { phase: 'check', applied: 0, total };", "run.progress = { phase: 'check', applied: 0, total: 0 };")], tests: ['shell-runtime-commit'] },
 	{ name: 'commit.js: the writing is not marked in the progress', edits: [e(CM, "if (progress) { progress.phase = 'write'; }", "")], tests: ['shell-commit', 'shell-runtime-commit'] },
 	{ name: 'commit.js: what is applied is not counted into the progress', edits: [e(CM, "if (counted) { applied++; if (progress) { progress.applied++; } }", "if (counted) { applied++; }")], tests: ['shell-commit', 'shell-runtime-commit'] },
 	{ name: 'commit.js: the notes count against this call\'s own set', edits: [e(CM, "note('applied ' + (base + applied) + ' of ' + grand + ' file changes; stopped at '", "note('applied ' + applied + ' of ' + total + ' file changes; stopped at '")], tests: ['shell-commit', 'shell-runtime-commit'] },
@@ -405,8 +406,8 @@ export const mutations = [
 	{ name: 'session: the terminal\'s width is carried to the next run', edits: [e(RT, "if (columns && env.COLUMNS === columns) { delete env.COLUMNS; }", "")], tests: ['shell-runtime-session'] },
 	{ name: 'session: the terminal\'s height is carried to the next run', edits: [e(RT, "if (lines && env.LINES === lines) { delete env.LINES; }", "")], tests: ['shell-runtime-session'] },
 	{ name: 'session: a width the script set itself is dropped too', edits: [e(RT, "if (columns && env.COLUMNS === columns) { delete env.COLUMNS; }", "if (columns) { delete env.COLUMNS; }")], tests: ['shell-runtime-session'] },
-	{ name: 'lifecycle: the worker that is replaced does not prefer one without /tmp files', edits: [e(RT, "((a.tmp.n > 0) !== (b.tmp.n > 0) ? b.tmp.n > 0 : a.lastUsed < b.lastUsed)", "(a.lastUsed < b.lastUsed)")], tests: ['shell-runtime-session'] },
-	{ name: 'lifecycle: the worker that is replaced prefers one WITH /tmp files', edits: [e(RT, "? b.tmp.n > 0 : a.lastUsed < b.lastUsed)", "? a.tmp.n > 0 : a.lastUsed < b.lastUsed)")], tests: ['shell-runtime-session'] },
+	{ name: 'lifecycle: the worker that is replaced does not prefer one without /tmp files', edits: [e(RT, "((a.held.n > 0) !== (b.held.n > 0) ? b.held.n > 0 : a.lastUsed < b.lastUsed)", "(a.lastUsed < b.lastUsed)")], tests: ['shell-runtime-session'] },
+	{ name: 'lifecycle: the worker that is replaced prefers one WITH /tmp files', edits: [e(RT, "? b.held.n > 0 : a.lastUsed < b.lastUsed)", "? a.held.n > 0 : a.lastUsed < b.lastUsed)")], tests: ['shell-runtime-session'] },
 	{ name: 'tmp: the lead notes are delivered last (the /tmp note after the others)', edits: [e(RT, "if (run.lead.length > 0) { o.notes = run.lead.concat(o.notes); }", "if (run.lead.length > 0) { o.notes = o.notes.concat(run.lead); }")], tests: ['shell-runtime-session'] },
 	// ---- fix round 3: a Stop keeps what the run already knew; the shell's give-up on a review is a cancellation; the check's budget goes with the set; /tmp is files and folders
 	{ name: 'stop: what the engine\'s result already said is kept only for a run that goes on to its end (a Stop during the commit drops it)', edits: [e(RT, "run.lead.push(...head);\n\t\t/** What the commit, or the reason there was none, adds after that. @type {string[]} */\n\t\tconst notes = [];", "const notes = head;")], tests: ['shell-runtime-commit'] },
@@ -428,8 +429,8 @@ export const mutations = [
 		e(RT, "if (o.onGiveUp) { o.onGiveUp(); } reject(err); };", "if (o.onGiveUp) { o.onGiveUp(); } else { progress.gaveUp = true; } reject(err); };"),
 		e(RT, "const cancelled = () => run.killed !== null || run.reviewGivenUp;", "const cancelled = () => run.killed !== null || run.reviewGivenUp || /** @type {any} */ (progress).gaveUp === true;"),
 	], tests: ['shell-runtime-commit'] },
-	{ name: 'check budget: it does not grow with the set (checkMs for any size)', edits: [e(RT, "family === 'check' ? checkBudgetMs(limits.workers, progress.total) : limits.workers.commitMs", "family === 'check' ? limits.workers.checkMs : limits.workers.commitMs")], tests: ['shell-runtime-commit'] },
-	{ name: 'check budget: the size of the set is not the run\'s (0 entries)', edits: [e(RT, "checkBudgetMs(limits.workers, progress.total)", "checkBudgetMs(limits.workers, 0)")], tests: ['shell-runtime-commit'] },
+	{ name: 'check budget: it does not grow with the set (checkMs for any size)', edits: [e(RT, "check: checkBudgetMs(limits.workers, total),", "check: limits.workers.checkMs,")], tests: ['shell-runtime-commit'] },
+	{ name: 'check budget: the size of the set is not the run\'s (0 entries)', edits: [e(RT, "check: checkBudgetMs(limits.workers, total),", "check: checkBudgetMs(limits.workers, 0),")], tests: ['shell-runtime-commit'] },
 	{ name: 'check budget: no ceiling', edits: [e(IN, "Math.max(w.checkMs, Math.min(w.checkMaxMs, Math.ceil(w.checkMs * n / w.checkEntries)))", "Math.max(w.checkMs, Math.ceil(w.checkMs * n / w.checkEntries))")], tests: ['shell-runtime-info', 'shell-runtime-commit'] },
 	{ name: 'check budget: a small set gets its share of checkMs, not all of it', edits: [e(IN, "Math.max(w.checkMs, Math.min(w.checkMaxMs, Math.ceil(w.checkMs * n / w.checkEntries)))", "Math.min(w.checkMaxMs, Math.ceil(w.checkMs * n / w.checkEntries))")], tests: ['shell-runtime-info', 'shell-runtime-commit'] },
 	{ name: 'check budget: the ceiling is above the floor\'s say (a ceiling below checkMs wins)', edits: [e(IN, "Math.max(w.checkMs, Math.min(w.checkMaxMs, Math.ceil(w.checkMs * n / w.checkEntries)))", "Math.min(w.checkMaxMs, Math.max(w.checkMs, Math.ceil(w.checkMs * n / w.checkEntries)))")], tests: ['shell-runtime-info'] },
@@ -438,11 +439,36 @@ export const mutations = [
 	{ name: 'check budget: the share is rounded down', edits: [e(IN, "Math.ceil(w.checkMs * n / w.checkEntries)", "Math.floor(w.checkMs * n / w.checkEntries)")], tests: ['shell-runtime-info'] },
 	{ name: 'check budget: a size that is not a number is taken as it is', edits: [e(IN, "const n = typeof entries === 'number' && Number.isFinite(entries) && entries > 0 ? entries : 0;", "const n = entries;")], tests: ['shell-runtime-info'] },
 	{ name: 'check budget: the table has no checkEntries (a set is always one entry\'s worth)', edits: [e(IN, "checkMs: 60000, checkEntries: 120, checkMaxMs: 120000,", "checkMs: 60000, checkEntries: 1e9, checkMaxMs: 120000,")], tests: ['shell-runtime-info'] },
-	{ name: 'tmp: the folders of /tmp are not looked at (tmpEntries is ignored)', edits: [e(RT, "const entries = countOf(stats.tmpEntries);", "const entries = null;")], tests: ['shell-runtime-session'] },
+	{ name: 'tmp: the folders of /tmp are not looked at (tmpEntries is ignored)', edits: [e(RT, "const entries = countOf(stats[name + 'Entries']);", "const entries = name === 'tmp' ? null : countOf(stats[name + 'Entries']);")], tests: ['shell-runtime-session'] },
 	{ name: 'tmp: the entries are believed over the files even when they are fewer', edits: [e(RT, "const n = entries === null ? files : Math.max(entries, files);", "const n = entries === null ? files : entries;")], tests: ['shell-runtime-session'] },
 	{ name: 'tmp: the files are believed over the entries', edits: [e(RT, "const n = entries === null ? files : Math.max(entries, files);", "const n = files;")], tests: ['shell-runtime-session'] },
-	{ name: 'tmp: the note says "files" over a count that has folders in it', edits: [e(RT, "const what = held.folders ? (n === 1 ? '1 file or folder' : n + ' files and folders') : n + ' file' + (n === 1 ? '' : 's');", "const what = n + ' file' + (n === 1 ? '' : 's');")], tests: ['shell-runtime-session'] },
+	{ name: 'tmp: the note says "files" over a count that has folders in it', edits: [e(RT, "return h.folders ? (n === 1 ? '1 file or folder' : n + ' files and folders') : n + ' file' + (n === 1 ? '' : 's');", "return n + ' file' + (n === 1 ? '' : 's');")], tests: ['shell-runtime-session'] },
 	{ name: 'tmp: the note says "files and folders" over a count of files only', edits: [e(RT, "return { n, folders: entries !== null && n > 0 };", "return { n, folders: n > 0 };")], tests: ['shell-runtime-session'] },
 	{ name: 'tmp: one entry is "1 files and folders"', edits: [e(RT, "(n === 1 ? '1 file or folder' : n + ' files and folders')", "(n + ' files and folders')")], tests: ['shell-runtime-session'] },
 	{ name: 'tmp: nothing in /tmp is something (an empty /tmp is a loss)', edits: [e(RT, "return { n, folders: entries !== null && n > 0 };", "return { n: n + 1, folders: entries !== null };")], tests: ['shell-runtime-session'] },
+	// ---- fix round 4: what the check lets through the writing can finish; /home/user is held too; Stop in the check with a dead worker; the run that was never heard from
+	{ name: 'write budget: the terminal\'s writing has commitMs whatever the set (it does not go with the check\'s: a scaffold is half applied)', edits: [e(RT, "write: run.commit ? limits.workers.commitMs : writeBudgetMs(limits.workers, total),", "write: limits.workers.commitMs,")], tests: ['shell-runtime-commit', 'shell-runtime-commit-fuzz'] },
+	{ name: 'write budget: the agent\'s writing is scaled with the set too (the folders a review left are not bound by commitMs)', edits: [e(RT, "write: run.commit ? limits.workers.commitMs : writeBudgetMs(limits.workers, total),", "write: writeBudgetMs(limits.workers, total),")], tests: ['shell-runtime-commit'] },
+	{ name: 'write budget: the size of the set is not the run\'s (0 entries)', edits: [e(RT, "writeBudgetMs(limits.workers, total),", "writeBudgetMs(limits.workers, 0),")], tests: ['shell-runtime-commit', 'shell-runtime-commit-fuzz'] },
+	{ name: 'write budget: the writing has none (Infinity)', edits: [e(RT, "write: run.commit ? limits.workers.commitMs : writeBudgetMs(limits.workers, total),", "write: run.commit ? limits.workers.commitMs : Infinity,")], tests: ['shell-runtime-commit'] },
+	{ name: 'write budget: it is the check\'s own (once, not twice)', edits: [e(IN, "return Math.max(w.commitMs, 2 * checkBudgetMs(w, entries));", "return Math.max(w.commitMs, checkBudgetMs(w, entries));")], tests: ['shell-runtime-info', 'shell-runtime-commit', 'shell-runtime-commit-fuzz'] },
+	{ name: 'write budget: three times the check\'s', edits: [e(IN, "return Math.max(w.commitMs, 2 * checkBudgetMs(w, entries));", "return Math.max(w.commitMs, 3 * checkBudgetMs(w, entries));")], tests: ['shell-runtime-info', 'shell-runtime-commit'] },
+	{ name: 'write budget: commitMs is not its floor', edits: [e(IN, "return Math.max(w.commitMs, 2 * checkBudgetMs(w, entries));", "return 2 * checkBudgetMs(w, entries);")], tests: ['shell-runtime-info', 'shell-runtime-commit'] },
+	{ name: 'write budget: it is commitMs and nothing else (the set is ignored)', edits: [e(IN, "return Math.max(w.commitMs, 2 * checkBudgetMs(w, entries));", "return w.commitMs;")], tests: ['shell-runtime-info', 'shell-runtime-commit', 'shell-runtime-commit-fuzz'] },
+	{ name: 'home: /home/user is never looked at (neither its folders nor its files)', edits: [e(RT, "const home = heldIn(stats, 'home');", "const home = { n: 0, folders: false };")], tests: ['shell-runtime-session'] },
+	{ name: 'home: the folders of /home/user are not looked at (homeEntries is ignored)', edits: [e(RT, "const entries = countOf(stats[name + 'Entries']);", "const entries = name === 'home' ? null : countOf(stats[name + 'Entries']);")], tests: ['shell-runtime-session'] },
+	{ name: 'home: the files of /home/user are not looked at (homeFiles is ignored)', edits: [e(RT, "const files = countOf(stats[name + 'Files']) || 0;", "const files = name === 'home' ? 0 : countOf(stats[name + 'Files']) || 0;")], tests: ['shell-runtime-session'] },
+	{ name: 'home: /home/user is not counted into what a worker holds (not kept twice as long, not preferred at the cap, not said)', edits: [e(RT, "return { n: tmp.n + home.n, tmp, home };", "return { n: tmp.n, tmp, home };")], tests: ['shell-runtime-session'] },
+	{ name: 'home: /tmp is not counted into what a worker holds', edits: [e(RT, "return { n: tmp.n + home.n, tmp, home };", "return { n: home.n, tmp, home };")], tests: ['shell-runtime-session'] },
+	{ name: 'home: the note names /tmp when only /home/user held something', edits: [e(RT, "const where = held.tmp.n > 0 ? '/tmp' : '/home/user';", "const where = '/tmp';")], tests: ['shell-runtime-session'] },
+	{ name: 'home: the note says what /tmp held when only /home/user held something', edits: [e(RT, "countText(held.tmp.n > 0 ? held.tmp : held.home)", "countText(held.tmp)")], tests: ['shell-runtime-session'] },
+	{ name: 'home: when both held something the note names only /tmp', edits: [e(RT, "if (held.tmp.n > 0 && held.home.n > 0) {", "if (false) {")], tests: ['shell-runtime-session'] },
+	{ name: 'home: the note names both places even when only one held something', edits: [e(RT, "if (held.tmp.n > 0 && held.home.n > 0) {", "if (held.n > 0) {")], tests: ['shell-runtime-session'] },
+	{ name: 'home: the two places are counted as one count (what /tmp held is said for both)', edits: [e(RT, "/home/user held ' + countText(held.home) + '): they live", "/home/user held ' + countText(held.tmp) + '): they live")], tests: ['shell-runtime-session'] },
+	{ name: 'stop: a Stop in the check does not mention a worker that died after done', edits: [e(RT, "\t\tif (run.workerFailure) { notes.push(note(run.workerFailure + ', after the command had finished')); }\n\t\treturn finish(run, 'aborted',", "\t\tif (run.workerFailure && p.phase !== 'check') { notes.push(note(run.workerFailure + ', after the command had finished')); }\n\t\treturn finish(run, 'aborted',")], tests: ['shell-runtime-commit'] },
+	{ name: 'stop: a Stop in the check after a worker died says it was stopped while applying (the failure replaces the check)', edits: [e(RT, "if (p.phase === 'check') {\n\t\t\tnotes.push(note('stopped before anything was applied", "if (p.phase === 'check' && !run.workerFailure) {\n\t\t\tnotes.push(note('stopped before anything was applied")], tests: ['shell-runtime-commit'] },
+	{ name: 'stop: the moved folders are said by a run that was stopped before its engine said done', edits: [e(RT, "\t\t\t\trun.state = 'running';\n", "\t\t\t\trun.state = 'running';\n\t\t\t\trun.lead.push(...run.mounts.filter((m) => m.reason).map((m) => note('The folder \"' + m.name + '\" is mounted at ' + m.mount)));\n")], tests: ['shell-runtime-commit'] },
+	{ name: 'lifecycle: the host deadline fires 100 ms early', edits: [e(RT, "\t\t\t\t}, run.timeoutMs);", "\t\t\t\t}, run.timeoutMs - 100);")], tests: ['shell-runtime-worker'] },
+	{ name: 'worker suite: an engine that does not report tmpEntries is a skip under LEVELCODE_REQUIRE_WORKER=1, not a failure', edits: [e('web/shell/engine/core.js', "tmpEntries: msg.keepTmp ? overlay.memory.countEntries('/tmp') : 0,", "")], tests: ['shell-runtime-worker'], env: { LEVELCODE_REQUIRE_WORKER: '1' } },
+	{ name: 'worker suite: an engine that does not report homeEntries is a skip under LEVELCODE_REQUIRE_WORKER=1, not a failure', edits: [e('web/shell/engine/core.js', "homeEntries: msg.keepTmp ? overlay.memory.countEntries('/home/user') : 0,", "")], tests: ['shell-runtime-worker'], env: { LEVELCODE_REQUIRE_WORKER: '1' } },
 ];

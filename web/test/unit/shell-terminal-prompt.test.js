@@ -32,6 +32,8 @@ test('the folder of the workspace the working folder is in names it; outside eve
 	assert.strictEqual(label('/elsewhere/dir', folders), '/elsewhere/dir');
 	assert.strictEqual(label('/', folders), '/');
 	assert.strictEqual(label('/ws/proj', [{ name: 'proj', root: '/ws/proj/' }]), 'proj', 'a trailing slash of the root');
+	assert.strictEqual(label('/ws/proj/src', [{ name: 'proj', root: '/ws/proj/' }]), 'proj/src');
+	assert.strictEqual(label('/ws/proj/src', [{ name: 'proj', root: '/ws/proj///' }]), 'proj/src', 'and every one of them');
 	assert.strictEqual(label('/a', [{ name: 'root', root: '/' }]), 'root/a');
 });
 
@@ -154,8 +156,12 @@ test('a label is made in linear time: a name or a path of 200,000 characters, or
 	assert.strictEqual(label('/mnt/1', folders, 200000).split('/').length, 30002, 'and they are told apart by the first one');
 });
 
+let finished = false;
+// a test that awaits something that never settles leaves nothing to keep the process alive: it would exit 0, silently
+process.on('exit', (code) => { if (code === 0 && !finished) { console.error('the tests did not finish: one of them waits for something that never happens'); process.exitCode = 1; } });
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }
+	finished = true;
 	console.log(`\n${n} tests passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

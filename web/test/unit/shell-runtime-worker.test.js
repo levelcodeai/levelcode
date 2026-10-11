@@ -84,6 +84,19 @@ function heartbeat() {
 
 const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Does the engine's `done` report what a terminal's memory holds (`stats.<key>` as numbers)? The tests that prove the
+ * "it was emptied" notes against the real engine are the ONLY proof of them, so an engine that does not report them is
+ * a failure, whatever the environment: a suite that said SKIPPED and still counted as passed would let the gate go green
+ * without the one proof (the engine of this tree reports them; a skip was for the day it did not yet).
+ * @param {any} done @param {string[]} keys @param {string} what
+ */
+function reports(done, keys, what) {
+	if (done && done.stats && keys.every((k) => typeof done.stats[k] === 'number')) { return true; }
+	const named = keys.map((k) => 'stats.' + k).join(', ');
+	return assert.fail('this engine does not report ' + named + ' (' + what + '): ' + JSON.stringify(done && done.stats));
+}
+
 (async () => {
 	const real = createRealWorkers(ENGINE_DIR);
 	setup.real = real;
@@ -157,8 +170,9 @@ const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms)
 		const hb = beat.stop();
 		assert.deepStrictEqual({ how: r.how, exit: r.exitCode, applied: r.applied }, { how: 'deadline', exit: 124, applied: 0 });
 		assert.ok(/ran out of time/.test(r.notes.join('\n')), r.notes.join('\n'));
-		// (a timer is seen early by what the thread did before it was set: 600 ms is the host's, the margin is for that)
-		assert.ok(r.ms >= 500 && r.ms < 3000, 'the deadline was 600 ms; the run lasted ' + r.ms);
+		// (the run is timed from the moment it was asked for - the thread was warm, and its start-up would only add to it -, and a
+		// deadline that fires early by more than the clock's own millisecond or two is a bug: 580 is the margin for that and no more)
+		assert.ok(r.ms >= 580 && r.ms < 3000, 'the deadline was 600 ms; the run lasted ' + r.ms);
 		assert.ok(hb.maxGap < 1000 && hb.ticks >= 10, 'the host thread was never blocked: ' + hb.maxGap + ' ms, ' + hb.ticks + ' ticks');
 		assert.strictEqual(x.ws.exists('/scratch/made.txt'), false);
 		assert.strictEqual((await line(s, 'echo ok')).out, 'ok\n');
@@ -236,14 +250,13 @@ const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms)
 		assert.ok(await real.allExited(5000));
 	});
 
-	await test('a terminal\'s /tmp that was lost with a replaced thread is said on the next line (needs the engine to report stats.tmpFiles)', async () => {
+	await test('a terminal\'s /tmp that was lost with a replaced thread is said on the next line (needs the engine to report stats.tmpFiles; fails, not skips, under LEVELCODE_REQUIRE_WORKER=1)', async () => {
 		const x = setup({ limits: { workers: { idleMs: 600 } } });
 		const s = x.rt.createSession();
 		let r = await line(s, 'echo scratch > /tmp/work.txt; cat /tmp/work.txt');
 		assert.strictEqual(r.out, 'scratch\n');
 		const done = x.threads()[0].lastDone;
-		if (!done || !done.stats || typeof done.stats.tmpFiles !== 'number') {
-			console.log('  SKIPPED - the /tmp note: this engine does not report stats.tmpFiles yet, so there is nothing for the note to be built on');
+		if (!reports(done, ['tmpFiles'], 'the /tmp note')) {
 			x.rt.dispose();
 			return 'skipped';
 		}
@@ -266,8 +279,7 @@ const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms)
 		const r0 = await line(s, 'mkdir /tmp/emptydir; ls /tmp');
 		assert.strictEqual(r0.out, 'emptydir\n');
 		const done = x.threads()[0].lastDone;
-		if (!done || !done.stats || typeof done.stats.tmpEntries !== 'number') {
-			console.log('  SKIPPED - the empty-folder /tmp note: this engine does not report stats.tmpEntries yet, so a /tmp of folders only is not seen');
+		if (!reports(done, ['tmpFiles', 'tmpEntries'], 'the empty-folder /tmp note')) {
 			x.rt.dispose();
 			return 'skipped';
 		}
@@ -279,6 +291,48 @@ const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms)
 		const after = await line(s, 'ls /tmp');
 		assert.strictEqual(after.out, '', 'the folder went with the thread');
 		assert.ok(after.notes.some((t) => /\/tmp was emptied when the shell restarted \(it held 1 file or folder\)/.test(t)), JSON.stringify(after.notes));
+		x.rt.dispose();
+		assert.ok(await real.allExited(5000));
+	});
+
+	await test('a terminal\'s /home/user goes with the thread too and is said BY NAME: ~ and $HOME are the engine\'s memory, kept twice the idle time (needs stats.homeEntries)', async () => {
+		const x = setup({ limits: { workers: { idleMs: 600 } } });
+		const s = x.rt.createSession();
+		const r0 = await line(s, 'echo secret > ~/notes.txt; mkdir ~/proj; ls ~');
+		assert.strictEqual(r0.out, 'notes.txt\nproj\n');
+		const done = x.threads()[0].lastDone;
+		if (!reports(done, ['tmpEntries', 'homeFiles', 'homeEntries'], 'the /home/user note')) {
+			x.rt.dispose();
+			return 'skipped';
+		}
+		assert.deepStrictEqual([done.stats.tmpEntries, done.stats.homeFiles, done.stats.homeEntries], [0, 1, 2], JSON.stringify(done.stats));
+		await sleep(850);                                   // past the idle time, inside twice of it: still the same thread
+		assert.strictEqual((await line(s, 'cat ~/notes.txt')).out, 'secret\n', 'a worker whose /home/user holds something is kept for twice the idle time');
+		assert.strictEqual(x.threads().length, 1);
+		await sleep(1500);                                  // past twice the idle time: replaced
+		const after = await line(s, 'cat ~/notes.txt; ls ~');
+		assert.ok(/No such file or directory/.test(after.err), after.err);
+		assert.deepStrictEqual(after.notes.filter((t) => /emptied/.test(t)), [
+			'[LevelCode Shell: /home/user was emptied when the shell restarted (it held 2 files and folders): /home/user lives in the engine\'s memory, which a minute or two of idle time, Ctrl+C or a timeout ends. Keep what matters in a workspace folder]',
+		]);
+		x.rt.dispose();
+		assert.ok(await real.allExited(5000));
+	});
+
+	await test('a fresh engine holds nothing in /tmp or /home/user: it is kept the usual time and nothing is said when it is replaced', async () => {
+		const x = setup({ limits: { workers: { idleMs: 400 } } });
+		const s = x.rt.createSession();
+		assert.strictEqual((await line(s, 'echo hi; ls ~; ls /tmp')).out, 'hi\n', 'a home and a /tmp with nothing in them');
+		const done = x.threads()[0].lastDone;
+		if (!reports(done, ['tmpEntries', 'homeEntries'], 'the fresh-engine check')) {
+			x.rt.dispose();
+			return 'skipped';
+		}
+		assert.deepStrictEqual([done.stats.tmpEntries, done.stats.homeEntries, done.stats.tmpFiles, done.stats.homeFiles], [0, 0, 0, 0], JSON.stringify(done.stats));
+		await sleep(700);                                   // past the idle time, inside twice of it: nothing is held, so it is gone
+		const after = await line(s, 'echo again');
+		assert.strictEqual(x.threads().length, 2, 'the usual idle time applied');
+		assert.deepStrictEqual(after.notes, []);
 		x.rt.dispose();
 		assert.ok(await real.allExited(5000));
 	});

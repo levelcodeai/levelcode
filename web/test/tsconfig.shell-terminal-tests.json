@@ -1,0 +1,13 @@
+{
+	// The type check of the terminal's TESTS and their helpers: the strict configuration of the sources
+	// (tsconfig.shell-terminal.json) without `noImplicitAny`, which is the one thing these scripts are not written for.
+	// Everything else is strict: `strictNullChecks` is what found the unchecked `null`s in them.
+	"extends": "./tsconfig.shell-terminal.json",
+	"compilerOptions": {
+		"noImplicitAny": false
+	},
+	"include": [
+		"unit/shell-terminal-*.test.js",
+		"unit/helpers/shell-terminal-*.js"
+	]
+}
