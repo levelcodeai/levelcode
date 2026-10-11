@@ -143,7 +143,7 @@ host translates a relocated mount back before a change reaches the review. `befo
 runtime.folders(): Array<{ name: string; root: string; uri: string }>        // live workspace folders, in order
 runtime.mounts(): Array<{ ...folder; mount: string }>                         // where the engine sees each (§4 Mounts)
 runtime.resolve(path: string): Uri | null                                      // an ENGINE path (as a command prints it) -> the workspace Uri; null outside the mounts
-runtime.stat(path: string): Promise<{ type: 'file'|'dir', size: number } | null>  // bounded by fsMs; null for nothing / outside / error / timeout
+runtime.stat(path: string): Promise<{ type: 'file'|'dir'|'other', size: number } | null>  // bounded by fsMs; null for nothing / outside / error / timeout; 'other' = neither bit (FileType.Unknown, a link to nothing)
 runtime.createSession(o?: { cwd?: string }): Session                          // a persistent terminal session
 runtime.onAgentRun(listener: (e: AgentRunEvent) => void): { dispose(): void } // every run_command, for the mirror tab
 runtime.dispose(): void
@@ -332,8 +332,9 @@ own values the rest.
   through `forDisplay`, a one-line note through `forNote`. `sanitize.js` makes control, format (`Cf`), bidi and
   unpaired-surrogate characters visible as `␛` / `[U+XXXX]`; the one exception is a single ZWNJ/ZWJ between two
   letters of the **same** Arabic or Indic script (and the joiners of an emoji sequence, VS16 with an emoji), which
-  `forTerminal` keeps and `forDisplay` still shows. The line editor makes the same exception for what is **typed or
-  pasted**, and says once under the line what it did not type. Every function that sees untrusted text is linear
+  `forTerminal` keeps and `forDisplay` still shows. The line editor makes the same exception for what is **pasted,
+  completed or arrives whole in one chunk**, and says once under the line what it did not type; a key pressed alone
+  that types nothing the screen can show says nothing. Every function that sees untrusted text is linear
   (`web/test/unit/helpers/shell-terminal-timing.js`: 23 shapes of 200,000 characters under 500 ms).
 * A command never changes the protected paths (`.git`, `.vscode`, `.levelcode`, `.cursor`, `.husky`,
   `.github/workflows`, `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `.windsurfrules`), whole-set refusal.

@@ -14,7 +14,8 @@
 //
 // What a TZ value may be, as it is on a system that has the tzdata files and a file system that has case: an IANA name
 // written in the case its file has (`Asia/Tokyo`, also with glibc's leading colon, `:America/New_York`; `asia/tokyo` is
-// no zone), and the POSIX form with a fixed offset (`JST-9`, `UTC+3`, `<+0530>-5:30`: the offset is hours WEST of
+// no zone), the path of such a file (`/usr/share/zoneinfo/Asia/Tokyo`, `/usr/share/zoneinfo/posix/...`: `zoneFileName`;
+// any other path is no file here, and is read as the text it is), and the POSIX form with a fixed offset (`JST-9`, `UTC+3`, `<+0530>-5:30`: the offset is hours WEST of
 // Greenwich, so `JST-9` is UTC+9). A daylight saving part after it (`EST5EDT,M3.2.0,M11.1.0`) is not applied (standard
 // time all year; a name Intl knows, `EST5EDT`, is the zone and has its rules). Anything else is what glibc makes of it:
 // the letters it starts with (three or more) are the name and the offset is 0 (`Nowhere` says `Nowhere`, `asia/tokyo`
@@ -64,6 +65,59 @@ function posixFixed(s) {
 	return { key: `posix:${name}:${-west}`, name, offsetMs: west === 0 ? 0 : -west * 1000 };
 }
 
+/** The directories of the reference's zone tree (`/usr/share/zoneinfo`, and its `posix` and `right` copies), as paths. */
+const ZONE_ROOT = 'usr/share/zoneinfo';
+/** @type {Set<string> | null} */
+let zoneDirs = null;
+function isZoneDir(path) {
+	if (!zoneDirs) {
+		zoneDirs = new Set(['', 'etc', 'usr', 'usr/share', ZONE_ROOT, ZONE_ROOT + '/posix', ZONE_ROOT + '/right']);
+		for (const n of NAMES) {
+			const at = n.split('/');
+			for (let i = 1; i < at.length; i++) {
+				const d = at.slice(0, i).join('/');
+				zoneDirs.add(`${ZONE_ROOT}/${d}`);
+				zoneDirs.add(`${ZONE_ROOT}/posix/${d}`);
+				zoneDirs.add(`${ZONE_ROOT}/right/${d}`);
+			}
+		}
+	}
+	return zoneDirs.has(path);
+}
+
+/**
+ * The name of a zone file as glibc finds it from a TZ that holds a slash: relative to /usr/share/zoneinfo, or an absolute
+ * path into it (also the `posix/` copy of the tree, which has the same zones; `right/` is a tree with leap seconds, which
+ * this runtime has not). `//` and `.` are nothing and `..` is the parent, as the file system has them, and every folder
+ * on the way has to be there (`a/../Asia/Tokyo` is not a file). `/etc/localtime` is the machine's own zone, which here is
+ * UTC. Any other absolute path is a file this runtime has not, and a name with no slash is its own file.
+ *
+ * @param {string} s a TZ value without its leading colon
+ * @returns {string | null} the name, or null when the path is no zone file of this runtime
+ */
+function zoneFileName(s) {
+	if (!s.includes('/')) { return s; }
+	if (s.endsWith('/')) { return null; }
+	/** @type {string[]} */
+	const at = s[0] === '/' ? [] : ZONE_ROOT.split('/');
+	const segs = s.split('/').filter((x) => x !== '' && x !== '.');
+	for (let i = 0; i < segs.length; i++) {
+		// a folder is walked through only when it is there: each one before the last name, and the one `..` leaves
+		if (!isZoneDir(at.join('/'))) { return null; }
+		if (segs[i] === '..') {
+			at.pop();
+			continue;
+		}
+		at.push(segs[i]);
+	}
+	const full = at.join('/');
+	if (full === 'etc/localtime') { return 'UTC'; }
+	if (!full.startsWith(ZONE_ROOT + '/')) { return null; }
+	const name = full.slice(ZONE_ROOT.length + 1);
+	if (name.startsWith('right/')) { return null; }
+	return name.startsWith('posix/') ? name.slice(6) : name;
+}
+
 /**
  * What a TZ value stands for: the key the rest of this module uses, or null when it is not a zone this runtime knows.
  * The key is the IANA name, `'UTC'`, or (a POSIX fixed offset) an opaque string that only this module reads.
@@ -73,8 +127,17 @@ function posixFixed(s) {
 function validZone(name) {
 	if (typeof name !== 'string' || name === '') { return null; }
 	if (fixedZones.has(name)) { return name; }
-	const s = name[0] === ':' ? name.slice(1) : name;       // glibc: ":NAME" is the zone file NAME
-	if (s === '' || /^[+-]\d/.test(s)) { return null; }      // an offset alone is no TZ (and a newer ICU would take it)
+	const typed = name[0] === ':' ? name.slice(1) : name;   // glibc: ":NAME" is the zone file NAME
+	if (typed === '') { return null; }
+	/** a TZ that is no zone file: glibc reads it as POSIX text (a name and an offset), whatever is there */
+	const posix = () => {
+		const fx = posixFixed(typed);
+		fixedZones.set(fx.key, { name: fx.name, offsetMs: fx.offsetMs });
+		return fx.key;
+	};
+	// an offset alone (`+05:00`, `-5`) is no zone, though a newer ICU would take it for one: UTC with no name, as `5` is
+	if (/^[+-]\d/.test(typed)) { return posix(); }
+	const s = zoneFileName(typed) || typed;
 	if (UTC_FILES.has(s) || GMT_FILES.has(s)) { return 'UTC'; }
 	if (formatters.get(s)) { return s; }
 	if (!formatters.has(s)) {
@@ -89,15 +152,19 @@ function validZone(name) {
 		} catch { /* not a zone Intl knows */ }
 		formatters.set(s, null);
 	}
-	const fx = posixFixed(s);
-	fixedZones.set(fx.key, { name: fx.name, offsetMs: fx.offsetMs });
-	return fx.key;
+	return posix();
+}
+
+/** the zone file a TZ names, as validZone reads it (the value itself when it is no path) */
+function fileOf(/** @type {string} */ name) {
+	const typed = name[0] === ':' ? name.slice(1) : name;
+	return zoneFileName(typed) || typed;
 }
 
 /** @param {unknown} name the value of TZ (anything: a missing or bad one is UTC) */
 function setZone(name) {
 	current = validZone(name) || 'UTC';
-	utcLabel = current === 'UTC' && typeof name === 'string' && GMT_FILES.has(name[0] === ':' ? name.slice(1) : name) ? 'GMT' : 'UTC';
+	utcLabel = current === 'UTC' && typeof name === 'string' && GMT_FILES.has(fileOf(name)) ? 'GMT' : 'UTC';
 }
 function getZone() { return current; }
 

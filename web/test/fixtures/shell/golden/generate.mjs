@@ -41,6 +41,7 @@ async function loadCases() {
 	const { CASES: round2 } = await import('./cases/round2.mjs');
 	const { CASES: round3 } = await import('./cases/round3.mjs');
 	const { CASES: round4 } = await import('./cases/round4.mjs');
+	const { CASES: round5 } = await import('./cases/round5.mjs');
 	const all = [];
 	const seen = new Set();
 	const add = (list, source, fixture) => {
@@ -57,6 +58,7 @@ async function loadCases() {
 	add(round2, 'round2', false);
 	add(round3, 'round3', false);
 	add(round4, 'round4', false);
+	add(round5, 'round5', false);
 	return { FIXTURE, cases: all };
 }
 

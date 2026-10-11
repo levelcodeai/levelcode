@@ -58,7 +58,7 @@ function fakeVscode(o) {
 		/** @type {any} */ linkProvider: null,
 		/** What was opened in an editor: { uri, options }. @type {any[]} */ opened: [],
 		/** The uris the fake file system was asked about. @type {string[]} */ stats: [],
-		/** What the fake file system has: uri string -> vscode.FileType (1 file, 2 folder). @type {Record<string, number>} */ files: {},
+		/** What the fake file system has: uri string -> vscode.FileType (0 unknown, 1 file, 2 folder, 64 link, and sums). @type {Record<string, number>} */ files: {},
 		/** Commands run through executeCommand. @type {string[]} */ executed: [],
 	};
 	/** @param {any} options */
@@ -148,7 +148,9 @@ function fakeVscode(o) {
 /**
  * What the runtime tells of engine paths (runtime.resolve, runtime.stat), over the fake file system of `fv`: `resolve`
  * is the Uri behind a path (the longest mount that holds it wins; null in no mount) and `stat` is what is at it,
- * `{ type: 'file' | 'dir', size }` or null, asked of the fake file system (so `state.stats` lists what was asked).
+ * `{ type: 'file' | 'dir' | 'other', size }` or null, asked of the fake file system (so `state.stats` lists what was
+ * asked). The types are the runtime's: 'dir' for the Directory bit, 'file' for the File bit and for nothing else, and
+ * 'other' for what has neither (FileType.Unknown, a link to nothing); a link to a file (File | SymbolicLink) is a 'file'.
  * @param {{ vscode: any }} fv
  * @param {Array<{ mount: string, uri: string }> | (() => Array<{ mount: string, uri: string }>)} mounts
  */
@@ -175,7 +177,7 @@ function fakeRuntimeFs(fv, mounts) {
 			if (!uri) { return null; }
 			try {
 				const st = await fv.vscode.workspace.fs.stat(uri);
-				return { type: (st.type & 2) !== 0 ? 'dir' : 'file', size: st.size };
+				return { type: (st.type & 2) !== 0 ? 'dir' : (st.type & 1) !== 0 ? 'file' : 'other', size: st.size };
 			} catch (e) {
 				return null;
 			}

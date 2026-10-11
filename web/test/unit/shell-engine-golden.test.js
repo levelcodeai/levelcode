@@ -121,12 +121,8 @@ const KNOWN_DIFFERENCES = [
 		cases: { 'indirect-decl': 'stdout', 'bash-source': 'stdout', 'env-vars': 'stdout', 'printf-v': 'stdout' },
 	},
 	{
-		why: 'engine: the options are not there: wc -L, cut --output-delimiter, uniq -f, tail -f, diff -r and -w',
-		cases: { 'wc-multi-ops': 'stdout', 'x-wc-L': 'stdout+exit+stderr', 'cut-variants': 'stdout+exit+stderr', 'uniq-flags': 'stdout+stderr', 'tail-f-follow': 'stdout', 'diff-r': 'stdout+stderr', 'diff-context-ignore': 'stdout+stderr' },
-	},
-	{
-		why: 'engine: rm -v lists the directory it was given, not each file under it',
-		cases: { 'rm-rv': 'stdout' },
+		why: 'engine: the options are not there: wc -L, cut --output-delimiter, uniq -f, tail -f',
+		cases: { 'wc-multi-ops': 'stdout', 'x-wc-L': 'stdout+exit+stderr', 'cut-variants': 'stdout+exit+stderr', 'uniq-flags': 'stdout+stderr', 'tail-f-follow': 'stdout' },
 	},
 	{
 		why: 'engine: cut -c and tr work on characters; coreutils 8.32 works on bytes (`cut -c1-2` of "héllo" is "h" and the first byte of "é"; `tr é e` makes "ee" of "é"). Here the engine is the better one',
@@ -154,20 +150,8 @@ const KNOWN_DIFFERENCES = [
 	},
 	// Found by the third round's differencing, not before it (round3.mjs, `r3-gap-*`): new entries, each with its reason
 	{
-		why: 'engine: date -d reads @N, now, yesterday, tomorrow and a wall clock (with or without a zone); a relative form (`+1 day`, `1 month`, `next friday`) or `1 Jan 2020 3pm` is "invalid date"',
-		cases: { 'r3-gap-date-relative': 'stdout+exit+stderr' },
-	},
-	{
-		why: 'engine: sed q and Q take no exit status (`2q5` is a syntax error) and sed has no -z',
-		cases: { 'r3-gap-sed-q-exit-and-z': 'stdout+exit+stderr' },
-	},
-	{
-		why: 'engine: rm has no -d (remove an empty directory)',
-		cases: { 'r3-gap-rm-d': 'stdout+stderr+tree' },
-	},
-	{
-		why: 'engine: sort has no -z (records ended by NUL)',
-		cases: { 'r3-gap-sort-z': 'stdout+stderr' },
+		why: 'engine: sed q and Q take no exit status (`2q5` is a syntax error)',
+		cases: { 'r3-gap-sed-q-exit-and-z': 'stdout+stderr' },
 	},
 	{
 		why: 'engine: grep has no -b (byte offset)',
@@ -183,13 +167,16 @@ const KNOWN_DIFFERENCES = [
 	},
 	// Found by the fourth round, each with its reason
 	{
-		why: 'wording only: GNU sort says which part of a key is wrong (`field number is zero`, `character offset is zero`, `invalid count at start of`), the engine that the specification is invalid; the status is the same',
+		why: 'wording only: GNU puts curly quotes around the key it rejects (‘0’) in a UTF-8 locale, the engine straight ones; the words, which say which part of a key is wrong, are GNU\'s since the fifth round',
 		cases: { 'r4-sort-k-invalid': 'stderr' },
 	},
 ];
 
-/** The most entries the list may have: it can only shrink (79 before the fourth round: 3 closed by it, 1 found by it). */
-const MAX_DIFFERENCES = 77;
+/**
+ * The most entries the list may have: it can only shrink (79 before the fourth round: 3 closed by it, 1 found by it; 77
+ * after it; the fifth closed 6 more: sort -z, date relatives, rm -d, rm -rv, diff -r and diff -w; none was added).
+ */
+const MAX_DIFFERENCES = 71;
 
 const INLINE_MAX = golden.meta.inlineMax;
 function encodeBytes(buf) {
@@ -272,11 +259,11 @@ async function main() {
 		assert.deepStrictEqual(golden.meta.flaky, ['patch', 'tar-gz', 'whoami-uname']);
 		assert.strictEqual(golden.meta.cases, golden.cases.length);
 		assert.ok(golden.cases.length >= 500, 'the batteries and the added cases: ' + golden.cases.length);
-		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra', 'round2', 'round3', 'round4']);
+		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra', 'round2', 'round3', 'round4', 'round5']);
 		const size = fs.statSync(path.join(REPO, 'web', 'test', 'fixtures', 'shell', 'golden', 'golden.json')).size;
 		// what grows with the cases is a case's script, its output and the files it left; a case that ran on a bare workspace
 		// lists no `gone` (it used to list the fixture's 18 paths: a third of the file)
-		assert.ok(size < 400 * 1024, 'fixtures stay small: ' + size);
+		assert.ok(size < 448 * 1024, 'fixtures stay small: ' + size);
 	});
 
 	test('the list of known differences names only cases that exist, and may only shrink', () => {

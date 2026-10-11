@@ -1,9 +1,9 @@
 /*---------------------------------------------------------------------------------------------
  *  xargs against GNU, size by size — run: node web/test/unit/shell-engine-xargs.test.js
  *
- *  web/test/fixtures/shell/xargs/limits.json holds what GNU xargs (findutils 4.8.0) did with 10,200 command lines: every
+ *  web/test/fixtures/shell/xargs/limits.json holds what GNU xargs (findutils 4.8.0) did with 12,102 command lines: every
  *  input of cases.mjs (none, one item, two, three) with -I and a replace string in thirteen commands, and with -L, -n and
- *  -x, at -s 1..30. What it does at those sizes is what separates "argument line too long" from "argument list too long",
+ *  -x (plain -x, with no batch size, too), and `--replace=` with nothing to replace, at -s 1..30. What it does at those sizes is what separates "argument line too long" from "argument list too long",
  *  "command too long" and "cannot fit single argument within argument list size limit", from what runs, from what runs
  *  before the message. Each run of sizes that did the same thing is replayed at its first size, its last and its middle.
  *
@@ -37,7 +37,7 @@ async function main() {
 	test('the recording: every group of cases.mjs, none left out, each size 1..LIMIT said exactly once', () => {
 		const groups = cases.groups();
 		assert.deepStrictEqual(rec.groups.map((g) => [g[0], g[1], g[2]]), groups.map((g) => [g.input, g.options, g.command]));
-		assert.strictEqual(groups.length, 412);
+		assert.strictEqual(groups.length, 473);
 		assert.deepStrictEqual(rec.meta.flaky, []);
 		assert.strictEqual(rec.meta.limit, cases.LIMIT);
 		assert.ok(/GNU xargs of findutils 4\.8\.0/.test(rec.meta.reference));

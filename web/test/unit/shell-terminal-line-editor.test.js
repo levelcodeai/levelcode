@@ -33,6 +33,7 @@ const { strWidth, stripEscapes } = require(path.join(dir, 'width.js'));
 const { VT } = require('./helpers/shell-terminal-vt');
 const { needXterm } = require('./helpers/shell-terminal-xterm');
 const { everyShape } = require('./helpers/shell-terminal-timing');
+const { makeSession, runSessions } = require('./helpers/shell-terminal-resize-sessions');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -1801,6 +1802,17 @@ const CORNER_SCENARIOS = [
 		{ cols: 80, rows: 24, prompt: '$ ', earlier: [], steps: [{ paste: ['p1l1' + W(3), 'p1l2', 'p1l3', 'p1l4' + W(3)].join('\n') }, { size: [75, 3] }, { size: [115, 6] }, { send: 'Z' }] }],
 	['a wider panel takes rows out of the region and so shows rows of the scrollback above it: the ghosts are written over, once',
 		{ cols: 100, rows: 8, prompt: 'proj/src $ ', earlier: [], steps: [{ paste: ['p1l1', 'p1l2' + W(170), 'p1l3'].join('\n') }, { size: [80, 4] }, { size: [120, 4] }, { send: 'Z' }] }],
+	// Chains of three resizes (the checkpoint before fix round 4 wrote over the first line of output in each of these):
+	// the rows xterm pushed are as wide as the screen was when it pushed them, and the line of the cursor is not re-wrapped,
+	// so two rows of 24 cells are one row at 104 columns, not two. The editor counted them at the width it was asked about.
+	['three resizes, the last one wider and much taller: the two rows pushed at 24 columns are 48 cells, one row at 104, and not the 108 cells they would be re-wrapped at 64',
+		{ cols: 80, rows: 15, prompt: '$ ', earlier: ['ban000 ' + 'x'.repeat(90)], steps: [{ send: 'y'.repeat(130) }, { size: [24, 5] }, { size: [64, 3] }, { size: [104, 44] }, { send: 'Z' }] }],
+	['narrower, shorter with a line pasted in between, then wider and taller: two pushed rows of 37 cells are one row at 86 (it was worse than both of the checkpoints before it)',
+		{ cols: 80, rows: 8, prompt: 'levelcode:~/work/project/src $ ', earlier: ['ban000'], steps: [{ send: 'd ' + 'y'.repeat(152) }, { size: [37, 8] }, { size: [46, 4] }, { paste: '\n' }, { size: [86, 12] }, { send: 'Z' }] }],
+	// the panel maximised and restored with a command that goes over several lines and the cursor above its last one: the
+	// rows the maximise added are blank rows under the region, so the restore drops those and not the region's own rows
+	['maximised and restored, a command of four lines and the cursor above the last: the redraw is where the region is, and the prompt is on the screen once',
+		{ cols: 80, rows: 10, prompt: '$ ', earlier: ['ban000'], steps: [{ paste: 'q1n1 \n\n\n' }, { send: 'y'.repeat(80) }, { send: key.up }, { size: [160, 40] }, { size: [80, 10] }, { send: 'Z' }] }],
 ];
 
 test('rows and columns in one event, with output before the prompt: it is not written over, and the region is where the cursor says (on the model terminal and on xterm.js)', async () => {
@@ -1817,6 +1829,9 @@ test('rows and columns in one event, with output before the prompt: it is not wr
 // the editor could count) and where nothing that was there before is written over.
 /** @type {typeof CORNER_SCENARIOS} */
 const COPY_SCENARIOS = [
+	// (the two rows that were pushed into the scrollback are a copy of the prompt's first row there, which nothing can erase)
+	['a prompt of wide characters, narrower, narrower, then much wider: the two rows pushed at 20 columns are 40 cells, one row at 50',
+		{ cols: 30, rows: 12, prompt: '\u4e2d\u6587 $ ', earlier: ['ban000 ' + 'x'.repeat(60)], steps: [{ send: 'y'.repeat(50) }, { send: 'cp ' + 'y'.repeat(60) }, { size: [20, 7] }, { size: [29, 5] }, { size: [50, 8] }, { send: 'Z' }] }],
 	['a long line shorter and a few rows, widened and made taller in several steps: a width that grows twice takes back rows that are wider than the panel was',
 		{ cols: 20, rows: 10, prompt: '$ ', earlier: ['out000', 'out001'], steps: [{ paste: ['p0' + W(160), 'p1' + W(160), 'p2' + W(60)].join('\n') }, { size: [20, 6] }, { size: [20, 30] }, { size: [10, 8] }, { size: [40, 12] }, { size: [120, 12] }, { send: 'Z' }] }],
 ];
@@ -1828,6 +1843,17 @@ test('rows and columns in one event: a copy of the prompt may be left, and what 
 			const problem = await runStrictScript(target, Object.assign({ prompt: plainPrompt, copiesOk: true }, spec));
 			assert.strictEqual(problem, null, name + ': ' + problem);
 		}
+	}
+});
+
+// The note under a line is the terminal's from the moment it is written, and a chain of resizes does not write over it
+// (the rows pushed into the scrollback while the note was there were counted at the width of the panel then asked about)
+test('a note under a line is not written over by a chain of three resizes (on the model terminal and on xterm.js)', async () => {
+	const xt = needXterm('the note and the chain of resizes against xterm.js');
+	const spec = { cols: 60, rows: 8, prompt: plainPrompt, earlier: [], steps: [{ send: 'y'.repeat(54) }, { paste: 'a\u200bb \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb.txt' }, { size: [20, 5] }, { size: [29, 3] }, { size: [50, 24] }, { send: 'Z' }] };
+	for (const target of xt ? [modelTarget, xtermTarget(xt)] : [modelTarget]) {
+		const problem = await runStrictScript(target, spec);
+		assert.strictEqual(problem, null, String(problem));
 	}
 });
 
@@ -1872,6 +1898,47 @@ test('rows and columns in one event, seeded sessions: earlier output taller than
 		}
 	}
 	assert.ok(resizes > 250 * targets.length && scrolled > 100 * targets.length && above > 140 * targets.length, 'resizes ' + resizes + ', terminals that had scrolled ' + scrolled + ', cursor above the end ' + above);
+});
+
+// The acceptance run of fix round 4 in miniature: 33,600 sessions of the verifier's generator (7 families x 12 seeds x 400,
+// chains of 6 to 16 events: typed and pasted lines, a Tab, a note, Ctrl+L, and the panel changed by width, by height, by
+// both, by a drag, by a toggle, by a maximise) wrote over output in none. These are 683 of them, taken from other seeds,
+// and the three that the checkpoint before it did write over. After every step of every session: what was on the terminal
+// before the prompt, and the note under a line, are there, whole and in order; the region is where the editor says; and
+// what the editor believes is blank under the region is blank. A copy of the prompt may be left; not more of them than
+// the checkpoint before left (it left 17 on the screen and 32 above it, in these sessions).
+test('seeded chains of resizes of an independent generator: nothing that was on the terminal is written over, and no more copies are left than before (on xterm.js)', async () => {
+	const xt = needXterm('the chains of resizes of the independent generator against xterm.js');
+	if (!xt) { return; }
+	// [family, first seed, how many, a chain of 6 to 16 events with no Enter (otherwise 3 to 10, with the command's output)]
+	/** @type {Array<[string, number, number, boolean]>} */
+	const blocks = [
+		['both', 8100000, 100, true], ['mixed', 8200000, 100, true], ['maximize', 8300000, 100, true],
+		['drag', 8400000, 50, true], ['width', 8500000, 50, true], ['rows', 8600000, 50, true], ['user', 8700000, 50, true],
+		['both', 8800000, 60, false], ['mixed', 8900000, 60, false], ['user', 9000000, 60, false],
+	];
+	// sessions that wrote over output at the checkpoint before (R1 to R3 are their minimal forms)
+	/** @type {Array<[string, number, boolean]>} */
+	const wroteOver = [['both', 8400291, true], ['both', 9000019, true], ['mixed', 9000346, true]];
+	const specs = [];
+	for (const [family, first, n, many] of blocks) { for (let k = 0; k < n; k++) { specs.push(makeSession(first + k, family, many)); } }
+	for (const [family, seed, many] of wroteOver) { specs.push(makeSession(seed, family, many)); }
+	const results = await runSessions(xt, specs);
+	const bad = [];
+	let visible = 0;
+	let scrolled = 0;
+	results.forEach((r, i) => {
+		for (const f of r.fails) {
+			if (f.cat === 'copyVisible') { visible++; } else if (f.cat === 'copyScrollback') { scrolled++; } else { bad.push(i + ': ' + f.cat + ' ' + f.label + ' ' + f.detail); }
+		}
+	});
+	assert.deepStrictEqual(bad.slice(0, 3), [], bad.length + ' of ' + specs.length + ' sessions went wrong; the first: ' + JSON.stringify(bad[0]) + ' of ' + JSON.stringify(specs[parseInt(bad[0] || '0', 10)]).slice(0, 600));
+	assert.ok(specs.length > 650);
+	// (counted once per session and step: a copy that is left stays for the steps after it, so the numbers are a few
+	// times the sessions that have one: 16 and 32 sessions at the checkpoint)
+	const sessions = (/** @type {string} */ cat) => results.filter((r) => r.cats.includes(cat)).length;
+	assert.ok(sessions('copyVisible') <= 17, 'sessions with a copy of the prompt left on the screen: ' + sessions('copyVisible') + ' (' + visible + ' steps)');
+	assert.ok(sessions('copyScrollback') <= 32, 'sessions with a copy left only above the screen: ' + sessions('copyScrollback') + ' (' + scrolled + ' steps)');
 });
 
 test('a resize that changes nothing writes nothing; nothing smaller than 2 columns or 2 rows is taken', () => {

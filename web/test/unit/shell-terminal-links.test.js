@@ -285,6 +285,76 @@ test('the 500 ms are for all the rounds together, not for each', async () => {
 	assert.deepStrictEqual(done, []);
 });
 
+test('only a FILE is a link: what the runtime calls "other" (a provider that does not say, a link to nothing) and a folder are not', async () => {
+	// vscode.FileType: Unknown 0, File 1, Directory 2, SymbolicLink 64; a link is added to what it points at
+	const t = setup({
+		'file:///scratch/unknown.js': 0, 'file:///scratch/dangling.js': 64, 'file:///scratch/file.js': 1,
+		'file:///scratch/linked.js': 65, 'file:///scratch/dir.js': 2, 'file:///scratch/dirlink.js': 66,
+	});
+	const line = 'unknown.js dangling.js file.js linked.js dir.js';
+	const links = await t.provider.provideTerminalLinks({ line, terminal: t.terminal }, token);
+	assert.deepStrictEqual(links.map((l) => line.slice(l.startIndex, l.startIndex + l.length)), ['file.js', 'linked.js']);
+	assert.strictEqual(t.fv.state.stats.length, 5, 'every one of them was asked');
+	assert.deepStrictEqual(await t.provider.provideTerminalLinks({ line: 'dirlink.js', terminal: t.terminal }, token), [], 'a link to a folder is a folder');
+	// and the words of the contract are all there is: the provider is not asked in FileType numbers, and 'other' is no file
+	for (const type of ['other', 'dir', 1, 65, 'File', undefined, null]) {
+		const u = setup({ 'file:///scratch/a.js': 1 }, { stat: async () => ({ type, size: 1 }) });
+		assert.deepStrictEqual(await u.provider.provideTerminalLinks({ line: 'a.js', terminal: u.terminal }, token), [], 'type ' + String(type));
+	}
+	const f = setup({ 'file:///scratch/a.js': 1 }, { stat: async () => ({ type: 'file', size: 1 }) });
+	assert.strictEqual((await f.provider.provideTerminalLinks({ line: 'a.js', terminal: f.terminal }, token)).length, 1);
+});
+
+test('the budget is for distinct paths: six spellings of one file are one slot, and a seventh name still gets its own', async () => {
+	const t = setup({ 'file:///scratch/q.js': 1, 'file:///scratch/other.js': 1 });
+	// ./q.js, ././q.js, ../scratch/q.js, x/../q.js and the absolute one are all /scratch/q.js
+	const line = 'q.js ./q.js ././q.js ../scratch/q.js x/../q.js /scratch/q.js other.js';
+	const links = await t.provider.provideTerminalLinks({ line, terminal: t.terminal }, token);
+	assert.deepStrictEqual(links.map((l) => line.slice(l.startIndex, l.startIndex + l.length)), ['q.js', './q.js', '././q.js', '../scratch/q.js', 'x/../q.js', '/scratch/q.js', 'other.js']);
+	assert.deepStrictEqual(t.fv.state.stats, ['file:///scratch/q.js', 'file:///scratch/other.js'], 'two files, two stats');
+	// and the slots are paths: five more names after six spellings make six paths, of which the sixth is not asked
+	const files = { 'file:///scratch/q.js': 1 };
+	for (let i = 0; i < 6; i++) { files['file:///scratch/n' + i + '.js'] = 1; }
+	const u = setup(files);
+	const long = 'q.js ./q.js ././q.js ../scratch/q.js x/../q.js /scratch/q.js n0.js n1.js n2.js n3.js n4.js n5.js';
+	const got = await u.provider.provideTerminalLinks({ line: long, terminal: u.terminal }, token);
+	assert.strictEqual(u.fv.state.stats.length, MAX_STATS);
+	assert.deepStrictEqual(got.slice(-4).map((l) => long.slice(l.startIndex, l.startIndex + l.length)), ['n0.js', 'n1.js', 'n2.js', 'n3.js']);
+	assert.strictEqual(got.length, 6 + 4, 'the six spellings and the four names that had a slot: n4.js and n5.js had none');
+});
+
+test('an absolute path that is nowhere is asked about once, though two folders would have looked for it', async () => {
+	// /scratch/nope.js is the same place whichever folder the line was printed in
+	const t = setup({}, { cwds: ['/scratch/b', '/scratch/a'] });
+	assert.deepStrictEqual(await t.provider.provideTerminalLinks({ line: '/scratch/nope.js:3 and ../nope.js', terminal: t.terminal }, token), []);
+	assert.deepStrictEqual(t.fv.state.stats, ['file:///scratch/nope.js'], 'one place, one question (../nope.js is the same place from either folder)');
+	// a relative path is a different place in each folder: asked in both
+	const r = setup({}, { cwds: ['/scratch/b', '/scratch/a'] });
+	await r.provider.provideTerminalLinks({ line: 'nope.js', terminal: r.terminal }, token);
+	assert.deepStrictEqual(r.fv.state.stats, ['file:///scratch/b/nope.js', 'file:///scratch/a/nope.js']);
+});
+
+test('once the 500 ms are spent the next folder is not asked at all (the answers that came after are ignored, and cost nothing)', async () => {
+	/** @type {string[]} */
+	const asked = [];
+	const t = setup({ 'file:///scratch/a/late.js': 1 }, {
+		cwds: ['/scratch/b', '/scratch/a'],
+		// the first folder never answers
+		stat: (p, rt) => { asked.push(p); return p.startsWith('/scratch/b/') ? new Promise(() => { }) : rt.stat(p); },
+	});
+	/** @type {any} */
+	let done = null;
+	const pending = t.provider.provideTerminalLinks({ line: 'late.js', terminal: t.terminal }, token).then((l) => { done = l; });
+	const tick = () => new Promise((r) => setTimeout(r, 5));
+	await tick();
+	assert.deepStrictEqual(asked, ['/scratch/b/late.js']);
+	t.timers.advance(500);
+	await pending;
+	await tick();
+	assert.deepStrictEqual(done, [], 'nothing answered in time');
+	assert.deepStrictEqual(asked, ['/scratch/b/late.js'], 'the second folder was never asked');
+});
+
 test('a path that is in no mount costs nothing: five of them on a line do not use up the budget of the one that is', async () => {
 	const t = setup({ 'file:///scratch/x.js': 1 });
 	const line = '/etc/a.js /etc/b.js /etc/c.js /etc/d.js /etc/e.js x.js';

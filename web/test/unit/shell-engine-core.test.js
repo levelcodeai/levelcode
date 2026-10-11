@@ -1016,8 +1016,9 @@ async function main() {
 		const a = await (await host(files)).run('echo hi | tee "/etc/$(cat x)"');
 		assert.strictEqual(a.stderr, 'bash: /etc/�: Permission denied\n');
 		assert.deepStrictEqual(a.done.denied.map((d) => d.path), ['/etc/�']);
-		const e = await (await host(files)).run("echo '😀' | awk '{print substr($0,1,1)}'");
-		assert.strictEqual(e.stdout, '�\n', 'half of an emoji is U+FFFD, not a lone surrogate');
+		// (awk counts characters since LC-33: `substr($0,1,1)` of an emoji is the emoji; printf's precision still cuts a UTF-16 pair)
+		const e = await (await host(files)).run("printf '%.1s\\n' '😀'; echo '😀' | awk '{print substr($0,1,1)}'");
+		assert.strictEqual(e.stdout, '�\n😀\n', 'half of an emoji is U+FFFD, not a lone surrogate; awk takes the whole character');
 		// a script that ends inside a folder whose name is not UTF-8 (its change set is refused): the session is handed the
 		// nearest folder above it that has a name, not '/w/\udcff'
 		const d = await (await host(files)).run('mkdir "d$(cat x)"; cd "d$(cat x)"; pwd');

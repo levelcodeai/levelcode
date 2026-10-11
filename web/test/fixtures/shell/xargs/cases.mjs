@@ -18,7 +18,11 @@ export const INPUTS = [
 
 /** [mode, the words after it]: -I with a replace string, and the plain forms that measure the same line */
 export const REPLACE_BASES = ['echo {}', 'echo X{}Y', 'echo {} {}', 'echo {} zzzzzzzz', 'echo zzzzzzzz {}', 'echo {}{}', 'echo', '{} x', 'echo q {} r', 'echo q {}', 'echo {} q', 'echo X{} zzzz', 'echo q'];
-export const PLAIN_MODES = ['', '-L1', '-L2', '-n1', '-n2', '-n1 -x', '-n2 -x'];
+// (plain -x, with no -n -L -I to give it a batch size, is a mode of its own: an item that cannot fit ends the batch
+// without a run, and `-L1 -x` / `-L2 -x` measure a line against the limit)
+export const PLAIN_MODES = ['', '-L1', '-L2', '-n1', '-n2', '-n1 -x', '-n2 -x', '-x', '-L1 -x', '-L2 -x'];
+/** `--replace=` with an empty string replaces nothing and the command line is too long, at every size */
+export const EMPTY_REPLACE = ['--replace=', '--replace= -x'];
 
 /**
  * Input with a quote that is never closed (GNU runs what was complete before it, and says so), with no -s.
@@ -35,6 +39,9 @@ export function groups() {
 	for (const input of INPUTS) {
 		for (const b of REPLACE_BASES) { out.push({ input, options: '-I{}', command: b, sized: true }); }
 		for (const m of PLAIN_MODES) { out.push({ input, options: m, command: 'echo', sized: true }); }
+	}
+	for (const input of INPUTS.slice(0, 5)) {
+		for (const m of EMPTY_REPLACE) { out.push({ input, options: m, command: 'echo x', sized: true }); }
 	}
 	for (const input of QUOTE_INPUTS) {
 		for (const m of QUOTE_OPTIONS) { out.push({ input, options: m, command: m.startsWith('-I') ? 'echo X{}' : 'echo', sized: false }); }

@@ -26,7 +26,7 @@ export const UNPATCHED_SHA256 = '38f1ad1e3283980ecdf68cede8a4eed028c6dff6e8c3179
  * file can collide with one. `Nu` is the file's own function (a sed range's key), a hoisted declaration, so it is there.
  */
 export const HEADER = `/*! LevelCode: this is just-bash@3.6.0 dist/bundle/browser.js (Apache-2.0, Copyright 2025 Vercel Inc.) MODIFIED by LevelCode:
- *  patches LC-1 .. LC-31 of web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs (Apache-2.0 section 4(b)).
+ *  patches LC-1 .. LC-33 of web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs (Apache-2.0 section 4(b)).
  *  Unmodified input sha256 ${UNPATCHED_SHA256}. */
 import __lcText from"lc-text";
 import __lcZone from"lc-zone";
@@ -39,7 +39,7 @@ var __lcRangeOpen=(a,l,n,st)=>{if(!a||a.negated||a.start===void 0||a.end===void 
 var __lcBuiltinNames=new Set(["alias","echo","history","printf","pwd","unalias"]);
 var __lcNoBuiltin=new Set(["bg","caller","disown","enable","fc","fg","jobs","kill","suspend","times","trap","ulimit","umask"]);
 var __lcWordB=e=>{if(!e.includes("\\\\<")&&!e.includes("\\\\>"))return e;let t="",n=!1;for(let r=0;r<e.length;r++){let s=e[r];if(s==="\\\\"&&r+1<e.length){let i=e[++r];t+=!n&&(i==="<"||i===">")?"\\\\b":s+i;continue}if(n)s==="]"&&(n=!1);else if(s==="["){n=!0,t+=s,e[r+1]==="^"&&(t+="^",r++),e[r+1]==="]"&&(t+="]",r++);continue}t+=s}return t};
-var __lcQuant=e=>{if(!/[*+?}][*+?{]/.test(e))return e;let o="",at=-1,q=!1,st=[],i=0;for(;i<e.length;){let c=e[i];if(c==="\\\\"){o+=c+(e[i+1]===void 0?"":e[i+1]),at=o.length-(e[i+1]===void 0?1:2),q=!1,i+=2;continue}if(c==="["){let j=i+1;for(e[j]==="^"&&j++,e[j]==="]"&&j++;j<e.length&&e[j]!=="]";){if(e[j]==="["&&(e[j+1]===":"||e[j+1]==="."||e[j+1]==="=")){let k=e.indexOf(e[j+1]+"]",j+2);j=k<0?e.length:k+2}else e[j]==="\\\\"?j+=2:j++}let w=e.slice(i,j+1);at=o.length,o+=w,q=!1,i=j+1;continue}if(c==="("){if(st.push(o.length),o+=c,i++,e[i]==="?"){for(;i<e.length&&e[i]!==":"&&e[i]!==")"&&e[i]!==">";)o+=e[i++];i<e.length&&(o+=e[i++])}at=-1,q=!1;continue}if(c===")"){o+=c,at=st.length?st.pop():-1,q=!1,i++;continue}if(c==="|"||c==="^"||c==="$"){o+=c,at=-1,q=!1,i++;continue}let m=c==="{"?/^\\{\\d+(?:,\\d*)?\\}/.exec(e.slice(i)):null;if(c==="*"||c==="+"||c==="?"||m){let t=m?m[0]:c;at>=0&&q&&(o=o.slice(0,at)+"(?:"+o.slice(at)+")"),o+=t,at>=0&&(q=!0),i+=t.length;continue}at=o.length,o+=c,q=!1,i++}return o};
+var __lcQuant=e=>{if(!/[*+?}][*+?{]|^[*+?{]|[(|][*+?{]|\\{,/.test(e))return e;let o="",at=-1,q=!1,st=[],i=0;for(;i<e.length;){let c=e[i];if(c==="\\\\"){o+=c+(e[i+1]===void 0?"":e[i+1]),at=o.length-(e[i+1]===void 0?1:2),q=!1,i+=2;continue}if(c==="["){let j=i+1;for(e[j]==="^"&&j++,e[j]==="]"&&j++;j<e.length&&e[j]!=="]";){if(e[j]==="["&&(e[j+1]===":"||e[j+1]==="."||e[j+1]==="=")){let k=e.indexOf(e[j+1]+"]",j+2);j=k<0?e.length:k+2}else e[j]==="\\\\"?j+=2:j++}let w=e.slice(i,j+1);at=o.length,o+=w,q=!1,i=j+1;continue}if(c==="("){if(st.push(o.length),o+=c,i++,e[i]==="?"){for(;i<e.length&&e[i]!==":"&&e[i]!==")"&&e[i]!==">";)o+=e[i++];i<e.length&&(o+=e[i++])}at=-1,q=!1;continue}if(c===")"){o+=c,at=st.length?st.pop():-1,q=!1,i++;continue}if(c==="|"||c==="^"||c==="$"){o+=c,at=-1,q=!1,i++;continue}let m=c==="{"?/^\\{(?:\\d+(?:,\\d*)?|,\\d*)\\}/.exec(e.slice(i)):null;if(c==="*"||c==="+"||c==="?"||m){let t=m?m[0]:c,n=t.length;if(at<0){i+=n;continue}t[0]==="{"&&t[1]===","&&(t="{0"+t.slice(1)),at>=0&&q&&(o=o.slice(0,at)+"(?:"+o.slice(at)+")"),o+=t,at>=0&&(q=!0),i+=n;continue}at=o.length,o+=c,q=!1,i++}return o};
 var __lcRe=e=>__lcQuant(__lcWordB(e));
 var __lcKey=(e,t,n,g)=>{let l=e.length,a=n===null?null:n[0],b=c=>c===" "||c==="\\t",f=(p,k)=>{if(a!==null){for(;p<l&&k--;){for(;p<l&&e[p]!==a;)p++;p<l&&p++}}else{for(;p<l&&k--;){for(;p<l&&b(e[p]);)p++;for(;p<l&&!b(e[p]);)p++}}return p},sb=t.ignoreLeading||g,eb=t.ignoreLeadingEnd||g,s=f(0,t.startField-1);if(sb)for(;s<l&&b(e[s]);)s++;if(s=Math.min(l,s+(t.startChar===void 0?0:t.startChar-1)),t.endField===void 0)return e.slice(s);let w=t.endField-1,c=t.endChar===void 0?0:t.endChar,p=0;if(c===0&&w++,a!==null){for(;p<l&&w--;){for(;p<l&&e[p]!==a;)p++;p<l&&(w||c)&&p++}}else{for(;p<l&&w--;){for(;p<l&&b(e[p]);)p++;for(;p<l&&!b(e[p]);)p++}}if(c!==0){if(eb)for(;p<l&&b(e[p]);)p++;p=Math.min(l,p+c)}return e.slice(s,Math.max(s,p))};
 var __lcKeySpec=e=>{let t={},p=e.split(","),fl=(f,end)=>{f.includes("n")&&(t.numeric=!0),f.includes("r")&&(t.reverse=!0),f.includes("f")&&(t.ignoreCase=!0),f.includes("b")&&(t[end?"ignoreLeadingEnd":"ignoreLeading"]=!0),f.includes("h")&&(t.humanNumeric=!0),f.includes("V")&&(t.versionSort=!0),f.includes("d")&&(t.dictionaryOrder=!0),f.includes("M")&&(t.monthSort=!0)},pos=s=>{let m=/^(\\d*)(?:\\.(\\d*))?([A-Za-z]*)$/.exec(s);return m?{f:m[1]===""?NaN:parseInt(m[1],10),c:m[2]?parseInt(m[2],10):void 0,o:m[3]}:null},a=pos(p[0]);if(p.length>2||!a||!(a.f>=1))return null;if(t.startField=a.f,a.c>=1&&(t.startChar=a.c),fl(a.o,!1),p.length>1&&p[1]!==""){let b=pos(p[1]);if(!b)return null;b.f>=1&&(t.endField=b.f,b.c>=1&&(t.endChar=b.c)),fl(b.o,!0)}return t};
@@ -47,6 +47,9 @@ var __lcBytes=a=>__lcText.decodeBytes(Uint8Array.from(a));
 var __lcByte=v=>{v&=255;return v<128?String.fromCharCode(v):String.fromCharCode(56320+v)};
 var __lcHeal=s=>__lcText.joinEscapes(s);
 var __lcErrno=l=>{let c=l&&l.code;return c==="ENOENT"?"No such file or directory":c==="EACCES"||c==="EPERM"?"Permission denied":c==="EISDIR"?"Is a directory":c==="ENOTDIR"?"Not a directory":c==="EROFS"?"Read-only file system":c==="ENOSPC"?"No space left on device":null};
+var __lcRedirectName=async(e,n)=>{if(n==="")return"No such file or directory";if(n.length>1&&n.endsWith("/"))return"Is a directory";if(n.includes("..")||n.endsWith("/.")){let c=n[0]==="/"?"/":e.state.cwd,p=n.split("/").filter(s=>s!==""&&s!==".");for(let k=0;k<p.length;k++){let st;try{st=await e.fs.stat(c)}catch{return"No such file or directory"}if(!st.isDirectory)return"Not a directory";c=e.fs.resolvePath(c,p[k])}if(n.endsWith("/.")){try{if(!(await e.fs.stat(c)).isDirectory)return"Not a directory"}catch{return"No such file or directory"}}}return null};
+var __lcCpLen=s=>{let n=0;for(let i=0;i<s.length;i++){let c=s.charCodeAt(i);if(c>=55296&&c<=56319&&i+1<s.length&&(s.charCodeAt(i+1)&64512)===56320)i++;n++}return n};
+var __lcCpSub=(s,a,l)=>{let r="",k=0,i=0;for(;i<s.length;){let c=s.charCodeAt(i),w=c>=55296&&c<=56319&&i+1<s.length&&(s.charCodeAt(i+1)&64512)===56320?2:1;if(k>=a&&(l===void 0||k<a+l))r+=s.slice(i,i+w);k++;i+=w;if(l!==void 0&&k>=a+l)break}return r};
 var __lcInherit=(h,e)=>{let q={...h};delete q.PWD;delete q.OLDPWD;return{...q,...e}};
 var __lcIso=(p,u,a,d)=>{let f=p==="date"?"%Y-%m-%d":p==="hours"?"%Y-%m-%dT%H":p==="minutes"?"%Y-%m-%dT%H:%M":p==="ns"?"%Y-%m-%dT%H:%M:%S,000000000":"%Y-%m-%dT%H:%M:%S",s=As(f,u,a,d);if(p==="date")return s;let z=As("%z",u,a,d);return s+z.slice(0,3)+":"+z.slice(3)};
 `;
@@ -470,6 +473,11 @@ export const PATCHES = [
 				to: 'if(o==="}"){t+="\\\\}",n+=2,r=!1;continue}if((o==="+"||o==="?")&&!r){t+=o,n+=2;continue}t+=i+o,n+=2,r=o==="b"||o==="B"||o==="<"||o===">"||o==="`"||o==="\'";continue}',
 			},
 			{
+				name: 'grep, basic expression: an interval with no lower bound, \\{,2\\}, is \\{0,2\\}',
+				from: 'if(o==="{"){let a=e.slice(n).match(/^\\\\{(\\d+)(,(\\d*)?)?\\\\}/);if(a){let c=a[1],u=a[2]!==void 0,f=a[3]||"";',
+				to: 'if(o==="{"){let a=e.slice(n).match(/^\\\\{(\\d*)(,(\\d*)?)?\\\\}/);if(a&&(a[1]!==""||a[2]!==void 0)){let c=a[1]||"0",u=a[2]!==void 0,f=a[3]||"";',
+			},
+			{
 				name: 'grep, basic and extended: \\< and \\> outside a bracket expression are word boundaries',
 				from: 't.wholeWord&&(n=`\\\\b(?:${n})\\\\b`),t.lineRegexp&&(n=`^(?:${n})$`);let s=',
 				to: 't.mode!=="fixed"&&t.mode!=="perl"&&(n=__lcRe(n)),t.wholeWord&&(n=`\\\\b(?:${n})\\\\b`),t.lineRegexp&&(n=`^(?:${n})$`);let s=',
@@ -684,17 +692,59 @@ export const PATCHES = [
 	},
 	{
 		id: 'LC-31',
-		title: 'a command word that is an unquoted expansion is split into words (and globbed) as bash splits it (`c="ls -l"; $c` ran a command named "ls -l" and said "command not found"): the first word is the command and the rest are its first arguments',
+		title: 'a command word that is an expansion is split into words (and globbed) as bash splits it (`c="ls -l"; $c` ran a command named "ls -l" and said "command not found"): the first word is the command and the rest are its first arguments. A quoted list is words too (`"$@"`, `"${cmd[@]}"`, `"x$@"`: `run() { "$@"; }` could not run what it was given), and one that is empty is no command at all',
 		edits: [
 			{
 				name: 'simple command: the command name is expanded with field splitting when it is only expansions',
 				from: 'let u=await Be(this.ctx,t.name),f=[],d=[],p=(N,$)=>{',
-				to: 'let __nm=t.name.parts.every(N=>N.type==="CommandSubstitution"||N.type==="ParameterExpansion"||N.type==="ArithmeticExpansion"),__ex=__nm?await dr(this.ctx,t.name):null,u=__ex?__ex.values[0]??"":await Be(this.ctx,t.name),f=[],d=[],p=(N,$)=>{',
+				to: 'let __nm=t.name.parts.every(N=>N.type==="CommandSubstitution"||N.type==="ParameterExpansion"||N.type==="ArithmeticExpansion"||N.type==="DoubleQuoted"&&N.parts.every(P=>P.type==="CommandSubstitution"||P.type==="ParameterExpansion"||P.type==="ArithmeticExpansion"||P.type==="Literal")),__ex=__nm?await dr(this.ctx,t.name):null,__z=__ex!==null&&__ex.values.length===0,u=__ex?__ex.values[0]??"":await Be(this.ctx,t.name),f=[],d=[],p=(N,$)=>{',
 			},
 			{
 				name: 'simple command: the words after the first one of such a name are the first arguments',
 				from: 'f.push(N),d.push($)};if(Jp(t.name,["local","declare","typeset","export","readonly"])&&(u==="local"',
 				to: 'f.push(N),d.push($)};if(__ex)for(let __x of __ex.values.slice(1))p(__x,__ex.quoted);if(Jp(t.name,["local","declare","typeset","export","readonly"])&&(u==="local"',
+			},
+			{
+				name: 'simple command: an expansion that made no word at all (an empty `"$@"`) is no command, and the next word is the command, as for an unquoted one',
+				from: 'let m=t.name.parts.every(N=>N.type==="CommandSubstitution"||N.type==="ParameterExpansion"||N.type==="ArithmeticExpansion");!u&&m&&f.length>0&&(u=f.shift(),d.shift());',
+				to: 'let m=__z||t.name.parts.every(N=>N.type==="CommandSubstitution"||N.type==="ParameterExpansion"||N.type==="ArithmeticExpansion");!u&&m&&f.length>0&&(u=f.shift(),d.shift());',
+			},
+		],
+	},
+	{
+		id: 'LC-32',
+		title: 'the target of an output redirection is looked at as it was typed: a name that ends in a slash is a directory (`echo x > f/` wrote a file named f), an empty one is no such file, and a path that goes up through a folder that is not there (`> x/../n`) or through a file is not there (`> x/../n` wrote `n`)',
+		edits: [
+			{
+				name: 'the check of an output target (exists? is a directory? noclobber?) first asks about the name as typed',
+				from: 'async function FO(e,t,n,r){try{if(!await e.fs.exists(t))return null;',
+				to: 'async function FO(e,t,n,r){try{let __m=await __lcRedirectName(e,n);if(__m)return`bash: ${n}: ${__m}\n`;if(!await e.fs.exists(t))return null;',
+			},
+		],
+	},
+	{
+		id: 'LC-33',
+		title: 'awk counts characters, not UTF-16 units: length, substr, index and the RSTART/RLENGTH of match are in code points (`length("😀")` was 2, GNU awk in a UTF-8 locale says 1)',
+		edits: [
+			{
+				name: 'length()',
+				from: 'function rE(e,t,n){return e.length===0?t.line.length:jt(await n.evalExpr(e[0])).length}',
+				to: 'function rE(e,t,n){return __lcCpLen(e.length===0?t.line:jt(await n.evalExpr(e[0])))}',
+			},
+			{
+				name: 'substr(): the slice of code points',
+				from: 'return r.substr(Math.max(0,s),i)}return r.substr(Math.max(0,s))}',
+				to: 'return __lcCpSub(r,Math.max(0,s),i)}return __lcCpSub(r,Math.max(0,s))}',
+			},
+			{
+				name: 'index(): the code points before the match',
+				from: 'i=r.indexOf(s);return i===-1?0:i+1}async function oE(',
+				to: 'i=r.indexOf(s);return i===-1?0:__lcCpLen(r.slice(0,i))+1}async function oE(',
+			},
+			{
+				name: 'match(): RSTART and RLENGTH',
+				from: 'return t.RSTART=o.index+1,t.RLENGTH=o[0].length,t.RSTART',
+				to: 'return t.RSTART=__lcCpLen(r.slice(0,o.index))+1,t.RLENGTH=__lcCpLen(o[0]),t.RSTART',
 			},
 		],
 	},

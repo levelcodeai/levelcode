@@ -249,13 +249,13 @@ async function main() {
 
 	test('sed: -i.bak keeps a copy, long options are the short ones, and the GNU one-line text commands get their newline', async () => {
 		const t = c.normaliseSed;
-		assert.deepStrictEqual(t(['-i.bak', 's/a/b/', 'f']), { args: ['-i', 's/a/b/', 'f'], suffix: '.bak', files: ['f'] });
-		assert.deepStrictEqual(t(['--in-place=.orig', '-e', 's/a/b/', 'f', 'g']), { args: ['-i', '-e', 's/a/b/', 'f', 'g'], suffix: '.orig', files: ['f', 'g'] });
-		assert.deepStrictEqual(t(['-i', 's/a/b/', 'f']), { args: ['-i', 's/a/b/', 'f'], suffix: '', files: ['f'] });
-		assert.deepStrictEqual(t(['-n', '-i', '-e', 'p', 'f']), { args: ['-n', '-i', '-e', 'p', 'f'], suffix: '', files: ['f'] });
-		assert.deepStrictEqual(t(['--quiet', '--expression=2p', 'f']), { args: ['-n', '-e', '2p', 'f'], suffix: null, files: ['f'] });
-		assert.deepStrictEqual(t(['-ne', 'p', 'f']), { args: ['-n', '-e', 'p', 'f'], suffix: null, files: ['f'] });
-		assert.deepStrictEqual(t(['-E', '-f', 'prog.sed', 'f']), { args: ['-E', '-f', 'prog.sed', 'f'], suffix: null, files: ['f'] });
+		assert.deepStrictEqual(t(['-i.bak', 's/a/b/', 'f']), { args: ['-i', 's/a/b/', 'f'], suffix: '.bak', files: ['f'], fileAt: [2] });
+		assert.deepStrictEqual(t(['--in-place=.orig', '-e', 's/a/b/', 'f', 'g']), { args: ['-i', '-e', 's/a/b/', 'f', 'g'], suffix: '.orig', files: ['f', 'g'], fileAt: [3, 4] });
+		assert.deepStrictEqual(t(['-i', 's/a/b/', 'f']), { args: ['-i', 's/a/b/', 'f'], suffix: '', files: ['f'], fileAt: [2] });
+		assert.deepStrictEqual(t(['-n', '-i', '-e', 'p', 'f']), { args: ['-n', '-i', '-e', 'p', 'f'], suffix: '', files: ['f'], fileAt: [4] });
+		assert.deepStrictEqual(t(['--quiet', '--expression=2p', 'f']), { args: ['-n', '-e', '2p', 'f'], suffix: null, files: ['f'], fileAt: [3] });
+		assert.deepStrictEqual(t(['-ne', 'p', 'f']), { args: ['-n', '-e', 'p', 'f'], suffix: null, files: ['f'], fileAt: [3] });
+		assert.deepStrictEqual(t(['-E', '-f', 'prog.sed', 'f']), { args: ['-E', '-f', 'prog.sed', 'f'], suffix: null, files: ['f'], fileAt: [3] });
 		assert.deepStrictEqual(t(['1i\\HEAD', 'f']).args, ['1i\\\nHEAD', 'f']);
 		assert.strictEqual(c.fixSedOneLiner('$a\\TAIL'), '$a\\\nTAIL');
 		assert.strictEqual(c.fixSedOneLiner('/x/,/y/c\\new\ns/a/b/'), '/x/,/y/c\\\nnew\ns/a/b/');
@@ -1207,7 +1207,7 @@ async function main() {
 		assert.strictEqual(r.stdout, '   c,FOO,0,foo\n9,Foo,é,B\naa,Foo,007\n--\nya\nxb\nzc\n--\nya\nxb\nzc\n--\na\n b\n  c\n');
 		const e = await sh("printf 'a\\n' | sort -k0; echo \"rc=$?\"; printf 'a\\n' | sort -k1.0; echo \"rc=$?\"; echo b | sort -o nodir/x; echo \"rc=$?\"; mkdir dd; echo b | sort -o dd; echo \"rc=$?\"");
 		assert.strictEqual(e.stdout, 'rc=2\nrc=2\nrc=2\nrc=2\n');
-		assert.strictEqual(e.stderr, "sort: invalid field specification '0'\nsort: invalid field specification '1.0'\nsort: open failed: nodir/x: No such file or directory\nsort: open failed: dd: Is a directory\n");
+		assert.strictEqual(e.stderr, "sort: field number is zero: invalid field specification '0'\nsort: character offset is zero: invalid field specification '1.0'\nsort: open failed: nodir/x: No such file or directory\nsort: open failed: dd: Is a directory\n");
 	});
 
 	for (const t of tests) {

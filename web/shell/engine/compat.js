@@ -23,7 +23,11 @@
 // @ts-check
 
 const zone = require('./zone.js');
-const { decodeBytes, decodeByteString } = require('./text.js');
+const tr = require('./tr.js');
+const zero = require('./zero.js');
+const datestr = require('./datestr.js');
+const diffs = require('./diff.js');
+const { decodeBytes, decodeByteString, encodeText } = require('./text.js');
 
 /** just-bash commands that are not offered: they need node:zlib / a DOM, neither of which a worker has. */
 const EXCLUDED = ['gzip', 'gunzip', 'zcat', 'html-to-markdown'];
@@ -59,28 +63,32 @@ const UNIMPLEMENTED_BUILTINS = ['bg', 'caller', 'disown', 'enable', 'fc', 'fg', 
  */
 const OPTION_VALUES = {
 	xargs: { short: 'ILnsPdEa', long: ['--max-args', '--max-chars', '--max-procs', '--delimiter', '--arg-file', '--process-slot-var'], optional: 'iel', operands: 'stop' },
-	grep: { short: 'efmABCdD', long: ['--regexp', '--file', '--max-count', '--after-context', '--before-context', '--context', '--include', '--exclude', '--exclude-from', '--exclude-dir', '--directories', '--devices', '--label', '--binary-files'], usage: ['Usage: grep [OPTION]... PATTERNS [FILE]...'], status: 2 },
+	grep: { short: 'efmABCdDX', long: ['--regexp', '--file', '--max-count', '--after-context', '--before-context', '--context', '--include', '--exclude', '--exclude-from', '--exclude-dir', '--directories', '--devices', '--label', '--binary-files', '--group-separator'], usage: ['Usage: grep [OPTION]... PATTERNS [FILE]...'], status: 2 },
 	cp: { short: 'tS', long: ['--target-directory', '--suffix', '--sparse', '--no-preserve'] },
 	mv: { short: 'tS', long: ['--target-directory', '--suffix'] },
 	rm: { short: '', long: [] },
 	mkdir: { short: 'm', long: ['--mode'] },
-	sed: { short: 'efl', long: ['--expression', '--file', '--line-length'], optional: 'i', usage: ['Usage: sed [OPTION]... {script-only-if-no-other-script} [input-file]...'] },
+	sed: { short: 'eflV', long: ['--expression', '--file', '--line-length'], optional: 'i', usage: ['Usage: sed [OPTION]... {script-only-if-no-other-script} [input-file]...'] },
 	paste: { short: 'd', long: ['--delimiters'] },
 	head: { short: 'nc', long: ['--lines', '--bytes'] },
 	tail: { short: 'ncs', long: ['--lines', '--bytes', '--sleep-interval', '--pid', '--max-unchanged-stats'] },
-	stat: { short: 'c', long: ['--format', '--printf'] },
+	stat: { short: 'c', long: ['--format', '--printf', '--cached'] },
 	uniq: { short: 'fsw', long: ['--skip-fields', '--skip-chars', '--check-chars'] },
 	wc: { short: '', long: ['--files0-from'] },
 	touch: { short: 'drt', long: ['--date', '--reference', '--time'] },
 	ls: { short: 'wIT', long: ['--width', '--ignore', '--tabsize', '--block-size', '--hide', '--format', '--sort', '--time', '--time-style', '--indicator-style', '--quoting-style'], status: 2 },
-	sort: { short: 'ktoST', long: ['--key', '--field-separator', '--output', '--buffer-size', '--temporary-directory', '--parallel', '--batch-size', '--files0-from', '--random-source', '--sort', '--compress-program'], status: 2 },
-	du: { short: 'dBtX', long: ['--max-depth', '--block-size', '--threshold', '--exclude', '--exclude-from', '--files0-from'] },
-	awk: { short: 'fvFeEil', long: ['--file', '--assign', '--field-separator', '--source', '--exec', '--include', '--load'], usage: ['Usage: awk [POSIX or GNU style options] -f progfile [--] file ...'], bare: true },
+	sort: { short: 'ktoSTy', long: ['--key', '--field-separator', '--output', '--buffer-size', '--temporary-directory', '--parallel', '--batch-size', '--files0-from', '--random-source', '--sort', '--compress-program'], status: 2 },
+	du: { short: 'dBtX', long: ['--max-depth', '--block-size', '--threshold', '--exclude', '--exclude-from', '--files0-from', '--time-style'] },
+	// gawk takes its long options to the short letter and says that one, without quotes
+	awk: { short: 'fvFeEilWZ', long: ['--file', '--assign', '--field-separator', '--source', '--exec', '--include', '--load'], usage: ['Usage: awk [POSIX or GNU style options] -f progfile [--] file ...'], bare: true, longAs: { '--file': 'f', '--assign': 'v', '--field-separator': 'F', '--source': 'e', '--exec': 'E', '--include': 'i', '--load': 'l' } },
 	date: { short: 'dfrs', long: ['--date', '--file', '--reference', '--set', '--rfc-3339'], optional: 'I' },
 	od: { short: 'AtjNS', long: ['--address-radix', '--format', '--skip-bytes', '--read-bytes', '--endian'], optional: 'w' },
 	realpath: { short: '', long: ['--relative-to', '--relative-base'] },
-	cmp: { short: 'in', long: ['--ignore-initial', '--bytes'], status: 2 },
+	cmp: { short: 'in', long: ['--ignore-initial', '--bytes'], status: 2, tryPrefix: 'cmp: ' },
 	nproc: { short: '', long: ['--ignore'] },
+	basename: { short: 's', long: ['--suffix'] },
+	comm: { short: '', long: ['--output-delimiter'] },
+	join: { short: '12ajeotv', long: [] },
 };
 OPTION_VALUES.egrep = OPTION_VALUES.grep;
 OPTION_VALUES.fgrep = OPTION_VALUES.grep;
@@ -105,7 +113,7 @@ function missingOptionValue(program, args) {
 	if (!t) { return null; }
 	const name = program === 'egrep' || program === 'fgrep' ? 'grep' : program;
 	// grep prints its usage line and then "Try"; sed and awk print their usage (here its first line) and nothing else
-	const tail = program === 'sed' || program === 'awk' ? '' : `Try '${name} --help' for more information.\n`;
+	const tail = program === 'sed' || program === 'awk' ? '' : `${t.tryPrefix || ''}Try '${name} --help' for more information.\n`;
 	const say = (what) => ({ stdout: '', stderr: `${name}: ${what}\n` + (t.usage ? t.usage.join('\n') + '\n' : '') + tail, exitCode: t.status || 1 });
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
@@ -117,7 +125,7 @@ function missingOptionValue(program, args) {
 		if (a.startsWith('--')) {
 			const eq = a.indexOf('=');
 			if (eq < 0 && t.long.includes(a)) {
-				if (i + 1 >= args.length) { return say(`option '${a}' requires an argument`); }
+				if (i + 1 >= args.length) { return say(t.longAs ? `option requires an argument -- ${t.longAs[a]}` : `option '${a}' requires an argument`); }
 				i++;
 			}
 			continue;
@@ -170,7 +178,7 @@ function normaliseXargs(args) {
 				case '--null': out.push('-0'); break;
 				case '--verbose': out.push('-t'); break;
 				case '--no-run-if-empty': out.push('-r'); break;
-				case '--replace': out.push('-I', attached !== null && attached !== '' ? attached : '{}'); break;
+				case '--replace': out.push('-I', attached !== null ? attached : '{}'); break;
 				case '--max-args': case '--max-lines': out.push(...withValue('-n', value())); break;
 				case '--delimiter': out.push(...withValue('-d', value())); break;
 				case '--max-procs': case '--max-chars': value(); break;
@@ -270,9 +278,10 @@ function parseXargs(args, upperLimit = XARGS_UPPER_LIMIT) {
 		}
 		return null;
 	};
-	const setLines = (n) => {
-		if (opts.replace !== null) { warnings.push('xargs: warning: options --replace and -L are mutually exclusive, ignoring previous --replace value\n'); opts.replace = null; }
-		if (opts.maxArgs !== null) { warnings.push('xargs: warning: options --max-args and -L are mutually exclusive, ignoring previous --max-args value\n'); opts.maxArgs = null; }
+	/** `name` is how GNU names the option that came last: `-L`, or `--max-lines/-l` for -l and --max-lines */
+	const setLines = (n, name) => {
+		if (opts.replace !== null) { warnings.push(`xargs: warning: options --replace and ${name} are mutually exclusive, ignoring previous --replace value\n`); opts.replace = null; }
+		if (opts.maxArgs !== null) { warnings.push(`xargs: warning: options --max-args and ${name} are mutually exclusive, ignoring previous --max-args value\n`); opts.maxArgs = null; }
 		opts.maxLines = n;
 	};
 	const setArgs = (n) => {
@@ -314,9 +323,9 @@ function parseXargs(args, upperLimit = XARGS_UPPER_LIMIT) {
 				case '--show-limits': break;
 				case '--max-procs': case '--process-slot-var': value(); break;
 				case '--max-chars': { const e = setChars(value()); if (e) { return e; } break; }
-				case '--replace': setReplace(attached !== null && attached !== '' ? attached : '{}'); break;
+				case '--replace': setReplace(attached !== null ? attached : '{}'); break;
 				case '--eof': opts.eof = attached === null || attached === '' ? null : attached; break;
-				case '--max-lines': { const n = attached === null ? 1 : number(attached, '-L', 1); if (typeof n !== 'number') { return n; } setLines(n); break; }
+				case '--max-lines': { const n = attached === null ? 1 : number(attached, '-L', 1); if (typeof n !== 'number') { return n; } setLines(n, '--max-lines/-l'); break; }
 				case '--max-args': { const n = number(value(), '-n', 1); if (typeof n !== 'number') { return n; } setArgs(n); break; }
 				case '--delimiter': { const d = delimiter(String(value())); if (d === null) { return badDelimiter; } opts.delim = d; break; }
 				case '--arg-file': opts.argFile = String(value()); break;
@@ -349,12 +358,12 @@ function parseXargs(args, upperLimit = XARGS_UPPER_LIMIT) {
 			} else if (ch === 'L') {
 				const n = number(value(), '-L', 1);
 				if (typeof n !== 'number') { return n; }
-				setLines(n);
+				setLines(n, '-L');
 			} else if (ch === 'l') {
 				c = a.length;
 				const n = rest !== '' ? number(rest, '-l', 1) : 1;
 				if (typeof n !== 'number') { return n; }
-				setLines(n);
+				setLines(n, '--max-lines/-l');
 			} else if (ch === 'n') {
 				const n = number(value(), '-n', 1);
 				if (typeof n !== 'number') { return n; }
@@ -488,7 +497,14 @@ function xargsPlan(lines, o, base, size = null, inputError = null) {
 	const events = [];
 	let stopped = inputError;
 	if (o.replace !== null) {
-		if (o.replace === '' && lines.length) { return [{ error: 'xargs: command too long\n', fatal: true }]; }
+		if (o.replace === '' && lines.length) {
+			// an empty string is found at every place of every word, so the command line of the first item grows until it
+			// is too long. The checks of -s that come before a command is built come first, in the words they have with -I
+			// (the item that cannot fit, the command that cannot); what gets past them is the growing line
+			const first = xargsPlan(lines.slice(0, 1), Object.assign({}, o, { replace: '\u0000' }), base, size, null)[0];
+			if (first && 'error' in first && /argument line too long|cannot fit single argument/.test(first.error)) { return [Object.assign({}, first, { fatal: true })]; }
+			return [{ error: 'xargs: command too long\n', fatal: true }];
+		}
 		for (const [at, l] of lines.entries()) {
 			const item = l.join(' ');
 			// a line is measured against the whole limit when it is the first, and against what is left of it by the
@@ -558,8 +574,11 @@ function xargsPlan(lines, o, base, size = null, inputError = null) {
 	}
 	if (stopped) {
 		events.push({ error: stopped, fatal: false });
-		// with -x (which -L implies) the batch that was still being filled is not run; a full one is
-		if (exact && !full()) { cur = []; }
+		// with -x (which -L implies) the batch that was still being filled is not run; a full one is. An item that
+		// cannot fit at all ends the run the same way for a plain -x (no -n, -L or -I): GNU says "argument line too
+		// long" and runs nothing more
+		const tooLong = stopped === 'xargs: argument line too long\n';
+		if ((exact || (o.exitIfExceeded && tooLong)) && !full()) { cur = []; }
 	}
 	flush();
 	// nothing to read: GNU runs the command once, without arguments, unless -r
@@ -567,15 +586,66 @@ function xargsPlan(lines, o, base, size = null, inputError = null) {
 	return events;
 }
 
+/**
+ * Shell builtins that are no program on a system with GNU coreutils: `xargs cd`, `xargs exit 3` and `xargs export A=1`
+ * are "No such file or directory", status 127, because xargs starts a program and has no shell to ask (`echo`, `printf`,
+ * `pwd`, `true`, `false`, `test` and `[` are programs too, and are not here).
+ */
+const NOT_PROGRAMS = new Set(['cd', 'exit', 'export', 'type', 'set', 'unset', 'alias', 'unalias', 'read', 'source', '.', 'eval', 'local', 'declare', 'typeset', 'readonly', 'let', 'shift', 'return', 'break', 'continue', 'builtin', 'command', 'hash', 'history', 'jobs', 'fg', 'bg', 'wait', 'trap', 'ulimit', 'umask', 'exec', 'getopts', 'shopt', 'enable', 'help', 'dirs', 'pushd', 'popd', 'suspend', 'times', 'caller', 'mapfile', 'readarray', 'compgen', 'complete', 'bind', 'disown', 'logout', 'fc']);
+
 /** A word as one shell word, quoted so that nothing in it means anything. */
 function shellQuote(w) { return "'" + w.replace(/'/g, "'\\''") + "'"; }
 
-/** A word as `xargs -t` shows it: plain when it is made of safe characters, else quoted the way a shell wants it. */
+/**
+ * A word as `xargs -t` shows it: gnulib's shell-escape quoting, as findutils 4.8 uses it, recorded character class by
+ * character class (1,480 words of the reference: every printable ASCII character after a quote, alone, first, and in
+ * random strings). A word of characters no shell treats specially is as it is (`x{}y`, `a%b`, `é`); one with a space or
+ * one of `!"$&()*;<=>?[\^`|` (or a leading `#` or `~`, or a lone `{` or `}`) is in single quotes; one that holds a single
+ * quote and none of those, nor `{ } # ~` in the middle, is in double quotes (`"it's"`); otherwise a quote is `'\''`.
+ * A control character is written as `$'\n'` / `$'\001'` between quoted runs (`'a'$'\t''b'`), and a word that holds a
+ * quote and ends in one is written with an extra pair of quotes in front (gnulib's, kept as it is).
+ *
+ * @param {string} w
+ * @returns {string}
+ */
 function xargsQuote(w) {
-	if (w !== '' && /^[A-Za-z0-9_+,.\/:@%^-]+$/.test(w)) { return w; }
-	if (!w.includes("'")) { return `'${w}'`; }
-	if (!/["$`\\!]/.test(w)) { return `"${w}"`; }
-	return `'${w.replace(/'/g, "'\\''")}'`;
+	if (w === '') { return "''"; }
+	const chars = [...w];
+	/** the bytes of a character a terminal cannot show: a control character, and an escaped byte that is not UTF-8 */
+	const raw = (ch) => {
+		const c = /** @type {number} */ (ch.codePointAt(0));
+		if (c < 0x20 || c === 0x7f) { return [c]; }
+		if (c >= 0x80 && c <= 0x9f) { return [0xc2, c]; }
+		if (c >= 0xdc80 && c <= 0xdcff) { return [c & 0xff]; }
+		return null;
+	};
+	const hostile = (ch, i) => ' !"$&()*;<=>?[\\^`|'.includes(ch) || (i === 0 && (ch === '#' || ch === '~'));
+	if (!chars.some((ch) => raw(ch))) {
+		const quoted = chars.includes("'");
+		if (!quoted && !chars.some((ch, i) => hostile(ch, i)) && w !== '{' && w !== '}') { return w; }
+		// a single quote makes the double-quoted form possible, unless something else needs the single-quoted one
+		if (quoted && !chars.some((ch, i) => '!"#$&()*;<=>?[\\^`{|}~'.includes(ch) && !(i === 0 && (ch === '#' || ch === '~')))) { return `"${w}"`; }
+		return "'" + w.replace(/'/g, "'\\''") + "'";
+	}
+	const named = { 7: '\\a', 8: '\\b', 9: '\\t', 10: '\\n', 11: '\\v', 12: '\\f', 13: '\\r' };
+	let out = "'";
+	let escaped = false;
+	for (const ch of chars) {
+		const bytes = raw(ch);
+		if (bytes) {
+			if (!escaped) { out += "'$'"; escaped = true; }
+			out += bytes.length === 1 && named[bytes[0]] ? named[bytes[0]] : bytes.map((b) => '\\' + b.toString(8).padStart(3, '0')).join('');
+			continue;
+		}
+		if (ch === "'") { out += "'\\''"; escaped = false; continue; }
+		if (escaped) { out += "''"; escaped = false; }
+		out += ch;
+	}
+	out += "'";
+	if (chars.includes("'") && raw(chars[chars.length - 1]) && chars[0] !== "'") {
+		out = raw(chars[0]) ? "'" + out.slice(4) : "''" + out;
+	}
+	return out;
 }
 
 /** GNU grep options that take a value (so that the value is never mistaken for an option or for something to drop). */
@@ -653,6 +723,70 @@ function grepOperands(args) {
 	}
 	const fileAt = patternGiven ? at : at.slice(1);
 	return { recursive, noName, withName, quiet, files: fileAt.map((i) => args[i]), fileAt };
+}
+
+/**
+ * `-d ACTION` / `--directories=ACTION` and `-D ACTION` / `--devices=ACTION` of grep, taken out of the arguments (the
+ * engine has neither). ACTION of -d is read, recurse or skip, or a prefix that is only one of them; recurse is `-r`.
+ * What is left: the arguments, and what to do with a folder given as a file.
+ *
+ * @param {string[]} args
+ * @returns {{ args: string[], action: 'read' | 'skip' | 'recurse', result?: { stdout: string, stderr: string, exitCode: number } }}
+ */
+function grepDirectories(args) {
+	const kept = [];
+	let action = 'read';
+	let result;
+	const words = ['read', 'recurse', 'skip'];
+	const bad = (kind, value, ambiguous) => ({
+		stdout: '',
+		stderr: `grep: ${ambiguous ? 'ambiguous' : 'invalid'} argument '${value}' for '--${kind}'\nValid arguments are:\n${words.map((w) => `  - '${w}'`).join('\n')}\nUsage: grep [OPTION]... PATTERNS [FILE]...\nTry 'grep --help' for more information.\n`,
+		exitCode: 1,
+	});
+	const take = (kind, value) => {
+		if (result) { return; }
+		if (kind === 'devices') {
+			if (value !== 'read' && value !== 'skip') { result = { stdout: '', stderr: 'grep: unknown devices method\n', exitCode: 2 }; }
+			return;
+		}
+		const exact = words.find((w) => w === value);
+		const prefixed = exact ? [exact] : words.filter((w) => value !== '' && w.startsWith(value));
+		if (prefixed.length === 1) { action = /** @type {any} */ (prefixed[0]); } else { result = bad('directories', value, prefixed.length > 1); }
+	};
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (a === '--') { kept.push(...args.slice(i)); break; }
+		if (a === '-' || !a.startsWith('-')) { kept.push(a); continue; }
+		if (a.startsWith('--')) {
+			const eq = a.indexOf('=');
+			const name = eq < 0 ? a : a.slice(0, eq);
+			if (name === '--directories' || name === '--devices') {
+				const value = eq >= 0 ? a.slice(eq + 1) : args[++i];
+				if (value === undefined) { kept.push(a); continue; }
+				take(name.slice(2), value);
+				continue;
+			}
+			kept.push(a);
+			continue;
+		}
+		let cluster = '-';
+		let taken = false;
+		for (let c = 1; c < a.length; c++) {
+			const ch = a[c];
+			if (ch === 'd' || ch === 'D') {
+				const value = c < a.length - 1 ? a.slice(c + 1) : args[++i];
+				if (value === undefined) { cluster += a.slice(c); break; }
+				take(ch === 'd' ? 'directories' : 'devices', value);
+				taken = true;
+				break;
+			}
+			if (GREP_SHORT_VALUE.has(ch)) { cluster += a.slice(c); if (c === a.length - 1 && i + 1 < args.length) { kept.push(cluster); cluster = ''; kept.push(args[++i]); } break; }
+			cluster += ch;
+		}
+		if (cluster !== '-' && cluster !== '') { kept.push(cluster); } else if (!taken && cluster === '-') { kept.push(a); }
+	}
+	if (action === 'recurse') { kept.unshift('-r'); }
+	return { args: kept, action, result };
 }
 
 /**
@@ -790,6 +924,28 @@ function wantsForce(args) {
 		if (a.startsWith('--') || !a.startsWith('-') || a === '-') { continue; }
 		for (let c = 1; c < a.length; c++) {
 			if (a[c] === 'f') { return true; }
+			if (a[c] === 't' || a[c] === 'S') { if (c === a.length - 1) { i++; } break; }
+		}
+	}
+	return false;
+}
+
+/**
+ * Does the command line ask cp to keep the modification times? `-p`, `-a`, `--archive`, `--preserve` alone (mode,
+ * ownership, timestamps) or with a list that names timestamps (or all). The values of -t and -S end the scan.
+ * @param {string[]} args
+ */
+function wantsPreserveTimes(args) {
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (a === '--') { return false; }
+		if (a === '--archive') { return true; }
+		if (a === '--preserve') { return true; }
+		if (a.startsWith('--preserve=')) { return /(^|,)(timestamps|all)(,|$)/.test(a.slice(11)); }
+		if (a === '--target-directory' || a === '--suffix') { i++; continue; }
+		if (a.startsWith('--') || !a.startsWith('-') || a === '-') { continue; }
+		for (let c = 1; c < a.length; c++) {
+			if (a[c] === 'p' || a[c] === 'a') { return true; }
 			if (a[c] === 't' || a[c] === 'S') { if (c === a.length - 1) { i++; } break; }
 		}
 	}
@@ -936,11 +1092,13 @@ function normaliseSed(args) {
 	let script = false;
 	const out = [];
 	const operands = [];
+	/** where in `out` each operand is */
+	const operandAt = [];
 	let firstOperand = -1;
 	let afterDashes = false;
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
-		if (afterDashes || a === '-' || !a.startsWith('-')) { if (firstOperand < 0) { firstOperand = out.length; } operands.push(a); out.push(a); continue; }
+		if (afterDashes || a === '-' || !a.startsWith('-')) { if (firstOperand < 0) { firstOperand = out.length; } operands.push(a); operandAt.push(out.length); out.push(a); continue; }
 		if (a === '--') { afterDashes = true; out.push(a); continue; }
 		if (a.startsWith('--')) {
 			const eq = a.indexOf('=');
@@ -974,7 +1132,7 @@ function normaliseSed(args) {
 	}
 	if (!script && firstOperand >= 0) { out[firstOperand] = fixSedOneLiner(out[firstOperand]); }
 	const files = script ? operands : operands.slice(1);
-	return { args: out, suffix, files };
+	return { args: out, suffix, files, fileAt: script ? operandAt : operandAt.slice(1) };
 }
 
 /**
@@ -1220,13 +1378,143 @@ function normaliseSort(args) {
 }
 
 /**
- * Is this the specification of a sort key, as coreutils reads it: `F[.C][OPTS][,F[.C][OPTS]]`, a field of 1 or more,
- * a character of 1 or more at the start (0 at the end is the end of the field), ordering letters after either position?
- * @param {string} spec
+ * What GNU's `quote()` writes between its quotation marks for an argument in a UTF-8 locale: a backslash is `\\`, the
+ * control characters are C's escapes (`\n`, `\t` ...) or three octal digits, the rest is as it is. (The marks are
+ * straight quotes here; GNU's are the curly ones.)
+ *
+ * @param {string} s
+ * @returns {string}
  */
-function sortKeyOk(spec) {
-	const m = /^(\d+)(?:\.(\d+))?[bdfghiMnRrV]*(?:,(\d+)(?:\.\d+)?[bdfghiMnRrV]*)?$/.exec(String(spec));
-	return !!m && Number(m[1]) >= 1 && (m[2] === undefined || Number(m[2]) >= 1);
+function gnuQuote(s) {
+	const named = { 7: '\\a', 8: '\\b', 9: '\\t', 10: '\\n', 11: '\\v', 12: '\\f', 13: '\\r' };
+	return String(s).replace(/[\\\u0000-\u001f\u007f]/g, (c) => {
+		const n = c.charCodeAt(0);
+		if (c === '\\') { return '\\\\'; }
+		return named[n] || '\\' + n.toString(8).padStart(3, '0');
+	});
+}
+
+/**
+ * A sort key as coreutils reads it (sort.c, `case 'k'`): `POS1[,POS2]` where each position is `F[.C]` and the ordering
+ * letters (`bdfghiMnRrV`) follow either one. A number is `strtoumax`'s: leading blanks and a plus sign are taken, a minus
+ * sign or no digit at all is an error, and one that is too big is the largest there is (not an error). The field of
+ * either position must be 1 or more and the character of the start too (an end character of 0 is "the end of the
+ * field"); anything after the last position is a stray character. The error is GNU's, word for word (the quotes are
+ * straight ones here).
+ *
+ * @param {string} spec
+ * @returns {{ spec: string, start: string, end: string } | { error: string }} `spec` is the canonical text the engine
+ *   reads (numbers in decimal, no blanks, no plus sign, an end character of 0 left out), `start` and `end` are the
+ *   ordering letters of each position
+ */
+function parseSortKey(spec) {
+	const s = String(spec);
+	let at = 0;
+	const bad = (what) => ({ error: `${what}: invalid field specification '${gnuQuote(s)}'` });
+	/** strtoumax: blanks, a plus sign, digits. `null` is "invalid count" (no digit, or a minus sign). */
+	const count = () => {
+		let q = at;
+		while (q < s.length && /[ \t\n\v\f\r]/.test(s[q])) { q++; }
+		if (s[q] === '-') { return null; }
+		if (s[q] === '+') { q++; }
+		let d = q;
+		while (d < s.length && s[d] >= '0' && s[d] <= '9') { d++; }
+		if (d === q) { return null; }
+		at = d;
+		return Number(s.slice(q, d));
+	};
+	const invalid = (where) => ({ error: `${where}: invalid count at start of '${gnuQuote(s.slice(at))}'` });
+	const letters = () => {
+		let l = '';
+		while (at < s.length && 'bdfghiMnRrV'.includes(s[at])) { l += s[at++]; }
+		return l;
+	};
+	const field = count();
+	if (field === null) { return invalid('invalid number at field start'); }
+	if (field === 0) { return bad('field number is zero'); }
+	let startChar = 0;
+	if (s[at] === '.') {
+		at++;
+		const c = count();
+		if (c === null) { return invalid("invalid number after '.'"); }
+		if (c === 0) { return bad('character offset is zero'); }
+		startChar = c;
+	}
+	const start = letters();
+	let out = String(field) + (startChar ? '.' + startChar : '') + start;
+	let end = '';
+	if (s[at] === ',') {
+		at++;
+		const f = count();
+		if (f === null) { return invalid("invalid number after ','"); }
+		if (f === 0) { return bad('field number is zero'); }
+		let endChar = 0;
+		if (s[at] === '.') {
+			at++;
+			const c = count();
+			if (c === null) { return invalid("invalid number after '.'"); }
+			endChar = c;
+		}
+		end = letters();
+		out += ',' + f + (endChar ? '.' + endChar : '') + end;
+	}
+	if (at < s.length) { return bad('stray character in field spec'); }
+	return { spec: out, start, end };
+}
+
+/**
+ * What GNU says when ordering options cannot be combined: more than one of -n -g -h -M and (-V, -R or -d/-i) applies to
+ * a key (`sort -k1nM`: "options '-Mn' are incompatible"). The letters are named in the order of its key_to_opts.
+ *
+ * @param {string} letters every ordering letter that applies to the key (blanks and reverse are not part of the rule)
+ * @returns {string | null} the message, or null when they combine
+ */
+function incompatibleOrdering(letters) {
+	const has = (c) => letters.includes(c);
+	const groups = (has('n') ? 1 : 0) + (has('g') ? 1 : 0) + (has('h') ? 1 : 0) + (has('M') ? 1 : 0) + (has('V') || has('R') || has('d') || has('i') ? 1 : 0);
+	if (groups < 2) { return null; }
+	// key_to_opts: b d f g h i M n R r V (blanks and reverse were cleared)
+	return `options '-${[...'dfghiMnRV'].filter((c) => has(c)).join('')}' are incompatible`;
+}
+
+/**
+ * The keys of a normalised `sort` line, read as GNU reads them: each `-k SPEC` is checked and handed to the engine in
+ * its canonical form (`-k +1` and `-k ' 1'` are `-k 1`), and ordering options that cannot be combined are GNU's error,
+ * for a key and for the global options a key inherits (a key with no letters of its own).
+ *
+ * @param {string[]} norm the arguments after `normaliseSort` (a valued option is `-k`, `-t` or `-o` and its value)
+ * @returns {{ args: string[] } | { error: string }}
+ */
+function sortKeys(norm) {
+	const args = norm.slice();
+	/** @type {string[]} the ordering letters of each key */
+	const keys = [];
+	let global = '';
+	const longLetters = { '--numeric-sort': 'n', '--general-numeric-sort': 'g', '--human-numeric-sort': 'h', '--month-sort': 'M', '--version-sort': 'V', '--random-sort': 'R', '--dictionary-order': 'd', '--ignore-nonprinting': 'i' };
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (a === '--') { break; }
+		if (a === '-t' || a === '-o') { i++; continue; }
+		if (a === '-k') {
+			const k = parseSortKey(args[i + 1] === undefined ? '' : args[i + 1]);
+			if ('error' in k) { return { error: k.error }; }
+			args[i + 1] = k.spec;
+			keys.push(k.start + k.end);
+			i++;
+			continue;
+		}
+		if (Object.prototype.hasOwnProperty.call(longLetters, a)) { global += longLetters[a]; continue; }
+		if (/^-[A-Za-z]+$/.test(a)) { global += a.slice(1); }
+	}
+	for (const letters of keys) {
+		const bad = incompatibleOrdering(letters);
+		if (bad) { return { error: bad }; }
+	}
+	if (!keys.length || keys.some((l) => l === '')) {
+		const bad = incompatibleOrdering(global);
+		if (bad) { return { error: bad }; }
+	}
+	return { args };
 }
 
 const COUNT_SUFFIX = { b: 512, kB: 1000, KB: 1000, K: 1024, k: 1024, MB: 1000 ** 2, M: 1024 ** 2, m: 1024 ** 2, GB: 1000 ** 3, G: 1024 ** 3, g: 1024 ** 3, TB: 1000 ** 4, T: 1024 ** 4, t: 1024 ** 4 };
@@ -1659,6 +1947,132 @@ function bytesEqual(a, b) {
 /* small commands                                                                                                */
 /* ------------------------------------------------------------------------------------------------------------ */
 
+/**
+ * One number as C's printf writes it for `%[flags][width][.precision](e|E|f|F|g|G)`.
+ *
+ * @param {{ flags: string, width: number, precision: number | null, type: string }} spec
+ * @param {number} v
+ */
+function fixedHalfEven(x, p) {
+	// printf rounds an exact tie to the even digit; toFixed takes the larger one
+	if (p > 70) { return x.toFixed(p); }
+	const t = x.toFixed(p + 30);
+	const dot = t.indexOf('.');
+	const rest = t.slice(dot + 1 + p);
+	if (!/^50*$/.test(rest)) { return x.toFixed(p); }
+	const kept = t.slice(0, dot + 1 + p).replace(/\.$/, '');
+	const last = kept.replace('.', '').slice(-1);
+	return Number(last) % 2 === 0 ? kept : x.toFixed(p);
+}
+
+function formatFloat(spec, v) {
+	const { flags, width, type } = spec;
+	const upper = type === type.toUpperCase();
+	let precision = spec.precision;
+	let body;
+	const negative = v < 0 || Object.is(v, -0);
+	const x = Math.abs(v);
+	const exp = (n, p) => {
+		const t = n.toExponential(p);
+		return t.replace(/e([+-])(\d)$/, 'e$10$2');
+	};
+	if (!Number.isFinite(x)) {
+		body = Number.isNaN(x) ? 'nan' : 'inf';
+	} else if (type === 'f' || type === 'F') {
+		body = fixedHalfEven(x, precision === null ? 6 : precision);
+		if (flags.includes('#') && !body.includes('.')) { body += '.'; }
+	} else if (type === 'e' || type === 'E') {
+		body = exp(x, precision === null ? 6 : precision);
+		if (flags.includes('#') && !/\./.test(body)) { body = body.replace('e', '.e'); }
+	} else {
+		// %g: the shorter of %e and %f at P significant digits, without the trailing zeros (unless #)
+		if (precision === null) { precision = 6; }
+		if (precision === 0) { precision = 1; }
+		const e = x === 0 ? 0 : Number(exp(x, precision - 1).split('e')[1]);
+		if (e < -4 || e >= precision) {
+			body = exp(x, precision - 1);
+			if (!flags.includes('#')) { body = body.replace(/\.?0+e/, 'e'); }
+		} else {
+			body = fixedHalfEven(x, Math.max(0, precision - 1 - e));
+			if (!flags.includes('#') && body.includes('.')) { body = body.replace(/\.?0+$/, ''); }
+		}
+	}
+	if (upper) { body = body.toUpperCase(); }
+	let sign = negative ? '-' : flags.includes('+') ? '+' : flags.includes(' ') ? ' ' : '';
+	if (Number.isNaN(x)) { sign = flags.includes('+') ? '+' : flags.includes(' ') ? ' ' : ''; }
+	let out = sign + body;
+	if (out.length < width) {
+		if (flags.includes('-')) { out = out.padEnd(width, ' '); } else if (flags.includes('0') && Number.isFinite(x)) { out = sign + body.padStart(width - sign.length, '0'); } else { out = out.padStart(width, ' '); }
+	}
+	return out;
+}
+
+/**
+ * `seq -f FORMAT` (the engine's seq has no -f): the numbers, one for each step of FIRST, INCREMENT, LAST, written with a
+ * printf format that holds exactly one of `e E f F g G`; `-s SEP` between them and a newline at the end.
+ *
+ * @param {string[]} args
+ * @returns {{ stdout: string, stderr: string, exitCode: number } | null} null when the line has no -f (the engine's)
+ */
+function seqFormatted(args) {
+	let format = null;
+	let separator = '\n';
+	let equal = false;
+	const numbers = [];
+	// only a wrong line (no number, one too many, a word for a number) is followed by the hint; a bad format is said alone
+	const fail = (m, usage = false) => ({ stdout: '', stderr: `seq: ${m}\n${usage ? "Try 'seq --help' for more information.\n" : ''}`, exitCode: 1 });
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (a === '--') { numbers.push(...args.slice(i + 1)); break; }
+		if (a === '-f' || a === '--format') { if (i + 1 >= args.length) { return null; } format = args[++i]; continue; }
+		if (a.startsWith('--format=')) { format = a.slice(9); continue; }
+		if (/^-f.+/.test(a) && !a.startsWith('--')) { format = a.slice(2); continue; }
+		if (a === '-s' || a === '--separator') { separator = args[++i] === undefined ? separator : args[i]; continue; }
+		if (a.startsWith('--separator=')) { separator = a.slice(12); continue; }
+		if (/^-s.+/.test(a) && !a.startsWith('--')) { separator = a.slice(2); continue; }
+		if (a === '-w' || a === '--equal-width') { equal = true; continue; }
+		// a number that starts with a minus is a number, not an option
+		if (/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(a)) { numbers.push(a); continue; }
+		if (a.startsWith('-') && a !== '-') { return null; }
+		numbers.push(a);
+	}
+	if (format === null) { return null; }
+	if (numbers.length < 1) { return fail('missing operand', true); }
+	if (numbers.length > 3) { return fail(`extra operand '${numbers[3]}'`, true); }
+	if (equal) { return fail('format string may not be specified when printing equal width strings', true); }
+	const parsed = numbers.map((t) => (/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t.trim()) ? Number(t) : NaN));
+	const badAt = parsed.findIndex((n) => Number.isNaN(n));
+	if (badAt >= 0) { return fail(`invalid floating point argument: '${numbers[badAt]}'`, true); }
+	const [first, step, last] = numbers.length === 1 ? [1, 1, parsed[0]] : numbers.length === 2 ? [parsed[0], 1, parsed[1]] : parsed;
+	if (step === 0) { return fail(`invalid Zero increment value: '${numbers[1]}'`, true); }
+	// the format: one conversion, `%%` for a percent
+	const re = /%([-+ #0']*)(\d*)(?:\.(\d*))?L?([^]?)/g;
+	let m;
+	let spec = null;
+	let at = 0;
+	let literal = '';
+	const pieces = [];
+	while ((m = re.exec(format)) !== null) {
+		if (m[0] === '%%') { literal += format.slice(at, m.index) + '%'; at = m.index + 2; continue; }
+		if (m[4] === '') { return fail(`format '${format}' ends in %`); }
+		if (spec) { return fail(`format '${format}' has too many % directives`); }
+		if (!'eEfFgG'.includes(m[4]) && m[4] !== 'a' && m[4] !== 'A') { return fail(`format '${format}' has unknown %${m[4]} directive`); }
+		spec = { flags: m[1], width: m[2] ? Number(m[2]) : 0, precision: m[3] === undefined ? null : Number(m[3] || 0), type: m[4] };
+		pieces.push(literal + format.slice(at, m.index));
+		literal = '';
+		at = m.index + m[0].length;
+	}
+	pieces.push(literal + format.slice(at));
+	if (!spec) { return fail(`format '${format}' has no % directive`); }
+	const [pre, post] = [pieces[0], pieces[1] === undefined ? '' : pieces[1]];
+	const out = [];
+	for (let i = 0; step > 0 ? first + i * step <= last : first + i * step >= last; i++) {
+		out.push(pre + formatFloat(spec, first + i * step) + post);
+		if (out.length > 100000) { return fail('too many numbers', false); }
+	}
+	return { stdout: out.length ? out.join(separator) + '\n' : '', stderr: '', exitCode: 0 };
+}
+
 const UNAME = { s: 'Linux', n: 'localhost', r: '5.15.0', v: '#1 SMP', m: 'x86_64', p: 'x86_64', i: 'x86_64', o: 'GNU/Linux' };
 
 /** @param {string[]} args @param {string} nodename */
@@ -1921,6 +2335,146 @@ async function du(args, io) {
 /* ------------------------------------------------------------------------------------------------------------ */
 
 /**
+ * The options of ls the engine does not have and that only change which entries are listed or in what order: -I and
+ * --ignore, --hide (not with -a or -A), -w and --width (no effect on one name a line), --sort=WORD, -X, -v, -U and
+ * -n. What is left is the engine's own arguments.
+ *
+ * @param {string[]} args
+ * @returns {{ error: string } | { args: string[], ignore: string[], hide: string[], all: boolean, sort: 'extension' | 'version' | null, numeric: boolean, reverse: boolean, active: boolean }}
+ */
+function lsOptions(args) {
+	const out = [];
+	const ignore = [];
+	const hide = [];
+	let all = false;
+	/** @type {'extension' | 'version' | null} */
+	let sort = null;
+	let numeric = false;
+	let reverse = false;
+	let afterDashes = false;
+	const SORTS = ['none', 'time', 'size', 'extension', 'version'];
+	const useSort = (w) => {
+		if (w === 'size') { out.push('-S'); sort = null; } else if (w === 'time') { out.push('-t'); sort = null; } else if (w === 'none') { sort = null; } else if (w === 'extension' || w === 'version') { sort = w; }
+	};
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (afterDashes || a === '-' || !a.startsWith('-')) { out.push(a); continue; }
+		if (a === '--') { afterDashes = true; out.push(a); continue; }
+		if (a.startsWith('--')) {
+			const eq = a.indexOf('=');
+			const name = eq < 0 ? a : a.slice(0, eq);
+			const value = () => (eq >= 0 ? a.slice(eq + 1) : args[++i]);
+			if (name === '--ignore') { ignore.push(String(value())); continue; }
+			if (name === '--hide') { hide.push(String(value())); continue; }
+			if (name === '--width') { value(); continue; }
+			if (name === '--sort') {
+				const w = String(value());
+				if (!SORTS.includes(w)) {
+					return { error: `ls: invalid argument '${w}' for '--sort'\nValid arguments are:\n${SORTS.map((x) => `  - '${x}'`).join('\n')}\nTry 'ls --help' for more information.\n` };
+				}
+				useSort(w);
+				continue;
+			}
+			if (name === '--all' || name === '--almost-all') { all = true; }
+			if (name === '--reverse') { reverse = true; }
+			if (name === '--numeric-uid-gid') { numeric = true; out.push('-l'); continue; }
+			out.push(a);
+			continue;
+		}
+		// a cluster: -I and -w take the rest or the next argument; -X -v -U -n are taken out
+		let kept = '-';
+		for (let c = 1; c < a.length; c++) {
+			const ch = a[c];
+			if (ch === 'I' || ch === 'w' || ch === 'T') {
+				const rest = a.slice(c + 1);
+				const value = rest !== '' ? rest : args[++i];
+				if (ch === 'I') { ignore.push(String(value)); }
+				if (ch === 'T') { kept += 'T'; if (rest === '') { out.push('-' + kept.slice(1), String(value)); kept = '-'; break; } }
+				break;
+			}
+			if (ch === 'a' || ch === 'A') { all = true; }
+			if (ch === 'r') { reverse = true; }
+			if (ch === 'X') { sort = 'extension'; continue; }
+			if (ch === 'v') { sort = 'version'; continue; }
+			if (ch === 'U') { sort = null; continue; }
+			if (ch === 'n') { numeric = true; kept += 'l'; continue; }
+			kept += ch;
+		}
+		if (kept !== '-') { out.push(kept); }
+	}
+	const active = ignore.length > 0 || hide.length > 0 || sort !== null || numeric;
+	return { args: out, ignore, hide, all, sort, numeric, reverse, active };
+}
+
+/** The glob of an ls pattern (fnmatch) as a regular expression: `*`, `?` and a set. */
+function lsGlob(glob) {
+	let re = '^';
+	for (let i = 0; i < glob.length; i++) {
+		const c = glob[i];
+		if (c === '*') { re += '.*'; } else if (c === '?') { re += '.'; } else if (c === '[' && glob.indexOf(']', i + 2) > 0) {
+			const close = glob.indexOf(']', i + 2);
+			re += '[' + glob.slice(i + 1, close).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']';
+			i = close;
+		} else { re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+	}
+	return new RegExp(re + '$');
+}
+
+/** `strverscmp`-like: runs of digits compare as numbers, the rest byte by byte. */
+function versionCompare(a, b) {
+	const ta = a.match(/\d+|\D+/g) || [];
+	const tb = b.match(/\d+|\D+/g) || [];
+	for (let i = 0; i < Math.min(ta.length, tb.length); i++) {
+		const x = ta[i];
+		const y = tb[i];
+		if (/^\d/.test(x) && /^\d/.test(y)) {
+			const d = Number(x) - Number(y);
+			if (d) { return d < 0 ? -1 : 1; }
+			if (x.length !== y.length) { return x.length < y.length ? 1 : -1; }
+		} else if (x !== y) { return x < y ? -1 : 1; }
+	}
+	return ta.length === tb.length ? 0 : ta.length < tb.length ? -1 : 1;
+}
+
+/**
+ * The listing the engine made, with what -I, --ignore and --hide hide taken out, and a plain listing of one folder
+ * ordered by extension or version when that was asked for; -n shows 1000 for the owner and the group.
+ *
+ * @param {string} text
+ * @param {{ ignore: string[], hide: string[], all: boolean, sort: 'extension' | 'version' | null, numeric: boolean, reverse: boolean }} o
+ */
+function lsRefine(text, o) {
+	const patterns = [...o.ignore, ...(o.all ? [] : o.hide)].map(lsGlob);
+	const lines = text.split('\n');
+	const trailingNewline = lines[lines.length - 1] === '';
+	if (trailingNewline) { lines.pop(); }
+	const longRow = /^([-dl][-rwxsStT]{9} +\d+ +)(\S+)( +)(\S+)( +\d+ +\S+ +\S+ +\S+ )(.*)$/;
+	const nameOf = (l) => {
+		const m = longRow.exec(l);
+		return m ? m[6] : l;
+	};
+	/** a name (a row of -l, or a bare name), not the `total` line, a blank line or the `DIR:` header of -R */
+	const isEntry = (l) => longRow.test(l) || (l !== '' && !/^total \d+$/.test(l) && !/:$/.test(l));
+	const keep = lines.filter((l) => !isEntry(l) || !patterns.some((re) => re.test(nameOf(l).replace(/[*\/@=|]$/, ''))));
+	let out = keep;
+	if (o.sort) {
+		const entries = keep.filter(isEntry);
+		const rest = keep.filter((l) => !isEntry(l));
+		if (rest.every((l) => /^total \d+$/.test(l))) {
+			const key = (l) => nameOf(l);
+			const ext = (nm) => { const at = nm.lastIndexOf('.'); return at < 0 ? '' : nm.slice(at); };
+			const cmp = o.sort === 'extension'
+				? (x, y) => { const ex = ext(key(x)); const ey = ext(key(y)); return ex < ey ? -1 : ex > ey ? 1 : (key(x) < key(y) ? -1 : key(x) > key(y) ? 1 : 0); }
+				: (x, y) => versionCompare(key(x), key(y));
+			entries.sort(cmp);
+			out = [...rest, ...(o.reverse ? entries.reverse() : entries)];
+		}
+	}
+	if (o.numeric) { out = out.map((l) => l.replace(longRow, (_m, a, _u, s1, _g, b, name) => `${a}1000${s1}1000${b}${name}`)); }
+	return out.join('\n') + (trailingNewline && out.length ? '\n' : '');
+}
+
+/**
  * ls. The engine has no `--color[=WHEN]` (dropped: there is no terminal) and no `-p` (a slash after a directory). `-p`
  * is the engine's `-F` with the `*` of executables taken off the end of each name, which `-p` does not print.
  *
@@ -2016,6 +2570,23 @@ function gnuTransferErrors(stderr, verb, cwd) {
 /* the commands, for the engine                                                                                  */
 /* ------------------------------------------------------------------------------------------------------------ */
 
+/**
+ * The bytes of what a command is given on standard input: a byte string (one character per byte), or, when something
+ * handed over text (a character above U+00FF), that text's UTF-8.
+ * @param {string | undefined} s
+ * @returns {Uint8Array}
+ */
+function stdinBytes(s) {
+	if (!s) { return new Uint8Array(0); }
+	const out = new Uint8Array(s.length);
+	for (let i = 0; i < s.length; i++) {
+		const c = s.charCodeAt(i);
+		if (c > 255) { return encodeText(s); }
+		out[i] = c;
+	}
+	return out;
+}
+
 /** A string of bytes (one char per byte) for a Uint8Array. */
 function latin1(u8) {
 	let s = '';
@@ -2095,6 +2666,57 @@ function commands(defineCommand, LimitError) {
 	const baseName = (p) => p.slice(p.lastIndexOf('/') + 1);
 	const dirName = (p) => p.slice(0, p.lastIndexOf('/')) || '/';
 	const statOrNull = async (ctx, p) => { try { return await ctx.fs.stat(p); } catch { return null; } };
+	/**
+	 * The stat of a path as a file system reaches it: each name as it was typed, and `..` from the folder that was reached.
+	 * `x/../d` is not `d` when there is no `x` (the engine, like a shell's own path arithmetic, takes it for `d`).
+	 * @param {any} ctx
+	 * @param {string} typed
+	 */
+	const typedStat = async (ctx, typed) => {
+		if (!typed.includes('..')) { return statOrNull(ctx, ctx.fs.resolvePath(ctx.cwd, typed)); }
+		let cur = typed.startsWith('/') ? '/' : ctx.cwd;
+		let st = await statOrNull(ctx, cur);
+		for (const seg of typed.split('/')) {
+			if (seg === '' || seg === '.') { continue; }
+			if (!st || !st.isDirectory) { return null; }
+			cur = ctx.fs.resolvePath(cur, seg);
+			st = await statOrNull(ctx, cur);
+		}
+		return st;
+	};
+	/**
+	 * Can the folder a name is in be reached as it is typed? (`x/../d` is not in `.` when `x` is not there.) A name with no
+	 * `..` is its normal path's own.
+	 * @param {any} ctx
+	 * @param {string} name
+	 */
+	const reachable = async (ctx, name) => {
+		if (!name.includes('..')) { return true; }
+		const plain = name.replace(/\/+$/, '');
+		const at = plain.lastIndexOf('/');
+		if (at < 0) { return true; }
+		const parent = await typedStat(ctx, plain.slice(0, at) || '/');
+		return !!parent && parent.isDirectory;
+	};
+	/**
+	 * Why a name cannot be looked at, walking it as it is typed: a file on the way is "Not a directory", a name that is
+	 * not there "No such file or directory". Null when it can be.
+	 * @param {any} ctx
+	 * @param {string} typed
+	 * @returns {Promise<string | null>}
+	 */
+	const whyMissing = async (ctx, typed) => {
+		let cur = typed.startsWith('/') ? '/' : ctx.cwd;
+		let st = await statOrNull(ctx, cur);
+		for (const seg of typed.split('/')) {
+			if (seg === '' || seg === '.') { continue; }
+			if (!st) { return 'No such file or directory'; }
+			if (!st.isDirectory) { return 'Not a directory'; }
+			cur = ctx.fs.resolvePath(cur, seg);
+			st = await statOrNull(ctx, cur);
+		}
+		return st ? null : 'No such file or directory';
+	};
 
 	/**
 	 * The operands of a cp or mv line as typed, and whether the destination is a folder NOW (once the command has run it
@@ -2146,7 +2768,7 @@ function commands(defineCommand, LimitError) {
 	 * @returns {Promise<{ result: { stdout: string, stderr: string, exitCode: number } | null, args: string[], stderr: string }>}
 	 *   `result` when the command is answered here; else the arguments for the engine and what to print before its output
 	 */
-	async function preflight(ctx, verb, norm, noTarget = false, force = false) {
+	async function preflight(ctx, verb, norm, noTarget = false, force = false, explicitTarget = false) {
 		const at = [];
 		const flags = [];
 		let afterDashes = false;
@@ -2161,13 +2783,18 @@ function commands(defineCommand, LimitError) {
 		const recursive = flags.some((f) => f === '--recursive' || /^-[A-Za-z]*[rR]/.test(f));
 		const destTyped = norm[at[at.length - 1]];
 		const destPlain = destTyped.replace(/\/+$/, '') || '/';
-		const destStat = await statOrNull(ctx, abs(ctx, destPlain));
+		const destStat = await typedStat(ctx, destPlain);
 		// what GNU says about the operands as a whole comes first, and counts them as they were typed (a source that is
 		// reported below does not make the command a different one): an operand too many for -T, and a destination
 		// that is no folder for several sources
 		const refuse = (say) => ({ result: { stdout: '', stderr: say, exitCode: 1 }, args: norm, stderr: '' });
 		if (noTarget && at.length > 2) {
 			return refuse(`${verb}: extra operand '${norm[at[2]]}'\nTry '${verb} --help' for more information.\n`);
+		}
+		// -t DIR names a folder, and one that is a file or not there is said before any source is looked at
+		if (explicitTarget && !noTarget) {
+			if (destStat && !destStat.isDirectory) { return refuse(`${verb}: target '${destTyped}' is not a directory\n`); }
+			if (!destStat) { return refuse(`${verb}: failed to access '${destTyped}': ${(await whyMissing(ctx, destPlain)) || 'No such file or directory'}\n`); }
 		}
 		// a destination that cannot be looked at because a FILE is on the way to it (`g/x`, or `g/` with g a file) is
 		// "failed to access" (mv -T: "cannot stat"), and comes before anything about the sources, whether they are there or
@@ -2186,7 +2813,10 @@ function commands(defineCommand, LimitError) {
 		}
 		/** a folder to put the sources into (not with -T): where a source goes, as GNU shows it */
 		const intoFolder = !noTarget && !!(destStat && destStat.isDirectory);
+		// a destination whose path goes up through a folder that is not there (`x/../d`) has nothing to be put in
+		const destUnreachable = !destStat && destPlain.includes('..') && !(await typedStat(ctx, destPlain.replace(/\/[^/]*$/, '') || '/'));
 		let stderr = '';
+		let said = '';
 		const dropped = new Set();
 		/** the source and where it goes, for each source seen so far that exists (cp: one named again is said, not copied again) */
 		const seen = new Set();
@@ -2196,7 +2826,7 @@ function commands(defineCommand, LimitError) {
 			const base = baseName(plain);
 			const target = intoFolder ? ctx.fs.resolvePath(abs(ctx, destPlain), base) : abs(ctx, destPlain);
 			const shown = intoFolder ? `${destTyped.replace(/\/+$/, '') || '/'}/${base}` : destTyped;
-			const st = await statOrNull(ctx, abs(ctx, plain));
+			const st = await typedStat(ctx, plain);
 			if (!st) {
 				// said here, in the order of the operands, with what is said about the others
 				stderr += `${verb}: cannot stat '${src}': No such file or directory\n`;
@@ -2206,6 +2836,13 @@ function commands(defineCommand, LimitError) {
 			if (verb === 'cp' && !recursive && st && st.isDirectory) {
 				// a folder with no -r is omitted, whatever the destination is
 				stderr += `cp: -r not specified; omitting directory '${src}'\n`;
+				dropped.add(i);
+				continue;
+			}
+			if (destUnreachable) {
+				// cp -v names the copy before it tries it
+				if (verb === 'cp' && verbose && !st.isDirectory) { said += `'${src}' -> '${destTyped}'\n`; }
+				stderr += verb === 'cp' ? `cp: cannot create ${st.isDirectory ? 'directory' : 'regular file'} '${destTyped}': No such file or directory\n` : `mv: cannot move '${src}' to '${destTyped}': No such file or directory\n`;
 				dropped.add(i);
 				continue;
 			}
@@ -2253,7 +2890,7 @@ function commands(defineCommand, LimitError) {
 			}
 		}
 		const left = at.filter((i) => !dropped.has(i));
-		if (left.length < 2 && dropped.size) { return { result: { stdout: '', stderr, exitCode: hasError(stderr) ? 1 : 0 }, args: norm, stderr }; }
+		if (left.length < 2 && dropped.size) { return { result: { stdout: said, stderr, exitCode: hasError(stderr) ? 1 : 0 }, args: norm, stderr }; }
 		/** the arguments for the engine: the sources that were reported are gone, `over` replaces one operand */
 		const build = (over) => norm.map((a, k) => (over && k === over.at ? over.text : a)).filter((_a, k) => !dropped.has(k));
 		const args = build(null);
@@ -2455,6 +3092,252 @@ function commands(defineCommand, LimitError) {
 		return { stdout, stderr, exitCode };
 	}
 
+	/** GNU says `cannot open 'f' for reading` for a file head and tail cannot read; the engine says only what is wrong */
+	const cannotOpen = (r, name) => {
+		if (!r.stderr || !r.stderr.includes(': No such file or directory')) { return r; }
+		const re = new RegExp(`^${name}: (.+): No such file or directory$`, 'gm');
+		return Object.assign({}, r, { stderr: r.stderr.replace(re, `${name}: cannot open '$1' for reading: No such file or directory`) });
+	};
+
+	/** a name for the copies a NUL-terminated run makes under /tmp (never shown: the names are put back) */
+	let zeroSeq = 0;
+
+	/**
+	 * `--files0-from=FILE` (wc, du, sort): the names in FILE (`-` is standard input), ended by NUL, are the operands.
+	 *
+	 * @param {any} ctx
+	 * @param {string} program
+	 * @param {string[]} args
+	 * @returns {Promise<{ args: string[], stderr: string, failed: boolean } | { result: { stdout: string, stderr: string, exitCode: number } }>}
+	 */
+	async function filesFrom(ctx, program, args) {
+		const status = program === 'sort' ? 2 : 1;
+		let source = null;
+		/** @type {string[]} */
+		const rest = [];
+		let operands = 0;
+		let firstOperand = '';
+		for (let i = 0; i < args.length; i++) {
+			const a = args[i];
+			if (a === '--') {
+				for (const o of args.slice(i + 1)) {
+					if (!operands++) { firstOperand = o; }
+					rest.push(o);
+				}
+				break;
+			}
+			if (a === '--files0-from') { source = args[++i]; continue; }
+			if (a.startsWith('--files0-from=')) { source = a.slice(14); continue; }
+			if (a !== '-' && a.startsWith('-')) {
+				rest.push(a);
+				// the value of an option that takes one is not an operand
+				const t = OPTION_VALUES[program];
+				if (t && !a.startsWith('--') && a.length === 2 && t.short.includes(a[1])) { rest.push(args[++i]); }
+				continue;
+			}
+			if (!operands++) { firstOperand = a; }
+			rest.push(a);
+		}
+		if (source === null) { return { args, stderr: '', failed: false }; }
+		if (operands) {
+			return { result: { stdout: '', stderr: `${program}: extra operand '${firstOperand}'\nfile operands cannot be combined with --files0-from\nTry '${program} --help' for more information.\n`, exitCode: status } };
+		}
+		let text;
+		try {
+			text = source === '-' ? decodeByteString(ctx.stdin || '') : decodeBytes(await readBytes(ctx)(source));
+		} catch {
+			return { result: { stdout: '', stderr: `${program}: cannot open '${source}' for reading: No such file or directory\n`, exitCode: status } };
+		}
+		const names = text.split('\0');
+		if (names.length && names[names.length - 1] === '') { names.pop(); }
+		let stderr = '';
+		const good = [];
+		names.forEach((n, k) => {
+			if (n === '') { stderr += `${program}: ${source}:${k + 1}: invalid zero-length file name\n`; } else { good.push(n); }
+		});
+		return { args: [...rest, ...(rest.includes('--') ? [] : good.length ? ['--'] : []), ...good], stderr, failed: stderr !== '' };
+	}
+
+	/**
+	 * `-z`, `-Z` and `-s` (zero.js): the program is run by the engine on copies of its input whose records have NUL and
+	 * newline exchanged, and what it printed is exchanged back, with the names of the copies put back as typed.
+	 *
+	 * @param {any} ctx
+	 * @param {string} program sort, uniq, cut, tail, paste, comm, join, sed, grep, egrep or fgrep
+	 * @param {ReturnType<typeof zero.plan>} p
+	 * @returns {Promise<{ stdout: string, stderr: string, exitCode: number }>}
+	 */
+	async function zeroRun(ctx, program, p) {
+		const isGrep = program === 'grep' || program === 'egrep' || program === 'fgrep';
+		const status = isGrep || program === 'sort' ? 2 : 1;
+		const fail = (message) => ({ stdout: '', stderr: `${program}: ${message}\n`, exitCode: status });
+		const swap = p.zero;
+		const args = p.args.slice();
+		const g = isGrep ? grepOperands(args) : null;
+		const kind = isGrep ? zero.grepOutputKind(args) : null;
+		// what the exchange cannot carry is said, not done wrong
+		if (g && (swap || p.nul) && g.recursive && !(p.nul && !swap && kind && (kind.names || kind.count))) {
+			return fail(`${swap ? '-z' : '-Z'} cannot be used with -r in this shell${swap ? '' : ', except with -l, -L or -c'}`);
+		}
+		const readText = async (name) => decodeBytes(await readBytes(ctx)(name));
+		/** @type {string[]} */
+		const scriptTexts = [];
+		if (swap && program === 'sed') {
+			for (const i of p.scripts) { scriptTexts.push(args[i]); }
+			for (const i of p.scriptFiles) {
+				try { scriptTexts.push(await readText(args[i])); } catch { /* the engine says */ }
+			}
+			for (const t of scriptTexts) {
+				const bad = zero.sedZeroRefusal(t);
+				if (bad) { return fail(`-z cannot be combined with ${bad} in this shell`); }
+			}
+		}
+		// the input: the files that can be read (a copy of each), and standard input when it is read
+		/** @type {Map<number, string>} */
+		const texts = new Map();
+		if (swap) {
+			for (const i of p.files) {
+				if (args[i] === '-') { continue; }
+				try { texts.set(i, await readText(args[i])); } catch { /* left as typed: the program says why */ }
+			}
+		}
+		const usesStdin = p.files.length === 0 || p.files.some((i) => args[i] === '-');
+		const stdinText = usesStdin ? decodeByteString(ctx.stdin || '') : '';
+		const x = swap ? zero.pickPlaceholder([...texts.values(), stdinText, ...args, ...scriptTexts]) : '';
+		const dir = `/tmp/.lc-zero-${++zeroSeq}`;
+		/** @type {Array<{ at: number, tmp: string, name: string }>} */
+		const copies = [];
+		let outputTmp = null;
+		/** where standard output goes when uniq was given an OUTPUT operand */
+		let uniqOutput = null;
+		try {
+			if (swap && (texts.size || p.scriptFiles.length || p.outputAt >= 0)) { await ctx.fs.mkdir(dir, { recursive: true }); }
+			if (swap) {
+				for (const i of p.scripts) { args[i] = zero.sedScriptIn(args[i], x); }
+				for (const i of p.scriptFiles) {
+					try {
+						const tmp = `${dir}/script-${i}`;
+						await ctx.fs.writeFile(tmp, encodeText(zero.sedScriptIn(await readText(args[i]), x)));
+						args[i] = tmp;
+					} catch { /* the engine says */ }
+				}
+				// a newline given as the field delimiter is the placeholder
+				for (let i = 0; i + 1 < args.length; i++) {
+					if (((program === 'cut' && args[i] === '-d') || (program === 'sort' && args[i] === '-t')) && args[i + 1] === '\n') { args[i + 1] = x; }
+				}
+				for (const [i, text] of texts) {
+					const tmp = `${dir}/${copies.length}`;
+					await ctx.fs.writeFile(tmp, encodeText(zero.swapIn(text, x)));
+					copies.push({ at: i, tmp, name: args[i] });
+					args[i] = tmp;
+				}
+			}
+			if (p.outputAt >= 0) {
+				outputTmp = `${dir}/out`;
+				args[p.outputAt] = outputTmp;
+			}
+			if (program === 'uniq' && p.files.length > 1) {
+				uniqOutput = args[p.files[1]];
+				args.splice(p.files[1], 1);
+			}
+			const stdinFor = swap ? zero.swapIn(stdinText, x) : stdinText;
+			const run = (list) => ctx.exec(shellQuote(program), { cwd: ctx.cwd, signal: ctx.signal, args: list, stdin: stdinFor });
+			let r;
+			if (program === 'sed' && p.separate && !p.inPlace && p.files.length > 1) {
+				// each file is a run of its own: `$` and the line numbers are the file's
+				r = { stdout: '', stderr: '', exitCode: 0 };
+				const skip = new Set(p.files);
+				const base = args.filter((_a, i) => !skip.has(i));
+				for (const i of p.files) {
+					const one = await run([...base, args[i]]);
+					// a stream that ends without its newline gets one when more follows
+					if (r.stdout !== '' && !r.stdout.endsWith('\n') && one.stdout !== '') { r.stdout += '\n'; }
+					r.stdout += one.stdout;
+					r.stderr += one.stderr;
+					if (one.exitCode) { r.exitCode = one.exitCode; }
+				}
+			} else {
+				r = await run(p.inPlace ? args.map((a) => (a === '-i' ? '-i' : a)) : args);
+			}
+			let stdout = r.stdout;
+			let stderr = r.stderr;
+			for (const c of copies) {
+				stdout = stdout.split(c.tmp).join(c.name);
+				stderr = stderr.split(c.tmp).join(c.name);
+			}
+			const unswapped = (t) => (swap ? zero.swapOut(t, x) : t);
+			if (swap) {
+				// names and counts (grep -l, -L, -c) are lines of their own, whatever ends a record
+				stdout = kind && (kind.names || kind.count) ? stdout.split(x).join('\n') : zero.swapOut(stdout, x);
+				stderr = stderr.split(x).join('\n');
+				// `sort -c` ends its message about the record that is out of order as it ends a record
+				if (program === 'sort') { stderr = stderr.replace(/(: disorder: [^\n]*)\n$/, '$1\0'); }
+			}
+			if (isGrep && p.nul && g) { stdout = grepNullNames(stdout, p.files.map((i) => p.args[i]), usesStdin, g, kind); }
+			// the files the engine changed are written back with the records as they were
+			if (p.inPlace && r.exitCode <= 1) {
+				for (const c of copies) {
+					const changed = await readText(c.tmp).catch(() => null);
+					if (changed === null) { continue; }
+					const original = texts.get(c.at);
+					if (p.suffix && original !== undefined) {
+						const real = abs(ctx, c.name);
+						const name = p.suffix.includes('*') ? p.suffix.replace(/\*/g, baseName(real)) : baseName(real) + p.suffix;
+						try { await ctx.fs.writeFile(name.startsWith('/') ? name : ctx.fs.resolvePath(dirName(real), name), encodeText(original)); } catch { /* the original is what mattered */ }
+					}
+					await ctx.fs.writeFile(abs(ctx, c.name), encodeText(unswapped(changed)));
+				}
+			}
+			if (outputTmp !== null && r.exitCode === 0) {
+				const out = await readText(outputTmp).catch(() => '');
+				const real = p.args[p.outputAt];
+				try {
+					await ctx.fs.writeFile(abs(ctx, real), encodeText(unswapped(out)));
+				} catch (e) {
+					const why = { ENOENT: 'No such file or directory', EISDIR: 'Is a directory', ENOTDIR: 'Not a directory', EACCES: 'Permission denied', EPERM: 'Operation not permitted' }[String(e && e.code)];
+					return { stdout: '', stderr: `sort: open failed: ${real}: ${why || 'cannot write'}\n`, exitCode: 2 };
+				}
+			}
+			if (uniqOutput !== null && r.exitCode === 0) {
+				try {
+					await ctx.fs.writeFile(abs(ctx, uniqOutput), encodeText(stdout));
+				} catch (e) {
+					return { stdout: '', stderr: `uniq: ${uniqOutput}: ${String(e && e.code) === 'ENOENT' ? 'No such file or directory' : 'cannot write'}\n`, exitCode: 1 };
+				}
+				stdout = '';
+			}
+			return { stdout, stderr, exitCode: r.exitCode };
+		} finally {
+			try { await ctx.fs.rm(dir, { recursive: true, force: true }); } catch { /* it is under /tmp, which is emptied */ }
+		}
+	}
+
+	/**
+	 * `grep -Z`: the name that starts a line is ended by NUL where it was ended by `:` (a match) or `-` (context), a name
+	 * listed by -l or -L by NUL where it was ended by a newline, and `name:count` of -c is `name\0count`.
+	 *
+	 * @param {string} out what the engine printed (lines)
+	 * @param {string[]} names the operands as they were typed
+	 * @param {boolean} fromStdin
+	 * @param {ReturnType<typeof grepOperands>} g
+	 * @param {{ names: boolean, count: boolean, quiet: boolean } | null} kind
+	 */
+	function grepNullNames(out, names, fromStdin, g, kind) {
+		if (!out) { return out; }
+		if (kind && kind.names) { return out.split('\n').map((l, i, all) => (i === all.length - 1 && l === '' ? '' : l + '\0')).join(''); }
+		const shown = (names.filter((n) => n !== '-').length + (fromStdin ? 1 : 0) > 1 || g.withName || g.recursive) && !g.noName;
+		if (!shown) { return out; }
+		const known = names.filter((n) => n !== '-').concat(fromStdin ? ['(standard input)'] : []).sort((a, b) => b.length - a.length);
+		return out.split('\n').map((l) => {
+			if (l === '' || l === '--') { return l; }
+			if (kind && kind.count) { return l.replace(/^(.*):(\d+)$/, '$1\0$2'); }
+			for (const n of known) {
+				if (l.startsWith(n + ':') || l.startsWith(n + '-')) { return n + '\0' + l.slice(n.length + 1); }
+			}
+			return l;
+		}).join('\n');
+	}
+
 	return [
 		define('xargs', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('xargs'); }
@@ -2499,6 +3382,12 @@ function commands(defineCommand, LimitError) {
 					if (opts.prompt) { return { stdout, stderr: stderr + argv.map(xargsQuote).join(' ') + 'xargs: failed to open /dev/tty for reading: No such device or address\n', exitCode: 1 }; }
 					if (opts.openTty) { return { stdout, stderr: stderr + "xargs: '/dev/tty': No such device or address\n", exitCode: 125 }; }
 					if (opts.verbose) { stderr += argv.map(xargsQuote).join(' ') + '\n'; }
+					// a builtin that is no program: GNU's xargs execs it and says so
+					if (NOT_PROGRAMS.has(argv[0])) {
+						stderr += `xargs: ${argv[0]}: No such file or directory\n`;
+						status = 127;
+						break;
+					}
 					// the arguments are handed over as they are (the engine's `args`), never through the parser: no quoting, and
 					// no cap of its own on the length of the line
 					const r = await ctx.exec(shellQuote(argv[0]), { cwd: ctx.cwd, signal: ctx.signal, args: argv.slice(1) });
@@ -2530,7 +3419,27 @@ function commands(defineCommand, LimitError) {
 			return ctx.origCommand(normaliseXargs(args));
 		}),
 		...['grep', 'egrep', 'fgrep'].map((name) => define(name, async (args, ctx) => {
-			if (!ctx.origCommand) { return missingOriginal(name); }
+		if (!ctx.origCommand) { return missingOriginal(name); }
+		// -d and -D (what to do with a folder, a device): taken out here, the engine has neither
+		const dd = grepDirectories(args);
+		if (dd.result) { return dd.result; }
+		if (dd.args.length !== args.length || dd.args.some((x, k) => x !== args[k])) {
+			args = dd.args;
+			if (dd.action === 'skip' && !args.some((x) => x === '-r' || x === '-R' || x === '--recursive')) {
+				// the folders given as files are not read, and not said: names are still shown when there were several
+				const g = grepOperands(args);
+				const drop = new Set();
+				for (const i of g.fileAt) { const st = args[i] === '-' ? null : await statOrNull(ctx, abs(ctx, args[i])); if (st && st.isDirectory) { drop.add(i); } }
+				if (drop.size) {
+					if (drop.size === g.fileAt.length) { return { stdout: '', stderr: '', exitCode: 1 }; }
+					const more = g.fileAt.length > 1 && !g.noName && !g.withName ? ['-H'] : [];
+					args = [...more, ...args.filter((x, k) => !drop.has(k))];
+				}
+			}
+		}
+		// -z and -Z (records and names that end in NUL): zeroRun
+		const zp = zero.plan(name, args, OPTION_VALUES[name]);
+		if (zp.zero || zp.nul) { return zeroRun(ctx, name, zp); }
 			// a directory named with a trailing slash prints src/file, not src//file (GNU strips it for the name)
 			const g0 = grepOperands(args);
 			const typed = args.slice();
@@ -2552,6 +3461,30 @@ function commands(defineCommand, LimitError) {
 			} else if (grepNeedsDot(typed)) {
 				norm = [...norm, '.'];
 			}
+			// -q stops at the first file with a match, and says what was wrong with the files before it (the engine says
+			// nothing when something matched): one file at a time, in order
+			if (g.recursive === false && g.files.length > 1 && zero.grepOutputKind(typed).quiet && ctx.exec) {
+				const state = [];
+				for (const f of g.files) { state.push(f === '-' ? 'ok' : (await statOrNull(ctx, abs(ctx, f))) ? ((await statOrNull(ctx, abs(ctx, f))).isDirectory ? 'dir' : 'ok') : 'missing'); }
+				if (state.some((x) => x !== 'ok')) {
+					const quietMessages = grepWantsSilence(typed);
+					let said = '';
+					let failed = false;
+					for (let k = 0; k < g.files.length; k++) {
+						if (state[k] !== 'ok') {
+							failed = true;
+							if (!quietMessages) { said += `grep: ${g.files[k]}: ${state[k] === 'dir' ? 'Is a directory' : 'No such file or directory'}\n`; }
+							continue;
+						}
+						const only = typed.filter((x, at) => !g.fileAt.includes(at) || at === g.fileAt[k]);
+						const one = await ctx.exec(shellQuote(name), { cwd: ctx.cwd, signal: ctx.signal, args: only, stdin: ctx.stdin });
+						said += one.stderr || '';
+						if (one.exitCode === 0) { return { stdout: '', stderr: said, exitCode: 0 }; }
+						if (one.exitCode !== 1) { failed = true; }
+					}
+					return { stdout: '', stderr: said, exitCode: failed ? 2 : 1 };
+				}
+			}
 			r = await ctx.origCommand(norm);
 			if (addedNull && r.stdout) {
 				r = Object.assign({}, r, { stdout: r.stdout.split('\n').filter((l) => l !== '/dev/null' && l !== '/dev/null:0').join('\n') });
@@ -2559,35 +3492,153 @@ function commands(defineCommand, LimitError) {
 			if (r.stdout && grepDotPrefix(typed)) {
 				r = Object.assign({}, r, { stdout: r.stdout.replace(/^(?!--$)(?=.)/gm, './') });
 			}
+			// -c counts a folder as 0 lines (the engine says nothing of it): its line, where it was in the operands
+			if (/^grep: .*: Is a directory$/m.test(r.stderr) && zero.grepOutputKind(typed).count && !g.recursive) {
+				const dirs = new Set(r.stderr.split('\n').map((l) => /^grep: (.*): Is a directory$/.exec(l)).filter(Boolean).map((m) => m[1]));
+				const names = (g.files.length > 1 || g.withName) && !g.noName;
+				const lines = r.stdout ? r.stdout.replace(/\n$/, '').split('\n') : [];
+				let k = 0;
+				const out = [];
+				for (const f of g.files) { if (dirs.has(f)) { out.push(names ? f + ':0' : '0'); } else if (k < lines.length) { out.push(lines[k++]); } }
+				r = Object.assign({}, r, { stdout: out.join('\n') + (out.length ? '\n' : '') });
+			}
+			// a folder given as a file is an error: the status is 2 whatever matched (-q alone, with a match, keeps 0)
+			if (r.exitCode !== 2 && /^grep: .*: Is a directory$/m.test(r.stderr) && !(r.exitCode === 0 && zero.grepOutputKind(typed).quiet)) {
+				r = Object.assign({}, r, { exitCode: 2 });
+			}
 			if (!r.stderr || !grepWantsSilence(typed)) { return r; }
 			const kept = r.stderr.split('\n').filter((l) => !/^grep: .*: (No such file or directory|Is a directory|Permission denied)$/.test(l));
 			return Object.assign({}, r, { stderr: kept.join('\n') });
 		})),
-		wrap('rm', normaliseRm),
+		define('rm', async (args, ctx) => {
+			if (!ctx.origCommand) { return missingOriginal('rm'); }
+			const norm = normaliseRm(args);
+			// the operands, and the flags that decide what is said and what is removed
+			const flags = [];
+			const operands = [];
+			let afterDashes = false;
+			for (const a of norm) {
+				if (!afterDashes && a === '--') { afterDashes = true; continue; }
+				if (!afterDashes && a.startsWith('-') && a !== '-') { flags.push(a); } else { operands.push(a); }
+			}
+			const has = (letters, long) => flags.some((f) => f === long || (!f.startsWith('--') && [...letters].some((c) => f.slice(1).includes(c))));
+			const recursive = has('rR', '--recursive');
+			const force = has('f', '--force');
+			const verbose = has('v', '--verbose');
+			const dirs = has('d', '--dir');
+			let stderr = '';
+			let exitCode = 0;
+			const todo = [];
+			for (const o of operands) {
+				// `.` and `..` are never removed, and a name that ends in one is not either
+				if (/(^|\/)\.{1,2}\/*$/.test(o)) {
+					// the folder it is in decides: not there, a file, or the folder whose `.` or `..` it is
+					const plain = o.replace(/\/+$/, '');
+					const at = plain.lastIndexOf('/');
+					const parent = at < 0 ? await statOrNull(ctx, ctx.cwd) : await typedStat(ctx, plain.slice(0, at) || '/');
+					if (parent && parent.isDirectory) {
+						stderr += `rm: refusing to remove '.' or '..' directory: skipping '${o}'\n`;
+						exitCode = 1;
+					} else if (!force) {
+						stderr += `rm: cannot remove '${o}': ${parent ? 'Not a directory' : 'No such file or directory'}\n`;
+						exitCode = 1;
+					}
+					continue;
+				}
+				// a name through `..` of a folder that is not there is not there (the engine took `x/../d` for `d`)
+				if (await reachable(ctx, o)) { todo.push(o); continue; }
+				if (!force) {
+					stderr += `rm: cannot remove '${o}': No such file or directory\n`;
+					exitCode = 1;
+				}
+			}
+			if (!dirs && !(verbose && recursive) && todo.length === operands.length) { return ctx.origCommand(norm); }
+			if (!todo.length) { return { stdout: '', stderr, exitCode }; }
+			// -d removes an empty folder; -rv lists every entry it removes, a folder after what is in it
+			const rest = flags.filter((f) => f.startsWith('--') ? f !== '--dir' && f !== '--verbose' : true)
+				.map((f) => (f.startsWith('--') ? f : '-' + f.slice(1).replace(/[dv]/g, '')))
+				.filter((f) => f !== '-');
+			let stdout = '';
+			/** @param {string} dir the name as typed */
+			const listTree = async (dir) => {
+				const out = [];
+				for (const name of (await ctx.fs.readdir(abs(ctx, dir))).slice().sort()) {
+					const p = dir.replace(/\/+$/, '') + '/' + name;
+					const st = await statOrNull(ctx, abs(ctx, p));
+					if (st && st.isDirectory) { out.push(...(await listTree(p)), `removed directory '${p}'\n`); } else { out.push(`removed '${p}'\n`); }
+				}
+				return out;
+			};
+			for (const o of todo) {
+				const st = await typedStat(ctx, o);
+				if (st && st.isDirectory && dirs && !recursive) {
+					if ((await ctx.fs.readdir(abs(ctx, o))).length) {
+						stderr += `rm: cannot remove '${o}': Directory not empty\n`;
+						exitCode = 1;
+						continue;
+					}
+					await ctx.fs.rm(abs(ctx, o), { recursive: false, force: false });
+					if (verbose) { stdout += `removed directory '${o}'\n`; }
+					continue;
+				}
+				const lines = verbose && recursive && st ? (st.isDirectory ? [...(await listTree(o)), `removed directory '${o}'\n`] : [`removed '${o}'\n`]) : null;
+				const r = await ctx.origCommand([...rest, ...(verbose && lines === null ? ['-v'] : []), '--', o]);
+				stderr += r.stderr;
+				if (r.exitCode) { exitCode = r.exitCode; } else { stdout += lines === null ? r.stdout : lines.join(''); }
+			}
+			return { stdout, stderr, exitCode };
+		}),
 		define('cp', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('cp'); }
 			const n = normaliseCp(args);
-			const pre = await preflight(ctx, 'cp', n.args, wantsNoTargetDirectory(args), wantsForce(args));
+			const pre = await preflight(ctx, 'cp', n.args, wantsNoTargetDirectory(args), wantsForce(args), extractTarget(args).target !== null);
 			if (pre.result) { return pre.result; }
+			const keepTimes = wantsPreserveTimes(args);
+			/** the copy made: what -p / -a keep of the original is its modification time, the engine's copy is made now */
+			const preserve = async (result) => {
+				if (!keepTimes || result.exitCode !== 0) { return result; }
+				const ops = [];
+				let dashes = false;
+				for (const a of pre.args) { if (!dashes && a === '--') { dashes = true; } else if (dashes || a === '-' || !a.startsWith('-')) { ops.push(a); } }
+				if (ops.length < 2) { return result; }
+				const dest = ops[ops.length - 1];
+				const intoFolder = !!(names && names.intoFolder);
+				const copyTimes = async (from, to) => {
+					const st = await statOrNull(ctx, from);
+					const dst = await statOrNull(ctx, to);
+					if (!st || !dst) { return; }
+					if (st.isDirectory && dst.isDirectory) {
+						for (const name of await ctx.fs.readdir(from)) { await copyTimes(ctx.fs.resolvePath(from, name), ctx.fs.resolvePath(to, name)); }
+					}
+					try { await ctx.fs.utimes(to, st.mtime, st.mtime); } catch { /* the copy is what mattered */ }
+				};
+				for (const src of ops.slice(0, -1)) {
+					const from = abs(ctx, src.replace(/\/+$/, '') || '/');
+					const to = intoFolder ? ctx.fs.resolvePath(abs(ctx, dest.replace(/\/+$/, '') || '/'), baseName(from)) : abs(ctx, dest.replace(/\/+$/, '') || '/');
+					await copyTimes(from, to);
+				}
+				return result;
+			};
+			let names = null;
 			// -u, and -n of a folder (which the engine skips as a whole where GNU merges what is missing), are done a file at a time
 			const recursive = pre.args.some((a) => /^-[A-Za-z]*[rR]/.test(a) || a === '--recursive');
 			const noClobber = pre.args.some((a) => a === '--no-clobber' || (/^-[A-Za-z]*n/.test(a) && !a.startsWith('--')));
+			names = await transferNames(ctx, pre.args, wantsNoTargetDirectory(args));
 			if (n.update || (recursive && noClobber)) {
 				const each = await transferEach(ctx, 'cp', pre.args, wantsNoTargetDirectory(args), { update: n.update, noClobber });
-				return Object.assign({}, each, { stderr: pre.stderr + each.stderr, exitCode: hasError(pre.stderr) ? 1 : each.exitCode });
+				return preserve(Object.assign({}, each, { stderr: pre.stderr + each.stderr, exitCode: hasError(pre.stderr) ? 1 : each.exitCode }));
 			}
-			const names = await transferNames(ctx, pre.args, wantsNoTargetDirectory(args));
 			let r = relativeVerbose(await ctx.origCommand(pre.args), ctx.cwd);
 			if (r.stdout && r.stdout.includes("' -> '") && recursive) {
 				r = Object.assign({}, r, { stdout: await verboseTree(ctx, r.stdout) });
 			}
 			if (r.stdout && names) { r = Object.assign({}, r, { stdout: verboseAsTyped(r.stdout, names.sources, names.dest, names.intoFolder) }); }
-			return Object.assign({}, r, { stderr: pre.stderr + (r.stderr ? gnuTransferErrors(r.stderr, 'cp', ctx.cwd) : ''), exitCode: hasError(pre.stderr) ? 1 : r.exitCode });
+			return preserve(Object.assign({}, r, { stderr: pre.stderr + (r.stderr ? gnuTransferErrors(r.stderr, 'cp', ctx.cwd) : ''), exitCode: hasError(pre.stderr) ? 1 : r.exitCode }));
 		}),
 		define('mv', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('mv'); }
 			const n = normaliseMv(args);
-			const pre = await preflight(ctx, 'mv', n.args, wantsNoTargetDirectory(args));
+			const pre = await preflight(ctx, 'mv', n.args, wantsNoTargetDirectory(args), false, extractTarget(args).target !== null);
 			if (pre.result) { return pre.result; }
 			if (n.update) {
 				const noClobber = pre.args.some((a) => a === '--no-clobber' || (/^-[A-Za-z]*n/.test(a) && !a.startsWith('--')));
@@ -2621,7 +3672,68 @@ function commands(defineCommand, LimitError) {
 					}
 				}
 			}
-			let r = await ctx.origCommand(n.args);
+			// a name that goes back up (`a/b/../c`): -p makes the folders on the way as typed (a/b too), and without -p the
+			// folder `a/b` has to be there already (the engine took the name for `a/c`)
+			let margs = n.args;
+			let mgone = '';
+			if (n.dirs.some((d) => d.includes('..'))) {
+				const parents = flags.some((f) => f === '--parents' || (!f.startsWith('--') && /^-[A-Za-z]*p/.test(f)));
+				const drop = new Set();
+				for (const d of n.dirs) {
+					if (!d.includes('..')) { continue; }
+					if (!parents) {
+						if (!(await reachable(ctx, d))) {
+							drop.add(d);
+							const plain = d.replace(/\/+$/, '');
+							mgone += `mkdir: cannot create directory '${d}': ${(await whyMissing(ctx, plain.slice(0, plain.lastIndexOf('/')) || '/')) || 'No such file or directory'}\n`;
+						}
+						continue;
+					}
+					let cur = d.startsWith('/') ? '/' : ctx.cwd;
+					const segs = d.split('/').filter((x) => x !== '' && x !== '.');
+					let typedSoFar = d.startsWith('/') ? '' : null;
+					for (let k = 0; k < segs.length - 1; k++) {
+						typedSoFar = typedSoFar === null ? segs[k] : typedSoFar + '/' + segs[k];
+						cur = segs[k] === '..' ? dirName(cur) : ctx.fs.resolvePath(cur, segs[k]);
+						const here = await statOrNull(ctx, cur);
+						if (here && !here.isDirectory) {
+							// a file where a folder is needed: said of the part of the path that is the file, and nothing is made
+							drop.add(d);
+							mgone += `mkdir: cannot create directory '${typedSoFar}': Not a directory\n`;
+							break;
+						}
+						if (segs[k] !== '..') { try { await ctx.fs.mkdir(cur, { recursive: true }); } catch { /* the engine says what is wrong */ } }
+					}
+				}
+				if (drop.size) {
+					margs = n.args.filter((a) => !drop.has(a));
+					if (!n.dirs.some((d) => !drop.has(d))) { return { stdout: '', stderr: mgone, exitCode: 1 }; }
+				}
+			}
+			let r = await ctx.origCommand(margs);
+			// a file on the way: GNU says "Not a directory" of the name that is a file (with -p, of the part of the path
+			// that is one), where the engine says its own system's words and its own absolute path
+			if (/ENOTDIR/.test(r.stderr)) {
+				const parents = flags.some((f) => f === '--parents' || (!f.startsWith('--') && /^-[A-Za-z]*p/.test(f)));
+				const lines = [];
+				for (const line of r.stderr.split('\n')) {
+					const m = /^mkdir: cannot create directory '(.*)': ENOTDIR: not a directory, mkdir '.*'$/.exec(line);
+					if (!m) { lines.push(line); continue; }
+					let shown = m[1];
+					if (parents) {
+						const parts = m[1].split('/');
+						for (let k = 1; k <= parts.length; k++) {
+							const prefix = parts.slice(0, k).join('/');
+							if (prefix === '' || /^\.{0,2}$/.test(parts[k - 1])) { continue; }
+							const st = await typedStat(ctx, prefix);
+							if (st && !st.isDirectory) { shown = prefix; break; }
+						}
+					}
+					lines.push(`mkdir: cannot create directory '${shown}': Not a directory`);
+				}
+				r = Object.assign({}, r, { stderr: lines.join('\n') });
+			}
+			if (mgone) { r = Object.assign({}, r, { stderr: mgone + r.stderr, exitCode: r.exitCode || 1 }); }
 			if (verboseParents && r.exitCode === 0) { r = Object.assign({}, r, { stdout: made.map((m) => `mkdir: created directory '${m}'\n`).join('') }); }
 			if (n.mode !== null && r.exitCode === 0 && /^[0-7]{1,4}$/.test(n.mode)) {
 				for (const d of n.dirs) { try { await ctx.fs.chmod(abs(ctx, d), parseInt(n.mode, 8)); } catch { /* the directory is what mattered */ } }
@@ -2630,6 +3742,11 @@ function commands(defineCommand, LimitError) {
 		}),
 		define('sed', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('sed'); }
+			const zp = zero.plan('sed', args, OPTION_VALUES.sed);
+			// -z (records end in NUL), and -s (each file is its own stream: `$` and the line numbers are its own)
+			if (zp.zero || (zp.separate && !zp.inPlace && zp.files.length > 1)) { return zeroRun(ctx, 'sed', zp); }
+			// -s with one file, or with -i (which implies it), is what there is without it
+			if (zp.separate) { args = zp.args.map((a) => (a === '-i' ? '-i' + (zp.suffix || '') : a === '--in-place' && zp.suffix ? '--in-place=' + zp.suffix : a)); }
 			const n = normaliseSed(args);
 			// a script file gets the same rewrite as -e text (GNU's one-line `$a\TEXT`); one that is not a plain small
 			// file is handed over as it is, and the engine says what is wrong with it
@@ -2655,7 +3772,35 @@ function commands(defineCommand, LimitError) {
 					} catch { /* the engine reports a file it cannot read */ }
 				}
 			}
-			return withoutDoubledPrefix(await ctx.origCommand(n.args), 'sed');
+			// GNU says `can't read` for a file it cannot open, and goes on to the next one: the status is 2 at the end
+			// (the engine stops at the first)
+			let cannotRead = '';
+			let fatal = '';
+			const gone = new Set();
+			for (const k of n.fileAt) {
+				if (n.args[k] === '-') { continue; }
+				const st = await statOrNull(ctx, abs(ctx, n.args[k]));
+				if (!st) {
+					gone.add(k);
+					cannotRead += `sed: can't read ${n.args[k]}: No such file or directory\n`;
+					continue;
+				}
+				if (st.isDirectory) {
+					// a folder ends it, after the files before it (a read error, status 4)
+					fatal = n.suffix !== null ? `sed: couldn't edit ${n.args[k]}: not a regular file\n` : `sed: read error on ${n.args[k]}: Is a directory\n`;
+					for (const j of n.fileAt) { if (j >= k) { gone.add(j); } }
+					break;
+				}
+			}
+			if (gone.size) {
+				if (gone.size === n.fileAt.length) { return { stdout: '', stderr: cannotRead + fatal, exitCode: fatal ? 4 : 2 }; }
+				n.args = n.args.filter((_, k) => !gone.has(k));
+			}
+			let r = withoutDoubledPrefix(await ctx.origCommand(n.args), 'sed');
+			if (cannotRead || fatal) { r = Object.assign({}, r, { stderr: cannotRead + r.stderr + fatal, exitCode: fatal ? 4 : (r.exitCode || 2) }); }
+			// a script file that is not there ends it (an I/O error, status 4)
+			if (r.exitCode === 1 && /^sed: couldn't open file /m.test(r.stderr)) { r = Object.assign({}, r, { exitCode: 4 }); }
+			return r;
 		}),
 		define('touch', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('touch'); }
@@ -2671,9 +3816,26 @@ function commands(defineCommand, LimitError) {
 				const own = t.args.slice(0, stop < 0 ? undefined : stop).some((a) => a === '-d' || a === '-t');
 				if (time === null && !own) { time = +ref.mtime; }
 			}
-			const r = await ctx.origCommand(t.args);
-			if (time !== null && r.exitCode === 0) {
+			// a name through `..` of a folder that is not there cannot be made (the engine took `x/../n` for `n`)
+			let gone = '';
+			let toTouch = t.files;
+			let touchArgs = t.args;
+			if (t.files.some((f) => f.includes('..'))) {
+				const keep = [];
 				for (const f of t.files) {
+					if (await reachable(ctx, f)) { keep.push(f); } else if (!t.args.some((a) => a === '-c' || a === '--no-create' || (/^-[A-Za-z]*c/.test(a) && !a.startsWith('--')))) { gone += `touch: cannot touch '${f}': No such file or directory\n`; } else { keep.push(f); }
+				}
+				if (keep.length !== t.files.length) {
+					toTouch = keep;
+					const drop = new Set(t.files.filter((f) => !keep.includes(f)));
+					touchArgs = t.args.filter((a) => !drop.has(a));
+					if (!keep.length) { return { stdout: '', stderr: gone, exitCode: 1 }; }
+				}
+			}
+			const r0 = await ctx.origCommand(touchArgs);
+			const r = gone ? Object.assign({}, r0, { stderr: gone + r0.stderr, exitCode: r0.exitCode || 1 }) : r0;
+			if (time !== null && r0.exitCode === 0) {
+				for (const f of toTouch) {
 					try { await ctx.fs.utimes(abs(ctx, f), new zone.LcDate(time), new zone.LcDate(time)); } catch { /* -c on a file that is not there */ }
 				}
 			}
@@ -2681,85 +3843,180 @@ function commands(defineCommand, LimitError) {
 		}),
 		define('ls', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('ls'); }
-			const n = normaliseLs(args);
+			// -I PATTERN, --ignore, --hide, -w and --width (a column is one name wide here anyway), --sort=WORD, -X, -v, -U, -n
+			const extra = lsOptions(args);
+			if ('error' in extra) { return { stdout: '', stderr: extra.error, exitCode: 1 }; }
+			const n = normaliseLs(extra.args);
 			let r = await ctx.origCommand(n.args);
 			if (n.slashOnly && r.stdout) { r = Object.assign({}, r, { stdout: r.stdout.replace(/\*$/gm, '') }); }
+			if (r.stdout && extra.active) { r = Object.assign({}, r, { stdout: lsRefine(r.stdout, extra) }); }
 			if (r.stdout && /(^|\n)total \d+\n/.test(r.stdout)) { r = Object.assign({}, r, { stdout: lsTotals(r.stdout) }); }
 			if (!r.stderr) { return r; }
 			// GNU: `ls: cannot access 'x': No such file or directory`
-			return Object.assign({}, r, { stderr: r.stderr.replace(/^ls: (.+): No such file or directory$/gm, "ls: cannot access '$1': No such file or directory") });
+			return Object.assign({}, r, { stderr: r.stderr.replace(/^ls: (?!cannot access )(.+): No such file or directory$/gm, "ls: cannot access '$1': No such file or directory") });
 		}),
-		define('du', async (args, ctx) => du(args, {
-			cwd: ctx.cwd,
-			stat: (p) => statOrNull(ctx, p),
-			readdir: async (p) => (await ctx.fs.readdir(p)).slice().sort(),
-			resolve: (b, p) => ctx.fs.resolvePath(b, p),
-			traversal: {
-				entries: ctx.limits && ctx.limits.maxTraversalEntries,
-				depth: ctx.limits && ctx.limits.maxTraversalDepth,
-				exceeded: (message) => (LimitError ? new LimitError(message, 'iterations') : Object.assign(new Error(message), { name: 'ExecutionLimitError' })),
-			},
+		define('du', async (args0, ctx) => {
+			const from = await filesFrom(ctx, 'du', args0);
+			if ('result' in from) { return from.result; }
+			const r = await du(from.args, {
+				cwd: ctx.cwd,
+				stat: (p) => statOrNull(ctx, p),
+				readdir: async (p) => (await ctx.fs.readdir(p)).slice().sort(),
+				resolve: (b, p) => ctx.fs.resolvePath(b, p),
+				traversal: {
+					entries: ctx.limits && ctx.limits.maxTraversalEntries,
+					depth: ctx.limits && ctx.limits.maxTraversalDepth,
+					exceeded: (message) => (LimitError ? new LimitError(message, 'iterations') : Object.assign(new Error(message), { name: 'ExecutionLimitError' })),
+				},
+			});
+			return from.stderr ? Object.assign({}, r, { stderr: from.stderr + r.stderr, exitCode: r.exitCode || 1 }) : r;
+		}),
+		...['basename', 'dirname', 'readlink', 'printenv'].map((name) => define(name, async (args, ctx) => {
+			if (!ctx.origCommand) { return missingOriginal(name); }
+			// -z (printenv: -0): each result ends in NUL, not in a newline. A result is one record, so the program is run for
+			// each operand and its own newline is the one that is replaced
+			const zp = zero.plan(name, args, OPTION_VALUES[name]);
+			if (!zp.zero) { return ctx.origCommand(args); }
+			const operandSet = new Set(zp.files);
+			const options = zp.args.filter((_a, i) => !operandSet.has(i));
+			const names = zp.files.map((i) => zp.args[i]);
+			const whole = name === 'basename' && !options.some((o) => o === '-a' || o === '--multiple' || /^-[A-Za-z]*a/.test(o) || o === '-s' || o.startsWith('--suffix') || /^-[A-Za-z]*s/.test(o));
+			const record = (out) => (out.endsWith('\n') ? out.slice(0, -1) + '\0' : out);
+			if (name === 'printenv' && !names.length) {
+				const entries = ctx.env instanceof Map ? [...ctx.env.entries()] : Object.entries(ctx.env || {});
+				return { stdout: entries.map(([k, v]) => `${k}=${v}\0`).join(''), stderr: '', exitCode: 0 };
+			}
+			if (whole || (name !== 'printenv' && !names.length)) { const r = await ctx.origCommand(zp.args); return Object.assign({}, r, { stdout: record(r.stdout) }); }
+			let stdout = '';
+			let stderr = '';
+			let exitCode = 0;
+			for (const n of names) {
+				const r = await ctx.origCommand(name === 'printenv' ? [...options, n] : [...options, '--', n]);
+				stdout += record(r.stdout);
+				stderr += r.stderr;
+				if (r.exitCode) { exitCode = r.exitCode; }
+			}
+			return { stdout, stderr, exitCode };
 		})),
+		define('diff', async (args, ctx) => {
+			if (!ctx.origCommand) { return missingOriginal('diff'); }
+			// folders, -r -N -q -s -x -X, -U N -C N with the timestamps GNU prints, -w -b -B -Z: diff.js, over the engine's
+			// own comparison of two files
+			const temps = [];
+			const r = await diffs.run(args, {
+				stdin: ctx.stdin || '',
+				readFile: (p) => ctx.fs.readFileBuffer(abs(ctx, p)),
+				stat: async (p) => {
+					const st = await statOrNull(ctx, abs(ctx, p));
+					return st ? { isFile: !!st.isFile, isDirectory: !!st.isDirectory, mtimeMs: +st.mtime } : null;
+				},
+				readdir: async (p) => (await ctx.fs.readdir(abs(ctx, p))).slice(),
+				engine: (list) => ctx.origCommand(list),
+				writeTemp: async (text) => {
+					const path = `/tmp/.lc-diff-${++zeroSeq}`;
+					await ctx.fs.writeFile(path, encodeText(text));
+					temps.push(path);
+					return path;
+				},
+				stamp: (ms) => statTimeFormat('%y', ms === null ? Date.now() : ms, zone.getZone()),
+				quote: xargsQuote,
+			}).finally(async () => { for (const t of temps) { try { await ctx.fs.rm(t, { force: true }); } catch { /* under /tmp */ } } });
+			return r || ctx.origCommand(args);
+		}),
+		define('cut', async (args, ctx) => {
+			if (!ctx.origCommand) { return missingOriginal('cut'); }
+			const zp = zero.plan('cut', args, { short: 'bcdf', long: ['--bytes', '--characters', '--delimiter', '--fields', '--output-delimiter'] });
+			return zp.zero ? zeroRun(ctx, 'cut', zp) : ctx.origCommand(args);
+		}),
 		define('tr', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('tr'); }
-			// the engine cannot see a NUL byte: `tr '\0' x` and `tr -d '\0'` are done here
-			const flags = args.filter((a) => a.startsWith('-') && a !== '-');
-			const sets = args.filter((a) => !a.startsWith('-') || a === '-');
-			const nul = (x) => x === '\\0' || x === '\\000' || x === '\\x00';
-			if (sets.length >= 1 && nul(sets[0]) && flags.every((f) => f === '-d' || f === '--delete')) {
-				const del = flags.length > 0;
-				if (del && sets.length === 1) { return { stdout: (ctx.stdin || '').replace(/\u0000/g, ''), stderr: '', exitCode: 0, stdoutEncoding: 'binary' }; }
-				if (!del && sets.length === 2 && sets[1].length >= 1) {
-					const to = sets[1] === '\\n' ? '\n' : sets[1] === '\\t' ? '\t' : sets[1][0];
-					return { stdout: (ctx.stdin || '').replace(/\u0000/g, to), stderr: '', exitCode: 0, stdoutEncoding: 'binary' };
-				}
-			}
-			return ctx.origCommand(args);
+			// GNU's tr, whole (tr.js): bytes, its escapes (NUL as a second set too), classes, repeats and its errors
+			const r = tr.run(args, stdinBytes(ctx.stdin));
+			if ('passThrough' in r) { return ctx.origCommand(args); }
+			return { stdout: latin1(r.stdout), stderr: r.stderr, exitCode: r.exitCode, stdoutEncoding: 'binary' };
 		}),
 		define('uniq', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('uniq'); }
+			const zp = zero.plan('uniq', args, OPTION_VALUES.uniq);
+			if (zp.zero) { return zeroRun(ctx, 'uniq', zp); }
 			const r = await ctx.origCommand(args);
 			if (!args.some((a) => a === '--count' || (/^-[A-Za-z]+$/.test(a) && a.includes('c')))) { return r; }
 			// the engine pads the count to 4 characters, GNU uniq to 7
 			return Object.assign({}, r, { stdout: r.stdout.replace(/^ *(\d+) /gm, (_m, n) => n.padStart(7, ' ') + ' ') });
 		}),
-		define('wc', async (args, ctx) => {
+		define('wc', async (args0, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('wc'); }
+			const from = await filesFrom(ctx, 'wc', args0);
+			if ('result' in from) { return from.result; }
+			const args = from.args;
+			const said = (res) => (from.stderr || from.failed ? Object.assign({}, res, { stderr: from.stderr + res.stderr, exitCode: res.exitCode || 1 }) : res);
 			const r = await ctx.origCommand(args);
-			if (r.exitCode !== 0 || !r.stdout) { return r; }
-			const operands = args.filter((a, i) => (a === '-' || !a.startsWith('-')) && !(args[i - 1] === '--files0-from'));
+			if (r.exitCode !== 0 || !r.stdout) { return said(r); }
+			const operands = args.filter((a) => a === '-' || !a.startsWith('-'));
+			// names read from a list were not looked at before the counts, and the width is the least one
 			let size = 0;
 			let known = operands.length > 0;
-			for (const f of operands) {
+			for (const f of from.args === args0 ? operands : []) {
 				try {
 					const st = await ctx.fs.stat(abs(ctx, f));
 					if (st.isFile) { size += st.size; }
 				} catch { known = false; }
 			}
-			return Object.assign({}, r, { stdout: wcWidth(r.stdout, operands.length, known ? size : null) });
+			return said(Object.assign({}, r, { stdout: wcWidth(r.stdout, operands.length, known || from.args !== args0 ? size : null) }));
 		}),
-		define('paste', async (args, ctx) => (ctx.origCommand ? ctx.origCommand(normalisePaste(args)) : missingOriginal('paste'))),
-		define('sort', async (args, ctx) => {
+		...['paste', 'comm', 'join'].map((name) => define(name, async (args, ctx) => {
+			if (!ctx.origCommand) { return missingOriginal(name); }
+			const zp = zero.plan(name, args, OPTION_VALUES[name]);
+			if (zp.zero) { return zeroRun(ctx, name, zp); }
+			return ctx.origCommand(name === 'paste' ? normalisePaste(args) : args);
+		})),
+		define('sort', async (args0, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('sort'); }
-			const norm = normaliseSort(args);
+			const from = await filesFrom(ctx, 'sort', args0);
+			if ('result' in from) { return from.result; }
+			const said = (res) => (from.stderr ? Object.assign({}, res, { stderr: from.stderr + res.stderr, exitCode: res.exitCode || 2 }) : res);
+			const zp = zero.plan('sort', from.args, OPTION_VALUES.sort);
+			if (zp.zero) { return said(await zeroRun(ctx, 'sort', zp)); }
+			// -C is -c that says nothing (the engine has no -C): the status is the answer
+			let quiet = false;
+			const args = from.args.map((a) => {
+				if (a === '--check=quiet' || a === '--check=silent') { quiet = true; return '-c'; }
+				if (/^-[A-Za-z]*C[A-Za-z]*$/.test(a)) { quiet = true; return a.replace('C', 'c'); }
+				return a;
+			});
+			// a key that is not F[.C][OPTS][,F[.C][OPTS]] is an error (the engine dropped it without a word), and the ones
+			// that are valid reach it in one spelling
+			const keyed = sortKeys(normaliseSort(args));
+			if ('error' in keyed) { return said({ stdout: '', stderr: `sort: ${keyed.error}\n`, exitCode: 2 }); }
+			let norm = keyed.args;
 			let output = null;
 			for (let i = 0; i < norm.length - 1 && norm[i] !== '--'; i++) {
-				// a key that is not F[.C][OPTS][,F[.C][OPTS]] is an error (the engine dropped it without a word)
-				if (norm[i] === '-k' && !sortKeyOk(norm[i + 1])) { return { stdout: '', stderr: `sort: invalid field specification '${norm[i + 1]}'\n`, exitCode: 2 }; }
 				if (norm[i] === '-o') { output = norm[i + 1]; }
 			}
+			// the engine reads no `--`: what follows is operands, a name that starts with a dash made safe
+			const dd = norm.indexOf('--');
+			if (dd >= 0) { norm = [...norm.slice(0, dd), ...norm.slice(dd + 1).map((f) => (f !== '-' && f.startsWith('-') ? './' + f : f))]; }
 			try {
-				return await ctx.origCommand(norm);
+				const r = await ctx.origCommand(norm);
+				return said(quiet ? Object.assign({}, r, { stderr: '' }) : r);
 			} catch (e) {
 				// the output file that cannot be written: the engine lets the error out (it printed "sort: ENOENT: ..." and
 				// 1); GNU says it in its own words and the status is 2
 				const why = e && output !== null ? { ENOENT: 'No such file or directory', EISDIR: 'Is a directory', ENOTDIR: 'Not a directory', EACCES: 'Permission denied', EPERM: 'Operation not permitted' }[String(e.code)] : undefined;
 				if (!why) { throw e; }
-				return { stdout: '', stderr: `sort: open failed: ${output}: ${why}\n`, exitCode: 2 };
+				return said({ stdout: '', stderr: `sort: open failed: ${output}: ${why}\n`, exitCode: 2 });
 			}
 		}),
 		define('tail', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('tail'); }
+			// the old form `tail +N [FILE]` (`+Nc` bytes, `+Nb` blocks of 512): GNU reads it only as the first argument of a
+			// line that has no more than one more
+			if (args.length >= 1 && args.length <= 2) {
+				const old = /^\+(\d+)([bcl]?)$/.exec(args[0]);
+				if (old) { args = old[2] === 'c' ? ['-c', '+' + old[1], ...args.slice(1)] : old[2] === 'b' ? ['-c', '+' + Number(old[1]) * 512, ...args.slice(1)] : ['-n', '+' + old[1], ...args.slice(1)]; }
+			}
+			const zp = zero.plan('tail', args, OPTION_VALUES.tail);
+			if (zp.zero) { return zeroRun(ctx, 'tail', zp); }
 			// `tail -n -3` and `tail -c -2` are `-n 3` and `-c 2` (the minus is only a sign that head uses)
 			const norm = normaliseCounts(args).map((a, i, all) => {
 				const valued = i > 0 && (all[i - 1] === '-n' || all[i - 1] === '-c' || all[i - 1] === '--lines' || all[i - 1] === '--bytes');
@@ -2768,7 +4025,7 @@ function commands(defineCommand, LimitError) {
 				return attached ? attached[1] + attached[2] : a;
 			});
 			const from = parseTailFrom(norm);
-			if (!from) { return ctx.origCommand(shortCounts(norm)); }
+			if (!from) { return cannotOpen(await ctx.origCommand(shortCounts(norm)), 'tail'); }
 			const names = from.files.length ? from.files : ['-'];
 			let out = '';
 			let err = '';
@@ -2790,9 +4047,12 @@ function commands(defineCommand, LimitError) {
 		}),
 		define('head', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('head'); }
+			// -z in a cluster (`-zc3`, `-nz`) is -z and the rest: parseHeadNegative reads it alone
+			const zp = zero.plan('head', args, OPTION_VALUES.head);
+			if (zp.zero) { args = [...zp.args, '-z']; }
 			args = shortCounts(normaliseCounts(args));
 			const neg = parseHeadNegative(args);
-			if (!neg) { return ctx.origCommand(args); }
+			if (!neg) { return cannotOpen(await ctx.origCommand(args), 'head'); }
 			const names = neg.files.length ? neg.files : ['-'];
 			let out = '';
 			let err = '';
@@ -2833,8 +4093,13 @@ function commands(defineCommand, LimitError) {
 		}),
 		define('awk', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('awk'); }
-			// -f PROGFILE: the engine takes the program as text only
+			// what the engine's awk does not do: -f PROGFILE (it takes the program as text only), `-v VAR=value` for a special
+			// variable (FS, OFS, RS ... are ignored) or with escapes in the value (`\t` stays two characters), and `var=value`
+			// among the operands (`awk '{...}' FS=, file`), which GNU makes when it gets to it
+			/** @type {string[]} */
 			const opts = [];
+			/** @type {string[]} */
+			const assigns = [];
 			const progs = [];
 			const operands = [];
 			let afterDashes = false;
@@ -2845,16 +4110,73 @@ function commands(defineCommand, LimitError) {
 				if (a === '-f' || a === '--file') { progs.push(args[++i]); continue; }
 				if (a.startsWith('--file=')) { progs.push(a.slice(7)); continue; }
 				if (/^-f.+/.test(a) && !a.startsWith('--')) { progs.push(a.slice(2)); continue; }
-				if (a === '-F' || a === '-v' || a === '--field-separator' || a === '--assign') { opts.push(a, args[++i]); continue; }
+				if (a === '-v' || a === '--assign') { assigns.push(String(args[++i])); continue; }
+				if (a.startsWith('--assign=')) { assigns.push(a.slice(9)); continue; }
+				if (/^-v.+/.test(a) && !a.startsWith('--')) { assigns.push(a.slice(2)); continue; }
+				if (a === '-F' || a === '--field-separator') { opts.push(a, args[++i]); continue; }
 				if (a.startsWith('-') && a !== '-') { opts.push(a); continue; }
 				operands.push(a);
 			}
-			if (!progs.length) { return withoutDoubledPrefix(await ctx.origCommand(args), 'awk'); }
-			let program = '';
-			for (const f of progs) {
-				try { program += decodeBytes(await readBytes(ctx)(f)) + '\n'; } catch { return { stdout: '', stderr: `awk: fatal: can't open source file \`${f}' for reading: No such file or directory\n`, exitCode: 2 }; }
+			const name = /^[A-Za-z_][A-Za-z0-9_]*=/s;
+			const first = progs.length ? 0 : 1;
+			const special = new Set(['FS', 'OFS', 'RS', 'ORS', 'SUBSEP', 'CONVFMT', 'OFMT', 'NF', 'NR', 'FNR', 'RSTART', 'RLENGTH']);
+			const hasOperandAssign = operands.slice(first).some((o) => name.test(o));
+			const needsRewrite = hasOperandAssign || assigns.some((x) => special.has(x.slice(0, x.indexOf('='))) || /\\/.test(x)) || operands.slice(first).includes('-');
+			const read = async () => {
+				let text = '';
+				for (const f of progs) {
+					try { text += decodeBytes(await readBytes(ctx)(f)) + '\n'; } catch { return { error: { stdout: '', stderr: `awk: fatal: can't open source file \`${f}' for reading: No such file or directory\n`, exitCode: 2 } }; }
+				}
+				return { text };
+			};
+			if (!needsRewrite) {
+				if (!progs.length) { return withoutDoubledPrefix(await ctx.origCommand(args), 'awk'); }
+				const prog = await read();
+				if ('error' in prog) { return prog.error; }
+				return withoutDoubledPrefix(await ctx.origCommand([...opts, ...assigns.flatMap((x) => ['-v', x]), prog.text, ...operands]), 'awk');
 			}
-			return withoutDoubledPrefix(await ctx.origCommand([...opts, program, ...operands]), 'awk');
+			/** a command-line value as awk reads it: its escapes are processed, and a number stays a number */
+			const literal = (v) => {
+				const raw = v.replace(/\\(?:([\\"/abfnrtv])|([0-7]{1,3}))/g, (_m, c, o) => (o !== undefined ? String.fromCharCode(parseInt(o, 8)) : { a: '\x07', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' }[c] || c));
+				if (/^[ \t]*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?[ \t]*$/.test(raw)) { return raw.trim(); }
+				return '"' + raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r') + '"';
+			};
+			const setter = (x) => { const eq = x.indexOf('='); return `${x.slice(0, eq)}=${literal(x.slice(eq + 1))}`; };
+			const keep = [];
+			const before = [];
+			for (const x of assigns) {
+				const nm = x.slice(0, x.indexOf('='));
+				if (special.has(nm) || /\\/.test(x)) { before.push(setter(x)); } else { keep.push('-v', x); }
+			}
+			const files = [];
+			const rules = [];
+			const after = [];
+			let pending = [];
+			for (const o of operands.slice(first)) {
+				if (name.test(o)) {
+					if (!files.length) { after.push(setter(o)); } else { pending.push(setter(o)); }
+					continue;
+				}
+				if (pending.length) {
+					rules.push(`FNR==1&&FILENAME==${literal('"' + o.replace(/"/g, '\\"') + '"').slice(1, -1) ? '"' + o.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' : '""'}{${pending.join(';')}}`);
+					pending = [];
+				}
+				files.push(o);
+			}
+			if (pending.length) { rules.push(`END{${pending.join(';')}}`); }
+			// a lone `-` is standard input, which is what no file is
+			const operandsOut = files.length === 1 && files[0] === '-' ? [] : files;
+			let text;
+			if (progs.length) {
+				const prog = await read();
+				if ('error' in prog) { return prog.error; }
+				text = prog.text;
+			} else {
+				text = operands[0];
+			}
+			// the -v assignments of special variables come before BEGIN, the operand ones after the BEGINs there are
+			const program = (before.length ? `BEGIN{${before.join(';')}}\n` : '') + (rules.length ? rules.join('\n') + '\n' : '') + text + (after.length ? `\nBEGIN{${after.join(';')}}` : '');
+			return withoutDoubledPrefix(await ctx.origCommand([...opts, ...keep, program, ...operandsOut]), 'awk');
 		}),
 		define('date', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('date'); }
@@ -2868,7 +4190,56 @@ function commands(defineCommand, LimitError) {
 				try { st = await ctx.fs.stat(abs(ctx, ref)); } catch { return { stdout: '', stderr: `date: ${ref}: No such file or directory\n`, exitCode: 1 }; }
 				out.push('-d', '@' + Math.floor(+st.mtime / 1000));
 			}
+			// a cluster of letters with a -d in it is the letters and the -d (`-ud STRING`, `-dnow`), which the engine's own
+			// option reader does not take apart; the letters that take a value (f r s, and I's format) own the rest
+			const flat = [];
+			for (const a of out) {
+				const m = /^-([A-Za-z]*)d([^]*)$/.exec(a);
+				if (!m || a.length < 3 || /[frsI]/.test(m[1])) { flat.push(a); continue; }
+				for (const letter of m[1]) { flat.push('-' + letter); }
+				flat.push('-d');
+				if (m[2] !== '') { flat.push(m[2]); }
+			}
+			out.length = 0;
+			out.push(...flat);
+			// -d STRING: the forms of GNU's date parser the engine does not read (a relative one, a date and a relative
+			// part, YYYYMMDD, a time alone, a fraction of a second) are read here and handed over as the instant they are
+			let nanos = 0;
+			const utc = out.some((x) => x === '-u' || x === '--utc' || x === '--universal');
+			for (let i = 0; i < out.length; i++) {
+				const a = out[i];
+				let at = -1;
+				let text;
+				if (a === '-d' || a === '--date') { at = i + 1; text = out[at]; } else if (a.startsWith('--date=')) { at = i; text = a.slice(7); }
+				if (at < 0 || text === undefined) { continue; }
+				const give = (seconds) => { if (at === i + 1) { out[at] = '@' + seconds; } else { out[i] = '--date=@' + seconds; } };
+				const frac = /^\s*@(-?)(\d+)[.,](\d+)\s*$/.exec(text);
+				if (frac) {
+					// `@1.5`: seconds and a fraction; before the epoch the fraction counts back
+					const f = Number((frac[3] + '000000000').slice(0, 9));
+					const whole = Number(frac[2]);
+					if (frac[1] === '-' && f > 0) { give(-whole - 1); nanos = 1e9 - f; } else { give(frac[1] === '-' ? -whole : whole); nanos = f; }
+					continue;
+				}
+				if (text.startsWith('@')) { continue; }
+				const r = datestr.parse(text, Date.now(), utc ? 'UTC' : zone.getZone());
+				if (r === null) { continue; }
+				if ('invalid' in r) { return { stdout: '', stderr: `date: invalid date '${gnuQuote(text)}'\n`, exitCode: 1 }; }
+				nanos = r.nanos;
+				give(Math.floor(r.ms / 1000));
+			}
+			// %N and %3N, %6N: the engine knows no fraction of a second, so it is written into the format here
+			if (nanos) {
+				for (let i = 0; i < out.length; i++) {
+					if (!out[i].startsWith('+')) { continue; }
+					out[i] = out[i].replace(/%%|%(\d*)N/g, (m, w) => (m === '%%' ? m : String(nanos).padStart(9, '0').slice(0, w ? Math.min(Number(w), 9) : 9)));
+				}
+			}
 			return ctx.origCommand(out);
+		}),
+		define('seq', async (args, ctx) => {
+			if (!ctx.origCommand) { return missingOriginal('seq'); }
+			return seqFormatted(args) || ctx.origCommand(args);
 		}),
 		define('od', async (args, ctx) => od(args, async () => ctx.stdin || '', readBytes(ctx))),
 		define('realpath', async (args, ctx) => realpath(args, { cwd: ctx.cwd, resolve: (b, p) => ctx.fs.resolvePath(b, p), exists: (p) => ctx.fs.exists(p) })),
@@ -2939,5 +4310,5 @@ module.exports = {
 	relativeVerbose,
 	verboseAsTyped,
 	/** names `commands()` shadows to normalise their arguments or fill in what the engine lacks */
-	WRAPPED: ['xargs', 'grep', 'egrep', 'fgrep', 'rm', 'cp', 'mv', 'mkdir', 'sed', 'paste', 'head', 'stat', 'awk', 'date', 'uniq', 'wc', 'touch', 'tr', 'ls', 'tail', 'sort', 'du'],
+	WRAPPED: ['xargs', 'grep', 'egrep', 'fgrep', 'rm', 'cp', 'mv', 'mkdir', 'sed', 'paste', 'head', 'stat', 'awk', 'date', 'uniq', 'wc', 'touch', 'tr', 'ls', 'tail', 'sort', 'du', 'cut', 'comm', 'join', 'basename', 'dirname', 'readlink', 'printenv', 'diff', 'seq'],
 };

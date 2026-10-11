@@ -42,7 +42,14 @@ test('which names are zones: the files of tzdata, in the case they are written i
 	assert.strictEqual(zone.validZone('Asia/Kolkata'), 'Asia/Kolkata');
 	assert.strictEqual(zone.validZone('US/Eastern'), 'US/Eastern', 'an alias is a file too');
 	for (const u of ['UTC', 'GMT', 'Etc/UTC', 'Etc/GMT', 'Zulu', 'UCT', 'Universal', 'GMT0', 'GMT+0', 'GMT-0', 'Greenwich']) { assert.strictEqual(zone.validZone(u), 'UTC', u); }
-	for (const bad of ['', ' \u0000'.slice(2), '+09:00', '-0500', ':', 42, null, undefined, {}]) { assert.strictEqual(zone.validZone(/** @type {any} */ (bad)), null, String(bad)); }
+	for (const bad of ['', ' \u0000'.slice(2), ':', 42, null, undefined, {}]) { assert.strictEqual(zone.validZone(/** @type {any} */ (bad)), null, String(bad)); }
+	// an offset alone is no zone: UTC with no name (GNU prints nothing for %Z), though a newer ICU takes `+09:00` for one
+	for (const off of ['+09:00', '-0500', '+5', '-5']) {
+		const key = /** @type {string} */ (zone.validZone(off));
+		assert.ok(key.startsWith('posix:'), off + ' is no zone file: ' + key);
+		assert.strictEqual(zone.offsetAt(key, 1600000000000), 0, off);
+		assert.strictEqual(zone.abbreviation(1600000000000, key), '', off);
+	}
 	// a file system has case: Intl takes `asia/tokyo`, `est`, `us/eastern`, GNU does not (it keeps the letters as a name)
 	for (const mis of ['asia/tokyo', 'ASIA/TOKYO', 'Asia/tokyo', 'us/eastern', 'america/new_york', 'est', 'utc', 'gmt']) {
 		const key = /** @type {string} */ (zone.validZone(mis));
@@ -188,10 +195,12 @@ test('what a TZ may be: an IANA name (with glibc\'s colon too), UTC, or POSIX NA
 	assert.strictEqual(offsetOf('EST5EDT,M3.2.0,M11.1.0', Date.UTC(2020, 6, 1)), -300, 'a daylight saving rule is not applied: standard time');
 	assert.strictEqual(offsetOf('JST-9x'), 540, 'what follows the offset is not read');
 	assert.strictEqual(offsetOf('JST-25'), 0, 'an offset over 24 hours is none');
-	for (const none of ['+09:00', '-0500', ':']) { assert.strictEqual(zone.validZone(none), null, none); }
-	// no zone: the letters it starts with are the name (three or more), the offset is 0
+	assert.strictEqual(zone.validZone(':'), null);
+	// no zone: the letters it starts with are the name (three or more), the offset is 0. A TZ that is only an offset
+	// (`+09:00`, `-0500`, `-5`, `5`) has no name either: GNU's %Z is empty for each, not UTC (the checkpoint said UTC)
 	const named = (name) => { zone.setZone(name); try { return zone.abbreviation(1600000000000); } finally { zone.setZone(undefined); } };
-	assert.deepStrictEqual(['Nowhere', 'Nowhere/Land', 'asia/tokyo', 'est', 'ab', 'us/eastern', 'a/b/c', '9'].map(named), ['Nowhere', 'Nowhere', 'asia', 'est', '', '', '', '']);
+	assert.deepStrictEqual(['Nowhere', 'Nowhere/Land', 'asia/tokyo', 'est', 'ab', 'us/eastern', 'a/b/c', '9', '+09:00', '-0500', '-5', '+5', '5', ':5'].map(named), ['Nowhere', 'Nowhere', 'asia', 'est', '', '', '', '', '', '', '', '', '', '']);
+	for (const off of ['+09:00', '-0500', '-5', '+5', '5']) { assert.strictEqual(offsetOf(off), 0, off); }
 	underProcessZones((proc) => {
 		zone.setZone('JST-9');
 		assert.strictEqual(new D(2020, 1, 29, 12).toISOString(), '2020-02-29T03:00:00.000Z', proc);
