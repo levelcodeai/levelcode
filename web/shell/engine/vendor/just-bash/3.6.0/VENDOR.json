@@ -1,0 +1,50 @@
+{
+	"package": "just-bash",
+	"version": "3.6.0",
+	"license": "Apache-2.0 (Copyright 2025 Vercel Inc.)",
+	"source": "npm tarball just-bash-3.6.0.tgz, file package/dist/bundle/browser.js (the `browser` export of the package)",
+	"repository": "https://github.com/vercel-labs/just-bash (packages/just-bash)",
+	"npmTarballIntegritySha512": "sha512-2COjEgcHdqKXeQSiNfPAHmpwQx4S8wATaIwog83g2t645U5tom6FED4CBBdr3M+0ioX4xZ26eODw3/nD6RQ6xw==",
+	"npmTarballSha1": "4e098c78e716500d2b626706b715614c377a8236",
+	"file": "browser.js",
+	"fileBytes": 1260935,
+	"fileSha256": "38f1ad1e3283980ecdf68cede8a4eed028c6dff6e8c31793dec1e0af529c446e",
+	"patched": {
+		"by": "apply-patches.mjs (in memory: load.mjs for tests, build.mjs for the worker); the patched text is never committed",
+		"sha256": "c11f997fb48faedd3a49caf2086fca2a2ef1390704865ce1a750525c1104ddfe",
+		"bytes": 1262278,
+		"patches": 9,
+		"edits": 17
+	},
+	"externals": {
+		"diff": {
+			"version": "8.0.4",
+			"license": "BSD-3-Clause",
+			"files": "vendor/diff/8.0.4/libesm (the .js files of the npm package, as published)",
+			"npmIntegritySha512": "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="
+		},
+		"sprintf-js": {
+			"version": "1.1.3",
+			"license": "BSD-3-Clause",
+			"files": "vendor/sprintf-js/1.1.3/sprintf.js (src/sprintf.js of the npm package, as published) and a package.json that says it is CommonJS",
+			"npmIntegritySha512": "sha512-Oo+0REFV59/rz3gfJNKQiBlwfHaSESl1pcGyABQsnnIfWOFt6JNj5gCog2U6MLZ//IGYD+nA8nI+mTShREReaA=="
+		},
+		"turndown": "vendor/stubs/turndown.mjs (html-to-markdown is not offered; the browser build of turndown needs a DOM)",
+		"node:zlib": "vendor/stubs/zlib.mjs (gzip, gunzip, zcat are not offered)",
+		"node:module": "vendor/stubs/module.mjs (named only in error texts of the browser entry)",
+		"Buffer": "the `buffer` package 5.7.1 of the Code-OSS checkout, injected by build.mjs through shims/buffer.mjs"
+	},
+	"inlinedByUpstream": [
+		"re2js 1.3.3 MIT (sha512-s/I5zEAo79SUK0Qw4dpZKpiMwbQ6Gz0KU2NRr7eaO4x/p2g7Vvmn3hdeXDg8VsaUjfj/ora+e9oi27LX/C9+mw==)",
+		"ieee754 BSD-3-Clause"
+	],
+	"neverVendor": [
+		"node-liblzma (LGPL-3.0, optional native dependency)",
+		"@mongodb-js/zstd (optional native dependency)",
+		"typescript",
+		"sql.js",
+		"undici",
+		"guarded-fetch"
+	],
+	"bump": "see NOTES.md, 'Bumping just-bash'"
+}

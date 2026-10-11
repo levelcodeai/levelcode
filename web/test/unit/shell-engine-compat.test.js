@@ -1,0 +1,481 @@
+/*---------------------------------------------------------------------------------------------
+ *  What the engine lacks that GNU has — run: node web/test/unit/shell-engine-compat.test.js
+ *
+ *  compat.js is pure functions from the arguments a person or a model types to the arguments the engine takes, a few
+ *  commands the engine does not have (od, realpath, uname, id, nproc, cmp), and wrappers that carry them out. The
+ *  golden suite compares the whole of it with GNU; this one pins the argument handling case by case, including the
+ *  forms the independent check found broken (`xargs -I {} -P2`, `-n 1 -P4`), and what is NOT dropped.
+ *--------------------------------------------------------------------------------------------*/
+// @ts-check
+'use strict';
+
+// `touch -t` and `date` read local time, as GNU does; the expected values here are the ones for UTC
+process.env.TZ = 'UTC';
+
+const assert = require('assert');
+const path = require('path');
+
+const { loadEngine, makeTree, makeHost, ENGINE_DIR } = require('./shell-engine-support.js');
+const c = require(path.join(ENGINE_DIR, 'compat.js'));
+
+/** @type {Array<{ name: string, fn: () => Promise<void> | void }>} */
+const tests = [];
+function test(name, fn) { tests.push({ name, fn }); }
+
+const bytes = (s) => (typeof s === 'string' ? Uint8Array.from(s, (ch) => ch.charCodeAt(0)) : Uint8Array.from(s));
+
+async function main() {
+	const E = await loadEngine();
+	const host = async (files) => makeHost({ Engine: E, tree: makeTree(Object.assign({ '/w': null }, files || {})) });
+	const sh = async (script, files) => (await host(files)).run(script);
+	const out = async (script, files) => { const r = await sh(script, files); return r.stdout; };
+
+	/* ------------------------------------------------------------------------------------------ xargs */
+
+	test('xargs: the attached, separated and clustered forms, in any order, become the engine\'s one-option-per-argument', () => {
+		const t = [
+			[['-I{}', 'echo', 'got-{}'], ['-I', '{}', 'echo', 'got-{}']],
+			[['-I', '{}', 'echo', '{}'], ['-I', '{}', 'echo', '{}']],
+			[['-I', '{}', '-P2', 'echo', '{}'], ['-I', '{}', 'echo', '{}']],      // found broken by the independent check
+			[['-n', '1', '-P4', 'echo'], ['-n', '1', 'echo']],                     // ditto
+			[['-n1', '-P', '4', 'echo'], ['-n', '1', 'echo']],
+			[['-P4', '-n1', 'echo'], ['-n', '1', 'echo']],
+			[['-P', '4', '-I', '%', 'echo', '%'], ['-I', '%', 'echo', '%']],
+			[['-L1', 'echo'], ['-n', '1', 'echo']],
+			[['-L', '2', 'echo'], ['-n', '2', 'echo']],
+			[['-l', 'echo'], ['-n', '1', 'echo']],
+			[['-i', 'echo', '{}'], ['-I', '{}', 'echo', '{}']],
+			[['-i%', 'echo', '%'], ['-I', '%', 'echo', '%']],
+			[['-0r', 'echo'], ['-0', '-r', 'echo']],
+			[['-rn1', 'echo'], ['-r', '-n', '1', 'echo']],
+			[['-0', '-n', '1', 'rm'], ['-0', '-n', '1', 'rm']],
+			[['--null', '--no-run-if-empty', '--verbose', 'echo'], ['-0', '-r', '-t', 'echo']],
+			[['--max-args=2', 'echo'], ['-n', '2', 'echo']],
+			[['--max-args', '2', 'echo'], ['-n', '2', 'echo']],
+			[['--replace', 'echo', '{}'], ['-I', '{}', 'echo', '{}']],
+			[['--replace=@', 'echo', '@'], ['-I', '@', 'echo', '@']],
+			[['--max-procs=4', 'echo'], ['echo']],
+			[['--max-procs', '4', 'echo'], ['echo']],
+			[['-s', '1000', 'echo'], ['echo']],
+			[['-s1000', '-E', 'EOF', 'echo'], ['echo']],
+			[['-x', 'echo'], ['echo']],
+			[['-d', ',', '-n', '1', 'echo'], ['-d', ',', '-n', '1', 'echo']],
+			[['-d,', 'echo'], ['-d', ',', 'echo']],
+			[['--delimiter=,', 'echo'], ['-d', ',', 'echo']],
+			[['echo', '-n', 'is-an-argument-of-echo'], ['echo', '-n', 'is-an-argument-of-echo']],
+			[['--', '-n', 'x'], ['--', '-n', 'x']],
+			[[], []],
+			[['-I'], ['-I', 'undefined']],
+		];
+		for (const [input, expected] of t) { assert.deepStrictEqual(c.normaliseXargs(input), expected, JSON.stringify(input)); }
+	});
+
+	test('xargs: every form gives GNU\'s answer through the engine', async () => {
+		const h = await host();
+		const cases = [
+			["printf 'a\\nb\\n' | xargs -I{} echo got-{}", 'got-a\ngot-b\n'],
+			["printf 'a\\nb\\n' | xargs -I {} -P2 echo got-{}", 'got-a\ngot-b\n'],
+			["printf '1 2 3 4\\n' | xargs -n 2 -P4 echo", '1 2\n3 4\n'],
+			["printf '1 2 3\\n' | xargs -n1 echo item", 'item 1\nitem 2\nitem 3\n'],
+			["printf 'a b\\0c\\0' | xargs -0 -n1 echo item", 'item a b\nitem c\n'],
+			["printf '1 2 3\\n' | xargs -rn1 echo n", 'n 1\nn 2\nn 3\n'],
+			["printf 'a\\nb\\n' | xargs --max-args=1 echo x", 'x a\nx b\n'],
+			["printf 'a,b,c' | xargs -d, -n1 echo item", 'item a\nitem b\nitem c\n'],
+			["printf '' | xargs echo ran; echo done", 'ran\ndone\n'],
+			["printf '' | xargs -r echo ran; echo done", 'done\n'],
+			["printf '' | xargs -I{} echo ran; echo done", 'done\n'],
+			["printf ' \\n\\n' | xargs echo blank", 'blank\n'],
+			["printf 'a\\n' | xargs sh -c 'echo \"[$1]\"' _", '[a]\n'],
+		];
+		for (const [script, expected] of cases) {
+			const r = await h.run(script);
+			assert.strictEqual(r.stdout, expected, script + '\n' + r.stderr);
+		}
+	});
+
+	/* ------------------------------------------------------------------------------------------ grep */
+
+	test('grep: what means nothing here is dropped (also from clusters), values are never mistaken for options', () => {
+		const t = [
+			[['-s', 'x', 'f'], ['x', 'f']],
+			[['--no-messages', 'x', 'f'], ['x', 'f']],
+			[['--color', 'x'], ['x']],
+			[['--color=always', 'x'], ['x']],
+			[['--colour=never', 'x'], ['x']],
+			[['-I', 'x'], ['x']],
+			[['--binary-files=without-match', 'x'], ['x']],
+			[['--line-buffered', 'x'], ['x']],
+			[['-a', '-U', 'x'], ['x']],
+			[['-rnIs', 'x', 'd'], ['-rn', 'x', 'd']],
+			[['-snr', 'x'], ['-nr', 'x']],
+			[['-s'], []],
+			[['-e', '-s', 'f'], ['-e', '-s', 'f']],
+			[['-e-s', 'f'], ['-e-s', 'f']],
+			[['-A', '2', '-s', 'x'], ['-A', '2', 'x']],
+			[['-m1', '-I', 'x'], ['-m1', 'x']],
+			[['--include=*.js', '-rI', 'x', '.'], ['--include=*.js', '-r', 'x', '.']],
+			[['--exclude-dir', 'node_modules', '-s', 'x'], ['--exclude-dir', 'node_modules', 'x']],
+			[['-oP', '\\d+'], ['-oP', '\\d+']],
+			[['--', '-s', 'f'], ['--', '-s', 'f']],
+			[['x', 'f', '-s'], ['x', 'f']],
+		];
+		for (const [input, expected] of t) { assert.deepStrictEqual(c.normaliseGrep(input), expected, JSON.stringify(input)); }
+		assert.strictEqual(c.grepWantsSilence(['-s', 'x']), true);
+		assert.strictEqual(c.grepWantsSilence(['-rns', 'x']), true);
+		assert.strictEqual(c.grepWantsSilence(['--no-messages', 'x']), true);
+		assert.strictEqual(c.grepWantsSilence(['-e', '-s', 'f']), false);
+		assert.strictEqual(c.grepWantsSilence(['-A', '2', 'x']), false);
+		assert.strictEqual(c.grepWantsSilence(['--', '-s']), false);
+	});
+
+	test('grep: -s silences the missing-file lines only; a recursive search of . names files as GNU does; -r alone searches .', async () => {
+		const h = await host({ '/w/d/a': 'foo\n', '/w/d/e/b': 'foo\n', '/w/f': 'foo\n' });
+		assert.deepStrictEqual([(await h.run('grep -s foo nofile f; echo rc=$?')).stdout, (await h.run('grep -s foo nofile f')).stderr], ['f:foo\nrc=2\n', '']);
+		assert.ok((await h.run('grep foo nofile')).stderr.includes('grep: nofile'));
+		assert.strictEqual((await h.run('grep -s -c foo f nofile')).stderr, '');
+		assert.strictEqual((await h.run('cd d; grep -rn foo . | sort')).stdout, './a:1:foo\n./e/b:1:foo\n');
+		assert.strictEqual((await h.run('cd d; grep -rn foo | sort')).stdout, 'a:1:foo\ne/b:1:foo\n');
+		assert.strictEqual((await h.run('cd d; grep -rhn foo . | sort')).stdout, '1:foo\n1:foo\n');
+		assert.strictEqual((await h.run('cd d; grep -rn foo e a | sort')).stdout, 'a:1:foo\ne/b:1:foo\n');
+		assert.strictEqual((await h.run('grep --color=auto -n foo f')).stdout, '1:foo\n');
+		assert.strictEqual((await h.run("printf 'a1\\nb2\\n' | grep -oP '[a-z]\\K\\d'")).stdout, '1\n2\n');
+		assert.strictEqual(c.grepDotPrefix(['-rn', 'x', '.']), true);
+		assert.strictEqual(c.grepDotPrefix(['-rn', 'x', 'src']), false);
+		assert.strictEqual(c.grepDotPrefix(['-rn', 'x']), false);
+		assert.strictEqual(c.grepDotPrefix(['-r', '-e', 'x', '.']), true);
+		assert.strictEqual(c.grepDotPrefix(['-rq', 'x', '.']), false);
+		assert.strictEqual(c.grepNeedsDot(['-rn', 'x']), true);
+		assert.strictEqual(c.grepNeedsDot(['-n', 'x']), false);
+		assert.strictEqual(c.grepNeedsDot(['-rn', '-e', 'x']), true);
+		assert.strictEqual(c.grepNeedsDot(['-rn', 'x', 'd']), false);
+	});
+
+	/* ------------------------------------------------------------------------------------------ cp mv rm */
+
+	test('cp: -a is -r -p; -f -L -P -H -d -x -T are dropped; -t moves; -i and -b are NOT dropped; -u is reported', () => {
+		const t = [
+			[['-a', 'd', 'e'], { args: ['-rp', 'd', 'e'], update: false }],
+			[['--archive', 'd', 'e'], { args: ['-p', '-r', 'd', 'e'], update: false }],
+			[['-rf', 'd', 'e'], { args: ['-r', 'd', 'e'], update: false }],
+			[['-fp', 'a', 'b'], { args: ['-p', 'a', 'b'], update: false }],
+			[['-T', 'a', 'b'], { args: ['a', 'b'], update: false }],
+			[['--force', '-L', 'a', 'b'], { args: ['a', 'b'], update: false }],
+			[['-u', 'a', 'b'], { args: ['a', 'b'], update: true }],
+			[['-ru', 'd', 'e'], { args: ['-r', 'd', 'e'], update: true }],
+			[['--update', 'a', 'b'], { args: ['a', 'b'], update: true }],
+			[['-t', 'dir', 'a', 'b'], { args: ['a', 'b', 'dir'], update: false }],
+			[['--target-directory=dir', 'a', 'b'], { args: ['a', 'b', 'dir'], update: false }],
+			[['--target-directory', 'dir', 'a', 'b'], { args: ['a', 'b', 'dir'], update: false }],
+			[['-rt', 'dir', 'a'], { args: ['-r', 'a', 'dir'], update: false }],
+			[['-tdir', 'a'], { args: ['a', 'dir'], update: false }],
+			[['-v', 'a', 'b'], { args: ['-v', 'a', 'b'], update: false }],
+			[['-i', 'a', 'b'], { args: ['-i', 'a', 'b'], update: false }],
+			[['-b', 'a', 'b'], { args: ['-b', 'a', 'b'], update: false }],
+			[['--', '-a', 'b'], { args: ['--', '-a', 'b'], update: false }],
+		];
+		for (const [input, expected] of t) { assert.deepStrictEqual(c.normaliseCp(input), expected, JSON.stringify(input)); }
+		assert.deepStrictEqual(c.normaliseMv(['-i', 'a', 'b']), { args: ['-i', 'a', 'b'], update: false });
+		assert.deepStrictEqual(c.normaliseMv(['-T', '-u', 'a', 'b']), { args: ['a', 'b'], update: true });
+		assert.deepStrictEqual(c.normaliseMv(['-t', 'd', 'a', 'b']), { args: ['a', 'b', 'd'], update: false });
+		assert.deepStrictEqual(c.normaliseMv(['-fv', 'a', 'b']), { args: ['-fv', 'a', 'b'], update: false });
+		assert.deepStrictEqual(c.normaliseRm(['-rf', 'd']), ['-rf', 'd']);
+		assert.deepStrictEqual(c.normaliseRm(['--preserve-root', '-r', 'd']), ['-r', 'd']);
+		assert.deepStrictEqual(c.normaliseRm(['-i', 'f']), ['-i', 'f'], 'a question nobody can answer is not dropped');
+		assert.deepStrictEqual(c.normaliseRm(['-rI', 'd']), ['-rI', 'd']);
+	});
+
+	test('cp -i, mv -i, rm -i, rm -I: refused, and nothing is copied, moved or removed (a shell with no one to answer says no)', async () => {
+		const h = await host();
+		const r = await h.run("echo a > a; echo b > b; cp -i a b; echo \"cp=$?\"; mv -i a b; echo \"mv=$?\"; rm -i a; echo \"rm=$?\"; rm -rI b; echo \"rmI=$?\"; cat a b");
+		assert.strictEqual(r.stdout, 'cp=1\nmv=1\nrm=1\nrmI=1\na\nb\n');
+		assert.strictEqual((r.stderr.match(/invalid option/g) || []).length, 4);
+	});
+
+	test('cp -u, mv -u: only when the source is newer, for files and for trees, with a time that is strictly later', async () => {
+		const h = await host();
+		const cases = [
+			["echo old > b; echo new > a; touch -d '@100' b; touch -d '@200' a; cp -u a b; cat b", 'new\n'],
+			["echo old > b; echo new > a; touch -d '@200' b; touch -d '@100' a; cp -u a b; cat b", 'old\n'],
+			["echo old > b; echo new > a; touch -d '@100' b; touch -d '@100' a; cp -u a b; cat b", 'old\n'],
+			["echo a > a; cp -u a b; cat b", 'a\n'],
+			["echo old > b; echo new > a; cp -u a b; cat b", 'new\n'],
+			["mkdir s t; echo old > t/x; echo new > s/x; echo y > s/y; touch -d '@100' t/x; touch -d '@200' s/x; cp -ru s/* t/; cat t/x t/y", 'new\ny\n'],
+			["mkdir s t; echo old > t/x; echo new > s/x; touch -d '@200' t/x; touch -d '@100' s/x; cp -ru s/* t/; cat t/x", 'old\n'],
+			["mkdir -p s/sub t; echo a > s/sub/f; cp -ru s t; cat t/s/sub/f", 'a\n'],
+			["echo old > b; echo new > a; touch -d '@100' b; touch -d '@200' a; mv -u a b; ls; cat b", 'b\nnew\n'],
+			["echo old > b; echo new > a; touch -d '@200' b; touch -d '@100' a; mv -u a b; ls; cat b", 'a\nb\nold\n'],
+			["echo a > a; echo b > b; mkdir d; cp -uv a b d/; ls d", "'a' -> 'd/a'\n'b' -> 'd/b'\na\nb\n"],
+		];
+		for (const [script, expected] of cases) {
+			const r = await h.run(script);
+			assert.strictEqual(r.stdout, expected, script + '\n' + r.stderr);
+			await h.run('rm -rf a b c d s t');
+		}
+		const miss = await h.run('cp -u nope x; echo "rc=$?"');
+		assert.ok(/cp: cannot stat 'nope': No such file or directory/.test(miss.stderr));
+		assert.strictEqual(miss.stdout, 'rc=1\n');
+	});
+
+	test('cp -v and mv -v name the destination as it was typed, not by its resolved path', async () => {
+		const r = await sh("echo a > a; mkdir d; cp -v a b; cp -v a d/; mv -v b c; mv -v c d/");
+		assert.strictEqual(r.stdout, "'a' -> 'b'\n'a' -> 'd/a'\nrenamed 'b' -> 'c'\nrenamed 'c' -> 'd/c'\n");
+		assert.strictEqual(c.relativeVerbose({ stdout: "'a' -> '/w/b'\n" }, '/w').stdout, "'a' -> 'b'\n");
+		assert.strictEqual(c.relativeVerbose({ stdout: "'a' -> '/tmp/b'\n" }, '/w').stdout, "'a' -> '/tmp/b'\n");
+		assert.strictEqual(c.relativeVerbose({ stdout: "'a' -> '/b'\n" }, '/').stdout, "'a' -> 'b'\n");
+	});
+
+	/* ------------------------------------------------------------------------------------------ mkdir, sed, others */
+
+	test('mkdir: -m MODE is taken out (clusters, attached, long, with the value apart) and applied after', async () => {
+		assert.deepStrictEqual(c.normaliseMkdir(['-m', '700', 'd']), { args: ['d'], mode: '700', dirs: ['d'] });
+		assert.deepStrictEqual(c.normaliseMkdir(['-m755', 'd', 'e']), { args: ['d', 'e'], mode: '755', dirs: ['d', 'e'] });
+		assert.deepStrictEqual(c.normaliseMkdir(['-pm', '700', 'a/b']), { args: ['-p', 'a/b'], mode: '700', dirs: ['a/b'] });
+		assert.deepStrictEqual(c.normaliseMkdir(['-pm700', 'a/b']), { args: ['-p', 'a/b'], mode: '700', dirs: ['a/b'] });
+		assert.deepStrictEqual(c.normaliseMkdir(['--mode=700', 'd']), { args: ['d'], mode: '700', dirs: ['d'] });
+		assert.deepStrictEqual(c.normaliseMkdir(['--mode', '700', 'd']), { args: ['d'], mode: '700', dirs: ['d'] });
+		assert.deepStrictEqual(c.normaliseMkdir(['-pv', 'd']), { args: ['-pv', 'd'], mode: null, dirs: ['d'] });
+		assert.deepStrictEqual(c.normaliseMkdir(['--', '-m']), { args: ['--', '-m'], mode: null, dirs: ['-m'] });
+		const r = await sh('mkdir -m 700 d; stat -c %a d; ls -ld d | cut -c1-10; mkdir -pm 711 a/b/c; stat -c %a a/b/c; mkdir -m 700 d; echo "rc=$?"; stat -c %a d');
+		assert.strictEqual(r.stdout, '700\ndrwx------\n711\nrc=1\n700\n');
+	});
+
+	test('sed: -i.bak keeps a copy, long options are the short ones, and the GNU one-line text commands get their newline', async () => {
+		const t = c.normaliseSed;
+		assert.deepStrictEqual(t(['-i.bak', 's/a/b/', 'f']), { args: ['-i', 's/a/b/', 'f'], suffix: '.bak', files: ['f'] });
+		assert.deepStrictEqual(t(['--in-place=.orig', '-e', 's/a/b/', 'f', 'g']), { args: ['-i', '-e', 's/a/b/', 'f', 'g'], suffix: '.orig', files: ['f', 'g'] });
+		assert.deepStrictEqual(t(['-i', 's/a/b/', 'f']), { args: ['-i', 's/a/b/', 'f'], suffix: '', files: ['f'] });
+		assert.deepStrictEqual(t(['-n', '-i', '-e', 'p', 'f']), { args: ['-n', '-i', '-e', 'p', 'f'], suffix: '', files: ['f'] });
+		assert.deepStrictEqual(t(['--quiet', '--expression=2p', 'f']), { args: ['-n', '-e', '2p', 'f'], suffix: null, files: ['f'] });
+		assert.deepStrictEqual(t(['-ne', 'p', 'f']), { args: ['-n', '-e', 'p', 'f'], suffix: null, files: ['f'] });
+		assert.deepStrictEqual(t(['-E', '-f', 'prog.sed', 'f']), { args: ['-E', '-f', 'prog.sed', 'f'], suffix: null, files: ['f'] });
+		assert.deepStrictEqual(t(['1i\\HEAD', 'f']).args, ['1i\\\nHEAD', 'f']);
+		assert.strictEqual(c.fixSedOneLiner('$a\\TAIL'), '$a\\\nTAIL');
+		assert.strictEqual(c.fixSedOneLiner('/x/,/y/c\\new\ns/a/b/'), '/x/,/y/c\\\nnew\ns/a/b/');
+		assert.strictEqual(c.fixSedOneLiner('s/a/b/;3a\\x'), 's/a/b/;3a\\\nx');
+		assert.strictEqual(c.fixSedOneLiner('1i\\\nalready'), '1i\\\nalready');
+		assert.strictEqual(c.fixSedOneLiner('s/a\\/b/c/'), 's/a\\/b/c/');
+		const r = await sh("printf 'a\\nb\\n' > f; sed -i.bak 's/a/X/' f; cat f f.bak; sed --in-place=.orig 's/b/Y/' f; ls | tr '\\n' ' '; echo; printf 'a\\nb\\n' | sed '1i\\H' | tr '\\n' ' '; echo; mkdir bk; sed -i'bk/*.old' 's/X/Z/' f; ls bk; cat f");
+		assert.strictEqual(r.stdout, 'X\nb\na\nb\nf f.bak f.orig \nH a b \nf.old\nZ\nY\n');
+	});
+
+	test('paste, head, stat, touch, date, awk: what the engine took as an error or as a literal', async () => {
+		assert.deepStrictEqual(c.normalisePaste(['-sd,']), ['-sd,', '-']);
+		assert.deepStrictEqual(c.normalisePaste(['-s', '-d', ',']), ['-s', '-d', ',', '-']);
+		assert.deepStrictEqual(c.normalisePaste(['-d', ',', 'f']), ['-d', ',', 'f']);
+		assert.deepStrictEqual(c.normalisePaste(['-']), ['-']);
+		assert.strictEqual(await out("printf '1\\n2\\n' | paste -sd,"), '1,2\n');
+		assert.strictEqual(await out("printf '1\\n2\\n3\\n' | paste - - -"), '1\t2\t3\n');
+		assert.deepStrictEqual(c.parseHeadNegative(['-n', '-2', 'f']), { unit: 'lines', count: 2, quiet: false, verbose: false, zero: false, files: ['f'] });
+		assert.deepStrictEqual(c.parseHeadNegative(['-n-2']).unit, 'lines');
+		assert.deepStrictEqual(c.parseHeadNegative(['--bytes=-3']).unit, 'bytes');
+		assert.strictEqual(c.parseHeadNegative(['-n', '2']), null);
+		assert.strictEqual(c.parseHeadNegative(['-5']), null);
+		assert.strictEqual(c.parseHeadNegative(['-x']), null);
+		assert.strictEqual(Buffer.from(c.dropLast(bytes('a\nb\nc'), 'lines', 1, false)).toString(), 'a\nb\n');
+		assert.strictEqual(Buffer.from(c.dropLast(bytes('a\nb\nc\n'), 'lines', 1, false)).toString(), 'a\nb\n');
+		assert.strictEqual(Buffer.from(c.dropLast(bytes('abc'), 'lines', 5, false)).toString(), '');
+		assert.strictEqual(Buffer.from(c.dropLast(bytes('abcdef'), 'bytes', 2, false)).toString(), 'abcd');
+		assert.strictEqual(Buffer.from(c.dropLast(bytes('a\0b\0c'), 'lines', 1, true)).toString(), 'a\0b\0');
+		assert.strictEqual(await out('seq 1 5 | head -n -2 | tr "\\n" " "'), '1 2 3 ');
+		assert.strictEqual(await out("printf 'é\\nü\\nx\\n' > u; head -n -1 u > v; od -An -tx1 v"), ' c3 a9 0a c3 bc 0a\n');
+		assert.strictEqual(await out("printf '1\\n2\\n' > p; printf '3\\n4\\n' > q; head -n -1 p q; head -q -n -1 p q; head -v -n -1 p"), '==> p <==\n1\n\n==> q <==\n3\n1\n3\n==> p <==\n1\n');
+		assert.strictEqual(c.statTimeFormat('%n|%Y|%y|%%|%X', 1588748889123), '%n|1588748889|2020-05-06 07:08:09.123000000 +0000|%%|1588748889');
+		assert.deepStrictEqual(c.parseStat(['-c', '%Y', 'f', 'g']), { format: '%Y', files: ['f', 'g'], other: [] });
+		assert.deepStrictEqual(c.parseStat(['--format=%y', 'f']).format, '%y');
+		assert.deepStrictEqual(c.parseStat(['-c%Y', 'f']), { format: '%Y', files: ['f'], other: [] });
+		assert.deepStrictEqual(c.parseTouch(['-t', '202005060708.09', 'f']).time, new Date(2020, 4, 6, 7, 8, 9).getTime());
+		assert.deepStrictEqual(c.parseTouch(['-d', '@100', 'f']), { args: ['f'], time: 100000, files: ['f'] });
+		assert.deepStrictEqual(c.parseTouch(['--date=@-5', 'f']).time, -5000);
+		assert.deepStrictEqual(c.parseTouch(['-d', '2020-01-01', 'f']), { args: ['-d', '2020-01-01', 'f'], time: null, files: ['f'] });
+		assert.deepStrictEqual(c.parseTouch(['-r', 'ref', 'f']), { args: ['-r', 'ref', 'f'], time: null, files: ['ref', 'f'].slice(1) });
+		const r = await sh("touch -d '@100' a; touch -t 197001010000 z; stat -c '%n %Y' a z; date -u -r a +%s; printf 'BEGIN{print \"p\"}\\n{print $1}\\n' > p.awk; echo 'x y' | awk -f p.awk");
+		assert.strictEqual(r.stdout, 'a 100\nz 0\n100\np\nx\n');
+	});
+
+	test('head and tail: a size with a suffix is its multiple (the engine read `1K` as one byte), GNU\'s suffixes, nothing else touched', async () => {
+		const n = c.normaliseCounts;
+		assert.deepStrictEqual(n(['-c', '1K', 'f']), ['-c', '1024', 'f']);
+		assert.deepStrictEqual(n(['-c1K', 'f']), ['-c1024', 'f']);
+		assert.deepStrictEqual(n(['--bytes=1KB', 'f']), ['--bytes=1000', 'f']);
+		assert.deepStrictEqual(n(['-n', '+2k', 'f']), ['-n', '+2048', 'f']);
+		assert.deepStrictEqual(n(['-c', '-1M']), ['-c', '-1048576']);
+		assert.deepStrictEqual(n(['-c', '2b']), ['-c', '1024']);
+		assert.deepStrictEqual(n(['-c', '5', 'f']), ['-c', '5', 'f']);
+		assert.deepStrictEqual(n(['-c', '1Q', 'f']), ['-c', '1Q', 'f'], 'an unknown suffix is left for the engine to refuse');
+		assert.deepStrictEqual(n(['--', '-c', '1K']), ['--', '-c', '1K'], 'after -- they are files');
+		assert.deepStrictEqual(n(['f', '1K']), ['f', '1K'], 'a file called 1K');
+		assert.strictEqual(await out("seq 1 2000 > f; head -c 1K f | wc -c; tail -c 1KB f | wc -c; head -n 1K f | wc -l; head -c -1K f | wc -c; tail -n +1K f | wc -l"), '1024\n1000\n1024\n7869\n977\n');   // seq 1 2000 is 8893 bytes
+	});
+
+	test('uniq -c and wc print the widths GNU does; tr sees a NUL', async () => {
+		assert.strictEqual(await out("printf 'a\\na\\nb\\n' | uniq -c"), '      2 a\n      1 b\n');
+		assert.strictEqual(await out("seq 1 12 | sed 's/.*/x/' | uniq -c"), '     12 x\n');
+		assert.strictEqual(await out("printf 'a\\na\\n' | uniq -d"), 'a\n', 'without -c nothing is touched');
+		assert.strictEqual(c.wcWidth('  3 a.txt\n  6 words.txt\n  9 total\n', 2, 53), ' 3 a.txt\n 6 words.txt\n 9 total\n');
+		assert.strictEqual(c.wcWidth('1 2 4\n', 0, null), '      1       2       4\n');
+		assert.strictEqual(c.wcWidth('3\n', 0, null), '3\n');
+		assert.strictEqual(c.wcWidth('20 a.txt\n', 1, 20), '20 a.txt\n');
+		assert.strictEqual(c.wcWidth('not numbers\n', 1, 5), 'not numbers\n');
+		const r = await sh("seq 1 10 > a; seq 1 100 > b; wc -l a b; echo x y | wc; printf 'a b\\n' | wc -w; head -c 20 /dev/zero | tr '\\0' x; echo; printf 'a\\0b' | tr -d '\\0' | wc -c");
+		assert.strictEqual(r.stdout, ' 10 a\n100 b\n110 total\n      1       2       4\n2\nxxxxxxxxxxxxxxxxxxxx\n2\n');
+	});
+
+	/* ------------------------------------------------------------------------------------------ od */
+
+	const od = async (args, input) => (await c.od(args, async () => bytes(input || ''), async (p) => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT', p }); }));
+	const A16 = 'abcdefghijklmnop';
+
+	test('od: the default, a named type, characters, and addresses, as GNU prints them', async () => {
+		assert.strictEqual((await od([], 'hi\n')).stdout, '0000000 064550 000012\n0000003\n');
+		assert.strictEqual((await od(['-An', '-tx1'], 'hi\n')).stdout, ' 68 69 0a\n');
+		assert.strictEqual((await od(['-c'], 'hi\n')).stdout, '0000000   h   i  \\n\n0000003\n');
+		assert.strictEqual((await od(['-An', '-a'], 'a\tb\0\x7f')).stdout, '   a  ht   b nul del\n');
+		assert.strictEqual((await od(['-An', '-tu1'], '\0\x01\x7f\x80\xff')).stdout, '   0   1 127 128 255\n');
+		assert.strictEqual((await od(['-An', '-td1'], '\0\x01\x7f\x80\xff')).stdout, '    0    1  127 -128   -1\n');
+		assert.strictEqual((await od(['-An', '-x'], 'hi\n')).stdout, ' 6968 000a\n');
+		assert.strictEqual((await od(['-An', '-s'], '\xff\xff')).stdout, '     -1\n');
+		assert.strictEqual((await od(['-An', '-d'], 'abcd')).stdout, ' 25185 25699\n');
+		assert.strictEqual((await od(['-An', '-b'], 'abc')).stdout, ' 141 142 143\n');
+		assert.strictEqual((await od(['-A', 'x', '-t', 'x1'], 'abcdefghijklmnopqrstuvwxyz')).stdout, '000000 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f 70\n000010 71 72 73 74 75 76 77 78 79 7a\n00001a\n');
+		assert.strictEqual((await od(['-A', 'd', '-t', 'c'], A16 + 'q')).stdout, '0000000   a   b   c   d   e   f   g   h   i   j   k   l   m   n   o   p\n0000016   q\n0000017\n');
+		assert.strictEqual((await od([], '')).stdout, '0000000\n');
+		assert.strictEqual((await od(['-An', '-c'], '')).stdout, '');
+	});
+
+	test('od: duplicate rows are one star, -v shows them, -j and -N and -w choose the bytes and the row width', async () => {
+		const same = 'abcdefgh'.repeat(8);
+		assert.strictEqual((await od(['-An', '-c'], same)).stdout, '   a   b   c   d   e   f   g   h   a   b   c   d   e   f   g   h\n*\n');
+		assert.strictEqual((await od(['-c'], same)).stdout, '0000000   a   b   c   d   e   f   g   h   a   b   c   d   e   f   g   h\n*\n0000100\n');
+		assert.strictEqual((await od(['-v', '-An', '-c'], same)).stdout.split('\n').length, 5);
+		assert.strictEqual((await od(['-An', '-c', '-j', '2', '-N', '4'], 'abcdefghij')).stdout, '   c   d   e   f\n');
+		assert.strictEqual((await od(['-An', '-tx1', '-w4'], 'abcdefghij')).stdout, ' 61 62 63 64\n 65 66 67 68\n 69 6a\n');
+		assert.strictEqual((await od(['-An', '-c', '-w2'], 'abcdef')).stdout, '   a   b\n   c   d\n   e   f\n');
+		assert.strictEqual((await od(['-An', '-tx2'], 'abc')).stdout, ' 6261 0063\n', 'a short last unit is padded with zero');
+		// GNU does not round a width it cannot use: it says so and takes the width of the widest type
+		const w6 = await od(['-An', '-tx4', '-w6'], 'abcdefghij');
+		assert.deepStrictEqual([w6.stdout, w6.stderr, w6.exitCode], [' 64636261\n 68676665\n 00006a69\n', 'od: warning: invalid width 6; using 4 instead\n', 0]);
+		const w3 = await od(['-An', '-tx1', '-tx2', '-w3'], 'abcd');
+		assert.deepStrictEqual([w3.stdout, w3.stderr], [' 61 62\n  6261\n 63 64\n  6463\n', 'od: warning: invalid width 3; using 2 instead\n']);
+		assert.strictEqual((await od(['-An', '-tx4', '-w8'], 'abcdefgh')).stderr, '');
+		const skip = await od(['-An', '-c', '-j', '5'], 'abc');
+		assert.deepStrictEqual([skip.stdout, skip.stderr, skip.exitCode], ['', 'od: cannot skip past end of combined input\n', 1]);
+	});
+
+	test('od: several types are printed over one width, the units of each spread over it (as GNU aligns them)', async () => {
+		const t = async (types) => (await od(['-An', ...types], A16)).stdout;
+		assert.strictEqual(await t(['-tx1', '-to2']), '  61 62  63 64  65 66  67 68  69 6a  6b 6c  6d 6e  6f 70\n 061141 062143 063145 064147 065151 066153 067155 070157\n');
+		assert.strictEqual(await t(['-to2', '-tx1']), ' 061141 062143 063145 064147 065151 066153 067155 070157\n  61 62  63 64  65 66  67 68  69 6a  6b 6c  6d 6e  6f 70\n');
+		assert.strictEqual(await t(['-tx2', '-tc']), '    6261    6463    6665    6867    6a69    6c6b    6e6d    706f\n   a   b   c   d   e   f   g   h   i   j   k   l   m   n   o   p\n');
+		assert.strictEqual(await t(['-tx4', '-tc']), '        64636261        68676665        6c6b6a69        706f6e6d\n   a   b   c   d   e   f   g   h   i   j   k   l   m   n   o   p\n');
+		assert.strictEqual(await t(['-tx1', '-tu4']), ' 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f 70\n  1684234849  1751606885  1818978921  1886350957\n');
+		assert.strictEqual(await t(['-tx1', '-tx8']), ' 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f 70\n        6867666564636261        706f6e6d6c6b6a69\n');
+		assert.strictEqual(await t(['-to1', '-tu2']), ' 141 142 143 144 145 146 147 150 151 152 153 154 155 156 157 160\n   25185   25699   26213   26727   27241   27755   28269   28783\n');
+		assert.strictEqual(await t(['-td2', '-to2']), '  25185  25699  26213  26727  27241  27755  28269  28783\n 061141 062143 063145 064147 065151 066153 067155 070157\n');
+		assert.strictEqual(await t(['-ta', '-tc', '-tx1']), '   a   b   c   d   e   f   g   h   i   j   k   l   m   n   o   p\n   a   b   c   d   e   f   g   h   i   j   k   l   m   n   o   p\n  61  62  63  64  65  66  67  68  69  6a  6b  6c  6d  6e  6f  70\n');
+		const rows = (await od(['-tx1', '-tc'], 'abcdefghijklmnopqrstuvwxyz')).stdout;
+		assert.strictEqual(rows, '0000000  61  62  63  64  65  66  67  68  69  6a  6b  6c  6d  6e  6f  70\n          a   b   c   d   e   f   g   h   i   j   k   l   m   n   o   p\n0000020  71  72  73  74  75  76  77  78  79  7a\n          q   r   s   t   u   v   w   x   y   z\n0000032\n');
+		assert.strictEqual((await od(['-An', '-tx1z'], 'hello\n')).stdout, ' 68 65 6c 6c 6f 0a                                >hello.<\n');
+		assert.strictEqual((await od(['-An', '-tcz'], 'hello\n')).stdout, '   h   e   l   l   o  \\n                                          >hello.<\n');
+	});
+
+	test('od: bad options and missing files are errors with GNU\'s words and print no address line', async () => {
+		assert.deepStrictEqual(await od(['-t', 'q'], 'x'), { stdout: '', stderr: "od: invalid type string 'q'\n", exitCode: 1 });
+		assert.deepStrictEqual(await od(['-A', 'q'], 'x'), { stdout: '', stderr: "od: invalid output address radix 'q'; it must be one character from [doxn]\n", exitCode: 1 });
+		assert.deepStrictEqual(await od(['-Z'], 'x'), { stdout: '', stderr: "od: invalid option -- 'Z'\n", exitCode: 1 });
+		assert.deepStrictEqual(await od(['nope']), { stdout: '', stderr: 'od: nope: No such file or directory\n', exitCode: 1 });
+		assert.ok((await od(['--nonsense'], 'x')).stderr.includes('unrecognized option'));
+		const h = await host({ '/w/f': 'ab' });
+		assert.strictEqual((await h.run('od -An -c f nope; echo "rc=$?"')).stdout, '   a   b\nrc=1\n');
+	});
+
+	/* ------------------------------------------------------------------------------------------ the small commands */
+
+	test('realpath, uname, id, nproc, cmp: what scripts probe a system with', async () => {
+		const h = await host({ '/w/a/b': null, '/w/f': 'x' });
+		const cases = [
+			['cd a; realpath b ../a/b .', '/w/a/b\n/w/a/b\n/w/a\n'],
+			['realpath f nope/x; echo "rc=$?"', '/w/f\nrc=1\n'],
+			['realpath -e nope; echo "rc=$?"', 'rc=1\n'],
+			['realpath -m x/y/../z', '/w/x/z\n'],
+			['realpath -q nope/x; echo "rc=$?"', 'rc=1\n'],
+			['realpath --relative-to=a a/b', 'b\n'],
+			['realpath -s f', '/w/f\n'],
+			['uname; uname -s; uname -m; uname -o; uname -sm', 'Linux\nLinux\nx86_64\nGNU/Linux\nLinux x86_64\n'],
+			['uname -n', 'localhost\n'],
+			['uname -a | cut -d" " -f1,2', 'Linux localhost\n'],
+			['id -u; id -g; id -un; id -gn', '1000\n1000\nuser\nuser\n'],
+			['id', 'uid=1000(user) gid=1000(user) groups=1000(user)\n'],
+			['id nobody; echo "rc=$?"', 'rc=1\n'],
+			['nproc; nproc --all', '1\n1\n'],
+		];
+		for (const [script, expected] of cases) {
+			const r = await h.run(script);
+			assert.strictEqual(r.stdout, expected, script + '\n' + r.stderr);
+		}
+		assert.ok(/realpath: nope\/x: No such file or directory/.test((await h.run('realpath nope/x')).stderr));
+		assert.ok(/uname: invalid option/.test((await h.run('uname -z')).stderr));
+	});
+
+	test('cmp: equal, different at a byte and line, one a prefix of the other, -s, -l, missing', async () => {
+		const h = await host({ '/w/a': 'abc\n', '/w/same': 'abc\n', '/w/b': 'abd\n', '/w/l2': 'a\nb\n', '/w/l2x': 'a\nc\n', '/w/short': 'abc', '/w/long': 'abcd' });
+		const cases = [
+			['cmp a same; echo "rc=$?"', 'rc=0\n', ''],
+			['cmp a b; echo "rc=$?"', 'a b differ: byte 3, line 1\nrc=1\n', ''],
+			['cmp l2 l2x; echo "rc=$?"', 'l2 l2x differ: byte 3, line 2\nrc=1\n', ''],
+			['cmp -s a b; echo "rc=$?"', 'rc=1\n', ''],
+			['cmp -l short long; echo "rc=$?"', 'rc=1\n', 'cmp: EOF on short after byte 3\n'],
+			['cmp short long; echo "rc=$?"', 'rc=1\n', 'cmp: EOF on short after byte 3, in line 1\n'],
+			['cmp a nope; echo "rc=$?"', 'rc=2\n', 'cmp: nope: No such file or directory\n'],
+			['cmp a; echo "rc=$?"', 'rc=2\n', "cmp: missing operand after 'a'\n"],
+			['printf abc | cmp - a; echo "rc=$?"', 'rc=1\n', 'cmp: EOF on - after byte 3, in line 1\n'],
+			['printf abcd | cmp - short; echo "rc=$?"', 'rc=1\n', 'cmp: EOF on short after byte 3, in line 1\n'],
+			['printf abc | cmp short -; echo "rc=$?"', 'rc=0\n', ''],
+			['printf abd | cmp - short; echo "rc=$?"', '- short differ: byte 3, line 1\nrc=1\n', ''],
+		];
+		for (const [script, expected, err] of cases) {
+			const r = await h.run(script);
+			assert.strictEqual(r.stdout, expected, script);
+			assert.strictEqual(r.stderr, err, script);
+		}
+		const l = await h.run("printf 'abc' > p; printf 'axc' > q; cmp -l p q");
+		assert.strictEqual(l.stdout, '2 142 170\n');
+		// the byte numbers of -l are as wide as the digits of the SMALLER file (10 bytes: two digits)
+		const wl = await h.run("printf aaaaXaaaaa > s; (printf aaaaYaaaaa; head -c 5000 /dev/zero | tr '\\0' a) > b; cmp -l s b; cmp -l b s");
+		assert.strictEqual(wl.stdout, ' 5 130 131\n 5 131 130\n');
+		assert.strictEqual(wl.stderr, 'cmp: EOF on s after byte 10\ncmp: EOF on s after byte 10\n');
+	});
+
+	test('the commands compat.js defines are exactly the lists it exports, and the engine\'s programs they shadow exist', async () => {
+		const cmds = c.commands(E.defineCommand);
+		assert.deepStrictEqual(cmds.map((x) => x.name).sort(), [...c.WRAPPED, ...c.ADDED].sort());
+		assert.strictEqual(new Set(cmds.map((x) => x.name)).size, cmds.length);
+		const engineNames = E.getCommandNames();
+		for (const w of c.WRAPPED) { assert.ok(engineNames.includes(w), w + ' shadows a program the engine has'); }
+		for (const a of c.ADDED) { assert.ok(a === 'od' || !engineNames.includes(a), a + ' is not an engine program'); }
+		// the lists the host shows the model are data, and a change to one is deliberate: pinned name by name
+		assert.deepStrictEqual(c.EXCLUDED, ['gzip', 'gunzip', 'zcat', 'html-to-markdown']);
+		assert.deepStrictEqual(c.UNIMPLEMENTED_BUILTINS, ['bg', 'caller', 'disown', 'enable', 'fc', 'fg', 'jobs', 'kill', 'suspend', 'times', 'trap', 'ulimit', 'umask']);
+		assert.deepStrictEqual(c.LIKELY_MISSING, ['git', 'npm', 'npx', 'yarn', 'pnpm', 'node', 'deno', 'bun', 'python', 'python3', 'pip', 'pip3', 'ruby', 'perl', 'php', 'java', 'go', 'cargo', 'rustc', 'make', 'cmake', 'gcc', 'cc', 'curl', 'wget', 'ssh', 'scp', 'rsync', 'tar', 'zip', 'unzip', 'gzip', 'gunzip', 'zcat', 'xz', 'bzip2', 'patch', 'less', 'more', 'vi', 'vim', 'nano', 'sudo', 'su', 'ps', 'top', 'docker', 'yq', 'xan', 'sqlite3', 'js-exec', 'html-to-markdown', 'bc', 'shuf', 'tsort', 'iconv', 'dd', 'install', 'truncate', 'sha512sum', 'shasum', 'cksum', 'hexdump', 'xxd']);
+		for (const m of c.LIKELY_MISSING) { assert.ok(!c.ADDED.includes(m) && !c.WRAPPED.includes(m), m); }
+		for (const m of c.EXCLUDED) { assert.ok(c.LIKELY_MISSING.includes(m)); }
+		const h = await host();
+		for (const m of c.LIKELY_MISSING) {
+			const r = await h.run(`${m} --version; echo "rc=$?"; command -v ${m}; echo "cv=$?"`);
+			assert.strictEqual(r.stderr, `bash: ${m}: command not found\n`, m);
+			assert.strictEqual(r.stdout, 'rc=127\ncv=1\n', m);
+		}
+		// builtins the engine names and does not have: found by command -v, 127 when run
+		for (const m of c.UNIMPLEMENTED_BUILTINS) {
+			const r = await h.run(`${m} 2>&1 </dev/null; echo "rc=$?"`);
+			assert.strictEqual(r.stdout, `bash: ${m}: command not found\nrc=127\n`, m);
+		}
+	});
+
+	for (const t of tests) {
+		await t.fn();
+		console.log('  ok - ' + t.name);
+	}
+	console.log(`\n${tests.length} tests passed`);
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });

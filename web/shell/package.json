@@ -1,0 +1,64 @@
+{
+	"name": "levelcode-shell",
+	"displayName": "LevelCode Shell",
+	"description": "A shell for the files of this workspace, in the browser tab: a terminal panel for you, and the engine behind the agent's commands.",
+	"publisher": "levelcode",
+	"version": "0.1.0",
+	"license": "MIT",
+	"engines": { "vscode": "^1.126.0" },
+	"categories": ["Other"],
+	"browser": "./extension.js",
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": { "supported": true }
+	},
+	"contributes": {
+		"commands": [
+			{ "command": "levelcode.shell.new", "title": "New Terminal", "category": "LevelCode Shell" },
+			{ "command": "levelcode.shell.toggle", "title": "Toggle Terminal", "category": "LevelCode Shell" },
+			{ "command": "levelcode.shell.showAgent", "title": "Show the Agent's Commands", "category": "LevelCode Shell" },
+			{ "command": "levelcode.shell.clearHistory", "title": "Clear Command History", "category": "LevelCode Shell" }
+		],
+		"terminal": {
+			"profiles": [
+				{ "id": "levelcode.shell", "title": "LevelCode Shell", "icon": "terminal" }
+			]
+		},
+		"keybindings": [
+			{ "command": "levelcode.shell.toggle", "key": "ctrl+`", "mac": "ctrl+`", "when": "!terminalProcessSupported && !terminalFocus" },
+			{ "command": "levelcode.shell.new", "key": "ctrl+shift+`", "mac": "ctrl+shift+`", "when": "!terminalProcessSupported" }
+		],
+		"viewsWelcome": [
+			{
+				"view": "terminal",
+				"contents": "A shell for the files in this workspace, running in your browser. It runs shell scripts and common commands such as ls, cat, grep, sed and find; it does not start programs such as node, npm, python or git.\n[Open LevelCode Shell](command:levelcode.shell.new)\nThe agent's commands show up here as well.",
+				"when": "!terminalProcessSupported"
+			}
+		],
+		"configuration": {
+			"title": "LevelCode Shell",
+			"properties": {
+				"levelcode.shell.revealAgentRuns": {
+					"type": "string",
+					"scope": "application",
+					"enum": ["firstRun", "always", "never"],
+					"default": "firstRun",
+					"enumDescriptions": [
+						"Open the terminal panel for the first command the agent runs in this session, and only add to the tab after that.",
+						"Show the agent's tab every time it runs a command, unless you are typing in another terminal.",
+						"Never open the panel for the agent. The tab is there when you look for it."
+					],
+					"markdownDescription": "Whether the terminal panel opens by itself when the agent runs a command."
+				},
+				"levelcode.shell.historySize": {
+					"type": "number",
+					"scope": "application",
+					"default": 1000,
+					"minimum": 0,
+					"maximum": 5000,
+					"markdownDescription": "How many commands the shell remembers between visits, in this browser. `0` keeps none."
+				}
+			}
+		}
+	}
+}

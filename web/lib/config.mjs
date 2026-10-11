@@ -61,6 +61,14 @@ export function webConfig(o = {}) {
 			// position zero too), which washes out line one. The editor starts below it.
 			'editor.padding.top': 24,
 			// Light or dark follows the visitor's system; the dark one is where it starts.
+			// The terminal (LevelCode Shell): a scrollback that holds a screenful of output the agent printed, no file links
+			// the workbench cannot resolve in a virtual workspace, only web links that may be followed, no toast when a
+			// command's status is not 0, and no kitty keyboard protocol (the shell does not speak it).
+			'terminal.integrated.scrollback': 10000,
+			'terminal.integrated.enableFileLinks': 'off',
+			'terminal.integrated.allowedLinkSchemes': ['http', 'https', 'mailto'],
+			'terminal.integrated.showExitAlert': false,
+			'terminal.integrated.enableKittyKeyboardProtocol': false,
 			'window.autoDetectColorScheme': true,
 			'workbench.colorTheme': 'LevelCode Web Dark',
 			'workbench.preferredDarkColorTheme': 'LevelCode Web Dark',

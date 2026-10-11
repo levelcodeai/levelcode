@@ -62,8 +62,14 @@ const server = http.createServer((req, res) => {
 		}
 		if (pathname.startsWith('/static/')) { file = within(STATIC_DIR, pathname.slice('/static/'.length)); }
 		else if (pathname.startsWith('/extensions/')) { file = within(EXT_DIR, pathname.slice('/extensions/'.length)); }
-		else { file = within(WEB_DIR, pathname.slice(1)); }
-		if (!file || file.includes(`${path.sep}lib${path.sep}`) || file.endsWith('serve.mjs')) { res.writeHead(404).end('not found'); return; }
+		else {
+			file = within(WEB_DIR, pathname.slice(1));
+			// The page's own files are served; the server's and the build's are not. (This used to be a test for any path
+			// containing /lib/, which also hid node_modules/@xterm/xterm/lib/xterm.js: the terminal never started here.)
+			const own = file && path.relative(WEB_DIR, file).split(path.sep)[0];
+			if (own === 'lib' || own === 'test' || own === 'shell' || (file && file.endsWith('serve.mjs'))) { file = null; }
+		}
+		if (!file) { res.writeHead(404).end('not found'); return; }
 	}
 	if (!file) { res.writeHead(404).end('not found'); return; }
 
