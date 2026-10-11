@@ -419,12 +419,15 @@ function commandResult(out, note, max) {
 // kills the whole process GROUP (server + children) — needed because a server is a child of the shell.
 // Returns the (capped) full output for the model.
 //
-// opts.folders / opts.commit are for a host whose shell is simulated (host.spawn); the desktop's spawn ignores them.
+// opts.onData(text, stream) sees EVERY chunk, unlike onChunk, which stops at the live view's cap — a
+// registry that feeds on the view stops updating when the view fills up. opts.folders / opts.commit are for
+// a host whose shell is simulated (host.spawn); the desktop's spawn ignores them.
 function runCommand(root, command, onChunk, onExit, onStart, timeoutMs, opts) {
 	return new Promise((resolve) => {
 		let out = '', streamed = 0, settled = false, timedOut = false, stopped = false;
 		const STREAM_CAP = 100000;            // max we push to the live terminal view
 		const start = Date.now();
+		const onData = opts && opts.onData;
 		const cap = (s, stream) => {
 			out += s;
 			if (out.length > 262144) { out = out.slice(-262144); }   // bound the model buffer's memory
@@ -435,6 +438,8 @@ function runCommand(root, command, onChunk, onExit, onStart, timeoutMs, opts) {
 				streamed += piece.length;
 				if (streamed >= STREAM_CAP) { onChunk('\n[output truncated in view]', 'stderr'); }
 			}
+			// After the view, so what the card shows and what the registry sees arrive in the order they always did.
+			if (onData) { onData(s, stream); }
 		};
 		let child;
 		// detached:true → the shell becomes its own process-group leader, so process.kill(-pid) kills the
@@ -595,6 +600,9 @@ async function runTool(tu, ctx) {
 			if (entry && ctx.commandRuns) { ctx.commandRuns.set(runId, entry); }
 			const onChunk = (chunk, stream) => {
 				ctx.post({ type: 'termOutput', id: runId, chunk: chunk, stream: stream });
+			};
+			// Fed with every chunk — see runCommand: the live view's cap must not stop the registry.
+			const onData = (chunk) => {
 				if (entry) {
 					entry.ring = (entry.ring + chunk).slice(-100000);   // bounded tail for read_command_output
 					entry.totalBytes += chunk.length;
@@ -628,7 +636,7 @@ async function runTool(tu, ctx) {
 				ctx.post({ type: 'termExit', id: runId, code: code, ms: ms, how: how });
 			};
 			const onStart = (child, stop) => { if (stops) { stops.set(runId, stop); } };
-			const spawnOpts = shellSpawnOpts(ctx, sh);
+			const spawnOpts = Object.assign({ onData }, shellSpawnOpts(ctx, sh));
 			if (bg) {
 				// Fire-and-forget: keep streaming + tracking, but return NOW so the agent loop isn't blocked.
 				// No timeout — a background server is meant to run long (Stop / New Chat reap it).
