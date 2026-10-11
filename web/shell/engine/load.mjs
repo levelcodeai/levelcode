@@ -15,13 +15,18 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // A worker has `crypto` (sha256sum, mktemp and the random devices use it); Node 18 has it only as require('crypto').webcrypto
 if (typeof globalThis.crypto === 'undefined') { globalThis.crypto = /** @type {any} */ (webcrypto); }
 
-/** The vendored files browser.js imports without bundling them (build.mjs aliases the same four names). */
+/**
+ * The files browser.js imports without bundling them (build.mjs aliases the same names), and LevelCode's own two
+ * modules that the patched file's header imports (engine/text.js and engine/zone.js, see apply-patches.mjs HEADER).
+ */
 export const EXTERNALS = {
 	'node:zlib': path.join(HERE, 'vendor', 'stubs', 'zlib.mjs'),
 	'node:module': path.join(HERE, 'vendor', 'stubs', 'module.mjs'),
 	diff: path.join(HERE, 'vendor', 'diff', '8.0.4', 'libesm', 'index.js'),
 	'sprintf-js': path.join(HERE, 'vendor', 'sprintf-js', '1.1.3', 'sprintf.js'),
 	turndown: path.join(HERE, 'vendor', 'stubs', 'turndown.mjs'),
+	'lc-text': path.join(HERE, 'text.js'),
+	'lc-zone': path.join(HERE, 'zone.js'),
 };
 export const BROWSER_JS = path.join(HERE, 'vendor', 'just-bash', '3.6.0', 'browser.js');
 

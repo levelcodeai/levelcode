@@ -221,6 +221,27 @@ function ctxFor(over) {
 			await p;
 		});
 
+		await test('BROWSER, the shell says the run was stopped while its changes were being checked: the commit hook applies nothing', async () => {
+			const { agent, host } = load(true);
+			const calls = registerFake(host);
+			const edits = [];
+			const enc = (s) => new TextEncoder().encode(s);
+			script = [tool('t1', 'run_command', { command: 'make-changes', explanation: 'x' }), say('Done: x')];
+			const ctx = ctxFor({ applyEdit: async (r) => { edits.push(r); return true; }, applyDelete: async () => true });
+			const p = agent.runAgent(ctx);
+			await settle(); await settle();
+			const commit = calls[0].opts.commit;
+			const out = await commit([{ kind: 'write', path: root + '/new.txt', existed: false, before: null, after: enc('hi\n') }], { cancelled: () => true });
+			assert.deepStrictEqual(edits, [], 'nothing was applied');
+			assert.strictEqual(out.refused, true);
+			assert.match(out.notes.join('\n'), /stopped before any file change was applied/);
+			const again = await commit([{ kind: 'write', path: root + '/new.txt', existed: false, before: null, after: enc('hi\n') }]);
+			assert.strictEqual(again.refused, false, 'a hook called without a control is not cancelled');
+			assert.strictEqual(edits.length, 1);
+			calls[0].child.emit('close', 0);
+			await p;
+		});
+
 		// ---- connecting: the shell extension is found lazily, once per run, and a failure is not remembered ----
 		const fakeShellApi = (over) => ({ apiVersion: 1, agent: { info: { label: 'LevelCode Shell', background: false, programs: false, network: false, commands: ['cat'] }, spawn() { return fakeChild(); } }, ...over });
 

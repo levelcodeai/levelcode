@@ -1,12 +1,17 @@
 #!/usr/bin/env node
-// Builds the engine worker: ONE classic script, <out>/engine.worker.js, that the shell extension turns into a Blob and
-// starts as a Worker (README.md §1).
+// Builds the engine worker: ONE classic script that the shell extension turns into a Blob and starts as a Worker
+// (README.md §1).
 //
-//   node web/shell/engine/build.mjs --out <dir> --vscode <Code-OSS checkout> [--no-minify]
+//   node web/shell/engine/build.mjs --out <dir | file.js> --vscode <Code-OSS checkout> [--minify | --no-minify]
 //
-// Input: worker.js, core.js, overlay-fs.js, compat.js, limits.js, and the vendored just-bash with its patches applied
-// IN MEMORY (apply-patches.mjs; a changed anchor stops the build) plus the vendored diff / sprintf-js and three stubs.
-// esbuild and the `buffer` package come from the Code-OSS checkout, which already depends on both.
+//   --out DIR       writes DIR/engine.worker.js and DIR/engine.worker.THIRD_PARTY.md (what web/shell/build.mjs passes)
+//   --out FILE.js   writes that file and FILE.THIRD_PARTY.md next to it (a name that ends in .js is a file)
+//   --minify        the default; --no-minify keeps the output readable. The last one given wins.
+//   anything else   is an error (exit 2): a flag that is ignored silently is how `--minify` once did nothing
+//
+// Input: worker.js, core.js, overlay-fs.js, compat.js, zone.js, limits.js, and the vendored just-bash with its patches
+// applied IN MEMORY (apply-patches.mjs; a changed anchor stops the build) plus the vendored diff / sprintf-js and three
+// stubs. esbuild and the `buffer` package come from the Code-OSS checkout, which already depends on both.
 //
 // The build FAILS when the output
 //   - requires or imports a `node:` built-in (a worker cannot have one), or
@@ -110,18 +115,58 @@ export async function buildEngine(o) {
 	};
 }
 
+/**
+ * The command line, parsed strictly.
+ * @param {string[]} argv the arguments after the script name
+ * @param {{ out: string, vscode: string }} defaults
+ * @returns {{ out: string, vscode: string, minify: boolean } | { error: string }}
+ */
+export function parseArgs(argv, defaults) {
+	const o = { out: defaults.out, vscode: defaults.vscode, minify: true };
+	for (let i = 0; i < argv.length; i++) {
+		const a = argv[i];
+		const eq = a.startsWith('--') ? a.indexOf('=') : -1;
+		const name = eq < 0 ? a : a.slice(0, eq);
+		if (name === '--minify' && eq < 0) { o.minify = true; continue; }
+		if (name === '--no-minify' && eq < 0) { o.minify = false; continue; }
+		if (name === '--out' || name === '--vscode') {
+			const v = eq >= 0 ? a.slice(eq + 1) : argv[++i];
+			if (!v || (eq < 0 && v.startsWith('--'))) { return { error: name + ' needs a value' }; }
+			o[name.slice(2)] = v;
+			continue;
+		}
+		return { error: 'unknown argument ' + JSON.stringify(a) };
+	}
+	return o;
+}
+
+/**
+ * Where the bundle and its notice go: a name that ends in .js is the file, anything else is a directory.
+ * @param {string} out
+ * @returns {{ dir: string, file: string, notice: string }}
+ */
+export function outputPaths(out) {
+	const p = path.resolve(out);
+	if (/\.js$/i.test(p)) {
+		return { dir: path.dirname(p), file: p, notice: p.replace(/\.js$/i, '.THIRD_PARTY.md') };
+	}
+	return { dir: p, file: path.join(p, 'engine.worker.js'), notice: path.join(p, 'engine.worker.THIRD_PARTY.md') };
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
-	const args = process.argv.slice(2);
-	const opt = (name, dflt) => { const i = args.indexOf(name); return i >= 0 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : dflt; };
-	const out = path.resolve(opt('--out', path.join(REPO, 'dist-web', 'shell')));
-	const vscodeDir = path.resolve(opt('--vscode', path.join(REPO, 'vscode')));
+	const parsed = parseArgs(process.argv.slice(2), { out: path.join(REPO, 'dist-web', 'shell'), vscode: path.join(REPO, 'vscode') });
+	if ('error' in parsed) {
+		process.stderr.write(parsed.error + '\nusage: node web/shell/engine/build.mjs --out <dir | file.js> --vscode <Code-OSS checkout> [--minify | --no-minify]\n');
+		process.exit(2);
+	}
+	const target = outputPaths(parsed.out);
 	try {
-		const r = await buildEngine({ vscodeDir, minify: !args.includes('--no-minify') });
-		fs.mkdirSync(out, { recursive: true });
-		fs.writeFileSync(path.join(out, 'engine.worker.js'), r.code);
-		fs.copyFileSync(path.join(HERE, 'vendor', 'just-bash', '3.6.0', 'THIRD_PARTY.md'), path.join(out, 'engine.worker.THIRD_PARTY.md'));
+		const r = await buildEngine({ vscodeDir: path.resolve(parsed.vscode), minify: parsed.minify });
+		fs.mkdirSync(target.dir, { recursive: true });
+		fs.writeFileSync(target.file, r.code);
+		fs.copyFileSync(path.join(HERE, 'vendor', 'just-bash', '3.6.0', 'THIRD_PARTY.md'), target.notice);
 		for (const w of r.warnings) { process.stderr.write('warning: ' + w + '\n'); }
-		process.stdout.write(`engine.worker.js: ${r.bytes} bytes raw, ${r.gzip} gzip, ${r.brotli} brotli (just-bash 3.6.0 patched sha256 ${r.patchedSha256.slice(0, 12)})\n`);
+		process.stdout.write(`${path.basename(target.file)}: ${r.bytes} bytes raw, ${r.gzip} gzip, ${r.brotli} brotli (just-bash 3.6.0 patched sha256 ${r.patchedSha256.slice(0, 12)})\n`);
 	} catch (e) {
 		process.stderr.write(String(e && e.message || e) + '\n');
 		process.exit(1);

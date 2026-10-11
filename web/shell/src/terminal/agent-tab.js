@@ -21,6 +21,10 @@ const UNSEEN_NAME = NAME + ' •';
 /** No reveal this soon after the visitor typed in a terminal. */
 const RECENT_INPUT_MS = 30000;
 const MAX_COMMAND_SHOWN = 300;
+/** The most characters of one explanation or one note that are shown; they are not output, and nobody bounds them. */
+const MAX_TEXT_SHOWN = 300;
+/** At most this many notes of a run are shown. */
+const MAX_NOTES = 8;
 
 const ESC = '\x1b';
 const DIM = ESC + '[2m';
@@ -67,6 +71,8 @@ function createAgentTab(deps) {
 
 	/** @type {any} */ let terminal = null;
 	/** @type {any} */ let pty = null;
+	/** The working folder of the last run that started: where the paths in the tab are relative to (file links). */
+	let lastCwd = /** @type {string | undefined} */ (undefined);
 	let firstRun = true;
 	let unseen = false;
 	let hinted = false;
@@ -169,6 +175,20 @@ function createAgentTab(deps) {
 		return sanitize.forTerminal(String(text).replace(/\s*\r?\n\s*/g, ' ')).replace(/[\r\n]+/g, ' ');
 	}
 
+	/**
+	 * One line of the model's explanation or of a note, at most MAX_TEXT_SHOWN characters of it. The cut is made on
+	 * what is shown (a character that the filter spells as [U+XXXX] counts as the characters it is spelled with).
+	 * @param {unknown} text @returns {string}
+	 */
+	function clip(text) {
+		const s = oneLine(String(text));
+		if (s.length <= MAX_TEXT_SHOWN) { return s; }
+		let cut = MAX_TEXT_SHOWN;
+		const code = s.charCodeAt(cut - 1);
+		if (code >= 0xd800 && code <= 0xdbff) { cut--; }       // not between the halves of a pair
+		return s.slice(0, cut) + '…';
+	}
+
 	/** @param {any} e a 'start' event */
 	function begin(e) {
 		ensureTab();
@@ -177,6 +197,8 @@ function createAgentTab(deps) {
 		firstRun = false;
 		if (reveal && terminal) { terminal.show(true); }
 
+		const output = createRunOutput({ write: (s) => put(s), limit: deps.outputLimit || OUTPUT_LIMIT });
+		if (e.cwd) { lastCwd = String(e.cwd); }
 		const command = String(e.command === undefined ? '' : e.command);
 		const lines = command.split('\n');
 		let first = lines[0];
@@ -186,18 +208,14 @@ function createAgentTab(deps) {
 		const where = e.cwd ? cwdLabel(String(e.cwd), folders, 120, sanitize) : '';
 
 		let head = wroteSomething ? '\r\n' : '';
-		if (typeof e.explanation === 'string' && e.explanation.trim() !== '') { head += DIM + oneLine(e.explanation) + RESET + '\r\n'; }
+		if (typeof e.explanation === 'string' && e.explanation.trim() !== '') { head += DIM + output.charge(clip(e.explanation)) + RESET + '\r\n'; }
 		head += BOLD + '$ ' + oneLine(first) + RESET + more + '\r\n';
 		if (where) { head += DIM + 'in ' + where + RESET + '\r\n'; }
 		put(head);
 		wroteSomething = true;
 		markUnseen();
 
-		current = {
-			id: e.id,
-			output: createRunOutput({ write: (s) => put(s), limit: deps.outputLimit || OUTPUT_LIMIT }),
-			startedAt: now(),
-		};
+		current = { id: e.id, output, startedAt: now() };
 	}
 
 	/** @param {any} e an 'end' event */
@@ -205,8 +223,8 @@ function createAgentTab(deps) {
 		const run = current;
 		if (!run) { return; }
 		let s = run.output.end();
-		const notes = Array.isArray(e.notes) ? e.notes.slice(0, 8) : [];
-		for (const n of notes) { if (typeof n === 'string') { s += DIM + oneLine(n) + RESET + '\r\n'; } }
+		const notes = Array.isArray(e.notes) ? e.notes.slice(0, MAX_NOTES) : [];
+		for (const n of notes) { if (typeof n === 'string') { s += DIM + clip(n) + RESET + '\r\n'; } }
 		const took = duration(now() - run.startedAt);
 		const code = Number.isFinite(e.exitCode) ? Math.trunc(e.exitCode) : 1;
 		switch (e.how) {
@@ -268,8 +286,10 @@ function createAgentTab(deps) {
 			terminal = null;
 			pty = null;
 		},
-		/** For tests and the extension's own bookkeeping. */
+		/** The tab's terminal, if it is there: the link provider asks whose output a line is. */
 		terminal: () => terminal,
+		/** The working folder of the last run that started, in the path space the runs are reported in. */
+		cwd: () => lastCwd,
 	};
 }
 

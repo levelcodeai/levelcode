@@ -17,6 +17,11 @@
 //
 // A region taller than the panel cannot be redrawn by moving up (the terminal clamps at its top row), so then only a
 // window of `rows` rows around the cursor is drawn and the window follows the cursor.
+//
+// Resize. The workbench re-wraps what is on the screen BEFORE it tells the pty, so the editor has to say where its
+// cursor ended up. xterm.js is run by VS Code with `reflowCursorLine` off (the line the cursor is on is left as it
+// was: a shell redraws its own line), and `resize()` below follows xterm's own loops, quirks included: see
+// `_cursorRowAfterReflow`.
 // @ts-check
 'use strict';
 
@@ -24,15 +29,21 @@ const { cpWidth, strWidth, stripEscapes } = require('./width');
 const { DEFAULT_MAX_PASTE } = require('./input-parser');
 
 const CSI = '\x1b[';
-const ZWJ = '\u200d';
-const BIDI = /[\u202a-\u202e\u2066-\u2069]/;
+/**
+ * What the screen cannot show, or shows as a blank that is not one: Unicode's own "default ignorable" set (zero-width
+ * space, joiners, bidi marks and overrides, soft hyphen, variation selectors, tag characters, fillers ...), lone
+ * surrogates, the line and paragraph separators, the blank braille pattern and the interlinear anchors.
+ */
+const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cs}\u2028\u2029\u2800\uFFF9-\uFFFB]/u;
 const WORD = /[\p{L}\p{N}\p{M}_]/u;
 const DIM = '\x1b[2m';
 const RESET = '\x1b[0m';
 
 /**
- * What may enter the buffer: tabs and newlines, and printable text. Controls, DEL, C1 and the bidi overrides are
- * dropped, so what is on screen is what will run.
+ * What may enter the buffer: tabs and newlines, and text the screen can show. Controls, DEL and C1 are dropped, and so
+ * is every invisible character (INVISIBLE), so what is on screen is what will run: `rm a<ZWSP>b.txt` cannot be drawn
+ * as `rm ab.txt`. The price is that a pasted word that had one (a ZWNJ in a Persian name, the joiner of a family
+ * emoji) is typed without it.
  * @param {string} s
  * @returns {string[]} code points
  */
@@ -41,7 +52,7 @@ function cleanText(s) {
 	for (const ch of s) {
 		const cp = /** @type {number} */ (ch.codePointAt(0));
 		if (ch === '\n' || ch === '\t') { cps.push(ch); continue; }
-		if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f) || BIDI.test(ch)) { continue; }
+		if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f) || INVISIBLE.test(ch)) { continue; }
 		cps.push(ch);
 	}
 	return cps;
@@ -79,17 +90,18 @@ class LineEditor {
 		this.hi = -1;                // the history entry shown, or -1 for the line being typed
 		this.draft = '';             // the live line, kept while a history entry is shown
 		this.kill = '';              // the kill ring: one entry
-		this.cursorRow = 0;          // rows between the first row drawn and the terminal cursor
+		this.cursorRow = 0;          // rows between the first row drawn and the terminal cursor (negative: above it, after a resize)
 		this.winTop = 0;             // first row of the region that is drawn (0 unless the region is taller than the panel)
 		this.lastRow = 0;            // last row of the region that was written
 		this.targetRow = 0;          // the row the cursor was left on, in region rows
-		this.cursorLine = 0;         // which logical line (separated by a newline in the buffer) the cursor is on
-		this.cursorRowInLine = 0;    // rows between the first row of that line and the cursor
 		this.phantom = false;        // the cursor is on a row made by forcing a wrap
 		this.fresh = false;          // the next draw starts a prompt: write the prompt marks with it
 		this.active = false;         // a prompt is waiting for input
 		this.lastTab = false;        // the previous event was a Tab that had nothing to add
 		this.version = 0;            // counts events, so an answer to a Tab that arrives late can be told from a current one
+		/** @type {{ version: number } | null} */
+		this.pendingTab = null;      // the Tab whose answer has not arrived
+		this.tabQueued = false;      // a Tab came in meanwhile: it runs when that answer has been applied
 	}
 
 	/* ------------------------------------------------------------------------------------------------ layout */
@@ -98,15 +110,18 @@ class LineEditor {
 
 	/**
 	 * Where every code point of the whole region lands, and the rows.
-	 * @returns {{ pos: Array<{ row: number, col: number }>, wid: number[], end: { row: number, col: number }, forced: boolean, lines: Array<{ row: number, idx: number }> }}
+	 * @param {boolean} [collect] also list every cell (prompt and continuation prompts included): its line, row and width
+	 * @returns {{ pos: Array<{ row: number, col: number }>, wid: number[], end: { row: number, col: number }, forced: boolean, lines: Array<{ row: number, idx: number }>, cells: Array<{ line: number, row: number, w: number }> }}
 	 */
-	_layout() {
+	_layout(collect) {
 		const cols = this.cols;
 		const n = this.buf.length;
 		const pos = new Array(n + 1);
 		const wid = new Array(n);
 		/** @type {Array<{ row: number, idx: number }>} */
 		const lines = [];
+		/** @type {Array<{ line: number, row: number, w: number }>} */
+		const cells = [];
 		let row = 0;
 		let col = 0;
 		/** @param {number} w */
@@ -114,6 +129,7 @@ class LineEditor {
 			if (w > 0 && col + w > cols) { row++; col = 0; }
 			const at = { row, col };
 			col += w;
+			if (collect) { cells.push({ line: lines.length - 1, row, w }); }
 			return at;
 		};
 		/** @param {string} text */
@@ -143,7 +159,7 @@ class LineEditor {
 			}
 		}
 		pos[n] = { row, col };
-		return { pos, wid, end: pos[n], forced: col >= cols, lines };
+		return { pos, wid, end: pos[n], forced: col >= cols, lines, cells };
 	}
 
 	/** @param {ReturnType<LineEditor['_layout']>} L */
@@ -183,7 +199,8 @@ class LineEditor {
 			out += CSI + '2J' + CSI + 'H';
 			this.cursorRow = 0;
 		}
-		if (this.cursorRow > 0) { out += CSI + this.cursorRow + 'A'; }
+		// negative: a resize left the terminal's cursor above the first row of the region (see _cursorRowAfterReflow)
+		if (this.cursorRow > 0) { out += CSI + this.cursorRow + 'A'; } else if (this.cursorRow < 0) { out += CSI + -this.cursorRow + 'B'; }
 		out += '\r' + CSI + 'J';
 
 		let first = true;
@@ -207,7 +224,13 @@ class LineEditor {
 				const p = L.pos[k];
 				if (p.row < winTop) { continue; }
 				if (p.row > winBottom) { break; }
-				out += this.buf[k] === '\t' ? ' '.repeat(L.wid[k]) : this.buf[k];
+				if (this.buf[k] === '\t') {
+					// The spaces of a tab that wrap past the last row drawn are not written: the terminal would scroll for
+					// them, and the cursor would end a row too low.
+					out += ' '.repeat(Math.min(L.wid[k], (winBottom - p.row + 1) * this.cols - p.col));
+				} else {
+					out += this.buf[k];
+				}
 			}
 		}
 
@@ -223,10 +246,6 @@ class LineEditor {
 		if (up > 0) { out += CSI + up + 'A'; }
 		if (target.col > 0) { out += CSI + target.col + 'C'; }
 
-		let line = 0;
-		while (line + 1 < L.lines.length && L.lines[line + 1].idx <= this.cur) { line++; }
-		this.cursorLine = line;
-		this.cursorRowInLine = target.row - L.lines[line].row;
 		this.winTop = winTop;
 		this.cursorRow = target.row - winTop;
 		this.lastRow = written;
@@ -246,7 +265,6 @@ class LineEditor {
 		s += this.phantom ? '\r' + CSI + 'K' : '\r\n';     // a phantom row is the row output starts on
 		this.host.write(s);
 		this.cursorRow = 0;
-		this.winTop = 0;
 		this.phantom = false;
 	}
 
@@ -259,14 +277,17 @@ class LineEditor {
 		this.hi = -1;
 		this.draft = '';
 		this.cursorRow = 0;
-		this.winTop = 0;
 		this.fresh = true;
 		this.lastTab = false;
+		this.pendingTab = null;
+		this.tabQueued = false;
 		this.active = true;
 		this._draw();
 	}
 
 	/**
+	 * The workbench has already changed the size of the terminal, and re-wrapped what was on it. Say where the cursor
+	 * is now and draw the region again from its first row.
 	 * @param {number} cols
 	 * @param {number} rows
 	 */
@@ -274,24 +295,79 @@ class LineEditor {
 		const c = Math.max(2, Math.floor(cols) || this.cols);
 		const r = Math.max(2, Math.floor(rows) || this.rows);
 		if (c === this.cols && r === this.rows) { return; }
-		const widthChanged = c !== this.cols;
+		// before the width changes: the layout the terminal had is the one the reflow starts from
+		const reflowed = this.active && c !== this.cols;
+		const row = reflowed ? this._cursorRowAfterReflow(c) : 0;
 		this.cols = c;
 		this.rows = r;
 		if (!this.active) { return; }
-		if (widthChanged) {
-			// The workbench leaves the line the cursor is on exactly as it was (xterm's reflowCursorLine is off: shells
-			// redraw it themselves) and re-wraps every other row. So the rows above the cursor's line are counted with the
-			// new width, and the rows of the cursor's own line are the ones that were drawn.
-			if (this.winTop === 0 && this.lastRow + 1 <= this.rows) {
-				const L = this._layout();
-				const line = Math.min(this.cursorLine, L.lines.length - 1);
-				this.cursorRow = L.lines[line].row + this.cursorRowInLine;
-			} else {
-				this.winTop = 0;
-				this.cursorRow = Math.min(this.cursorRow, this.rows - 1);
-			}
-		}
+		// the redraw starts at the first row that is on the screen, which is the first row of a window too
+		if (reflowed) { this.cursorRow = row; }
 		this._draw();
+	}
+
+	/**
+	 * Where the terminal's cursor is, in rows below the first row of what is on the screen (the region, or the window
+	 * of it), after xterm.js has re-wrapped the screen for a new width. Not "where the line the cursor is on starts":
+	 * xterm.js (Buffer._reflowSmaller / _reflowLarger, with `reflowCursorLine` off) walks the screen's lines and moves
+	 * its cursor row by the rows each one gained or lost, whichever side of the cursor the line is on. So, line by line
+	 * (a line is the rows one logical line of the buffer takes on the screen, with its prompt; in a window the first
+	 * and the last may be cut):
+	 *   narrower: from the LAST line up. A line that was wrapped or is now too wide is re-wrapped, unless it holds the
+	 *     cursor, and the cursor row is the running one: every row a lower line gained moved it down, so the line it is
+	 *     on may no longer be the line that holds it. The cursor row grows by the rows the line gained.
+	 *   wider: from the first line down, with the cursor row it had at the start. A wrapped line that does not hold it
+	 *     is joined, and every row that was removed (below the cursor's line too) moves the cursor up. That can leave it
+	 *     above the region: the answer is then negative.
+	 * Known gap: xterm.js stops that at the top of its buffer, which the editor cannot see; it only matters when the
+	 * region starts in the very first rows of the whole scrollback and lines under the cursor are re-joined.
+	 * @param {number} cols the new width
+	 * @returns {number}
+	 */
+	_cursorRowAfterReflow(cols) {
+		const top = this.winTop;
+		const before = this._layout(true);
+		const cells = before.cells.filter((c) => c.row >= top && c.row <= this.lastRow);
+		// the row that was made by forcing a wrap holds a space, which is part of the last line and is re-wrapped with it
+		if (this.phantom) { cells.push({ line: before.lines.length - 1, row: this.lastRow, w: 1 }); }
+		/** @type {Array<{ first: number, last: number, widths: number[] }>} */
+		const lines = [];
+		for (const c of cells) {
+			let l = lines[c.line];
+			if (!l) { l = lines[c.line] = { first: c.row, last: c.row, widths: [] }; }
+			l.last = c.row;
+			l.widths.push(c.w);
+		}
+		/** The rows a run of cells takes when it starts a row: a cell that does not fit goes to the next. @param {number[]} widths */
+		const rowsAt = (widths) => {
+			let rows = 1;
+			let col = 0;
+			for (const w of widths) {
+				if (w > 0 && col + w > cols) { rows++; col = 0; }
+				col += w;
+			}
+			return rows;
+		};
+		const on = lines.filter(Boolean);
+		const start = on.map((l) => l.first - top);
+		const was = on.map((l) => l.last - l.first + 1);
+		const now = on.map((l) => rowsAt(l.widths));
+		const holds = (/** @type {number} */ row, /** @type {number} */ k) => row >= start[k] && row < start[k] + was[k];
+		let row = this.cursorRow;
+		if (cols < this.cols) {
+			for (let k = on.length - 1; k >= 0; k--) {
+				if (was[k] === 1 && now[k] === 1) { continue; }              // not wrapped, and not too wide: not touched
+				if (holds(row, k)) { continue; }
+				row += Math.max(0, now[k] - was[k]);
+			}
+			return row;
+		}
+		const at = row;
+		for (let k = 0; k < on.length; k++) {
+			if (was[k] < 2 || holds(at, k)) { continue; }                   // only wrapped lines are joined
+			row -= Math.max(0, was[k] - now[k]);
+		}
+		return row;
 	}
 
 	text() { return this.buf.join(''); }
@@ -315,8 +391,15 @@ class LineEditor {
 	/** @param {any} e */
 	_event(e) {
 		if (e.t === 'ignored') { return; }        // a report from the workbench: not the person typing
+		if (e.t === 'key' && e.key === 'tab' && !e.shift && this.pendingTab && this.pendingTab.version === this.version) {
+			// A Tab before the answer to the last one has arrived waits for it (one at most), so that Tab Tab lists even
+			// when the first answer is slow. It is not an event of its own: the answer in flight is still current.
+			this.tabQueued = true;
+			return;
+		}
 		const wasTab = this.lastTab;
 		this.lastTab = false;
+		this.tabQueued = false;
 		this.version++;
 		switch (e.t) {
 			case 'text': this._insert(e.s); break;
@@ -382,7 +465,7 @@ class LineEditor {
 			case 'down': return this._down();
 			case 'tab':
 				if (e.shift) { return; }
-				this._tab(wasTab).catch(() => { /* a completion that failed completes nothing */ });
+				this._tab(wasTab);
 				return;
 			case 'escape': case 'pageup': case 'pagedown': case 'insert': return;
 			default: break;
@@ -426,20 +509,17 @@ class LineEditor {
 
 	/* ------------------------------------------------------------------------------------------------ cursor */
 
-	/** @param {string} ch a character that is part of the cell before it (a mark, a ZWJ, a variation selector) */
+	/** @param {string} ch a character that is part of the cell before it (a combining mark) */
 	_zeroWidth(ch) {
 		return ch !== '\n' && ch !== '\t' && cpWidth(/** @type {number} */ (ch.codePointAt(0))) === 0;
 	}
 
-	/** Start of the cluster before i: a character with the marks after it, and a joined ZWJ sequence. @param {number} i */
+	/** Start of the cluster before i: a character with the marks after it. @param {number} i */
 	_prev(i) {
 		if (i <= 0) { return 0; }
 		let j = i - 1;
-		for (;;) {
-			while (j > 0 && this._zeroWidth(this.buf[j])) { j--; }
-			if (j > 0 && this.buf[j - 1] === ZWJ) { j--; continue; }
-			return j;
-		}
+		while (j > 0 && this._zeroWidth(this.buf[j])) { j--; }
+		return j;
 	}
 
 	/** End of the cluster at i. @param {number} i @returns {number} */
@@ -448,7 +528,6 @@ class LineEditor {
 		if (i >= n) { return n; }
 		let j = i + 1;
 		while (j < n && this._zeroWidth(this.buf[j])) { j++; }
-		if (this.buf[j - 1] === ZWJ && j < n) { return this._next(j); }
 		return j;
 	}
 
@@ -618,13 +697,33 @@ class LineEditor {
 	/* ------------------------------------------------------------------------------------------------ completion */
 
 	/**
+	 * Ask for completions and apply the answer. A Tab that came in while it was waiting runs when it has been applied.
 	 * @param {boolean} second the previous event was a Tab that left several candidates
 	 */
 	async _tab(second) {
 		if (!this.host.complete) { return; }
-		const version = this.version;
+		const mine = { version: this.version };
+		this.pendingTab = mine;
+		try {
+			await this._complete(mine.version, second);
+		} catch (e) {
+			/* a completion that failed completes nothing */
+		} finally {
+			if (this.pendingTab === mine) { this.pendingTab = null; }
+		}
+		if (this.tabQueued && this.active) {
+			this.tabQueued = false;
+			const wasTab = this.lastTab;
+			this.lastTab = false;
+			this.version++;
+			this._tab(wasTab);
+		}
+	}
+
+	/** @param {number} version the event count when the Tab was pressed @param {boolean} second */
+	async _complete(version, second) {
 		const line = this.buf.join('');
-		const r = await this.host.complete(line, this.cur);
+		const r = await /** @type {NonNullable<EditorHost['complete']>} */ (this.host.complete)(line, this.cur);
 		if (!this.active || version !== this.version || !r || !r.candidates || r.candidates.length === 0) { return; }
 		if (!(r.start >= 0 && r.start <= this.cur)) { return; }
 		const cs = r.candidates;

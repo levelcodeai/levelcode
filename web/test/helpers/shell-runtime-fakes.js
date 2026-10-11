@@ -102,6 +102,15 @@ function createWorkspace(o) {
 		const pre = k.endsWith('/') ? k : k + '/';
 		return Array.from(nodes.keys()).filter((n) => n.startsWith(pre) && !n.slice(pre.length).includes('/'));
 	};
+	/** Is a file on the way to `k`? (what a real disk answers ENOTDIR for) */
+	function underAFile(/** @type {string} */ k) {
+		const floor = k.indexOf(':') + 1;
+		for (let p = parentKey(k); p.length > floor + 1 && p !== parentKey(p); p = parentKey(p)) {
+			const n = nodes.get(p);
+			if (n && n.type === File) { return true; }
+		}
+		return false;
+	}
 	async function enter(/** @type {string} */ op, /** @type {Uri} */ uri) {
 		const k = key(uri);
 		calls.push(op + ' ' + k);
@@ -109,7 +118,7 @@ function createWorkspace(o) {
 		for (const r of rules) {
 			if (r.op === op && r.match(k)) {
 				if (r.hang) { await new Promise(() => { }); }
-				if (r.error) { throw r.error; }
+				if ('error' in r) { throw r.error; }   // whatever it is: `undefined`, a string and a number are thrown too
 			}
 		}
 		return k;
@@ -127,6 +136,7 @@ function createWorkspace(o) {
 		async stat(/** @type {Uri} */ uri) {
 			const k = await enter('stat', uri);
 			if (uri.path === '/') { return { type: Directory, ctime: 0, mtime: 0, size: 0 }; }
+			if (underAFile(k)) { throw fsErrors.FileNotADirectory(k); }
 			const n = nodes.get(k);
 			if (!n) { throw fsErrors.FileNotFound(k); }
 			return { type: n.type, ctime: n.mtime, mtime: n.mtime, size: n.type === File ? n.data.length : 0 };

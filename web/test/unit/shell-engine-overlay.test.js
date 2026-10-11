@@ -19,7 +19,7 @@ const path = require('path');
 if (typeof globalThis.crypto === 'undefined') { globalThis.crypto = /** @type {any} */ (require('crypto').webcrypto); }
 
 const { makeTree } = require('./shell-engine-support.js');
-const { createOverlay, createMemory, planMounts, DEFAULT_CAPS, DIR_SIZE, isShellScript } = require(path.join(__dirname, '..', '..', 'shell', 'engine', 'overlay-fs.js'));
+const { createOverlay, createMemory, planMounts, validCaps, DEFAULT_CAPS, DIR_SIZE, isShellScript } = require(path.join(__dirname, '..', '..', 'shell', 'engine', 'overlay-fs.js'));
 
 /** @type {Array<{ name: string, fn: () => Promise<void> | void }>} */
 const tests = [];
@@ -369,7 +369,7 @@ test('a staged file or folder is newer than anything before it in the run, even 
 
 /* ---------------------------------------------------------------------------------------------- the opening of a redirection */
 
-test('a redirection that cannot open throws bash\'s reason and is not recorded; the same path\'s content write never throws', async () => {
+test('a redirection that cannot open throws bash\'s reason and is not recorded', async () => {
 	const { ov, fs } = setup({ '/w/d': null, '/w/f': 'x' });
 	fs.writeFileSync('/bin/ls', 'stub');
 	// the engine opens with an empty write, encoding 'binary'
@@ -382,11 +382,28 @@ test('a redirection that cannot open throws bash\'s reason and is not recorded; 
 	assert.strictEqual(ov.denied.length, 0, 'a refused opening is a visible failure, not a drop');
 	assert.ok(ov.notes.some((n) => n.startsWith('/etc/passwd is outside the workspace folders')), ov.notes.join('\n'));
 	assert.ok(ov.notes.some((n) => n.startsWith('/bin/ls is part of the shell')));
-	// content: never throws, recorded
-	await fs.writeFile('/w/nodir/f', 'data');
+});
+
+test('a content write the SHELL refuses (outside the folders, a protected path) is dropped and recorded, never thrown', async () => {
+	const { ov, fs } = setup({});
+	fs.writeFileSync('/bin/ls', 'stub');
 	await fs.writeFile('/etc/passwd', 'data');
-	await fs.appendFile('/w/d', 'data');
-	assert.deepStrictEqual(ov.denied.map((d) => [d.path, d.reason, d.code]), [['/w/nodir/f', 'missing-parent', 'ENOENT'], ['/etc/passwd', 'outside', 'EACCES'], ['/w/d', 'is-dir', 'EISDIR']]);
+	await fs.appendFile('/etc/passwd', 'more');
+	await fs.writeFile('/bin/ls', 'data');
+	assert.deepStrictEqual(ov.denied.map((d) => [d.path, d.op, d.reason, d.code]), [['/etc/passwd', 'write', 'outside', 'EACCES'], ['/etc/passwd', 'append', 'outside', 'EACCES'], ['/bin/ls', 'write', 'readonly', 'EACCES']]);
+	assert.deepStrictEqual(await changes(ov), []);
+});
+
+test('a write a real file system would refuse (no parent, the parent is a file, a directory) is an error the command reports: it is not `denied`', async () => {
+	const { ov, fs } = setup({ '/w/d': null, '/w/f': 'x' });
+	// touch, tee, sort -o and split call writeFile with the content: GNU says "No such file or directory" and goes on
+	assert.strictEqual(await code(fs.writeFile('/w/nodir/f', 'data')), 'ENOENT');
+	assert.strictEqual(await code(fs.writeFile('/w/f/x', 'data')), 'ENOTDIR');
+	assert.strictEqual(await code(fs.writeFile('/w/d', 'data')), 'EISDIR');
+	assert.strictEqual(await code(fs.appendFile('/w/d', 'data')), 'EISDIR');
+	assert.strictEqual(await code(fs.writeFile('/tmp/nodir/x', 'data')), 'ENOENT');
+	assert.strictEqual(await code(fs.writeFile('/tmp', 'data')), 'EISDIR');
+	assert.deepStrictEqual(ov.denied, [], 'nothing was refused by the shell: the whole run is not withheld');
 	assert.deepStrictEqual(await changes(ov), []);
 });
 
@@ -615,6 +632,395 @@ test('the engine\'s synchronous writes (stubs, /dev, /proc) land in memory and n
 	assert.strictEqual(await fs.readFile('/proc/version'), 'Linux version');
 	assert.deepStrictEqual(await changes(ov), []);
 	assert.deepStrictEqual(ov.denied, []);
+});
+
+/* ---------------------------------------------------------------------------------------------- staged files below a removed or moved folder */
+
+test('a file written two to four levels below a folder that is then removed does not survive it, and is not in the change set', async () => {
+	// base: only the top of the tree; the deeper folders exist in the base too, so nothing staged links them
+	const { ov, fs } = setup({ '/w/build/out/deep/old.txt': 'old', '/w/build/keep': 'k', '/w/other/x': 'x' });
+	await fs.writeFile('/w/build/out/deep/new.txt', 'new');
+	await fs.writeFile('/w/build/out/deep/old.txt', 'changed');
+	await fs.mkdir('/w/build/out/deep/sub', { recursive: true });
+	await fs.writeFile('/w/build/out/deep/sub/f', 'f');
+	await fs.rm('/w/build', { recursive: true });
+	assert.strictEqual(await fs.exists('/w/build'), false);
+	assert.strictEqual(await fs.exists('/w/build/out/deep/new.txt'), false);
+	assert.strictEqual(await code(fs.readFile('/w/build/out/deep/old.txt')), 'ENOENT');
+	const cs = brief(await changes(ov));
+	assert.ok(cs.every((c) => c.startsWith('delete') || c.startsWith('rmdir')), cs.join(' | '));
+	assert.deepStrictEqual(cs, ['delete /w/build/out/deep/old.txt via /w/build', 'delete /w/build/keep via /w/build', 'rmdir /w/build/out/deep', 'rmdir /w/build/out', 'rmdir /w/build']);
+	assert.strictEqual(ov.denied.length, 0);
+});
+
+test('the same for a folder that is moved: what was staged below it goes with it, once, at the new place', async () => {
+	const { ov, fs } = setup({ '/w/pkg/lib/deep/file.js': 'old', '/w/pkg/lib/other.js': 'o' });
+	await fs.writeFile('/w/pkg/lib/deep/file.js', 'new');
+	await fs.writeFile('/w/pkg/lib/deep/extra.js', 'x');
+	await fs.mv('/w/pkg', '/w/pkg2');
+	assert.strictEqual(await fs.exists('/w/pkg'), false);
+	assert.strictEqual(await fs.readFile('/w/pkg2/lib/deep/file.js'), 'new');
+	assert.strictEqual(await fs.readFile('/w/pkg2/lib/deep/extra.js'), 'x');
+	const cs = await changes(ov);
+	assert.deepStrictEqual(cs.filter((c) => c.kind === 'write').map((c) => c.path), ['/w/pkg2/lib/deep/extra.js', '/w/pkg2/lib/deep/file.js', '/w/pkg2/lib/other.js']);
+	assert.ok(!cs.some((c) => c.kind === 'write' && c.path.startsWith('/w/pkg/')), 'nothing is written below what was moved away');
+	assert.ok(cs.some((c) => c.kind === 'rmdir' && c.path === '/w/pkg'));
+});
+
+test('a folder removed and made again is empty at every depth, and what is staged in it afterwards is listed and read', async () => {
+	const { ov, fs } = setup({ '/w/a/b/c/old': '1', '/w/a/b/keep': '2' });
+	await fs.writeFile('/w/a/b/c/staged', 's');
+	await fs.rm('/w/a', { recursive: true });
+	await fs.mkdir('/w/a/b/c', { recursive: true });
+	assert.deepStrictEqual(await fs.readdir('/w/a/b'), ['c']);
+	assert.deepStrictEqual(await fs.readdir('/w/a/b/c'), []);
+	await fs.writeFile('/w/a/b/c/fresh', 'n');
+	assert.deepStrictEqual(await fs.readdir('/w/a/b/c'), ['fresh']);
+	assert.deepStrictEqual(brief(await changes(ov)).filter((c) => c.startsWith('write')), ['write /w/a/b/c/fresh']);
+});
+
+test('removing one staged file leaves its staged siblings and the folders that lead to them listed', async () => {
+	const { fs } = setup({ '/w/a/b/c/x': '1' });
+	await fs.writeFile('/w/a/b/c/y', 'y');
+	await fs.writeFile('/w/a/b/c/z', 'z');
+	await fs.rm('/w/a/b/c/y');
+	assert.deepStrictEqual(await fs.readdir('/w/a/b/c'), ['x', 'z']);
+	await fs.rm('/w/a/b/c/z');
+	await fs.rm('/w/a/b/c/x');
+	assert.deepStrictEqual(await fs.readdir('/w/a/b/c'), []);
+	assert.strictEqual(await fs.exists('/w/a/b/c'), true);
+});
+
+/* ---------------------------------------------------------------------------------------------- caps: exactly the limit passes, one over does not */
+
+test('the read cap is on the size: a file of exactly the cap is read, one byte over is refused and never fetched', async () => {
+	const { base, ov, fs } = setup({ '/w/at': new Uint8Array(100), '/w/over': new Uint8Array(101) }, { caps: { readFile: 100, readRun: 1000 } });
+	assert.strictEqual((await fs.readFileBuffer('/w/at')).length, 100);
+	assert.strictEqual(await code(fs.readFileBuffer('/w/over')), 'EFBIG');
+	assert.ok(!base.calls.includes('readFile /w/over'));
+	assert.ok(ov.notes.some((n) => /"\/w\/over" was NOT read: it is 101 bytes, over the 100 bytes/.test(n)), ov.notes.join('\n'));
+});
+
+test('the per-run read cap is on bytes read so far plus the size: exactly the cap is read, one over is refused', async () => {
+	const { fs } = setup({ '/w/a': new Uint8Array(60), '/w/b': new Uint8Array(40), '/w/c': new Uint8Array(1) }, { caps: { readFile: 100, readRun: 100 } });
+	await fs.readFileBuffer('/w/a');
+	await fs.readFileBuffer('/w/b');                                       // 60 + 40 = 100: at the cap
+	assert.strictEqual(await code(fs.readFileBuffer('/w/c')), 'EFBIG');     // 100 + 1
+});
+
+test('the write caps: a file of exactly the cap is written, one byte over is dropped; the same for a run, and for entries', async () => {
+	const a = setup({}, { caps: { writeFile: 10, writeRun: 100, entries: 100 } });
+	await a.fs.writeFile('/w/at', '0123456789');
+	await a.fs.writeFile('/w/over', '0123456789A');
+	assert.deepStrictEqual(a.ov.denied.map((d) => [d.path, d.reason]), [['/w/over', 'cap-file']]);
+	assert.strictEqual((await changes(a.ov)).length, 1);
+	const b = setup({}, { caps: { writeFile: 100, writeRun: 10, entries: 100 } });
+	await b.fs.writeFile('/w/a', '01234');
+	await b.fs.writeFile('/w/b', '01234');                                 // 5 + 5 = 10: at the cap
+	await b.fs.writeFile('/w/c', '0');                                      // 11
+	assert.deepStrictEqual(b.ov.denied.map((d) => [d.path, d.reason]), [['/w/c', 'cap-run']]);
+	const c = setup({}, { caps: { writeFile: 100, writeRun: 100, entries: 3 } });
+	await c.fs.writeFile('/w/a', '');
+	await c.fs.mkdir('/w/d');
+	await c.fs.writeFile('/w/b', '');                                       // 3 entries: at the cap
+	await c.fs.writeFile('/w/c', '');
+	await c.fs.writeFile('/w/a', 'again');                                   // an existing entry is not a new one
+	assert.deepStrictEqual(c.ov.denied.map((d) => [d.path, d.reason]), [['/w/c', 'cap-entries']]);
+});
+
+test('the change set has at most `entries` entries, deletions and folders included: the cap itself passes, one over is refused whole', async () => {
+	const files = {};
+	for (let i = 0; i < 5; i++) { files['/w/d/f' + i] = String(i); }
+	// rm -rf d: five deletes and one rmdir = 6 entries
+	const at = setup(files, { caps: { entries: 6 } });
+	await at.fs.rm('/w/d', { recursive: true });
+	const ok = await at.ov.changes();
+	assert.strictEqual(ok.refused, null, String(ok.refused));
+	assert.strictEqual(ok.changes.length, 6);
+	const over = setup(files, { caps: { entries: 5 } });
+	await over.fs.rm('/w/d', { recursive: true });
+	const no = await over.ov.changes();
+	assert.ok(/more than 5 files and folders/.test(String(no.refused)), String(no.refused));
+	// removals of single files are counted the same way as writes
+	const many = setup(files, { caps: { entries: 5 } });
+	for (let i = 0; i < 5; i++) { await many.fs.rm('/w/d/f' + i); }
+	assert.strictEqual((await many.ov.changes()).refused, null);
+	const one = setup(Object.assign({ '/w/d/f5': '5' }, files), { caps: { entries: 5 } });
+	for (let i = 0; i < 6; i++) { await one.fs.rm('/w/d/f' + i); }
+	assert.ok(/more than 5/.test(String((await one.ov.changes()).refused)));
+});
+
+test('caps from the host are numbers above zero or the default: undefined, NaN, a string, zero and a negative one are not limits', async () => {
+	const dflt = Object.assign({}, DEFAULT_CAPS);
+	assert.deepStrictEqual(validCaps(undefined), dflt);
+	assert.deepStrictEqual(validCaps(null), dflt);
+	assert.deepStrictEqual(validCaps('big'), dflt);
+	assert.deepStrictEqual(validCaps({ readFile: undefined, readRun: NaN, writeFile: '5', writeRun: 0, entries: -3 }), dflt);
+	assert.deepStrictEqual(validCaps({ readFile: Infinity }), dflt);
+	assert.deepStrictEqual(validCaps({ readFile: 7, entries: 9, unknown: 1 }), Object.assign({}, dflt, { readFile: 7, entries: 9 }));
+	// and the overlay enforces what is left
+	const { ov, fs } = setup({}, { caps: { writeFile: NaN, writeRun: undefined, entries: '2' } });
+	assert.deepStrictEqual(ov.caps, dflt);
+	await fs.writeFile('/w/big', 'x'.repeat(DEFAULT_CAPS.writeFile + 1));
+	assert.strictEqual(ov.denied.length, 1);
+});
+
+/* ---------------------------------------------------------------------------------------------- what is remembered, and said */
+
+test('a refusal is recorded once per path, operation and reason, however often the command tries; notes stop at twenty', async () => {
+	const { ov, fs } = setup({}, { caps: { writeFile: 4 } });
+	for (let i = 0; i < 50; i++) { await fs.appendFile('/w/log', 'line ' + i + '\n'); }
+	assert.strictEqual(ov.denied.length, 1, JSON.stringify(ov.denied));
+	assert.deepStrictEqual([ov.denied[0].path, ov.denied[0].op, ov.denied[0].reason], ['/w/log', 'append', 'cap-file']);
+	await fs.writeFile('/w/log', 'long line');
+	assert.deepStrictEqual(ov.denied.map((d) => d.op), ['append', 'write'], 'another operation is another record');
+	// notes: twenty distinct ones at most (a note is said once for what it says)
+	const many = setup({}, {});
+	for (let i = 0; i < 40; i++) { await many.fs.writeFile('/etc/file' + i, 'x', undefined).catch(() => { /* a drop, not a throw */ }); }
+	assert.strictEqual(many.ov.notes.length, 20, many.ov.notes.length + ' notes');
+	assert.strictEqual(new Set(many.ov.notes).size, 20);
+});
+
+test('a note is said once however often the command trips over the same thing', async () => {
+	const { ov, fs } = setup({ '/w/big': new Uint8Array(500), '/w/d': null }, { caps: { readFile: 100 } });
+	for (let i = 0; i < 5; i++) { await fs.readFileBuffer('/w/big').catch(() => { /* refused */ }); }
+	for (let i = 0; i < 5; i++) { await fs.readFileBuffer('/w/d').catch(() => { /* a directory */ }); }
+	assert.strictEqual(ov.notes.length, 2, ov.notes.join('\n'));
+	assert.ok(/"\/w\/big" was NOT read/.test(ov.notes[0]) && /"\/w\/d" is a directory/.test(ov.notes[1]));
+});
+
+test('memory bytes follow every write, append, overwrite and removal (they count toward the write cap of the next run)', async () => {
+	const { ov, fs } = setup({});
+	const m = ov.memory;
+	const start = m.bytes;
+	await fs.writeFile('/tmp/f', '12345');
+	assert.strictEqual(m.bytes - start, 5);
+	await fs.appendFile('/tmp/f', '678');
+	assert.strictEqual(m.bytes - start, 8);
+	await fs.writeFile('/tmp/f', '12');
+	assert.strictEqual(m.bytes - start, 2, 'an overwrite replaces what was there');
+	await fs.writeFile('/tmp/g', 'abc');
+	await fs.mkdir('/tmp/d');
+	await fs.writeFile('/tmp/d/h', 'wxyz');
+	assert.strictEqual(m.bytes - start, 9);
+	await fs.rm('/tmp/g');
+	assert.strictEqual(m.bytes - start, 6);
+	await fs.rm('/tmp/d', { recursive: true });
+	assert.strictEqual(m.bytes - start, 2);
+	await fs.rm('/tmp/f');
+	assert.strictEqual(m.bytes - start, 0);
+	// moved and copied inside memory
+	await fs.writeFile('/tmp/a', 'xxxx');
+	await fs.cp('/tmp/a', '/tmp/b');
+	assert.strictEqual(m.bytes - start, 8);
+	await fs.mv('/tmp/a', '/tmp/c');
+	assert.strictEqual(m.bytes - start, 8);
+	assert.strictEqual(m.countFiles('/tmp'), 2);
+	assert.strictEqual(m.countFiles('/tmp/b'), 1);
+	assert.strictEqual(m.countFiles('/home/user'), 0);
+});
+
+/* ---------------------------------------------------------------------------------------------- where folders are mounted */
+
+test('a folder that contains an earlier one is relocated too (the overlap is checked both ways)', () => {
+	const inside = planMounts([{ id: '1', path: '/a/b', name: 'b' }, { id: '2', path: '/a', name: 'a' }]);
+	assert.deepStrictEqual(inside.map((m) => [m.id, m.at, m.relocated]), [['1', '/a/b', false], ['2', '/mnt/a', true]]);
+	assert.ok(/overlaps/.test(inside[1].reason || ''));
+	const around = planMounts([{ id: '1', path: '/a', name: 'a' }, { id: '2', path: '/a/b', name: 'b' }]);
+	assert.deepStrictEqual(around.map((m) => [m.id, m.at, m.relocated]), [['1', '/a', false], ['2', '/mnt/b', true]]);
+	const same = planMounts([{ id: '1', path: '/a', name: 'a' }, { id: '2', path: '/a', name: 'a' }]);
+	assert.deepStrictEqual(same.map((m) => m.at), ['/a', '/mnt/a']);
+	// a sibling with the same prefix is not inside it
+	const sibling = planMounts([{ id: '1', path: '/a', name: 'a' }, { id: '2', path: '/ab', name: 'ab' }]);
+	assert.deepStrictEqual(sibling.map((m) => m.relocated), [false, false]);
+});
+
+test('/proc is the shell\'s own, and a name that starts with a dot or has odd characters is made safe for /mnt', () => {
+	const plan = planMounts([
+		{ id: '1', path: '/proc/x', name: 'x' },
+		{ id: '2', path: '/', name: '..' },
+		{ id: '3', path: '/dev/w', name: '.hidden' },
+		{ id: '4', path: '/tmp/a', name: 'my project (2)' },
+		{ id: '5', path: '/usr', name: '' },
+	]);
+	assert.deepStrictEqual(plan.map((m) => m.at), ['/mnt/x', '/mnt/_', '/mnt/_hidden', '/mnt/my_project_2_', '/mnt/usr']);
+	assert.ok(plan.every((m) => m.relocated));
+	assert.ok(plan.every((m) => m.at.split('/').length === 3 && !m.at.slice(5).includes('..')));
+});
+
+test('a folder rooted at /mnt does not hang the search for a free name: the others go to /lc-mnt (bounded, whatever the names)', () => {
+	const t0 = Date.now();
+	const plan = planMounts([
+		{ id: '1', path: '/mnt', name: 'mnt' },
+		{ id: '2', path: '/', name: 'root' },
+		{ id: '3', path: '/tmp', name: 'tmp' },
+		{ id: '4', path: '/tmp/x', name: 'mnt' },
+		{ id: '5', path: '/lc-mnt', name: 'lc' },
+	]);
+	assert.ok(Date.now() - t0 < 500, 'it ended');
+	assert.deepStrictEqual(plan.map((m) => [m.id, m.at]), [['1', '/mnt'], ['2', '/lc-mnt-2/root'], ['3', '/lc-mnt-2/tmp'], ['4', '/lc-mnt-2/mnt'], ['5', '/lc-mnt']]);
+	// two folders called mnt, and the same name five times: distinct names under /mnt
+	const same = planMounts([{ id: 'a', path: '/', name: 'mnt' }, { id: 'b', path: '/tmp', name: 'mnt' }, { id: 'c', path: '/home', name: 'mnt' }]);
+	assert.deepStrictEqual(same.map((m) => m.at), ['/mnt/mnt', '/mnt/mnt-2', '/mnt/mnt-3']);
+	// every mount is distinct and none is inside another (the invariant, for a pile of awkward input)
+	const pile = [];
+	for (let i = 0; i < 40; i++) { pile.push({ id: 'p' + i, path: ['/', '/mnt', '/mnt/x', '/tmp', '/lc-mnt', '/a', '/a/b'][i % 7], name: ['mnt', 'x', '', '..', 'lc-mnt'][i % 5] }); }
+	const out = planMounts(pile);
+	assert.strictEqual(out.length, 40);
+	const ats = out.map((m) => m.at);
+	assert.strictEqual(new Set(ats).size, 40, 'distinct');
+	for (const a of ats) { for (const b of ats) { assert.ok(a === b || !a.startsWith(b + '/'), `${a} is inside ${b}`); } }
+});
+
+/* ---------------------------------------------------------------------------------------------- what is executable */
+
+test('a script is a file that starts with a shebang naming a shell: env forms, a space after #!, CRLF, the size bound', async () => {
+	const yes = ['#!/bin/sh\n', '#!/usr/bin/env bash\n', '#!/usr/bin/env -S bash\n', '#!/usr/bin/env -S bash -e\n', '#! /bin/sh\n', '#!/bin/bash\r\n', '#!/bin/sh', '#!/usr/bin/env bash -x\necho\n', '#!/bin/dash\n', '#!/usr/bin/zsh\n'];
+	const no = ['#!/usr/bin/env node\n', '#!/usr/bin/env -S node --flag\n', '#!/usr/bin/python3\n', '# !/bin/sh\n', '#!\n', '#!/usr/bin/env\n', 'echo hi\n', '', '#', '#!/usr/bin/envbash\n'];
+	for (const t of yes) { assert.strictEqual(isShellScript(enc.encode(t)), true, JSON.stringify(t)); }
+	for (const t of no) { assert.strictEqual(isShellScript(enc.encode(t)), false, JSON.stringify(t)); }
+	assert.strictEqual(isShellScript(enc.encode('#!/bin/sh' + ' '.repeat(300) + '\n')), true, 'a long first line is still bash');
+	assert.strictEqual(isShellScript(enc.encode('#!' + 'x'.repeat(300) + '/sh\n')), false);
+	// the size bound: a probe reads files up to 32 KiB, not one byte more
+	const head = '#!/bin/sh\n';
+	const files = {
+		'/w/at': head + 'x'.repeat(32 * 1024 - head.length),
+		'/w/over': head + 'x'.repeat(32 * 1024 + 1 - head.length),
+		'/w/one': '#',
+		'/w/two': '#!',
+	};
+	const { fs } = setup(files);
+	assert.strictEqual((await fs.stat('/w/at')).size, 32768);
+	assert.strictEqual((await fs.stat('/w/at')).mode, 0o755);
+	assert.strictEqual((await fs.stat('/w/over')).size, 32769);
+	assert.strictEqual((await fs.stat('/w/over')).mode, 0o644);
+	assert.strictEqual((await fs.stat('/w/one')).mode, 0o644, 'a file of one byte is never probed');
+	assert.strictEqual((await fs.stat('/w/two')).mode, 0o644, '"#!" alone names no shell');
+});
+
+/* ---------------------------------------------------------------------------------------------- mv, rm and mkdir in the memory areas */
+
+test('mv carries a mode set with chmod, for a file and for everything below a folder; a file keeps its modification time', async () => {
+	const { fs } = setup({ '/w/a': 'x', '/w/d/f': 'y', '/w/d/sub/g': 'z' });
+	await fs.chmod('/w/a', 0o600);
+	await fs.chmod('/w/d/f', 0o700);
+	await fs.chmod('/w/d/sub', 0o711);
+	await fs.utimes('/w/a', new Date(0), new Date(1234000));
+	await fs.mv('/w/a', '/w/b');
+	assert.strictEqual((await fs.stat('/w/b')).mode, 0o600);
+	assert.strictEqual(+(await fs.stat('/w/b')).mtime, 1234000, 'rename keeps the time');
+	await fs.mv('/w/d', '/w/e');
+	assert.strictEqual((await fs.stat('/w/e/f')).mode, 0o700);
+	assert.strictEqual((await fs.stat('/w/e/sub')).mode, 0o711);
+	assert.strictEqual((await fs.stat('/w/e/sub/g')).mode, 0o644);
+	assert.strictEqual(await code(fs.stat('/w/d/f')), 'ENOENT');
+	// memory areas too
+	await fs.writeFile('/tmp/t', 'x');
+	await fs.chmod('/tmp/t', 0o640);
+	await fs.mv('/tmp/t', '/tmp/u');
+	assert.strictEqual((await fs.stat('/tmp/u')).mode, 0o640);
+});
+
+test('the process-substitution directory cannot be removed, its files can; mkdir -p through a file in /tmp is ENOTDIR', async () => {
+	const { fs } = setup({});
+	await fs.writeFile('/dev/fd/63', 'p');
+	assert.strictEqual(await code(fs.rm('/dev/fd', { recursive: true })), 'EACCES');
+	assert.strictEqual(await code(fs.rm('/dev/fd')), 'EACCES');
+	await fs.rm('/dev/fd/63');
+	assert.strictEqual(await fs.exists('/dev/fd/63'), false);
+	assert.strictEqual(await fs.exists('/dev/fd'), true);
+	await fs.writeFile('/tmp/file', 'x');
+	assert.strictEqual(await code(fs.mkdir('/tmp/file/x', { recursive: true })), 'ENOTDIR');
+	assert.strictEqual(await code(fs.mkdir('/tmp/file/x/y', { recursive: true })), 'ENOTDIR');
+	assert.strictEqual(await code(fs.mkdir('/tmp/file/x')), 'ENOENT');
+	assert.strictEqual(await fs.exists('/tmp/file/x'), false);
+	await fs.mkdir('/tmp/d/e/f', { recursive: true });
+	assert.strictEqual(await fs.exists('/tmp/d/e/f'), true);
+});
+
+/* ---------------------------------------------------------------------------------------------- bytes that are not UTF-8 */
+
+test('a file that is not valid UTF-8 read as text and written back is the same bytes (and so is a BOM and a NUL)', async () => {
+	const samples = {
+		latin1: [0x63, 0x61, 0x66, 0xe9, 0x0a],
+		png: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d],
+		bom: [0xef, 0xbb, 0xbf, 0x68, 0x69, 0x0a],
+		nul: [0x61, 0, 0x62, 0x0a],
+		mixed: [0xc3, 0xa9, 0xff, 0xe2, 0x82, 0xac, 0xe2, 0x82, 0x0a],
+		surrogate: [0xed, 0xa0, 0x80, 0x0a],
+		overlong: [0xc0, 0x80, 0xe0, 0x80, 0x80, 0xf0, 0x80, 0x80, 0x80],
+		toobig: [0xf4, 0x90, 0x80, 0x80, 0xf5, 0x80],
+		truncated: [0xf0, 0x9f, 0x98],
+		astral: [0xf0, 0x9f, 0x98, 0x80, 0x0a],
+	};
+	for (const [name, bytes] of Object.entries(samples)) {
+		const { ov, fs } = setup({ ['/w/' + name]: Uint8Array.from(bytes) });
+		const text = await fs.readFile('/w/' + name);
+		assert.strictEqual(typeof text, 'string');
+		await fs.writeFile('/w/' + name, text);
+		assert.deepStrictEqual(await changes(ov), [], name + ': writing the text back is not a change');
+		await fs.writeFile('/w/copy-' + name, text);
+		assert.deepStrictEqual([...await fs.readFileBuffer('/w/copy-' + name)], bytes, name);
+	}
+	// what is valid is exactly what TextDecoder says; only the bytes that are not become escapes
+	const { fs } = setup({ '/w/ok': enc.encode('héllo ✓ 😀\n'), '/w/bad': Uint8Array.from([0x61, 0xff, 0x62]) });
+	assert.strictEqual(await fs.readFile('/w/ok'), 'héllo ✓ 😀\n');
+	assert.strictEqual(await fs.readFile('/w/bad'), 'a\udcffb');
+	assert.strictEqual(await fs.readFile('/w/bom-less'.replace('bom-less', 'ok'), 'utf8'), 'héllo ✓ 😀\n');
+});
+
+test('every encoding of a write: utf8 (default, named, in an object), binary, latin1, base64, hex', async () => {
+	const { fs } = setup({});
+	await fs.writeFile('/w/u', 'é');
+	await fs.writeFile('/w/u2', 'é', 'utf8');
+	await fs.writeFile('/w/u3', 'é', { encoding: 'utf-8' });
+	await fs.writeFile('/w/b', '\u00e9\u0100', 'binary');
+	await fs.writeFile('/w/l', 'é', 'latin1');
+	await fs.writeFile('/w/b64', '/+Dg', 'base64');
+	await fs.writeFile('/w/hex', 'c3a9ff', 'hex');
+	await fs.writeFile('/w/lone', 'a\udcffb\ud800c');
+	const bytes = async (p) => [...await fs.readFileBuffer(p)];
+	assert.deepStrictEqual(await bytes('/w/u'), [0xc3, 0xa9]);
+	assert.deepStrictEqual(await bytes('/w/u2'), [0xc3, 0xa9]);
+	assert.deepStrictEqual(await bytes('/w/u3'), [0xc3, 0xa9]);
+	assert.deepStrictEqual(await bytes('/w/b'), [0xe9, 0x00], 'binary is the low byte of each character');
+	assert.deepStrictEqual(await bytes('/w/l'), [0xe9]);
+	assert.deepStrictEqual(await bytes('/w/b64'), [0xff, 0xe0, 0xe0]);
+	assert.deepStrictEqual(await bytes('/w/hex'), [0xc3, 0xa9, 0xff]);
+	assert.deepStrictEqual(await bytes('/w/lone'), [0x61, 0xff, 0x62, 0xef, 0xbf, 0xbd, 0x63], 'an escape is its byte, any other lone surrogate is U+FFFD');
+	assert.strictEqual(await fs.readFile('/w/hex', 'hex'), 'c3a9ff');
+	assert.strictEqual(await fs.readFile('/w/b64', 'base64'), '/+Dg');
+});
+
+/* ---------------------------------------------------------------------------------------------- a base that fails */
+
+test('an unlistable folder below a removed one makes the set refused (what removing it takes with it is not known)', async () => {
+	const tree = makeTree({ '/w': null, '/w/d/a.txt': 'a', '/w/d/sub/f.txt': 'f' });
+	const base = baseOf(tree);
+	const failing = Object.assign({}, base, {
+		async readDir(p) { if (p === '/w/d/sub') { throw Object.assign(new Error('no permission'), { code: 'EACCES' }); } return base.readDir(p); },
+	});
+	const ov = createOverlay({ folders: [{ id: 'f', path: '/w', name: 'w' }], base: failing });
+	await ov.fs.writeFile('/w/ok.txt', 'ok');
+	await ov.fs.rm('/w/d', { recursive: true });
+	const r = await ov.changes();
+	assert.ok(/"?\/w\/d\/sub"? could not be listed, so what removing \/w\/d takes with it is not known/.test(String(r.refused)) || /\/w\/d\/sub could not be listed/.test(String(r.refused)), String(r.refused));
+	assert.ok(ov.notes.some((n) => /could not be listed: the editor answered EACCES/.test(n)), ov.notes.join('\n'));
+});
+
+test('a base that fails while the change set is worked out is refused with a reason; changes() never throws', async () => {
+	const tree = makeTree({ '/w': null, '/w/d/a.txt': 'a', '/w/d/f.txt': 'f' });
+	const base = baseOf(tree);
+	const failing = Object.assign({}, base, {
+		async stat(p) { if (p === '/w/d/f.txt') { throw Object.assign(new Error('input/output error'), { code: 'EIO' }); } return base.stat(p); },
+	});
+	const ov = createOverlay({ folders: [{ id: 'f', path: '/w', name: 'w' }], base: failing });
+	await ov.fs.rm('/w/d', { recursive: true });
+	let r;
+	await assert.doesNotReject(async () => { r = await ov.changes(); });
+	assert.deepStrictEqual(r.changes, []);
+	assert.ok(/the editor could not be read while the changes were worked out \(/.test(String(r.refused)), String(r.refused));
+	assert.ok(!/^EIO: /.test(String(r.refused)));
 });
 
 /* ---------------------------------------------------------------------------------------------- run */

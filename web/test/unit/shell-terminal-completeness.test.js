@@ -156,6 +156,30 @@ test('arbitrary text never throws, and a long one is answered quickly (seeded)',
 	assert.ok(Date.now() - t0 < 5000, 'took ' + (Date.now() - t0) + ' ms');
 });
 
+test('a redirection is not a command: a file descriptor before it, and a process substitution after it, keep their meaning', () => {
+	// `2>f if ...`: the `2` is a file descriptor, so `if` is still at command position and opens a conditional
+	reasons([['2>/dev/null if true; then echo', 'if'], ['1>&2 while true; do echo', 'loop'], ['cat <(echo a', 'subst'], ['diff <(sort a) <(sort b', 'subst'], ['tee >(cat', 'subst']]);
+	all(['2>/dev/null if true; then echo a; fi', 'cat <(echo a) <(echo b)', 'echo hi > out.txt', 'cat < in.txt | wc', 'echo >&2', 'ls 2>&1 | head'], true);
+	// a redirection at command position leaves it there: what follows the target is the command
+	reasons([['> out if true; then echo', 'if'], ['< in while true; do echo', 'loop']]);
+});
+
+test('nesting is bounded: 99 levels are followed, 100 or 50,000 are run (the engine reports them) and never overflow the stack', () => {
+	assert.deepStrictEqual(isComplete('$('.repeat(99)), { complete: false, reason: 'subst' });
+	assert.deepStrictEqual(isComplete('$('.repeat(100)), { complete: true, reason: 'error' });
+	for (const unit of ['$(', '${a:-', '"$(', '`$(', '<(', '$((', '$(echo "${x:-']) {
+		for (const n of [5000, 50000]) {
+			const r = isComplete('echo ' + unit.repeat(n));
+			assert.strictEqual(r.complete, true, JSON.stringify(unit) + ' x' + n);
+		}
+	}
+	// the cheaper kind of nesting (${ counts 1 per level, and the top list 1)
+	assert.deepStrictEqual(isComplete('${a:-'.repeat(199)), { complete: false, reason: 'param' });
+	assert.deepStrictEqual(isComplete('${a:-'.repeat(200)), { complete: true, reason: 'error' });
+	// and a closed deep nesting below the bound is complete, as it always was
+	assert.strictEqual(isComplete('echo ' + '$('.repeat(40) + 'echo hi' + ')'.repeat(40)).complete, true);
+});
+
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }

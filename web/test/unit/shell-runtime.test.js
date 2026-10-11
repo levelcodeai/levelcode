@@ -9,7 +9,10 @@
  *    the generation guard (late and foreign messages are dropped);
  *    reads: a path outside every mount is EACCES and never touches the workspace, `..` is resolved first,
  *    FileSystemError -> POSIX code, the per-file cap is checked with a stat BEFORE the read, the per-run
- *    budget cannot be beaten by reading in parallel.
+ *    budget cannot be beaten by reading in parallel, a size that is not a number is EIO and not "unlimited",
+ *    and every read is answered whatever the provider threw;
+ *    planMounts always returns (a folder rooted at /mnt included), nested roots map to the longest one;
+ *    a worker that fails is logged as `worker-failed`; the idle timer never kills a worker that is running.
  *
  *  The commit of what a run changed is shell-runtime-commit.test.js; Session and Tab completion are
  *  shell-runtime-session.test.js; the agent's ChildLike is shell-runtime-agent.test.js.
@@ -23,8 +26,10 @@ process.on('exit', (code) => { if (!finished && code === 0) { console.error('not
 
 const assert = require('assert');
 const path = require('path');
+const vm = require('vm');
 
 const { createRig, flush, FileSystemError } = require(path.join(__dirname, '..', 'helpers', 'shell-runtime-fakes.js'));
+const { observe } = require(path.join(__dirname, '..', 'helpers', 'shell-conformance.js'));
 const { planMounts, toMountPath, toRootPath, normalizePath, posixCode } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'runtime.js'));
 const { PROGRAMS } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'info.js'));
 
@@ -140,6 +145,29 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		await r.clock.advance(10000);
 		assert.strictEqual(r.engines.workers[0].terminated, true);
 		assert.strictEqual(r.engines.workers.length, 1);
+		r.rt.dispose();
+	});
+
+	await test('a run that lasts longer than the idle time is not an idle worker: the timer armed by the run before it must not kill it', async () => {
+		const r = createRig();
+		/** @type {() => void} */ let finish = () => { };
+		r.engines.state.onRun = async (run, w, h) => {
+			if (run.script === 'long') { await new Promise((res) => { finish = () => res(undefined); }); }
+			h.done({ exitCode: run.script === 'long' ? 9 : 0, how: 'exit' });
+		};
+		const s = r.rt.createSession();
+		await s.run('short');                        // arms the idle timer (60 s)
+		await r.clock.advance(10000);
+		const p = s.run('long');                     // 50 s of that timer are left
+		await r.clock.advance(100000);               // the run lasts 100 s: past the timer, and past a second one
+		assert.strictEqual(r.engines.workers.length, 1);
+		assert.strictEqual(r.engines.workers[0].terminated, false, 'a worker with a run is not idle');
+		finish();
+		const res = await p;
+		assert.deepStrictEqual({ how: res.how, exitCode: res.exitCode }, { how: 'exit', exitCode: 9 }, 'the run ended by itself, not by a kill');
+		assert.strictEqual(r.engines.workers[0].terminated, false);
+		await r.clock.advance(60000);
+		assert.strictEqual(r.engines.workers[0].terminated, true, 'and it is idle after, for the usual time');
 		r.rt.dispose();
 	});
 
@@ -269,6 +297,80 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		r.rt.dispose();
 	});
 
+	await test('timeoutMs: a number setTimeout cannot hold is the default deadline, not "now"; the largest it holds and the smallest are used as given', async () => {
+		const DEFAULT = 600000 + 15000;
+		for (const bad of [Infinity, -Infinity, NaN, 2 ** 31, 1e12, 0, -5, 0.5, '1000', null]) {
+			const r = createRig();
+			r.engines.state.onRun = async () => { await new Promise(() => { }); };
+			const s = r.rt.createSession();
+			let how = 'pending';
+			const p = s.run('x', { timeoutMs: bad }).then((v) => { how = v.how; });
+			await flush();
+			await r.clock.advance(DEFAULT - 1);
+			assert.strictEqual(how, 'pending', 'timeoutMs ' + String(bad) + ' fired early');
+			await r.clock.advance(1);
+			await p;
+			assert.strictEqual(how, 'deadline', 'timeoutMs ' + String(bad) + ' is the default deadline');
+			r.rt.dispose();
+		}
+		// the default itself is held to what a timer can hold, however large the engine's backstop is made
+		{
+			const r = createRig({ limits: { engine: { maxExecutionTimeMs: 2 ** 31 - 1 } } });
+			r.engines.state.onRun = async () => { await new Promise(() => { }); };
+			let how = 'pending';
+			const p = r.rt.createSession().run('x').then((v) => { how = v.how; });
+			await flush();
+			await r.clock.advance(2 ** 31 - 2);
+			assert.strictEqual(how, 'pending');
+			await r.clock.advance(1);
+			await p;
+			assert.strictEqual(how, 'deadline', 'at 2^31-1 ms, not 15 s after');
+			r.rt.dispose();
+		}
+		for (const [good, at] of [[1, 1], [2 ** 31 - 1, 2 ** 31 - 1], [1500, 1500]]) {
+			const r = createRig();
+			r.engines.state.onRun = async () => { await new Promise(() => { }); };
+			const s = r.rt.createSession();
+			let how = 'pending';
+			const p = s.run('x', { timeoutMs: good }).then((v) => { how = v.how; });
+			await flush();
+			if (at > 1) { await r.clock.advance(at - 1); assert.strictEqual(how, 'pending', 'timeoutMs ' + good + ' fired one ms early'); }
+			await r.clock.advance(1);
+			await p;
+			assert.strictEqual(how, 'deadline', 'timeoutMs ' + good);
+			r.rt.dispose();
+		}
+	});
+
+	await test('the same through the agent: an absurd timeoutMs is the default, a real one is kept', async () => {
+		const r = createRig();
+		r.engines.state.onRun = async () => { await new Promise(() => { }); };
+		const c = r.rt.spawnAgent('x', { cwd: '/scratch', timeoutMs: Infinity });
+		const o = observe(c, 10 * 60 * 1000);
+		await flush();
+		await r.clock.advance(600000);
+		assert.strictEqual(o.events.some((e) => e.type === 'close'), false, 'not an immediate deadline');
+		await r.clock.advance(15000);
+		await o.closed;
+		assert.strictEqual(/** @type {any} */ (o.events[o.events.length - 1]).code, 124);
+		r.rt.dispose();
+	});
+
+	await test('a run stopped in the instant its (reused) worker is being handed over starts no deadline timer and posts nothing', async () => {
+		const r = createRig();
+		const s = r.rt.createSession();
+		await s.run('warm up');                           // the worker is ready and idle: handing it over takes microtask turns, not time
+		const before = r.engines.workers[0].sent.length;
+		const p = s.run('x');
+		queueMicrotask(() => s.stop());
+		const res = await p;
+		assert.strictEqual(res.how, 'aborted');
+		await flush();
+		assert.strictEqual(r.engines.workers[0].sent.length, before, 'the script was not posted to a worker that was stopped');
+		assert.strictEqual(r.clock.pending, 0, 'and no deadline timer was started for a run that is over (nor an idle one for a worker that is gone)');
+		r.rt.dispose();
+	});
+
 	await test('a worker that dies under a run: the run ends as an error with the reason, and a new worker serves the next', async () => {
 		const r = createRig();
 		r.engines.state.onRun = async (run, w) => { w.crash('out of memory'); };
@@ -280,6 +382,99 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		r.engines.state.onRun = async (run, w, h) => { h.done({ exitCode: 0, how: 'exit' }); };
 		assert.strictEqual((await s.run('again')).how, 'exit');
 		assert.strictEqual(r.engines.workers.length, 2);
+		r.rt.dispose();
+	});
+
+	await test('a message the host cannot read (messageerror) ends the run at once, not at the deadline', async () => {
+		const r = createRig();
+		r.engines.state.onRun = async (run, w) => { w.onmessageerror({ data: null }); };
+		const s = r.rt.createSession();
+		const res = await s.run('x');
+		assert.deepStrictEqual({ how: res.how, exitCode: res.exitCode }, { how: 'error', exitCode: 1 });
+		assert.ok(/sent a message that could not be read/.test(res.notes.join('\n')), res.notes.join('\n'));
+		assert.strictEqual(r.engines.workers[0].terminated, true);
+		assert.strictEqual(r.clock.pending, 0, 'no deadline timer is left');
+		r.engines.state.onRun = async (run, w, h) => { h.done({}); };
+		assert.strictEqual((await s.run('again')).how, 'exit');
+		r.rt.dispose();
+	});
+
+	await test('a worker that fails is logged as `worker-failed` with the reason - for an error event, a messageerror, a postMessage that throws and an engine that never starts', async () => {
+		const failed = (/** @type {any} */ r) => r.logs.filter((/** @type {any} */ l) => l[0] === 'worker-failed').map((/** @type {any} */ l) => l[1].reason);
+		let r = createRig();
+		r.engines.state.onRun = async (run, w) => { w.crash('out of memory'); };
+		await r.rt.createSession().run('x');
+		assert.strictEqual(failed(r).length, 1);
+		assert.ok(/stopped unexpectedly: out of memory/.test(failed(r)[0]), failed(r)[0]);
+		assert.ok(/** @type {any} */ (r.logs.find((l) => l[0] === 'worker-failed'))[1].gen >= 1);
+		r.rt.dispose();
+
+		r = createRig();
+		r.engines.state.onRun = async (run, w) => { w.onmessageerror({}); };
+		await r.rt.createSession().run('x');
+		assert.ok(/could not be read/.test(failed(r).join('|')), failed(r).join('|'));
+		r.rt.dispose();
+
+		r = createRig();
+		r.engines.state.noReady = true;
+		const p = r.rt.createSession().run('x');
+		await r.clock.advance(20000);
+		await p;
+		assert.ok(/did not start in 20 s/.test(failed(r).join('|')), failed(r).join('|'));
+		r.rt.dispose();
+
+		r = createRig();
+		const orig = r.engines.create;
+		const { createRuntime } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'runtime.js'));
+		/** @type {any[]} */ const seen = [];
+		const rt = createRuntime({
+			vscode: r.ws.vscode, loadEngineSource: async () => 'src',
+			createWorker: (/** @type {string} */ src) => { const w = orig(src); const post = w.postMessage.bind(w); w.postMessage = (/** @type {any} */ m, /** @type {any} */ t) => { if (m.t === 'run') { throw new Error('DataCloneError'); } post(m, t); }; return w; },
+			now: r.clock.now, setTimeout: r.clock.setTimeout, clearTimeout: r.clock.clearTimeout, log: (/** @type {string} */ e, /** @type {any} */ d) => seen.push([e, d]),
+		});
+		await rt.createSession().run('x');
+		assert.ok(seen.some((l) => l[0] === 'worker-failed' && /DataCloneError/.test(l[1].reason)), JSON.stringify(seen));
+		rt.dispose();
+		r.rt.dispose();
+
+		// a worker that is only stopped (Ctrl+C, idle, a deadline) is not a failure
+		r = createRig();
+		r.engines.state.onRun = async () => { await new Promise(() => { }); };
+		const s = r.rt.createSession();
+		const q = s.run('x');
+		await flush();
+		s.stop();
+		await q;
+		assert.deepStrictEqual(failed(r), []);
+		r.rt.dispose();
+	});
+
+	await test('what a worker or a provider says about a failure is shown in the note, not passed: an escape sequence in it is made visible', async () => {
+		const bad = '\x1b]0;pwned\x07\x1b[2J\x9b6n';
+		const safe = (/** @type {string} */ t) => !/[\x00-\x08\x0B-\x1F\x7F-\x9F]/.test(t);
+		let r = createRig();
+		r.engines.state.onRun = async (run, w) => { w.crash('boom ' + bad); };
+		let res = await r.rt.createSession().run('x');
+		assert.ok(safe(res.notes.join('\n')) && res.notes.join('').includes('boom \u{241B}]0;pwned'), JSON.stringify(res.notes));
+		r.rt.dispose();
+
+		r = createRig();
+		r.state.loadError = new Error('engine.worker.js: 404 ' + bad);
+		res = await r.rt.createSession().run('x');
+		assert.ok(safe(res.notes.join('\n')) && res.notes.join('').includes('404 \u{241B}]0;pwned'), JSON.stringify(res.notes));
+		r.rt.dispose();
+
+		r = createRig();
+		r.engines.state.failCreate = new Error('no workers ' + bad);
+		res = await r.rt.createSession().run('x');
+		assert.ok(safe(res.notes.join('\n')), JSON.stringify(res.notes));
+		r.rt.dispose();
+
+		// the log keeps the same text the person sees
+		r = createRig();
+		r.engines.state.onRun = async (run, w) => { w.crash('boom ' + bad); };
+		await r.rt.createSession().run('x');
+		assert.ok(r.logs.filter((l) => l[0] === 'worker-failed').every((l) => safe(l[1].reason)), JSON.stringify(r.logs));
 		r.rt.dispose();
 	});
 
@@ -584,7 +779,51 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		r.rt.dispose();
 	});
 
+	await test('a path is at most 4096 characters: exactly that is served, one more is not a path (and the workspace is not asked)', async () => {
+		assert.strictEqual(normalizePath('/' + 'a'.repeat(4095)), '/' + 'a'.repeat(4095), '4096 characters');
+		assert.strictEqual(normalizePath('/' + 'a'.repeat(4096)), null, '4097');
+		assert.strictEqual(normalizePath('/' + 'a/'.repeat(2047) + 'a'), '/' + 'a/'.repeat(2047) + 'a', 'long and deep, 4096');
+		const r = createRig();
+		/** @type {any[]} */ const out = [];
+		const longRoot = '/scratch/' + 'a'.repeat(4096 - '/scratch/'.length);
+		r.engines.state.onRun = readsThenDone([['stat', longRoot], ['stat', longRoot + 'a']], null, out);
+		await r.rt.createSession().run('x');
+		assert.strictEqual(longRoot.length, 4096);
+		assert.deepStrictEqual(out.map((m) => m.error.code), ['ENOENT', 'EACCES'], 'the one at the cap is looked for; the one over it is outside everything');
+		assert.deepStrictEqual(r.ws.calls, ['stat levelcode-scratch:' + longRoot]);
+		r.rt.dispose();
+	});
+
+	await test('a directory read as a file is EISDIR whatever the provider would do with it: the engine is never handed a "file" that is a folder', async () => {
+		const r = createRig();
+		r.ws.mkdir('/scratch/dir');
+		r.ws.fs.readFile = async () => new Uint8Array(0);     // a provider that does not check
+		/** @type {any[]} */ const out = [];
+		r.engines.state.onRun = readsThenDone([['readFile', '/scratch/dir']], null, out);
+		await r.rt.createSession().run('x');
+		assert.deepStrictEqual({ ok: out[0].ok, code: out[0].error.code }, { ok: false, code: 'EISDIR' });
+		r.rt.dispose();
+	});
+
+	await test('what a provider says that was not classified is trimmed to 160 characters for the engine, and a failure message to 200 for the note', async () => {
+		const r = createRig();
+		r.ws.put('/scratch/a', 'x');
+		r.ws.fail('stat', () => true, new Error('X'.repeat(1000)));
+		/** @type {any[]} */ const out = [];
+		r.engines.state.onRun = readsThenDone([['stat', '/scratch/a']], null, out);
+		await r.rt.createSession().run('x');
+		assert.strictEqual(out[0].error.code, 'EIO');
+		assert.strictEqual(out[0].error.message, 'input/output error: ' + 'X'.repeat(160));
+		const c = createRig();
+		c.engines.state.onRun = async (run, w) => { w.crash('Y'.repeat(1000)); };
+		const res = await c.rt.createSession().run('x');
+		assert.ok(res.notes[0].includes('stopped unexpectedly: ' + 'Y'.repeat(200) + ']'), res.notes[0]);
+		r.rt.dispose();
+		c.rt.dispose();
+	});
+
 	await test('posixCode: the shapes measured in the web workbench', () => {
+		assert.strictEqual(posixCode({ name: 'NoModificationAllowedError' }), 'EACCES', 'what a File System Access folder says of a locked file');
 		assert.strictEqual(posixCode({ code: 'FileNotFound', name: 'EntryNotFound (FileSystemError)' }), 'ENOENT');
 		assert.strictEqual(posixCode({ name: 'EntryNotFound (FileSystemError)' }), 'ENOENT');
 		assert.strictEqual(posixCode({ name: 'NoPermissions (FileSystemError)' }), 'EACCES');
@@ -617,6 +856,85 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		r.engines.state.onRun = readsThenDone([['readFile', '/scratch/liar']], null, out);
 		await r.rt.createSession().run('x');
 		assert.deepStrictEqual({ ok: out[0].ok, code: out[0].error.code }, { ok: false, code: 'EFBIG' });
+		r.rt.dispose();
+	});
+
+	await test('a size that is not a number is EIO, not "no limit": the budget cannot be switched off by a provider that does not say', async () => {
+		const r = createRig({ limits: { read: { file: 100, run: 250, served: 250 } } });
+		for (const f of ['a', 'b', 'c', 'd', 'e']) { r.ws.put('/scratch/' + f, 'x'.repeat(100)); }
+		r.ws.mkdir('/scratch/dir');
+		const realStat = r.ws.fs.stat.bind(r.ws.fs);
+		/** @type {(s: any) => any} */ let shape = (s) => ({ type: s.type, mtime: s.mtime });   // no size at all
+		r.ws.fs.stat = async (/** @type {any} */ u) => shape(await realStat(u));
+		/** @type {any[]} */ const out = [];
+		r.engines.state.onRun = async (run, w, h) => {
+			for (const f of ['a', 'b', 'c', 'd', 'e']) { out.push(await h.fs('readFile', '/scratch/' + f)); }
+			out.push(await h.fs('stat', '/scratch/a'));
+			out.push(await h.fs('stat', '/scratch/dir'));
+			h.done({});
+		};
+		await r.rt.createSession().run('x');
+		assert.deepStrictEqual(out.slice(0, 5).map((m) => (m.ok ? 'ok' : m.error.code)), ['EIO', 'EIO', 'EIO', 'EIO', 'EIO'], 'not ok,ok,ok,ok,ok');
+		assert.deepStrictEqual(out[5].error.code, 'EIO', 'and a stat of a file says so too');
+		assert.deepStrictEqual({ ok: out[6].ok, type: out[6].value.type, size: out[6].value.size }, { ok: true, type: 'dir', size: 0 }, 'a folder\'s size is nothing the engine counts with');
+		assert.ok(!r.ws.calls.some((c) => c.startsWith('readFile')), 'no file was read on the strength of a size nobody gave: ' + r.ws.calls.join(','));
+		// every shape that is not a count
+		for (const bad of [NaN, -1, Infinity, '5', null, {}, [5]]) {
+			shape = (s) => ({ type: s.type, mtime: s.mtime, size: bad });
+			out.length = 0;
+			await r.rt.createSession().run('x');
+			assert.strictEqual(out[0].error.code, 'EIO', JSON.stringify(bad));
+		}
+		// ...and a zero is a size
+		r.ws.put('/scratch/empty', '');
+		shape = (s) => s;
+		/** @type {any[]} */ const out2 = [];
+		r.engines.state.onRun = readsThenDone([['readFile', '/scratch/empty'], ['stat', '/scratch/empty']], null, out2);
+		await r.rt.createSession().run('x');
+		assert.deepStrictEqual([out2[0].ok, out2[1].value.size], [true, 0]);
+		r.rt.dispose();
+	});
+
+	await test('whatever the provider throws, the engine gets an answer: a string, undefined, an object with no text - and nothing is left unhandled', async () => {
+		const r = createRig();
+		r.ws.put('/scratch/a', 'x');
+		let unhandled = 0;
+		const count = () => { unhandled++; };
+		process.on('unhandledRejection', count);
+		try {
+			const hostile = Object.create(null);
+			const getter = Object.defineProperty({}, 'message', { get() { throw new Error('getter'); } });
+			const cases = [['a string', 'boom'], ['undefined', undefined], ['no prototype', hostile], ['a throwing toString', { toString() { throw new Error('no'); } }],
+				['a throwing message getter', getter], ['a number', 42], ['null', null]];
+			/** @type {any[]} */ const out = [];
+			r.engines.state.onRun = async (run, w, h) => {
+				for (const [, err] of cases) {
+					r.ws.clearRules();
+					r.ws.fail('stat', () => true, err);
+					out.push(await Promise.race([h.fs('readFile', '/scratch/a'), new Promise((res) => setTimeout(() => res('NO ANSWER'), 500))]));
+				}
+				h.done({});
+			};
+			await r.rt.createSession().run('x');
+			await new Promise((res) => setTimeout(res, 20));
+			assert.deepStrictEqual(out.map((m) => (m === 'NO ANSWER' ? m : m.ok ? 'ok' : m.error.code)), cases.map(() => 'EIO'));
+			assert.ok(/boom/.test(out[0].error.message), 'a string keeps its text: ' + out[0].error.message);
+			assert.strictEqual(unhandled, 0, 'unhandled rejections');
+			assert.ok(!r.logs.some((l) => l[0] === 'fs-failed'), 'every one of these was answered in the ordinary way, not by the last resort');
+		} finally { process.off('unhandledRejection', count); }
+		r.rt.dispose();
+	});
+
+	await test('a read whose answer cannot even be made ready (a buffer that throws on copy) is still answered, with EIO, once', async () => {
+		const r = createRig();
+		r.ws.put('/scratch/a', 'x');
+		r.ws.fs.readFile = async () => Object.assign(new Uint8Array(1), { slice: () => { throw new Error('no copy for you'); } });
+		/** @type {any[]} */ const out = [];
+		r.engines.state.onRun = readsThenDone([['readFile', '/scratch/a']], null, out);
+		await r.rt.createSession().run('x');
+		assert.deepStrictEqual({ ok: out[0].ok, code: out[0].error.code }, { ok: false, code: 'EIO' });
+		assert.strictEqual(r.engines.workers[0].sent.filter((/** @type {any} */ m) => m.t === 'fsr').length, 1, 'exactly one answer');
+		assert.ok(r.logs.some((l) => l[0] === 'fs-failed'));
 		r.rt.dispose();
 	});
 
@@ -714,6 +1032,15 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		r.rt.dispose();
 	});
 
+	await test('an empty chunk is nothing: no listener of the terminal is called with it', async () => {
+		const r = createRig();
+		r.engines.state.onRun = async (run, w, h) => { w.emit({ t: 'out', id: run.id, stream: 'stdout', text: '' }); h.out(run.id, 'stderr', ''); h.out(run.id, 'stdout', 'x'); await flush(); h.done({}); };
+		const got = [];
+		await r.rt.createSession().run('x', { onStdout: (t) => got.push(['out', t]), onStderr: (t) => got.push(['err', t]) });
+		assert.deepStrictEqual(got, [['out', 'x']]);
+		r.rt.dispose();
+	});
+
 	await test('output beyond twice the engine\'s own cap is dropped, and the run says so', async () => {
 		const r = createRig({ limits: { engine: { maxOutputSize: 100 } } });
 		r.engines.state.onRun = async (run, w, h) => {
@@ -753,6 +1080,88 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		assert.deepStrictEqual(mounts([f('My Project!', '/'), f('My Project!', '/tmp')]), ['/mnt/my-project', '/mnt/my-project-2']);
 		assert.deepStrictEqual(mounts([f('a', '/a//b/../c/'), f('rel', 'relative'), { name: 'nouri', root: '/z' }, null]), ['/a/c'], 'a bad entry is skipped, not fatal');
 		assert.deepStrictEqual(planMounts([f('a', '/a'), f('b', '/b')]).map((m) => m.id), ['ws0', 'ws1']);
+	});
+
+	/* ===== planMounts always returns ======================================================= */
+
+	/** planMounts under a watchdog: a loop that never ends is a failed test, not a suite that hangs. */
+	function planWithin(/** @type {any[]} */ list) {
+		try {
+			return JSON.parse(vm.runInNewContext('JSON.stringify(planMounts(list))', { planMounts, list: JSON.parse(JSON.stringify(list)) }, { timeout: 2000 }));
+		} catch (e) {
+			return assert.fail('planMounts did not return for ' + JSON.stringify(list.map((f) => f.root)) + ': ' + (e && /** @type {any} */ (e).message));
+		}
+	}
+	const folder = (/** @type {string} */ name, /** @type {string} */ root) => ({ name, root, uri: 'file://' + root });
+
+	await test('planMounts: a folder rooted at /mnt takes /mnt away as a place to move others to; they go under /lc-mnt', async () => {
+		const mounts = (/** @type {any[]} */ list) => planWithin(list).map((/** @type {any} */ m) => m.mount);
+		assert.deepStrictEqual(mounts([folder('mnt', '/mnt'), folder('root', '/')]), ['/mnt', '/lc-mnt/root'], 'the root after /mnt (it never returned)');
+		assert.deepStrictEqual(mounts([folder('mnt', '/mnt'), folder('t', '/tmp/x')]), ['/mnt', '/lc-mnt/t'], 'a reserved name after /mnt');
+		assert.deepStrictEqual(mounts([folder('t', '/tmp/x'), folder('mnt', '/mnt')]), ['/mnt/t', '/mnt/mnt'], 'the other way round, /mnt itself is what overlaps');
+		assert.deepStrictEqual(mounts([folder('mnt', '/mnt'), folder('mnt', '/tmp')]), ['/mnt', '/lc-mnt/mnt'], 'two folders named mnt');
+		assert.deepStrictEqual(mounts([folder('mnt', '/mnt'), folder('mnt', '/mnt')]), ['/mnt', '/lc-mnt/mnt'], 'the same /mnt twice (two schemes)');
+		assert.deepStrictEqual(mounts([folder('a', '/mnt'), folder('b', '/lc-mnt'), folder('r', '/')]), ['/mnt', '/lc-mnt', '/lc-mnt-2/r'], 'both bases taken');
+		assert.deepStrictEqual(mounts([folder('a', '/mnt'), folder('b', '/lc-mnt'), folder('c', '/lc-mnt-2'), folder('r', '/'), folder('s', '/tmp')]),
+			['/mnt', '/lc-mnt', '/lc-mnt-2', '/lc-mnt-3/r', '/lc-mnt-3/s'], 'and three');
+		assert.deepStrictEqual(mounts([folder('x', '/mnt/x'), folder('x', '/')]), ['/mnt/x', '/mnt/x-2'], 'a folder UNDER /mnt does not take the base away');
+		assert.deepStrictEqual(mounts([folder('mnt', '/mnt'), folder('r', '/'), folder('r', '/home')]), ['/mnt', '/lc-mnt/r', '/lc-mnt/r-2'], 'and what moves is kept apart');
+	});
+
+	await test('planMounts: whatever the folders are, it returns, nothing is nested, nothing is at / and the first folder stays first', async () => {
+		const roots = ['/', '/mnt', '/mnt/a', '/mnt/mnt', '/lc-mnt', '/lc-mnt/mnt', '/lc-mnt-2', '/tmp', '/tmp/x', '/home', '/bin', '/a', '/a/b', '/mnt/lc-mnt'];
+		const names = ['mnt', 'a', 'x', 'lc-mnt', 'My Project!', ''];
+		let seed = 20261011;
+		const rnd = (/** @type {number} */ n) => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed % n; };
+		for (let round = 0; round < 400; round++) {
+			const list = Array.from({ length: 1 + rnd(9) }, () => folder(names[rnd(names.length)], roots[rnd(roots.length)]));
+			const out = planWithin(list);
+			assert.strictEqual(out.length, list.length);
+			const m = out.map((/** @type {any} */ x) => x.mount);
+			for (let i = 0; i < m.length; i++) {
+				assert.notStrictEqual(m[i], '/', JSON.stringify(list));
+				for (let j = i + 1; j < m.length; j++) {
+					assert.ok(m[i] !== m[j] && !m[i].startsWith(m[j] + '/') && !m[j].startsWith(m[i] + '/'), 'overlap ' + m[i] + ' ' + m[j] + ' for ' + JSON.stringify(list.map((f) => f.root)));
+				}
+			}
+			assert.deepStrictEqual(out.map((/** @type {any} */ x) => x.id), list.map((_, i) => 'ws' + i));
+		}
+	});
+
+	await test('runtime.mounts() is the plan as of now: what the terminal\'s prompt shows and what the next run starts with', async () => {
+		const r = createRig({ workspace: { folders: [{ name: 'home', uri: 'file:///home' }, { name: 'scratch', uri: 'levelcode-scratch:///scratch' }] } });
+		assert.deepStrictEqual(r.rt.mounts().map((m) => [m.name, m.root, m.mount, m.reason !== null]), [['home', '/home', '/mnt/home', true], ['scratch', '/scratch', '/scratch', false]]);
+		assert.deepStrictEqual(r.rt.mounts(), planMounts(r.rt.folders()));
+		const s = r.rt.createSession();
+		await s.run('x');
+		assert.deepStrictEqual(r.engines.workers[0].sent[0].folders.map((/** @type {any} */ f) => f.path), r.rt.mounts().map((m) => m.mount));
+		r.ws.setFolders([{ name: 'mnt', uri: 'file:///mnt' }, { name: 'root', uri: 'file:///' }]);
+		assert.deepStrictEqual(r.rt.mounts().map((m) => m.mount), ['/mnt', '/lc-mnt/root'], 'live, and it returns');
+		const res = await s.run('y');
+		assert.strictEqual(res.how, 'exit', 'a run with such folders starts (it used to freeze the host)');
+		r.rt.dispose();
+	});
+
+	await test('nested roots in different schemes: a path is mapped by the LONGEST root, to the folder it is really in', async () => {
+		const r = createRig({ workspace: { folders: [{ name: 'a', uri: 'file:///a' }, { name: 'b', uri: 'levelcode-scratch:///a/b' }] } });
+		const mounts = r.rt.mounts();
+		assert.deepStrictEqual(mounts.map((m) => [m.root, m.mount]), [['/a', '/a'], ['/a/b', '/mnt/b']]);
+		assert.strictEqual(toMountPath(mounts, '/a/b/x/y.txt'), '/mnt/b/x/y.txt', 'not "/a" + the rest');
+		assert.strictEqual(toMountPath(mounts, '/a/b'), '/mnt/b');
+		assert.strictEqual(toMountPath(mounts, '/a/bc/y.txt'), '/a/bc/y.txt', 'a name that only starts the same is not inside');
+		assert.strictEqual(toMountPath(mounts, '/a/other'), '/a/other');
+		assert.strictEqual(toRootPath(mounts, '/mnt/b/x'), '/a/b/x');
+		// and the whole way through a run: the engine starts in /mnt/b/src and what it reads there is the scratch scheme's
+		r.ws.put('levelcode-scratch:/a/b/f.txt', 'B');
+		r.ws.put('file:/a/b/f.txt', 'WRONG');
+		/** @type {any[]} */ const out = [];
+		r.engines.state.onRun = readsThenDone([['readFile', '/mnt/b/f.txt']], null, out);
+		const folders = r.rt.folders();
+		const o = observe(r.rt.spawnAgent('x', { cwd: '/a/b/src', folders }), 3000);
+		await o.closed;
+		assert.strictEqual(r.engines.workers[0].runs[0].cwd, '/mnt/b/src');
+		assert.strictEqual(Buffer.from(out[0].value).toString(), 'B');
+		r.rt.dispose();
 	});
 
 	await test('toMountPath and toRootPath: identity for a normal mount, and the translation for a moved one', async () => {
@@ -798,6 +1207,29 @@ function readsThenDone(/** @type {Array<[string, string]>} */ reads, /** @type {
 		assert.deepStrictEqual((await plain.rt.createSession().run('pwd')).notes, []);
 		r.rt.dispose();
 		plain.rt.dispose();
+	});
+
+	await test('the relocation note shows a folder\'s name and path, it does not pass them: an escape sequence in either is made visible', async () => {
+		const esc = '\x1b]0;pwned\x07\x1b[2J';
+		const r = createRig({ workspace: { folders: [{ name: 'good\x1b[31m\x9b6n', uri: 'file:///tmp/' + esc + 'x' }] } });
+		const res = await r.rt.createSession().run('pwd');
+		assert.strictEqual(res.notes.length, 1);
+		assert.ok(!/[\x00-\x08\x0B-\x1F\x7F-\x9F]/.test(res.notes[0]), JSON.stringify(res.notes[0]));
+		assert.ok(res.notes[0].includes('\u{241B}]0;pwned\u{2407}\u{241B}[2Jx'), 'the path is there, made visible: ' + res.notes[0]);
+		assert.ok(res.notes[0].includes('good\u{241B}[31m[U+009B]6n'), res.notes[0]);
+		// and a line break in a name is shown too: the note stays one line
+		const nl = createRig({ workspace: { folders: [{ name: 'a\n[LevelCode Shell: nothing to see]\tb', uri: 'file:///tmp/x\ny' }] } });
+		const one = await nl.rt.createSession().run('pwd');
+		assert.strictEqual(one.notes.length, 1);
+		assert.ok(/^\[LevelCode Shell: [^\n\t]+\]$/.test(one.notes[0]), JSON.stringify(one.notes[0]));
+		nl.rt.dispose();
+		// the agent's stderr is the same text
+		const c = r.rt.spawnAgent('pwd', { cwd: '/tmp/' + esc + 'x', folders: r.rt.folders() });
+		const o = observe(c, 3000);
+		await o.closed;
+		assert.ok(!/[\x00-\x08\x0B-\x1F\x7F-\x9F]/.test(o.stderr), JSON.stringify(o.stderr));
+		assert.ok(o.stderr.includes('\u{241B}]0;pwned'), o.stderr);
+		r.rt.dispose();
 	});
 
 	await test('folders that change: idle workers started for the old set go at once, and the next run mounts the new set', async () => {

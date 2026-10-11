@@ -29,6 +29,8 @@ const LIMITS = Object.freeze({
 	maxWorkUnits: 100000000,
 
 	// --- what a script can nest or expand
+	// (the parser has a limit of its own that nothing here sets: a script, heredocs included, of more than 1,000,000
+	// bytes is "Input too large", whatever maxSourceBytes and maxHeredocSize say; the host sees a syntax error, status 2)
 	maxSourceBytes: 8 * MiB,
 	maxExecDepth: 64,
 	maxSubstitutionDepth: 50,

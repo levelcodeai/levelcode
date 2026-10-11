@@ -57,9 +57,14 @@ function createWriter(o) {
 		},
 		/** Drop what has not been written yet (Ctrl+C, close). */
 		clear() { queue = []; },
-		pending: () => queue.length > 0,
 	};
 }
+
+/**
+ * Put the terminal back to where a command found it, whatever the filters believe they wrote: colours, a link, a hidden
+ * cursor. The filters only know what they emitted, and after a Ctrl+C part of that was dropped from the queue unwritten.
+ */
+const RESET_TAIL = '\x1b[0m' + '\x1b]8;;\x1b\\' + '\x1b[?25h';
 
 /**
  * One run's output: a filter per stream so a stream that ends in an unterminated sequence cannot hide the other,
@@ -69,16 +74,43 @@ function createWriter(o) {
 function createRunOutput(o) {
 	const budget = createBudget(o.limit === undefined ? OUTPUT_LIMIT : o.limit);
 	const filters = { stdout: createOutputFilter({ budget }), stderr: createOutputFilter({ budget }) };
-	/** @type {ReturnType<typeof createOutputFilter>} */
-	let last = filters.stdout;
+	/** The writer of the last text shown: whether it ended a line says whether the next thing needs a break. */
+	let last = { endsAtLineStart: () => true };
 	let wrote = false;
+	let stopped = false;
+
+	/**
+	 * The terminal's own words in the middle of the output (a notice): written as they are (the caller says they are
+	 * constants), and the line state follows them.
+	 * @param {string} text
+	 */
+	function say(text) {
+		if (!text) { return; }
+		o.write(text);
+		const ends = /\n$/.test(text);
+		last = { endsAtLineStart: () => ends };
+		wrote = true;
+	}
 
 	return {
 		/** @param {'stdout' | 'stderr'} stream @param {string} text */
 		write(stream, text) {
+			if (stopped) { return; }
 			const f = filters[stream === 'stderr' ? 'stderr' : 'stdout'];
 			const s = f.write(String(text));
 			if (s) { o.write(s); last = f; wrote = true; }
+		},
+		say,
+		/**
+		 * Ctrl+C: the run shows nothing more. The terminal is put back unconditionally (RESET_TAIL), and `^C` is written
+		 * the way a shell echoes it: where the output stopped. end() then supplies the line break after it.
+		 */
+		interrupt() {
+			stopped = true;
+			filters.stdout.end();
+			filters.stderr.end();
+			o.write(RESET_TAIL);
+			say('\x1b[2m^C\x1b[0m');
 		},
 		/**
 		 * The run is over: put back colours/links/cursor, make sure the next thing starts on its own line, and say
@@ -94,10 +126,16 @@ function createRunOutput(o) {
 			}
 			return s;
 		},
-		truncated: () => budget.full,
-		/** True when the run wrote nothing the screen shows (so nothing needs to be separated from what follows). */
-		wrote: () => wrote,
+		/**
+		 * Count text that is shown outside the filters (the agent's explanation, which is written before the output)
+		 * against the run's cap, so that the cap is for what the run puts in the tab and not only for its output.
+		 * @param {string} text @returns {string} the same text
+		 */
+		charge(text) {
+			budget.used += text.length;
+			return text;
+		},
 	};
 }
 
-module.exports = { createWriter, createRunOutput, CHUNK, OUTPUT_LIMIT };
+module.exports = { createWriter, createRunOutput, CHUNK, OUTPUT_LIMIT, RESET_TAIL };

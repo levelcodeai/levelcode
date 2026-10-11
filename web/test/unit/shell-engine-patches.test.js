@@ -17,6 +17,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const REPO = path.join(__dirname, '..', '..', '..');
@@ -47,6 +48,21 @@ async function main() {
 		return { fs: fsys, sh: new E.Bash(Object.assign({ fs: fsys, cwd: '/w' }, opts || {})) };
 	};
 
+	/** a bash over the engine's real file system (the overlay), the way the worker has it: text is read losslessly */
+	const { makeTree } = require('./shell-engine-support.js');
+	const { createOverlay } = require(path.join(ENGINE, 'overlay-fs.js'));
+	const overlayBash = (files, opts) => {
+		const tree = makeTree(Object.assign({ '/w': null }, files || {}));
+		const err = (code) => Object.assign(new Error(code), { code });
+		const base = {
+			async stat(p) { if (!tree.nodes.has(p)) { throw err('ENOENT'); } const n = tree.nodes.get(p); return { type: n === null ? 'dir' : 'file', size: n ? n.length : 0, mtime: 1700000000000 }; },
+			async readFile(p) { const n = tree.nodes.get(p); if (n === undefined) { throw err('ENOENT'); } if (n === null) { throw err('EISDIR'); } return n.slice(); },
+			async readDir(p) { if (tree.nodes.get(p) !== null) { throw err('ENOENT'); } return tree.list(p); },
+		};
+		const ov = createOverlay({ folders: [{ id: 'f', path: '/w', name: 'w' }], base });
+		return { ov, fs: ov.fs, sh: new E.Bash(Object.assign({ fs: ov.fs, cwd: '/w' }, opts || {})) };
+	};
+
 	/* ------------------------------------------------------------------------------------------ the file */
 
 	test('the vendored file is the published one: size, sha256, and the integrity string of the tarball it came from', () => {
@@ -72,9 +88,9 @@ async function main() {
 
 	/* ------------------------------------------------------------------------------------------ the patches */
 
-	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9'];
+	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9', 'LC-10', 'LC-11', 'LC-12', 'LC-13', 'LC-14', 'LC-15', 'LC-16', 'LC-17', 'LC-18'];
 
-	test('there are nine patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
+	test('there are eighteen patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
 		assert.deepStrictEqual(patchMod.PATCHES.map((p) => p.id), IDS);
 		let edits = 0;
 		for (const p of patchMod.PATCHES) {
@@ -92,12 +108,55 @@ async function main() {
 		const r = patchMod.applyPatches(original);
 		assert.strictEqual(r.sha256, vendorJson.patched.sha256);
 		assert.strictEqual(Buffer.byteLength(r.text), vendorJson.patched.bytes);
+		assert.strictEqual(vendorJson.patched.patches, IDS.length);
 		assert.strictEqual(r.inputSha256, vendorJson.fileSha256);
 		assert.ok(r.text.startsWith('/*! LevelCode: this is just-bash@3.6.0'));
 		assert.ok(r.text.includes('MODIFIED by LevelCode'));
 		assert.ok(r.text.includes('Apache-2.0'));
 		assert.ok(r.text.includes('section 4(b)'));
+		assert.ok(r.text.includes('LC-1 .. LC-18'), 'the notice says how many patches there are');
 		assert.deepStrictEqual(r.patches.map((p) => p.id), IDS);
+	});
+
+	test('the header imports LevelCode\'s own two modules by names the loader and the build both map, and nothing else', () => {
+		const head = patchMod.HEADER;
+		assert.deepStrictEqual(loader.importSpecifiers(head), ['lc-text', 'lc-zone']);
+		assert.ok(fs.existsSync(loader.EXTERNALS['lc-text']) && fs.existsSync(loader.EXTERNALS['lc-zone']));
+		assert.deepStrictEqual(loader.importSpecifiers(patchMod.applyPatches(original).text), ['diff', 'lc-text', 'lc-zone', 'node:zlib', 'sprintf-js', 'turndown']);
+		// every identifier the header adds starts with __lc, apart from Date, which it shadows on purpose
+		const added = [...head.matchAll(/\b(?:var|const|import)\s+([A-Za-z_$][\w$]*)/g)].map((m) => m[1]);
+		assert.deepStrictEqual(added.filter((n) => !n.startsWith('__lc')), ['Date']);
+	});
+
+	test('--check verifies the hash and every anchor and writes nothing; a changed file fails it and names what is wrong', () => {
+		const run = (extra) => spawnSync(process.execPath, [path.join(VENDOR, 'apply-patches.mjs'), '--check', ...extra], { encoding: 'utf8' });
+		const ok = run([]);
+		assert.strictEqual(ok.status, 0, ok.stderr);
+		const summary = JSON.parse(ok.stdout);
+		assert.deepStrictEqual([summary.check, summary.patches, summary.edits, summary.sha256], ['ok', IDS.length, vendorJson.patched.edits, vendorJson.fileSha256]);
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-check-'));
+		try {
+			// one anchor gone, and so a different hash: both are said
+			const edited = original.replace('function Os(e,t,n,r,s,i){let o=q9(', 'function Os(e,t,n,r,s,i){let o=q8(');
+			assert.notStrictEqual(edited, original);
+			fs.writeFileSync(path.join(dir, 'x.js'), edited);
+			const bad = run(['--in', path.join(dir, 'x.js')]);
+			assert.strictEqual(bad.status, 1);
+			assert.ok(/sha256 is [0-9a-f]{64}, expected 38f1ad1e/.test(bad.stderr), bad.stderr);
+			// a copy with an anchor broken in one place (the first one: it is not the anchor of the patch under test)
+			const first = patchMod.PATCHES[0].edits[0];
+			const anchorless = original.replace(first.from, first.from.slice(0, -1) + 'X');
+			assert.notStrictEqual(anchorless, original);
+			fs.writeFileSync(path.join(dir, 'y.js'), anchorless);
+			const bad2 = run(['--in', path.join(dir, 'y.js')]);
+			assert.strictEqual(bad2.status, 1);
+			assert.ok(/LC-1 anchor "[^"]+" occurs 0 times \(expected exactly 1\)/.test(bad2.stderr), bad2.stderr);
+			assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['x.js', 'y.js'], 'nothing was written');
+			assert.ok(patchMod.checkAnchors(original).every((a) => a.count === 1));
+			assert.strictEqual(patchMod.checkAnchors(original).length, vendorJson.patched.edits);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	test('taking the patches out gives the original back, byte for byte', () => {
@@ -327,6 +386,299 @@ async function main() {
 		assert.strictEqual(await run("printf 'b 1\\na 1\\nB 1\\nA 1\\n' | sort -k2,2"), 'A 1\nB 1\na 1\nb 1\n', 'a tie on the key too');
 		assert.strictEqual(await run("printf 'b 1\\na 1\\nB 1\\nA 1\\n' | sort -r -k2,2"), 'b 1\na 1\nB 1\nA 1\n');
 		assert.strictEqual(await run("printf 'b\\nB\\nb\\n' | sort -u"), 'B\nb\n');
+	});
+
+	/* ------------------------------------------------------------------------------------------ LC-9, extended */
+
+	/** String.prototype.localeCompare as a Swedish-like collation: case-insensitive first, "ä" after "z" */
+	const withCollation = async (fn) => {
+		const real = String.prototype.localeCompare;
+		const key = (s) => s.toLowerCase().replace(/[äå]/g, '{').replace(/ö/g, '|');
+		String.prototype.localeCompare = function (o) { const a = key(String(this)); const b = key(String(o)); return a < b ? -1 : a > b ? 1 : 0; };
+		try { return await fn(); } finally { String.prototype.localeCompare = real; }
+	};
+
+	test('LC-10: the file has 14 TextDecoders and 8 TextEncoders, and which of them see bytes of a file or a pipe has been looked at (a bump that adds one fails here)', () => {
+		assert.strictEqual(count(original, 'new TextDecoder'), 14);
+		assert.strictEqual(count(original, 'new TextEncoder'), 8);
+		const r = patchMod.applyPatches(original);
+		// a BOM is kept by the decoder of byte strings (M8), by that of a command's result (h$), and by curl's, which had it
+		assert.strictEqual(count(r.text, 'ignoreBOM:!0'), 3);
+		// the uses of the module: the byte-string decoder, the encoder, and `__lcUtf8` of `read` and `mapfile` in the header
+		assert.strictEqual(count(r.text, '__lcText.'), 3);
+	});
+
+	test('LC-9: the patched file has no localeCompare left at all (a new one in a bumped file fails here)', () => {
+		const r = patchMod.applyPatches(original);
+		assert.strictEqual(count(original, 'localeCompare'), 12, 'what the published file has');
+		assert.strictEqual(count(r.text, 'localeCompare'), 0);
+	});
+
+	test('LC-9: the order of everything the engine sorts is by code point, whatever the collation of the process', async () => {
+		const files = { '/w/B': 'b', '/w/a': 'a', '/w/A': 'a', '/w/_x': 'x', '/w/z': 'z', '/w/ä': 'ae', '/w/sub/b': 'b', '/w/sub/A': 'a', '/w/sub/a': 'a', '/w/sub/Z': 'z', '/w/sub/.h': 'h' };
+		// each line: what it prints, in code point order (a collation that ignores case would put A a b Z, and ä after z)
+		const steps = [
+			['a glob', 'echo *', 'A B _x a sub z ä'],
+			['find', "find . -type f | tr '\n' ' '", './A ./B ./_x ./a ./sub/.h ./sub/A ./sub/Z ./sub/a ./sub/b ./z ./ä '],
+			['grep -r', "grep -r '' sub | tr '\n' ' '", 'sub/A:a sub/Z:z sub/a:a sub/b:b '],
+			['a pattern grep expands itself', "grep '' 'sub/[a-zA-Z]' | tr '\n' ' '", 'sub/A:a sub/Z:z sub/a:a sub/b:b '],
+			['sort -V', "printf 'v10\nv2\nV2\nv1\n' | sort -V | tr '\n' ' '", 'V2 v1 v2 v10 '],
+			['tree', "tree sub | head -n 5 | tr '\n' ' '", 'sub |-- A |-- Z |-- a `-- b '],
+			['tree -a', "tree -a sub | head -n 3 | tr '\n' ' '", 'sub |-- .h |-- A '],
+			['jq sort', "echo '[\"z\",\"B\",\"a\",\"A\",\"ä\",\"_\"]' | jq -c sort", '["A","B","_","a","z","ä"]'],
+			['jq unique', "echo '[\"z\",\"B\",\"a\",\"A\",\"ä\",\"_\"]' | jq -c unique", '["A","B","_","a","z","ä"]'],
+			['jq min max', "echo '[\"z\",\"B\",\"a\",\"A\",\"ä\",\"_\"]' | jq -c 'min, max' | tr '\n' ' '", '"A" "ä" '],
+			['jq keys', "echo '{\"b\":1,\"B\":2,\"a\":3,\"ä\":4}' | jq -c keys", '["B","a","b","ä"]'],
+			['jq to_entries is in insertion order', "echo '{\"b\":1,\"B\":2,\"a\":3,\"ä\":4}' | jq -c 'to_entries|map(.key)'", '["b","B","a","ä"]'],
+			['jq sort_by group_by unique_by', "echo '[{\"k\":\"b\"},{\"k\":\"B\"},{\"k\":\"a\"}]' | jq -c 'sort_by(.k)|map(.k), (group_by(.k)|map(.[0].k)), (unique_by(.k)|map(.k))' | tr '\n' ' '", '["B","a","b"] ["B","a","b"] ["B","a","b"] '],
+			['jq string comparison', "jq -n '\"a\" < \"B\", \"B\" < \"a\", (\"Z\" < \"a\"), (\"b\" >= \"B\")' | tr '\n' ' '", 'false true true true '],
+			['jq sort of objects (by their keys)', "echo '[{\"a\":1},{\"B\":2},{\"A\":3}]' | jq -c sort", '[{"A":3},{"B":2},{"a":1}]'],
+		];
+		const run = async (script) => {
+			const { sh } = bash(files);
+			const r = await sh.exec(script);
+			assert.strictEqual(r.stderr, '', script);
+			return r.stdout.replace(/\n$/, '');
+		};
+		for (const [what, script, want] of steps) {
+			assert.strictEqual(await run(script), want, what);
+			assert.strictEqual(await withCollation(() => run(script)), want, what + ' (collation of the process: Swedish)');
+		}
+		const opts = await run('echo $SHELLOPTS');
+		assert.ok(/^braceexpand:/.test(opts), opts);
+	});
+
+	test('LC-9: jq\'s sort, unique and group_by are sorted by key (unique kept the order of appearance, group_by too)', async () => {
+		const { sh } = bash({});
+		const run = async (q, input) => (await sh.exec(`echo '${input}' | jq -c '${q}'`)).stdout;
+		assert.strictEqual(await run('unique', '["z","B","a","A","_","1","b","a"]'), '["1","A","B","_","a","b","z"]\n');
+		assert.strictEqual(await run('unique', '[3,1,2,1,null,"a",true,[1],{"a":1}]'), '[null,true,1,2,3,"a",[1],{"a":1}]\n');
+		assert.strictEqual(await run('group_by(.)', '["b","A","a","B","b"]'), '[["A"],["B"],["a"],["b","b"]]\n');
+		assert.strictEqual(await run('group_by(.k)|map(map(.n))', '[{"k":"y","n":1},{"k":"x","n":2},{"k":"y","n":3}]'), '[[2],[1,3]]\n');
+		assert.strictEqual(await run('group_by(.[0:1])|length', '["ab","Ac","ad","Ae"]'), '2\n');
+		// the order of code points, not of UTF-16 units: U+FF5E is below U+1F600 although its units are above
+		assert.strictEqual(await run('sort', '["\\uff5e","\\ud83d\\ude00","z"]'), '["z","\\uff5e","\\ud83d\\ude00"]\n'.replace('\\uff5e', '\uff5e').replace('\\ud83d\\ude00', '\ud83d\ude00'));
+	});
+
+	test('LC-9: a process whose own locale is not English orders the same (the locale of this process is asked of ICU, in a child)', () => {
+		const probe = spawnSync(process.execPath, ['-e', "console.log(['z','ä','a','B'].sort((a,b)=>a.localeCompare(b)).join(''))"], { encoding: 'utf8', env: Object.assign({}, process.env, { LC_ALL: 'sv_SE.UTF-8', LANG: 'sv_SE.UTF-8', LANGUAGE: 'sv' }) });
+		const swedish = probe.stdout.trim() === 'aBzä';
+		if (!swedish) {
+			console.log('  note - this node does not take its default locale from LC_ALL (' + JSON.stringify(probe.stdout.trim()) + '); the collation was replaced by a stand-in above');
+			return;
+		}
+		const script = path.join(os.tmpdir(), 'lc-locale-' + process.pid + '.js');
+		fs.writeFileSync(script, `
+			const { loadEngine } = require(${JSON.stringify(path.join(__dirname, 'shell-engine-support.js'))});
+			(async () => {
+				const E = await loadEngine();
+				const fsys = new E.InMemoryFs();
+				fsys.mkdirSync('/w', { recursive: true });
+				for (const n of ['B', 'a', 'A', 'z', 'ä']) { fsys.writeFileSync('/w/' + n, 'x'); }
+				const sh = new E.Bash({ fs: fsys, cwd: '/w' });
+				const r = await sh.exec("echo *; printf 'z\\\\nB\\\\na\\\\nA\\\\nä\\\\n' | sort | tr '\\\\n' ' '; echo; echo '[\\"z\\",\\"B\\",\\"a\\",\\"ä\\"]' | jq -c sort");
+				process.stdout.write(r.stdout);
+			})();
+		`);
+		try {
+			const out = spawnSync(process.execPath, [script], { encoding: 'utf8', env: Object.assign({}, process.env, { LC_ALL: 'sv_SE.UTF-8', LANG: 'sv_SE.UTF-8' }) });
+			assert.strictEqual(out.stdout, 'A B a z ä\nA B a z ä \n["B","a","z","ä"]\n', out.stderr);
+		} finally {
+			fs.rmSync(script, { force: true });
+		}
+	});
+
+	/* ------------------------------------------------------------------------------------------ LC-10 */
+
+	test('LC-10: bytes that are not UTF-8 go through cat, a pipe, $(...), sort, tee, grep, awk, tr, cut and back out unchanged', async () => {
+		const lat = new Uint8Array([0x63, 0x61, 0x66, 0xe9, 0x0a, 0x61, 0x62, 0x63, 0x0a]);
+		const { fs: fsys, sh } = overlayBash({ '/w/lat': lat });
+		const r = await sh.exec('cat lat | cat > c1; x=$(cat lat); printf "%s\\n" "$x" > c2; sort -o s1 lat; tee t1 < lat > /dev/null; grep a lat > g1; awk "{print}" lat > a1; tr a-z A-Z < lat > r1; cut -c1-4 lat > u1; paste lat > p1; head -n 1 lat > h1; tail -n 1 lat > l1; sed -n 1p lat > e1; rev lat > v1; uniq lat > q1; cat lat > c3; wc -c lat');
+		assert.strictEqual(r.stderr, '');
+		const bytes = async (p) => [...await fsys.readFileBuffer(p)];
+		const first = [0x63, 0x61, 0x66, 0xe9, 0x0a];
+		assert.deepStrictEqual(await bytes('/w/c1'), [...lat]);
+		assert.deepStrictEqual(await bytes('/w/c3'), [...lat]);
+		assert.deepStrictEqual(await bytes('/w/c2'), [...lat]);
+		assert.deepStrictEqual(await bytes('/w/s1'), [0x61, 0x62, 0x63, 0x0a, 0x63, 0x61, 0x66, 0xe9, 0x0a]);
+		assert.deepStrictEqual(await bytes('/w/t1'), [...lat]);
+		assert.deepStrictEqual(await bytes('/w/g1'), [...lat]);
+		assert.deepStrictEqual(await bytes('/w/a1'), [...lat]);
+		assert.deepStrictEqual(await bytes('/w/r1'), [0x43, 0x41, 0x46, 0xe9, 0x0a, 0x41, 0x42, 0x43, 0x0a]);
+		assert.deepStrictEqual(await bytes('/w/u1'), [...lat]);
+		assert.deepStrictEqual(await bytes('/w/p1'), [...lat]);
+		assert.deepStrictEqual(await bytes('/w/h1'), first);
+		assert.deepStrictEqual(await bytes('/w/e1'), first);
+		assert.deepStrictEqual(await bytes('/w/q1'), [...lat]);
+		assert.strictEqual(r.stdout.trim(), '9 lat');
+	});
+
+	test('LC-10: a UTF-8 BOM and a NUL are kept; text with letters of U+0080..U+00FF is not mistaken for bytes', async () => {
+		const bom = new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69, 0x0a]);
+		const { fs: fsys, sh } = overlayBash({ '/w/bom': bom, '/w/nul': new Uint8Array([0x61, 0x00, 0x62, 0x0a]), '/w/utf': 'café ñ ü\n' });
+		const r = await sh.exec('cat bom | cat > b1; echo "$(cat bom)" > b2; sed -i s/zzz/y/ bom nul utf; cat nul | cat > n1; cat utf | cat; cat utf | sort; echo naïve; echo "$(cat utf)"; cut -f1 utf');
+		assert.deepStrictEqual([...await fsys.readFileBuffer('/w/b1')], [...bom]);
+		assert.deepStrictEqual([...await fsys.readFileBuffer('/w/b2')], [...bom]);
+		assert.deepStrictEqual([...await fsys.readFileBuffer('/w/n1')], [0x61, 0x00, 0x62, 0x0a]);
+		assert.strictEqual(r.stdout, 'café ñ ü\ncafé ñ ü\nnaïve\ncafé ñ ü\ncafé ñ ü\n');
+		assert.deepStrictEqual([...await fsys.readFileBuffer('/w/bom')], [...bom], 'sed -i with no match writes the same bytes');
+	});
+
+	test('LC-10: the escape of a byte is a lone U+DC80..U+DCFF in the engine\'s text, and only there (it goes back to the byte)', async () => {
+		const { sh } = overlayBash({ '/w/lat': new Uint8Array([0x61, 0xe9, 0x0a]) });
+		const r = await sh.exec('x=$(cat lat); echo "${#x}"; y="${x}z"; printf "%s" "$y" | od -An -b');
+		assert.strictEqual(r.stdout, '2\n 141 351 172\n', 'two characters (a and the byte), and the byte is back after a string operation');
+	});
+
+	/* ------------------------------------------------------------------------------------------ LC-11, LC-12 */
+
+	test('LC-11: `$a\\`, `a\\`, `i\\` and `c\\` with no text print nothing and add a missing newline, as GNU does', async () => {
+		const { sh } = bash({});
+		const run = async (input, script) => (await sh.exec(`printf '${input}' | sed '${script}' | od -An -c | tr -s ' ' | tr '\\n' ' '`)).stdout;
+		assert.strictEqual(await run('x', '$a\\'), ' x \\n ');
+		assert.strictEqual(await run('a\\nb\\n', '$a\\'), ' a \\n b \\n ');
+		assert.strictEqual(await run('a\\nb\\n', 'a\\'), ' a \\n b \\n ');
+		assert.strictEqual(await run('a\\nb', '1a\\'), ' a \\n b ', 'the last line was not touched: still no newline');
+		assert.strictEqual(await run('a\\nb\\n', 'i\\'), ' a \\n b \\n ');
+		assert.strictEqual(await run('a\\nb\\nc\\nd\\n', '2,3c\\'), ' a \\n d \\n ');
+		assert.strictEqual(await run('a\\nb', '$c\\'), ' a \\n ');
+		// with a text after the backslash, on the line (GNU one-liner) or the next, nothing changes
+		assert.strictEqual(await run('a\\n', '$a\\\nTAIL'), ' a \\n T A I L \\n ');
+		assert.strictEqual(await run('a\\n', '1i\\\nHEAD'), ' H E A D \\n a \\n ');
+		// -e pieces: a trailing `a\\` takes the next -e as its text, as GNU does
+		const e = await sh.exec("printf 'a\\n' | sed -e '$a\\' -e 'TAIL'");
+		assert.strictEqual(e.stdout, 'a\nTAIL\n');
+		// -i: the idiom that gives a file its final newline
+		const { fs: fsys, sh: sh2 } = bash({ '/w/f': 'x', '/w/g': 'x\n' });
+		await sh2.exec("sed -i -e '$a\\' f g");
+		assert.strictEqual(await fsys.readFile('/w/f'), 'x\n');
+		assert.strictEqual(await fsys.readFile('/w/g'), 'x\n');
+	});
+
+	test('LC-12: `c` on a range prints its text once, at the end of the range; once per line when negated, in a block or on a step', async () => {
+		const { sh } = bash({});
+		const run = async (input, script) => (await sh.exec(`printf '${input}' | sed '${script}' | tr '\\n' ' '`)).stdout;
+		const abcd = 'a\\nb\\nc\\nd\\n';
+		assert.strictEqual(await run(abcd, '2,3c X'), 'a X d ');
+		assert.strictEqual(await run(abcd, '/b/,/c/c X'), 'a X d ');
+		assert.strictEqual(await run(abcd, '2,$c X'), 'a X ');
+		assert.strictEqual(await run(abcd, '3,2c X'), 'a b X d ');
+		assert.strictEqual(await run(abcd, '/b/,/zzz/c X'), 'a ', 'a range that never ends never prints');
+		assert.strictEqual(await run(abcd, '2,100c X'), 'a ');
+		assert.strictEqual(await run(abcd, '2,3!c X'), 'X b c X ');
+		assert.strictEqual(await run(abcd, '2,3{c X\n}'), 'a X X d ');
+		assert.strictEqual(await run(abcd, '2c X'), 'a X c d ');
+		assert.strictEqual(await run(abcd, '/b/c X'), 'a X c d ');
+		assert.strictEqual(await run(abcd, '1,2c X'), 'X c d ');
+		assert.strictEqual(await run(abcd, '2,+1c X'), 'a X d ');
+		// two ranges, one after the other
+		assert.strictEqual(await run(abcd, '1,2c X\n3,4c Y'), 'X Y ');
+	});
+
+	/* ------------------------------------------------------------------------------------------ LC-13, LC-14, LC-15 */
+
+	test('LC-13: a bare `length` is length($0) in every place an expression is', async () => {
+		const { sh } = bash({});
+		const run = async (prog, input = 'foo bar\\nHello\\nHello World\\n') => (await sh.exec(`printf '${input}' | awk '${prog}' | tr '\\n' ' '`)).stdout;
+		assert.strictEqual(await run('{print length}'), '7 5 11 ');
+		assert.strictEqual(await run('length > 5'), 'foo bar Hello World ');
+		assert.strictEqual(await run('{ n += length } END { print n }'), '23 ');
+		assert.strictEqual(await run('{print length()}'), '7 5 11 ');
+		assert.strictEqual(await run('{print length($0)}'), '7 5 11 ');
+		assert.strictEqual(await run('{print length($1)}'), '3 5 5 ');
+		assert.strictEqual(await run('BEGIN{print length("abcd")}', ''), '4 ');
+		assert.strictEqual(await run('length == 0 { print NR }', 'a\\n\\nb\\n'), '2 ');
+		assert.strictEqual(await run('{ if (length > 5) print "long"; else print "short" }'), 'long short long ');
+		assert.strictEqual(await run('{ print length * 2 }'), '14 10 22 ');
+		assert.strictEqual(await run('{ x = length; print x }'), '7 5 11 ');
+	});
+
+	test('LC-14: grep -o with a pattern that can match nothing prints the non-empty matches, skips the empty ones, and never fails at the end of a line', async () => {
+		const { sh } = bash({ '/w/a.txt': 'abc\nxyz\n123\n', '/w/b.txt': 'ab\n', '/w/f.txt': 'abb\nxyz\nbab\n' });
+		const run = async (script) => (await sh.exec(script)).stdout;
+		const both = async (script) => { const r = await sh.exec(script); return [r.stdout, r.stderr]; };
+		assert.strictEqual(await run("printf 'abb\\n' | grep -o 'b*'"), 'bb\n');
+		assert.strictEqual(await run("printf 'aab\\n' | grep -o 'a*'"), 'aa\n');
+		assert.strictEqual(await run("printf 'abc\\n' | grep -o '[0-9]*'; echo rc=$?"), 'rc=0\n', 'the line matched (with nothing): status 0, nothing printed');
+		assert.strictEqual(await run("printf 'x1y22\\n' | grep -oE '[0-9]*'"), '1\n22\n');
+		assert.strictEqual(await run("printf 'hello\\n' | grep -o 'l*'"), 'll\n');
+		assert.strictEqual(await run('grep -o "[0-9]*" a.txt; echo rc=$?'), '123\nrc=0\n');
+		assert.strictEqual(await run('grep -on "[a-c]*" a.txt'), '1:abc\n');
+		assert.strictEqual(await run('grep -o "x*" a.txt b.txt; echo rc=$?'), 'a.txt:xyz\n'.replace('a.txt:xyz', 'a.txt:x') + 'rc=0\n');
+		assert.strictEqual(await run('grep -c "b*" a.txt'), '3\n');
+		assert.strictEqual(await run("printf 'abab\\n' | grep -o 'ab*'"), 'ab\nab\n');
+		assert.strictEqual(await run("printf 'aXbX\\n' | grep -o 'X*'"), 'X\nX\n');
+		// the other loops that step over an empty match: with context lines, counting matches, rg's vimgrep format
+		assert.deepStrictEqual(await both("grep -o -A1 'b*' f.txt"), ['bb\nxyz\nbab\n', ''], 'the matches, then the context line, no failure at the end of a line');
+		assert.deepStrictEqual(await both("grep -on -C1 'b*' f.txt | head -n 1"), ['1:bb\n', '']);
+		assert.deepStrictEqual(await both("rg --count-matches 'b*' f.txt b.txt"), ['b.txt:1\nf.txt:3\n', ''], 'empty matches are not counted');
+		const vim = await both("rg --vimgrep 'b*' f.txt");
+		assert.strictEqual(vim[1], '');
+		assert.ok(vim[0].startsWith('1:1:abb\n1:2:abb\n1:4:abb\n2:1:xyz\n'), 'every position is looked at once, the "bb" at column 2 is not stepped over: ' + vim[0]);
+	});
+
+	test('LC-15: cut -f prints a line without the delimiter whole, unless -s', async () => {
+		const { sh } = bash({});
+		const run = async (script) => (await sh.exec(script)).stdout;
+		assert.strictEqual(await run("printf 'a,b\\nx\\n' | cut -d, -f2"), 'b\nx\n');
+		assert.strictEqual(await run("printf 'a,b\\nx\\n' | cut -s -d, -f2"), 'b\n');
+		assert.strictEqual(await run("printf 'a,b\\nx\\n' | cut -d, -f1"), 'a\nx\n');
+		assert.strictEqual(await run("printf 'a\\tb\\nx\\n' | cut -f2"), 'b\nx\n');
+		assert.strictEqual(await run("printf 'a,b,c\\nxyz\\n' | cut -d, -f1,3"), 'a,c\nxyz\n');
+		assert.strictEqual(await run("printf 'a,b\\n\\n' | cut -d, -f2"), 'b\n\n', 'an empty line has no delimiter either');
+	});
+
+	/* ------------------------------------------------------------------------------------------ LC-16, LC-17, LC-18 */
+
+	test('LC-16: every Date of the engine is the shell\'s: the zone of the process is never asked, the command\'s TZ is', async () => {
+		const was = process.env.TZ;
+		try {
+			for (const zone of ['UTC', 'America/New_York', 'Asia/Tokyo']) {
+				process.env.TZ = zone;
+				const { fs: fsys, sh } = bash({ '/w/f': 'x', '/w/old': 'o', '/w/new': 'n' });
+				// the times a stat hands out are LcDate, as the overlay's are
+				const D = require(path.join(ENGINE, 'zone.js')).LcDate;
+				await fsys.utimes('/w/f', new D(1580000000000), new D(1580000000000));
+				await fsys.utimes('/w/old', new D(1000000), new D(1000000));
+				await fsys.utimes('/w/new', new D(2000000), new D(2000000));
+				const r = await sh.exec("date -u -d '2020-02-29 12:00:00' '+%F %T'; date -d '2020-02-29 12:00:00' +%s; date -d 'Feb 29 2020 12:00' '+%F %T'; date -d '2020-02-29 12:00:00 +0100' +%s; TZ=Asia/Tokyo date -d '2020-02-29 12:00:00' +%s; TZ=Asia/Tokyo date -d '@0' '+%F %T'; ls -l f | awk '{print $6, $7, $8}'; TZ=America/New_York ls -l f | awk '{print $6, $7, $8}'; find . -type f -newer old | sort | tr '\n' ' '; echo; echo $(( $(date -d '2020-01-01' +%s) % 86400 ))");
+				assert.strictEqual(r.stderr, '', zone);
+				assert.strictEqual(r.stdout, [
+					'2020-02-29 12:00:00', '1582977600', '2020-02-29 12:00:00', '1582974000',
+					'1582945200', '1970-01-01 09:00:00',
+					'Jan 26 2020', 'Jan 25 2020',
+					'./f ./new ', '0',
+				].join('\n') + '\n', zone + ': ' + r.stdout);
+			}
+		} finally {
+			if (was === undefined) { delete process.env.TZ; } else { process.env.TZ = was; }
+		}
+	});
+
+	test('LC-17: echo, printf, pwd, alias, unalias and history are found without PATH, like the builtins of bash; cat is not', async () => {
+		const { sh } = bash({ '/w/f': 'x\n' });
+		const r = await sh.exec('PATH=/nonexistent; echo a; printf "b\\n"; pwd; alias foo=bar; unalias foo; history | wc -l; cat f; echo "rc=$?"');
+		assert.ok(r.stdout.startsWith('a\nb\n/w\n'), r.stdout);
+		assert.ok(r.stdout.includes('rc=127'), r.stdout);
+		assert.ok(/cat: command not found/.test(r.stderr), r.stderr);
+		const q = await sh.exec('PATH=/x:/y; command -v echo; echo "rc=$?"; echo hi | cat');
+		assert.ok(/echo/.test(q.stdout), q.stdout);
+	});
+
+	test('LC-18: the thirteen builtins that are declared and not implemented are not found, listed or documented', async () => {
+		const names = ['bg', 'caller', 'disown', 'enable', 'fc', 'fg', 'jobs', 'kill', 'suspend', 'times', 'trap', 'ulimit', 'umask'];
+		const { sh } = bash({});
+		const r = await sh.exec(`command -v ${names.join(' ')}; echo "found=$?"; type trap umask 2>&1; help | tr -s ' ' '\\n' | grep -c -x -e ${names.join(' -e ')}; help cd | head -1; command -v cd read wait history help builtin`);
+		const lines = r.stdout.split('\n');
+		assert.strictEqual(lines[0], 'found=1');
+		assert.ok(/not found/.test(lines[1]) && /not found/.test(lines[2]), r.stdout);
+		assert.strictEqual(lines[3], '0');
+		assert.ok(lines[4].startsWith('cd:'), lines[4]);
+		assert.deepStrictEqual(lines.slice(5, 11), ['cd', 'read', 'wait', 'history', 'help', 'builtin']);
+		for (const n of names) {
+			const x = await sh.exec(`${n} 2>&1 </dev/null; echo "rc=$?"`);
+			assert.strictEqual(x.stdout, `bash: ${n}: command not found\nrc=127\n`, n);
+		}
 	});
 
 	for (const t of tests) {

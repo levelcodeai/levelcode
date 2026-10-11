@@ -3,6 +3,9 @@
  *
  *  README section 3b: what the terminal consumes. A session keeps what must survive a worker's death (cwd,
  *  env), runs one script at a time, stops with Ctrl+C, and completes for Tab from the workspace itself.
+ *
+ *  What it cannot keep it says: when a terminal's engine is replaced and its /tmp held files, the next line
+ *  carries one note that /tmp was emptied; variables over the bounds are named, not silently lost.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -15,6 +18,7 @@ const assert = require('assert');
 const path = require('path');
 
 const { createRig, flush } = require(path.join(__dirname, '..', 'helpers', 'shell-runtime-fakes.js'));
+const { observe } = require(path.join(__dirname, '..', 'helpers', 'shell-conformance.js'));
 const { PROGRAMS, BUILTINS } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'info.js'));
 
 let n = 0;
@@ -81,6 +85,65 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		r.rt.dispose();
 	});
 
+	await test('a variable over the bounds is left out - that one, not everything after it - and the line says so, once', async () => {
+		const r = createRig();
+		const KiB = 1024;
+		/** @type {Record<string, string>} */ let toCarry = {};
+		r.engines.state.onRun = async (run, w, h) => { h.done({ env: toCarry }); };
+		const s = r.rt.createSession();
+		// `export BIG=<300 KiB>; export A=1`
+		toCarry = { FIRST: '1', BIG: 'x'.repeat(300 * KiB), A: '1', LAST: '2' };
+		let res = await s.run('export BIG=...; export A=1');
+		assert.deepStrictEqual(Object.keys(s.env).sort(), ['A', 'FIRST', 'LAST']);
+		assert.deepStrictEqual(res.notes, ['[LevelCode Shell: 1 environment variable was not kept: this shell carries at most 512 variables and 256 KiB of them]']);
+		// the byte bound: name + value, exactly 256 KiB is kept, one more is not
+		toCarry = { EXACT: 'y'.repeat(256 * KiB - 'EXACT'.length) };
+		res = await s.run('x');
+		assert.strictEqual(Object.keys(s.env).join(','), 'EXACT');
+		assert.deepStrictEqual(res.notes, []);
+		toCarry = { OVER: 'y'.repeat(256 * KiB - 'OVER'.length + 1), SMALL: 's' };
+		res = await s.run('x');
+		assert.strictEqual(Object.keys(s.env).join(','), 'SMALL');
+		assert.strictEqual(res.notes.length, 1);
+		// two that fit separately and not together: the first stays
+		toCarry = { P: 'p'.repeat(200 * KiB), Q: 'q'.repeat(100 * KiB), R: 'r' };
+		res = await s.run('x');
+		assert.deepStrictEqual(Object.keys(s.env), ['P', 'R']);
+		assert.ok(/1 environment variable was not kept/.test(res.notes[0]));
+		// the count bound: 512 are kept, the 513th and the ones after it are counted
+		toCarry = {};
+		for (let i = 0; i < 512; i++) { toCarry['V' + i] = 'v'; }
+		res = await s.run('x');
+		assert.strictEqual(Object.keys(s.env).length, 512);
+		assert.deepStrictEqual(res.notes, [], 'exactly 512 is allowed');
+		toCarry['V512'] = 'v';
+		toCarry['V513'] = 'v';
+		res = await s.run('x');
+		assert.strictEqual(Object.keys(s.env).length, 512);
+		assert.ok(!('V512' in s.env));
+		assert.deepStrictEqual(res.notes, ['[LevelCode Shell: 2 environment variables were not kept: this shell carries at most 512 variables and 256 KiB of them]']);
+		// names that are not names are not variables, and are not "left out"
+		toCarry = { 'BAD NAME': 'x', OK: 'y', NUM: /** @type {any} */ (5) };
+		res = await s.run('x');
+		assert.deepStrictEqual(res.notes, []);
+		r.rt.dispose();
+	});
+
+	await test('the same for an agent\'s opts.env: the one that does not fit is named on stderr, the rest are in the engine\'s environment', async () => {
+		const r = createRig();
+		const seen = [];
+		r.engines.state.onRun = async (run, w, h) => { seen.push(run.env); h.done({}); };
+		const env = /** @type {Record<string, string>} */ ({ BIG: 'x'.repeat(300 * 1024), SMALL: 's' });
+		for (let i = 0; i < 520; i++) { env['W' + i] = 'w'; }
+		const o = observe(r.rt.spawnAgent('x', { cwd: '/scratch', env }), 3000);
+		await o.closed;
+		assert.strictEqual(seen[0].SMALL, 's');
+		assert.ok(!('BIG' in seen[0]));
+		assert.ok(/\[LevelCode Shell: \d+ environment variables were not kept/.test(o.stderr), o.stderr);
+		assert.strictEqual(o.stderr.split('were not kept').length - 1, 1, 'once');
+		r.rt.dispose();
+	});
+
 	await test('session.env cannot be used to change the session: it is a frozen copy', async () => {
 		const r = createRig();
 		const s = r.rt.createSession();
@@ -97,10 +160,50 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		const s = r.rt.createSession();
 		await s.run('a', { cols: 120 });
 		await s.run('b', { cols: 0 });
-		await s.run('c', { cols: 'wide' });
+		await s.run('c', { cols: /** @type {any} */ ('wide') });
 		await s.run('d', { cols: 80.7 });
 		await s.run('e');
 		assert.deepStrictEqual(cols, ['120', undefined, undefined, '80', undefined]);
+		r.rt.dispose();
+	});
+
+	await test('its height reaches the engine as LINES the same way; the bounds are 1 and 9999, and a fraction below 1 is nothing', async () => {
+		const r = createRig();
+		/** @type {Array<[string|undefined, string|undefined]>} */ const seen = [];
+		r.engines.state.onRun = async (run, w, h) => { seen.push([run.env.COLUMNS, run.env.LINES]); h.done({}); };
+		const s = r.rt.createSession();
+		/** @type {any[]} */
+		const sizes = [[120, 30], [1, 1], [9999, 9999], [10000, 10000], [0, 0], [0.5, 0.5], [-3, -3], [NaN, NaN], [Infinity, Infinity], ['40', '12'], [80.9, 24.9], [undefined, undefined]];
+		for (const [cols, rows] of sizes) { await s.run('x', { cols, rows }); }
+		await s.run('only rows', { rows: 40 });
+		assert.deepStrictEqual(seen, [
+			['120', '30'], ['1', '1'], ['9999', '9999'], [undefined, undefined], [undefined, undefined], [undefined, undefined], [undefined, undefined],
+			[undefined, undefined], [undefined, undefined], [undefined, undefined], ['80', '24'], [undefined, undefined], [undefined, '40'],
+		]);
+		r.rt.dispose();
+	});
+
+	await test('run() never throws: a script that is not text, a disposed or busy session are rejections, whatever the script is', async () => {
+		const r = createRig();
+		r.engines.state.onRun = async () => { await new Promise(() => { }); };
+		const s = r.rt.createSession();
+		const hostile = Object.create(null);
+		for (const bad of [42, undefined, null, {}, [], hostile, { toString() { throw new Error('no'); } }, Symbol('x'), () => 'echo']) {
+			/** @type {any} */ let p;
+			assert.doesNotThrow(() => { p = s.run(/** @type {any} */ (bad)); }, 'threw synchronously for ' + typeof bad);
+			assert.ok(p instanceof Promise);
+			await assert.rejects(p, (e) => e instanceof Error && e.message === 'script must be text');
+		}
+		assert.strictEqual(r.engines.workers.length, 0, 'nothing was started for any of them');
+		const first = s.run('hang');
+		await flush();
+		/** @type {any} */ let busy;
+		assert.doesNotThrow(() => { busy = s.run('x'); });
+		await assert.rejects(busy, (e) => e instanceof Error && e.message === 'busy');
+		s.stop();
+		assert.strictEqual((await first).how, 'aborted');
+		s.dispose();
+		await assert.rejects(s.run('x'), (e) => e instanceof Error && e.message === 'disposed');
 		r.rt.dispose();
 	});
 
@@ -149,6 +252,30 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		assert.ok(/\/tmp\/work is gone .* starting in \/scratch/.test(res.notes[0]), res.notes.join('\n'));
 		assert.strictEqual(s.cwd, '/scratch');
 		r.rt.dispose();
+	});
+
+	await test('the note that a folder in the engine\'s memory is gone shows its name, it does not pass it', async () => {
+		const r = createRig();
+		const evil = '/tmp/\x1b]0;pwned\x07\x1b[2J\x9b6n';
+		r.engines.state.onRun = async (run, w, h) => { h.done({ cwd: run.script === 'cd' ? evil : run.cwd }); };
+		const s = r.rt.createSession();
+		await s.run('cd');
+		await r.clock.advance(60000);
+		const res = await s.run('pwd');
+		assert.strictEqual(res.notes.length, 1);
+		assert.ok(!/[\x00-\x08\x0B-\x1F\x7F-\x9F]/.test(res.notes[0]), JSON.stringify(res.notes[0]));
+		assert.ok(res.notes[0].includes('/tmp/\u{241B}]0;pwned\u{2407}\u{241B}[2J[U+009B]6n is gone'), res.notes[0]);
+		r.rt.dispose();
+		// and the folder it starts in again is the visitor's own, with whatever its path holds
+		const odd = createRig({ workspace: { folders: [{ name: 'w', uri: 'file:///work/\x1b[2Jdir' }] } });
+		odd.engines.state.onRun = async (run, w, h) => { h.done({ cwd: run.script === 'cd' ? '/tmp/x' : run.cwd }); };
+		const t = odd.rt.createSession();
+		await t.run('cd');
+		await odd.clock.advance(60000);
+		const back = await t.run('pwd');
+		assert.ok(!/[\x00-\x08\x0B-\x1F\x7F-\x9F]/.test(back.notes.join('\n')), JSON.stringify(back.notes));
+		assert.ok(back.notes[0].includes('starting in /work/\u{241B}[2Jdir'), back.notes[0]);
+		odd.rt.dispose();
 	});
 
 	await test('the engine\'s own /tmp survives a replaced worker as a place to start: it is always there in a new one', async () => {
@@ -207,6 +334,162 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		assert.strictEqual(r.clock.pending, 0, 'and no timer is left behind');
 	});
 
+	/* ===== a terminal's /tmp does not outlive its engine, and it says so ===================================== */
+
+	/** The engine's side: it keeps `files` in /tmp and says so in `done`, as the real one does for a terminal run. */
+	function holdsTmp(/** @type {any} */ r, /** @type {() => number} */ files) {
+		r.engines.state.onRun = async (/** @type {any} */ run, /** @type {any} */ w, /** @type {any} */ h) => {
+			if (run.script === 'hang') { await new Promise(() => { }); }
+			h.done({ exitCode: 0, how: 'exit', cwd: run.cwd, stats: { tmpFiles: files() } });
+		};
+	}
+	const EMPTIED = /^\[LevelCode Shell: \/tmp was emptied when the shell restarted \(it held (\d+) files?\)/;
+
+	await test('a replaced worker whose /tmp held files: the NEXT line says /tmp was emptied, once; with nothing in /tmp, nothing is said', async () => {
+		const r = createRig();
+		let files = 3;
+		holdsTmp(r, () => files);
+		const s = r.rt.createSession();
+		assert.deepStrictEqual((await s.run('echo x > /tmp/a')).notes, [], 'the first line has nothing to say');
+		assert.deepStrictEqual((await s.run('cat /tmp/a')).notes, [], 'the same worker: /tmp is there');
+		await r.clock.advance(120000);                     // (twice the idle time: see the next test)
+		assert.strictEqual(r.engines.workers[0].terminated, true);
+		const after = await s.run('cat /tmp/a');
+		assert.strictEqual(after.notes.length, 1, after.notes.join('\n'));
+		const m = EMPTIED.exec(after.notes[0]);
+		assert.ok(m && m[1] === '3', after.notes[0]);
+		assert.ok(/Keep what matters in a workspace folder\]$/.test(after.notes[0]), after.notes[0]);
+		assert.deepStrictEqual((await s.run('echo again')).notes, [], 'said once');
+		// an empty /tmp (or an engine that does not say) is not worth a line
+		files = 0;
+		await s.run('rm -r /tmp/*');
+		await r.clock.advance(60000);
+		assert.strictEqual(r.engines.workers[r.engines.workers.length - 1].terminated, true, 'with nothing in /tmp the usual minute is enough');
+		assert.deepStrictEqual((await s.run('x')).notes, []);
+		r.rt.dispose();
+	});
+
+	await test('a worker that holds /tmp files is kept for TWICE the idle time; one that holds none, for once', async () => {
+		const r = createRig();
+		holdsTmp(r, () => 1);
+		const s = r.rt.createSession();
+		await s.run('x');
+		await r.clock.advance(60000);
+		assert.strictEqual(r.engines.workers[0].terminated, false, 'a minute is not enough for one that holds files');
+		await r.clock.advance(59999);
+		assert.strictEqual(r.engines.workers[0].terminated, false);
+		await r.clock.advance(1);
+		assert.strictEqual(r.engines.workers[0].terminated, true, 'two minutes are');
+		// and the clock restarts with use
+		const t = createRig();
+		holdsTmp(t, () => 1);
+		const u = t.rt.createSession();
+		await u.run('a');
+		await t.clock.advance(100000);
+		await u.run('b');
+		await t.clock.advance(100000);
+		assert.strictEqual(t.engines.workers[0].terminated, false, '100 s after the last line is still inside 120 s');
+		await t.clock.advance(20000);
+		assert.strictEqual(t.engines.workers[0].terminated, true);
+		r.rt.dispose();
+		t.rt.dispose();
+	});
+
+	await test('every way a terminal\'s worker is replaced says the same on the next line: Ctrl+C, a deadline, a crash, an eviction, other folders', async () => {
+		const ways = /** @type {Array<[string, (r: any, s: any) => Promise<void>]>} */ ([
+			['Ctrl+C', async (r, s) => { const p = s.run('hang'); await flush(); s.stop(); await p; }],
+			['a deadline', async (r, s) => { const p = s.run('hang', { timeoutMs: 1000 }); await flush(); await r.clock.advance(1000); await p; }],
+			['a crash', async (r, s) => { r.engines.state.onRun = async (run, w) => { w.crash('out of memory'); }; await s.run('boom'); holdsTmp(r, () => 5); }],
+			['an eviction', async (r) => {
+				const others = [1, 2, 3, 4].map(() => r.rt.createSession());
+				for (const o of others) { await r.clock.advance(1000); await o.run('x'); }
+			}],
+			['other folders', async (r) => { r.ws.setFolders([{ name: 'other', uri: 'file:///other' }]); }],
+		]);
+		for (const [way, replace] of ways) {
+			const r = createRig({ limits: way === 'an eviction' ? { workers: { max: 4 } } : undefined });
+			holdsTmp(r, () => 5);
+			const s = r.rt.createSession();
+			assert.deepStrictEqual((await s.run('echo x > /tmp/a')).notes, [], way);
+			await replace(r, s);
+			const res = await s.run('ls /tmp');
+			const emptied = res.notes.filter((t) => EMPTIED.test(t));
+			assert.strictEqual(emptied.length, 1, way + ': ' + res.notes.join('\n'));
+			assert.ok(/held 5 files/.test(emptied[0]), way);
+			assert.deepStrictEqual((await s.run('ls /tmp')).notes.filter((t) => EMPTIED.test(t)), [], way + ': said once');
+			r.rt.dispose();
+		}
+	});
+
+	await test('the note travels with the run that has the new worker, even if that run is stopped; it is not lost and not said twice', async () => {
+		const r = createRig();
+		holdsTmp(r, () => 2);
+		const s = r.rt.createSession();
+		await s.run('echo x > /tmp/a');
+		await r.clock.advance(120000);
+		const p = s.run('hang');
+		await flush();
+		s.stop();
+		const stopped = await p;
+		assert.strictEqual(stopped.how, 'aborted');
+		assert.strictEqual(stopped.notes.filter((t) => EMPTIED.test(t)).length, 1, 'the stopped run says it: ' + stopped.notes.join('\n'));
+		assert.deepStrictEqual((await s.run('ls /tmp')).notes.filter((t) => EMPTIED.test(t)), []);
+		r.rt.dispose();
+	});
+
+	await test('a run that never got as far as a new worker has not said it yet: the next one does', async () => {
+		const r = createRig();
+		holdsTmp(r, () => 4);
+		const s = r.rt.createSession();
+		await s.run('x');
+		await r.clock.advance(120000);
+		// no worker can be had: the cap is taken by four busy runs of others
+		const others = [1, 2, 3, 4].map(() => r.rt.createSession());
+		r.engines.state.onRun = async () => { await new Promise(() => { }); };
+		others.forEach((o) => { o.run('hang'); });
+		await flush();
+		const refused = await s.run('x');
+		assert.strictEqual(refused.how, 'error');
+		assert.deepStrictEqual(refused.notes.filter((t) => EMPTIED.test(t)), [], 'nothing was replaced yet');
+		others.forEach((o) => o.dispose());
+		holdsTmp(r, () => 0);
+		const ok = await s.run('x');
+		assert.strictEqual(ok.notes.filter((t) => EMPTIED.test(t)).length, 1);
+		r.rt.dispose();
+	});
+
+	await test('an engine that does not report its /tmp (no stats.tmpFiles) never gets the note; an agent run never does either', async () => {
+		const r = createRig();
+		r.engines.state.onRun = async (run, w, h) => { h.done({ stats: { durationMs: 3 } }); };
+		const s = r.rt.createSession();
+		await s.run('x');
+		await r.clock.advance(60000);
+		assert.strictEqual(r.engines.workers[0].terminated, true, 'and the usual minute applies');
+		assert.deepStrictEqual((await s.run('x')).notes, []);
+		const rr = createRig();
+		holdsTmp(rr, () => 9);
+		for (let i = 0; i < 2; i++) {
+			const o = observe(rr.rt.spawnAgent('x', { cwd: '/scratch' }), 3000);
+			await o.closed;
+			await rr.clock.advance(60000);
+			assert.strictEqual(rr.engines.workers[rr.engines.workers.length - 1].terminated, true, 'an agent\'s worker is idle for the usual minute, whatever its /tmp held');
+			assert.ok(!/\/tmp was emptied/.test(o.stderr), o.stderr);
+		}
+		const nonsense = createRig();
+		const t = nonsense.rt.createSession();
+		for (const bad of [-1, NaN, Infinity, '3', null, {}, 0.4]) {
+			nonsense.engines.state.onRun = async (run, w, h) => { h.done({ stats: { tmpFiles: bad } }); };
+			await t.run('x');
+			await nonsense.clock.advance(60000);
+			const last = nonsense.engines.workers[nonsense.engines.workers.length - 1];
+			assert.strictEqual(last.terminated, true, JSON.stringify(bad) + ' is not a count of files: the usual minute applies');
+			assert.deepStrictEqual((await t.run('x')).notes, [], JSON.stringify(bad));
+		}
+		r.rt.dispose();
+		rr.rt.dispose();
+		nonsense.rt.dispose();
+	});
+
 	/* ===== completion =============================================================================== */
 
 	await test('complete(command): what exists, by prefix, sorted, the engine\'s own list once it has started, builtins too', async () => {
@@ -238,6 +521,8 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		assert.deepStrictEqual(await s.complete('path', '/scratch/sr'), ['/scratch/src/']);
 		assert.deepStrictEqual(await s.complete('path', 'nothing/'), []);
 		assert.deepStrictEqual(await s.complete('path', '~/x'), []);
+		r.ws.put('/scratch/~/inside.txt', 'x');
+		assert.deepStrictEqual(await s.complete('path', '~/'), [], 'a name that starts with ~ is the shell\'s home, not a folder of that name');
 		assert.deepStrictEqual(await s.complete('path', '../../../etc/'), [], 'above the mounts there is nothing of the workspace');
 		r.rt.dispose();
 	});

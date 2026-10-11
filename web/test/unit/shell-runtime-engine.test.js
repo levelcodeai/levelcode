@@ -179,6 +179,20 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		x.rt.dispose();
 	});
 
+	await test('a folder at /mnt and the root of a file system together: the engine takes the layout (they were a hang of the host)', async () => {
+		const x = setup({ workspace: { folders: [{ name: 'mnt', uri: 'file:///mnt' }, { name: 'root', uri: 'file:///' }] } });
+		x.ws.put('file:/mnt/m.txt', 'M');
+		x.ws.put('file:/etc/hostname', 'host');
+		const s = x.rt.createSession({ cwd: '/etc' });
+		assert.strictEqual(s.cwd, '/lc-mnt/root/etc');
+		const r = await line(s, 'pwd; cat /mnt/m.txt; cat hostname; echo new > /lc-mnt/root/made.txt');
+		assert.strictEqual(r.out, '/lc-mnt/root/etc\nMhost');
+		assert.strictEqual(r.applied, 1);
+		assert.strictEqual(x.ws.text('file:/made.txt'), 'new\n');
+		assert.ok(/mounted at \/lc-mnt\/root, not at \//.test(r.notes.join('')), JSON.stringify(r.notes));
+		x.rt.dispose();
+	});
+
 	await test('non-ASCII text and file names survive the round trip', async () => {
 		const x = setup();
 		x.ws.put('/scratch/caf\u{E9}.txt', 'cr\u{E8}me \u{65E5}\u{672C}\n');

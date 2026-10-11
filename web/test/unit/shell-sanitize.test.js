@@ -12,7 +12,7 @@
 const assert = require('assert');
 const path = require('path');
 
-const { forTerminal, forDisplay } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'sanitize.js'));
+const { forTerminal, forDisplay, forNote } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'sanitize.js'));
 
 let n = 0;
 function test(/** @type {string} */ name, /** @type {() => void} */ fn) { fn(); n++; console.log('  ok - ' + name); }
@@ -46,6 +46,43 @@ const INVISIBLE = [
 ];
 
 /* ----- classes, both functions ---------------------------------------------------------------- */
+
+test('EVERY format character (Unicode category Cf) is shown by both functions: there is no row to forget', () => {
+	let seen = 0;
+	for (let cp = 0; cp <= 0x10FFFF; cp++) {
+		if (cp >= 0xD800 && cp <= 0xDFFF) { continue; }
+		const ch = chr(cp);
+		if (!/^\p{Cf}$/u.test(ch)) { continue; }
+		seen++;
+		const s = 'a' + ch + 'b';
+		assert.strictEqual(forDisplay(s), 'a' + bracket(cp) + 'b', 'forDisplay left U+' + cp.toString(16) + ' (Cf)');
+		assert.strictEqual(forTerminal(s), 'a' + bracket(cp) + 'b', 'forTerminal left U+' + cp.toString(16) + ' (Cf)');
+	}
+	assert.ok(seen >= 20, 'the engine knows only ' + seen + ' format characters');
+});
+
+test('the named Cf characters the table above does not list: Arabic number signs, the end of ayah, the Syriac abbreviation mark, Egyptian and musical format controls', () => {
+	const cps = [0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605, 0x06DD, 0x070F, 0x0890, 0x0891, 0x08E2, 0x110BD, 0x110CD, 0x1D173, 0x1D17A, 0xE0001];
+	for (const cp of cps) {
+		const s = 'a' + chr(cp) + 'b';
+		assert.strictEqual(forDisplay(s), 'a' + bracket(cp) + 'b', 'forDisplay U+' + cp.toString(16));
+		assert.strictEqual(forTerminal(s), 'a' + bracket(cp) + 'b', 'forTerminal U+' + cp.toString(16));
+	}
+});
+
+test('the header is true: nothing Unicode calls default-ignorable or a format character is left in forDisplay, and what is left alone are spaces', () => {
+	for (let cp = 0; cp <= 0x10FFFF; cp++) {
+		if (cp >= 0xD800 && cp <= 0xDFFF) { continue; }
+		const ch = chr(cp);
+		const out = forDisplay('a' + ch + 'b');
+		if (/^[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]$/u.test(ch) && cp !== 0x0A && cp !== 0x09) { assert.notStrictEqual(out, 'a' + ch + 'b', 'U+' + cp.toString(16) + ' is invisible and was left'); }
+	}
+	// the blank-looking spaces are unchanged on purpose: a gap is a gap
+	for (const cp of [0x00A0, 0x1680, ...span(0x2000, 0x200A), 0x202F, 0x205F, 0x3000]) {
+		assert.strictEqual(forDisplay('a' + chr(cp) + 'b'), 'a' + chr(cp) + 'b');
+		assert.strictEqual(forTerminal('a' + chr(cp) + 'b'), 'a' + chr(cp) + 'b');
+	}
+});
 
 for (const [cls, cps] of INVISIBLE) {
 	test('every ' + cls + ' is shown as [U+XXXX], by both', () => {
@@ -169,6 +206,81 @@ const NOT_EMOJI = [
 for (const [what, input, want] of NOT_EMOJI) {
 	test('not an emoji sequence: ' + what, () => { assert.strictEqual(forTerminal(input), want); });
 }
+
+/**
+ * The joiners of scripts that are written with them. forTerminal keeps ONE between two letters or marks of the same
+ * script (Arabic, or one of the Indic scripts); forDisplay shows it always.
+ * @type {Array<[string, string]>}
+ */
+const WRITTEN_WITH_JOINERS = [
+	['Persian: می‌خواهم (ZWNJ inside the word)', '\u{645}\u{6CC}\u{200C}\u{62E}\u{648}\u{627}\u{647}\u{645}'],
+	['Persian: a plural suffix after a ZWNJ', '\u{6A9}\u{62A}\u{627}\u{628}\u{200C}\u{647}\u{627}'],
+	['Urdu: ZWNJ between Arabic-script letters', '\u{6A9}\u{62A}\u{627}\u{628}\u{200C}\u{6CC}'],
+	['Devanagari: a ZWJ asks for the half form after a virama', '\u{915}\u{94D}\u{200D}\u{937}'],
+	['Devanagari: a ZWNJ asks for the explicit virama', '\u{915}\u{94D}\u{200C}\u{937}'],
+	['Bengali: ra + ZWJ + virama + ya', '\u{9B0}\u{200D}\u{9CD}\u{9AF}'],
+	['Malayalam: ZWNJ between letter and sign', '\u{D15}\u{D4D}\u{200C}\u{D15}'],
+	['Sinhala: ZWJ after a virama', '\u{D9A}\u{DCA}\u{200D}\u{DBB}'],
+	['Tamil', '\u{B95}\u{BCD}\u{200C}\u{BB7}'],
+];
+for (const [what, s] of WRITTEN_WITH_JOINERS) {
+	test('written with joiners: ' + what + ' is drawn by forTerminal and shown by forDisplay', () => {
+		assert.strictEqual(forTerminal(s), s);
+		assert.ok(/\[U\+200[CD]\]/.test(forDisplay(s)), forDisplay(s));
+		assert.strictEqual(forTerminal(forTerminal(s)), s, 'idempotent');
+	});
+}
+
+/** @type {Array<[string, string, string]>} */
+const JOINER_HIDDEN = [
+	['between Latin letters', 'a\u{200C}b', 'a[U+200C]b'],
+	['between a Persian letter and a Latin one', '\u{645}\u{200C}r', '\u{645}[U+200C]r'],
+	['between a Persian letter and a Devanagari one (two scripts are not a word)', '\u{645}\u{200C}\u{915}', '\u{645}[U+200C]\u{915}'],
+	['first in the string', '\u{200C}\u{645}', '[U+200C]\u{645}'],
+	['last in the string', '\u{645}\u{200C}', '\u{645}[U+200C]'],
+	['after a space', '\u{645} \u{200C}\u{62E}', '\u{645} [U+200C]\u{62E}'],
+	['doubled (a run can carry text)', '\u{645}\u{200C}\u{200C}\u{62E}', '\u{645}[U+200C][U+200C]\u{62E}'],
+	['mixed with a ZWJ', '\u{645}\u{200C}\u{200D}\u{62E}', '\u{645}[U+200C][U+200D]\u{62E}'],
+	['between digits', '1\u{200C}2', '1[U+200C]2'],
+	['between Hebrew letters (not a script that uses it)', '\u{5E9}\u{200C}\u{5DC}', '\u{5E9}[U+200C]\u{5DC}'],
+	['between Persian punctuation and a letter', '\u{60C}\u{200C}\u{62E}', '\u{60C}[U+200C]\u{62E}'],
+	['a tag character is not made a joiner by a Persian word around it', '\u{645}\u{E0041}\u{62E}', '\u{645}[U+E0041]\u{62E}'],
+	['a ZWSP in a Persian word', '\u{645}\u{200B}\u{62E}', '\u{645}[U+200B]\u{62E}'],
+	['a word joiner in a Persian word', '\u{645}\u{2060}\u{62E}', '\u{645}[U+2060]\u{62E}'],
+	['a BOM in a Persian word', '\u{645}\u{FEFF}\u{62E}', '\u{645}[U+FEFF]\u{62E}'],
+	['a VS16 in a Persian word', '\u{645}\u{FE0F}\u{62E}', '\u{645}[U+FE0F]\u{62E}'],
+];
+for (const [what, input, want] of JOINER_HIDDEN) {
+	test('a joiner that is not part of a word stays visible: ' + what, () => { assert.strictEqual(forTerminal(input), want); });
+}
+
+test('a zero-width joiner in text is a way to hide a command; the card never lets it through, in any script', () => {
+	for (const [, s] of WRITTEN_WITH_JOINERS) { assert.ok(!/[\u{200C}\u{200D}]/u.test(forDisplay(s))); }
+	assert.strictEqual(forDisplay('r\u{200C}m \u{645}\u{200C}\u{62E}'), 'r[U+200C]m \u{645}[U+200C]\u{62E}');
+});
+
+test('forNote is forDisplay on ONE line: what goes inside a note cannot add a line to it (a file named "a\n[LevelCode Shell: all applied]")', () => {
+	assert.strictEqual(forNote('a\nb\tc\rd'), 'a\u{240A}b\u{2409}c\u{240D}d');
+	assert.strictEqual(forNote('a\r\nb'), 'a\u{240D}\u{240A}b');
+	assert.strictEqual(forNote('x\n[LevelCode Shell: all applied]'), 'x\u{240A}[LevelCode Shell: all applied]');
+	assert.strictEqual(forNote('\u{1B}[2J\u{202E}\u{9B}'), '\u{241B}[2J[U+202E][U+009B]', 'and everything forDisplay does');
+	assert.strictEqual(forNote(undefined), '');
+	assert.strictEqual(forNote(Object.create(null)), '[unprintable value]');
+	assert.ok(!/[\n\t]/.test(forNote('line\nbreak\tand tab \u{2028}\u{2029}')));
+	assert.strictEqual(forNote(forNote('a\nb')), forNote('a\nb'), 'idempotent');
+});
+
+test('both are total: an object with no prototype, or a toString that throws, is text, not an exception', () => {
+	const hostile = Object.create(null);
+	const thrower = { toString() { throw new Error('no'); } };
+	for (const v of [hostile, thrower]) {
+		assert.strictEqual(forDisplay(v), '[unprintable value]');
+		assert.strictEqual(forTerminal(v), '[unprintable value]');
+	}
+	assert.strictEqual(forDisplay({ toString() { return 'a\x1bb'; } }), 'a\u{241B}b');
+	assert.strictEqual(forDisplay(0), '0');
+	assert.strictEqual(forDisplay(false), 'false');
+});
 
 /* ----- shape ------------------------------------------------------------------------------------ */
 

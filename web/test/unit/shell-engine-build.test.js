@@ -11,8 +11,10 @@
 
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const vm = require('vm');
+const { spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const REPO = path.join(__dirname, '..', '..', '..');
@@ -22,13 +24,27 @@ const ENGINE = path.join(REPO, 'web', 'shell', 'engine');
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
 
-/** A Code-OSS checkout with esbuild and buffer, or null (CI has none; a worktree is next to the main checkout). */
-function findVscode(build) {
+/**
+ * A Code-OSS checkout whose esbuild RUNS here (a checkout made on another platform has the other platform's binary),
+ * with `buffer`: its path, or why there is none (CI has none; a worktree is next to the main checkout).
+ * @returns {Promise<{ dir: string } | { why: string }>}
+ */
+async function findVscode(build) {
 	const candidates = [process.env.LEVELCODE_VSCODE, path.join(REPO, 'vscode'), path.join(REPO, '..', '..', '..', 'vscode')].filter(Boolean);
+	const tried = [];
 	for (const c of candidates) {
-		if (fs.existsSync(path.join(c, 'node_modules', 'buffer')) && build.locate('esbuild', c)) { return c; }
+		if (!fs.existsSync(path.join(c, 'node_modules', 'buffer'))) { tried.push(c + ': no node_modules/buffer'); continue; }
+		const entry = build.locate('esbuild', c);
+		if (!entry) { tried.push(c + ': no esbuild'); continue; }
+		try {
+			const esbuild = await import(pathToFileURL(entry).href);
+			await esbuild.transform('1', {});
+			return { dir: c };
+		} catch (e) {
+			tried.push(c + ': esbuild does not run here (' + String(e && e.message || e).split('\n')[0].slice(0, 100) + ')');
+		}
 	}
-	return null;
+	return { why: tried.length ? tried.join('; ') : 'no candidate (set LEVELCODE_VSCODE to a Code-OSS checkout)' };
 }
 
 async function main() {
@@ -48,10 +64,66 @@ async function main() {
 		assert.ok(build.FORBIDDEN_PACKAGES.includes('node-liblzma') && build.FORBIDDEN_PACKAGES.includes('guarded-fetch'));
 	});
 
-	const vscodeDir = findVscode(build);
-	if (!vscodeDir) {
-		console.log('  skipped - the real build and run: no Code-OSS checkout with esbuild and buffer (set LEVELCODE_VSCODE)');
+	test('the command line: --out is a directory or a file that ends in .js, --minify and --no-minify (the last wins), nothing else is accepted', () => {
+		const d = { out: '/dflt', vscode: '/vs' };
+		assert.deepStrictEqual(build.parseArgs([], d), { out: '/dflt', vscode: '/vs', minify: true });
+		assert.deepStrictEqual(build.parseArgs(['--out', '/o', '--vscode', '/v'], d), { out: '/o', vscode: '/v', minify: true });
+		assert.deepStrictEqual(build.parseArgs(['--out=/o', '--vscode=/v', '--no-minify'], d), { out: '/o', vscode: '/v', minify: false });
+		assert.strictEqual(build.parseArgs(['--no-minify', '--minify'], d).minify, true);
+		assert.strictEqual(build.parseArgs(['--minify', '--no-minify'], d).minify, false);
+		assert.deepStrictEqual(build.parseArgs(['--minify'], d), { out: '/dflt', vscode: '/vs', minify: true });
+		for (const bad of [['--bogus'], ['--out'], ['--out', '--minify'], ['--vscode='], ['--minify=false'], ['out'], ['--no-minify=1']]) {
+			assert.ok('error' in build.parseArgs(bad, d), JSON.stringify(bad));
+		}
+		assert.deepStrictEqual(build.outputPaths('/x/dir'), { dir: '/x/dir', file: '/x/dir/engine.worker.js', notice: '/x/dir/engine.worker.THIRD_PARTY.md' });
+		assert.deepStrictEqual(build.outputPaths('/x/dir/'), { dir: '/x/dir', file: '/x/dir/engine.worker.js', notice: '/x/dir/engine.worker.THIRD_PARTY.md' });
+		assert.deepStrictEqual(build.outputPaths('/x/y/custom.js'), { dir: '/x/y', file: '/x/y/custom.js', notice: '/x/y/custom.THIRD_PARTY.md' });
+		assert.deepStrictEqual(build.outputPaths('/x/y/Engine.JS'), { dir: '/x/y', file: '/x/y/Engine.JS', notice: '/x/y/Engine.THIRD_PARTY.md' });
+		assert.strictEqual(build.outputPaths('/x/jsdir').file, '/x/jsdir/engine.worker.js', 'a name that merely contains js is a folder');
+	});
+
+	test('a bad argument ends the build with status 2 and the usage, before anything is written', () => {
+		const out = path.join(os.tmpdir(), 'lc-build-never-' + process.pid);
+		for (const bad of [['--out', out, '--bogus'], ['--out'], ['--minify=no']]) {
+			const r = spawnSync(process.execPath, [path.join(ENGINE, 'build.mjs'), ...bad], { encoding: 'utf8' });
+			assert.strictEqual(r.status, 2, JSON.stringify(bad) + ' ' + r.stderr);
+			assert.ok(/usage: node web\/shell\/engine\/build\.mjs --out/.test(r.stderr), r.stderr);
+		}
+		assert.strictEqual(fs.existsSync(out), false);
+	});
+
+	// (the copy of this file that the test below starts is not asked to start another one)
+	if (!process.env.LC_BUILD_TEST_COPY) test('with no checkout the build tests say so in a line that starts !! SKIPPED, and LEVELCODE_REQUIRE_BUILD=1 makes that a failure', () => {
+		// this file, copied (with the engine it builds) to where no checkout is beside it
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-build-skip-'));
+		try {
+			fs.mkdirSync(path.join(root, 'web', 'test', 'unit'), { recursive: true });
+			fs.cpSync(ENGINE, path.join(root, 'web', 'shell', 'engine'), { recursive: true });
+			fs.copyFileSync(__filename, path.join(root, 'web', 'test', 'unit', 'shell-engine-build.test.js'));
+			const run = (env) => spawnSync(process.execPath, [path.join(root, 'web', 'test', 'unit', 'shell-engine-build.test.js')], { encoding: 'utf8', env: Object.assign({}, process.env, { LEVELCODE_VSCODE: '', LEVELCODE_REQUIRE_BUILD: '', LC_BUILD_TEST_COPY: '1' }, env) });
+			const quiet = run({});
+			assert.strictEqual(quiet.status, 0, quiet.stdout + quiet.stderr);
+			assert.ok(/^  !! SKIPPED - the real build, its run in a worker-like context, and the shell build end to end did NOT run: /m.test(quiet.stdout), quiet.stdout);
+			assert.ok(/LEVELCODE_REQUIRE_BUILD=1/.test(quiet.stdout));
+			const strict = run({ LEVELCODE_REQUIRE_BUILD: '1' });
+			assert.notStrictEqual(strict.status, 0);
+			assert.ok(/LEVELCODE_REQUIRE_BUILD=1 and the real build/.test(strict.stderr), strict.stderr);
+			assert.ok(!/SKIPPED/.test(strict.stdout));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	const found = await findVscode(build);
+	if ('why' in found) {
+		const line = 'the real build, its run in a worker-like context, and the shell build end to end did NOT run: ' + found.why;
+		if (process.env.LEVELCODE_REQUIRE_BUILD === '1') {
+			throw new Error('LEVELCODE_REQUIRE_BUILD=1 and ' + line);
+		}
+		// loud on purpose: a green run that built nothing must not look like one that did
+		console.log('  !! SKIPPED - ' + line + ' (set LEVELCODE_VSCODE to a Code-OSS checkout; LEVELCODE_REQUIRE_BUILD=1 makes this a failure)');
 	} else {
+		const vscodeDir = found.dir;
 		/** @type {any} */
 		let built = null;
 		test('the build: one IIFE, the licence notice kept, and nothing it must not contain', async () => {
@@ -133,6 +205,54 @@ async function main() {
 			} finally {
 				clearInterval(pump);
 				for (const t of timers) { clearTimeout(t); }
+			}
+		});
+
+		test('the command line builds a directory or a named file, minified or not, and writes the notice next to it', () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-build-cli-'));
+			try {
+				const run = (args) => spawnSync(process.execPath, [path.join(ENGINE, 'build.mjs'), '--vscode', vscodeDir, ...args], { encoding: 'utf8' });
+				const a = run(['--out', path.join(dir, 'dist')]);
+				assert.strictEqual(a.status, 0, a.stderr);
+				assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'dist')).sort(), ['engine.worker.THIRD_PARTY.md', 'engine.worker.js']);
+				assert.ok(fs.statSync(path.join(dir, 'dist', 'engine.worker.js')).isFile(), 'a FILE, not a folder');
+				const b = run(['--out', path.join(dir, 'named', 'my-engine.js'), '--no-minify']);
+				assert.strictEqual(b.status, 0, b.stderr);
+				assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'named')).sort(), ['my-engine.THIRD_PARTY.md', 'my-engine.js']);
+				assert.ok(fs.statSync(path.join(dir, 'named', 'my-engine.js')).isFile());
+				const min = fs.statSync(path.join(dir, 'dist', 'engine.worker.js')).size;
+				const readable = fs.statSync(path.join(dir, 'named', 'my-engine.js')).size;
+				assert.ok(readable > min * 1.3, `--no-minify is bigger: ${readable} against ${min}`);
+				const c = run(['--out', path.join(dir, 'explicit.js'), '--no-minify', '--minify']);
+				assert.strictEqual(c.status, 0, c.stderr);
+				assert.strictEqual(fs.statSync(path.join(dir, 'explicit.js')).size, min, '--minify is the minified bundle (the last of the two wins)');
+				assert.ok(/engine\.worker\.js: \d+ bytes raw/.test(a.stdout) && /my-engine\.js: \d+ bytes raw/.test(b.stdout), a.stdout + b.stdout);
+				assert.strictEqual(fs.readFileSync(path.join(dir, 'dist', 'engine.worker.THIRD_PARTY.md'), 'utf8'), fs.readFileSync(path.join(ENGINE, 'vendor', 'just-bash', '3.6.0', 'THIRD_PARTY.md'), 'utf8'));
+			} finally {
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		test('the shell build, end to end (web/shell/build.mjs): the extension, the engine worker as a FILE, the notices, and the same bytes as the engine build', async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-build-shell-'));
+			try {
+				const r = spawnSync(process.execPath, [path.join(REPO, 'web', 'shell', 'build.mjs'), '--out', dir, '--vscode', vscodeDir, '--minify'], { encoding: 'utf8' });
+				assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+				const out = path.join(dir, 'levelcode-shell');
+				for (const f of ['package.json', 'package.nls.json', 'extension.js', 'engine.worker.js', 'engine.worker.THIRD_PARTY.md', 'THIRD_PARTY_NOTICES.md']) {
+					assert.ok(fs.existsSync(path.join(out, f)), f + ' is there: ' + fs.readdirSync(out).join(' '));
+				}
+				assert.ok(fs.statSync(path.join(out, 'engine.worker.js')).isFile(), 'engine.worker.js is a file (it was a folder when --out was a path)');
+				assert.ok(fs.statSync(path.join(out, 'extension.js')).size > 1000);
+				const direct = await build.buildEngine({ vscodeDir, minify: true });
+				assert.strictEqual(fs.readFileSync(path.join(out, 'engine.worker.js'), 'utf8'), direct.code, '--minify reaches the engine build');
+				const plain = spawnSync(process.execPath, [path.join(REPO, 'web', 'shell', 'build.mjs'), '--out', dir, '--vscode', vscodeDir], { encoding: 'utf8' });
+				assert.strictEqual(plain.status, 0, plain.stdout + plain.stderr);
+				assert.ok(fs.statSync(path.join(out, 'engine.worker.js')).size > direct.bytes * 1.3, 'without --minify the engine is readable');
+				assert.ok(/MODIFIED by LevelCode/.test(fs.readFileSync(path.join(out, 'engine.worker.js'), 'utf8')));
+				assert.ok(/just-bash 3\.6\.0 \(Apache-2\.0, Copyright 2025 Vercel Inc\.\), \*\*modified by LevelCode\*\*/.test(fs.readFileSync(path.join(out, 'THIRD_PARTY_NOTICES.md'), 'utf8')));
+			} finally {
+				fs.rmSync(dir, { recursive: true, force: true });
 			}
 		});
 	}

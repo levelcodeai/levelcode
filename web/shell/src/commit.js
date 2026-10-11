@@ -15,13 +15,17 @@
  *    3. A write that fails part-way is reported as what it is: "applied N of M", where it stopped and why.
  *       It is not atomic across files (a series of awaits) and the text does not pretend it is.
  *
+ *  Stopping is allowed while the set is being JUDGED (reading is harmless) and not while it is being WRITTEN
+ *  (half of a `mv` is worse than all of it): `cancelled()` is asked before each file is checked and once more
+ *  before the first write.
+ *
  *  Pure: every file-system call, and the question "is this path inside a folder", is injected (`io`), so it is
  *  tested with plain node. A path is judged by `io.resolve`, never by string tests of its own.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
 
-const { forDisplay } = require('./sanitize');
+const { forNote } = require('./sanitize');
 
 /** How many reasons a note spells out; the rest are counted. */
 const SHOWN = 6;
@@ -45,7 +49,8 @@ const UNNORMALISED = /(^|\/)\.\.?(\/|$)|\/\/|.\/$/;
  * @property {(target: any) => Promise<void>} remove            one file, or one EMPTY folder
  *
  * @typedef {{ writeFile: number, writeRun: number, entries: number }} Caps
- * @typedef {{ total: number, applied: number, failed: number, refused: boolean, notes: string[] }} CommitResult
+ * @typedef {{ total: number, applied: number, failed: number, refused: boolean, cancelled?: boolean, notes: string[] }} CommitResult
+ *     `cancelled`: it was asked to stop before it had written anything; nothing was applied and it has no note
  */
 
 /** @param {string} p */
@@ -55,7 +60,7 @@ function dirOf(p) { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(
 /** @param {string} a @param {string} b */
 function byPath(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
 /** @param {unknown} e */
-function reasonOf(e) { return forDisplay(String((e && /** @type {any} */ (e).message) || e).slice(0, 160)); }
+function reasonOf(e) { return forNote((e && /** @type {any} */ (e).message) || e).slice(0, 160); }
 /** @param {Uint8Array} a @param {Uint8Array} b */
 function sameBytes(a, b) {
 	if (a.length !== b.length) { return false; }
@@ -84,7 +89,7 @@ function checkChangeSet(changes, io, caps) {
 	let bytes = 0;
 	for (const c of changes) {
 		if (!c || typeof c !== 'object' || !KINDS.has(c.kind) || typeof c.path !== 'string') { out.push('an entry of the change set is malformed'); continue; }
-		const p = forDisplay(c.path);
+		const p = forNote(c.path);
 		if (c.path[0] !== '/' || UNNORMALISED.test(c.path)) { out.push(p + ' is not a normal absolute path'); continue; }
 		if (!io.resolve(c.path)) { out.push(p + ' is outside the workspace folders'); continue; }
 		// A disk that ignores case (macOS, Windows: the usual File System Access folder) cannot tell two paths apart
@@ -95,7 +100,9 @@ function checkChangeSet(changes, io, caps) {
 		if (first !== undefined) {
 			out.push(first === c.path
 				? p + ' appears twice in the change set'
-				: p + ' differs from ' + forDisplay(first) + ' only in letter case or accent form, which a disk that ignores case cannot keep apart (a move would become a deletion)');
+				: p + ' differs from ' + forNote(first) + ' only in letter case or accent form. A disk that ignores case cannot keep the two apart'
+					+ ' (a move would become a deletion), and this shell cannot tell which kind of disk the folder is on, so it refuses on every one'
+					+ ' (a case-sensitive disk, like the scratch workspace, would have kept both): use one spelling, or rename in a command of its own');
 			continue;
 		}
 		folded.set(key, c.path);
@@ -113,15 +120,17 @@ function checkChangeSet(changes, io, caps) {
 
 /**
  * Is anything on disk no longer what the command saw? Reads each path once, and a file's bytes only when its
- * size still matches. A path that cannot be checked is a conflict, not a pass.
- * @param {Change[]} changes @param {CommitIO} io
+ * size still matches. A path that cannot be checked is a conflict, not a pass. Stops looking, and returns what
+ * it has, as soon as `cancelled()` says so (the caller then discards the answer).
+ * @param {Change[]} changes @param {CommitIO} io @param {() => boolean} [cancelled]
  * @returns {Promise<string[]>}
  */
-async function findConflicts(changes, io) {
+async function findConflicts(changes, io, cancelled) {
 	/** @type {string[]} */ const out = [];
 	for (const c of changes) {
+		if (cancelled && cancelled()) { break; }
 		const t = io.resolve(c.path);
-		const p = forDisplay(c.path);
+		const p = forNote(c.path);
 		try {
 			const st = await io.stat(t);
 			if (c.kind === 'write' || c.kind === 'delete') {
@@ -146,9 +155,10 @@ async function findConflicts(changes, io) {
  * @param {Change[]} changes
  * @param {CommitIO} io
  * @param {Caps} caps
+ * @param {() => boolean} [cancelled]  true: stop, before anything is written (see the header)
  * @returns {Promise<CommitResult>}
  */
-async function commitChanges(changes, io, caps) {
+async function commitChanges(changes, io, caps, cancelled) {
 	const refuse = (/** @type {string[]} */ reasons, /** @type {number} */ total) => {
 		const notes = reasons.slice(0, SHOWN).map((r) => note('refused: ' + r));
 		if (reasons.length > SHOWN) { notes.push(note('and ' + (reasons.length - SHOWN) + ' more refused')); }
@@ -159,7 +169,10 @@ async function commitChanges(changes, io, caps) {
 	const problems = checkChangeSet(changes, io, caps);
 	if (problems.length) { return refuse(problems, total); }
 	if (total === 0) { return { total: 0, applied: 0, failed: 0, refused: false, notes: [] }; }
-	const conflicts = await findConflicts(changes, io);
+	const conflicts = await findConflicts(changes, io, cancelled);
+	// Asked again here, after the last await of the check: from this line to the end of the function nothing waits
+	// for a decision, and what is written is written whole.
+	if (cancelled && cancelled()) { return { total, applied: 0, failed: total, refused: false, cancelled: true, notes: [] }; }
 	if (conflicts.length) { return refuse(conflicts, total); }
 
 	const of = (/** @type {string} */ kind) => /** @type {any[]} */ (changes.filter((c) => c.kind === kind));
@@ -204,7 +217,7 @@ async function commitChanges(changes, io, caps) {
 		const s = /** @type {{ path: string, reason: string }} */ (stopped);
 		return {
 			total, applied, failed: total - applied, refused: false,
-			notes: [note('applied ' + applied + ' of ' + total + ' file changes; stopped at ' + forDisplay(s.path) + ': ' + s.reason + '. The rest were not applied.')],
+			notes: [note('applied ' + applied + ' of ' + total + ' file changes; stopped at ' + forNote(s.path) + ': ' + s.reason + '. The rest were not applied.')],
 		};
 	}
 	return { total, applied, failed: 0, refused: false, notes: [] };

@@ -16,8 +16,10 @@
 // @ts-check
 'use strict';
 
-// date, touch -t and stat print local time, as GNU does; the reference ran with TZ unset, which is UTC
-process.env.TZ = 'UTC';
+// The reference ran with TZ unset, which is UTC, and so does the shell: whatever zone the process (the visitor's
+// browser) is in is never asked. Every case is run under three of them and must give the same answer.
+const ZONES = ['UTC', 'America/New_York', 'Asia/Tokyo'];
+const PROCESS_TZ = process.env.TZ;
 
 const assert = require('assert');
 const crypto = require('crypto');
@@ -132,8 +134,8 @@ const KNOWN_DIFFERENCES = [
 		cases: { 'indirect-decl': 'stdout', 'bash-source': 'stdout', 'env-vars': 'stdout', 'printf-v': 'stdout' },
 	},
 	{
-		why: 'engine: the options are not there: du -b, wc -L, cut --output-delimiter, uniq -f, tail -f, diff -r and -w',
-		cases: { 'du-ab': 'stdout+exit+stderr', 'wc-multi-ops': 'stdout', 'x-wc-L': 'stdout+exit+stderr', 'cut-variants': 'stdout+exit+stderr', 'uniq-flags': 'stdout+stderr', 'tail-f-follow': 'stdout', 'diff-r': 'stdout+stderr', 'diff-context-ignore': 'stdout+stderr' },
+		why: 'engine: the options are not there: wc -L, cut --output-delimiter, uniq -f, tail -f, diff -r and -w',
+		cases: { 'wc-multi-ops': 'stdout', 'x-wc-L': 'stdout+exit+stderr', 'cut-variants': 'stdout+exit+stderr', 'uniq-flags': 'stdout+stderr', 'tail-f-follow': 'stdout', 'diff-r': 'stdout+stderr', 'diff-context-ignore': 'stdout+stderr' },
 	},
 	{
 		why: 'engine: rm -v lists the directory it was given, not each file under it',
@@ -166,7 +168,7 @@ const KNOWN_DIFFERENCES = [
 ];
 
 /** The most entries the list may have: it can only shrink. */
-const MAX_DIFFERENCES = 74;
+const MAX_DIFFERENCES = 73;
 
 const INLINE_MAX = golden.meta.inlineMax;
 function encodeBytes(buf) {
@@ -208,23 +210,9 @@ async function main() {
 	const tests = [];
 	const test = (name, fn) => tests.push({ name, fn });
 
-	test('the recording: GNU bash 5.1 and coreutils 8.32, run twice, with what was left out because it was not repeatable', () => {
-		assert.ok(/GNU bash 5\.1\.16 and coreutils 8\.32/.test(golden.meta.reference));
-		assert.strictEqual(golden.meta.runs, 2);
-		assert.deepStrictEqual(golden.meta.flaky, ['patch', 'tar-gz', 'whoami-uname']);
-		assert.strictEqual(golden.meta.cases, golden.cases.length);
-		assert.ok(golden.cases.length >= 500, 'the batteries and the added cases: ' + golden.cases.length);
-		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra']);
-		const size = fs.statSync(path.join(REPO, 'web', 'test', 'fixtures', 'shell', 'golden', 'golden.json')).size;
-		assert.ok(size < 400 * 1024, 'fixtures stay small: ' + size);
-	});
-
-	test('the list of known differences names only cases that exist, and may only shrink', () => {
-		for (const name of table.keys()) { assert.ok(byName.has(name), 'listed but not in golden.json: ' + name); }
-		assert.ok(table.size <= MAX_DIFFERENCES, `the list has ${table.size} entries, it may have ${MAX_DIFFERENCES}`);
-	});
-
-	test('every case: the engine does what GNU did, or is listed as differing in exactly the listed fields', async () => {
+	async function everyCase(zoneName) {
+		matched = 0;
+		problems.length = 0;
 		for (const c of golden.cases) {
 			const tree = makeTree({});
 			const h = await makeHost({ Engine: E, tree });
@@ -251,8 +239,37 @@ async function main() {
 			if (!fields.length) { problems.push(`${c.name}: now matches GNU. Remove it from KNOWN_DIFFERENCES (it was: ${known.why})`); continue; }
 			if (!same(fields, known.fields)) { problems.push(`${c.name}: differs in ${fields.join('+')}, listed as ${known.fields.join('+')} (${known.why})`); }
 		}
-		assert.deepStrictEqual(problems, []);
+		assert.deepStrictEqual(problems, [], 'process zone ' + zoneName);
 		assert.strictEqual(matched + table.size, golden.cases.length);
+	}
+
+
+
+	test('the recording: GNU bash 5.1 and coreutils 8.32, run twice, with what was left out because it was not repeatable', () => {
+		assert.ok(/GNU bash 5\.1\.16 and coreutils 8\.32/.test(golden.meta.reference));
+		assert.strictEqual(golden.meta.runs, 2);
+		assert.deepStrictEqual(golden.meta.flaky, ['patch', 'tar-gz', 'whoami-uname']);
+		assert.strictEqual(golden.meta.cases, golden.cases.length);
+		assert.ok(golden.cases.length >= 500, 'the batteries and the added cases: ' + golden.cases.length);
+		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra', 'round2']);
+		const size = fs.statSync(path.join(REPO, 'web', 'test', 'fixtures', 'shell', 'golden', 'golden.json')).size;
+		assert.ok(size < 400 * 1024, 'fixtures stay small: ' + size);
+	});
+
+	test('the list of known differences names only cases that exist, and may only shrink', () => {
+		for (const name of table.keys()) { assert.ok(byName.has(name), 'listed but not in golden.json: ' + name); }
+		assert.ok(table.size <= MAX_DIFFERENCES, `the list has ${table.size} entries, it may have ${MAX_DIFFERENCES}`);
+	});
+
+	test('every case, in each of three zones of the process: the engine does what GNU did, or is listed as differing in exactly the listed fields', async () => {
+		try {
+			for (const zoneName of ZONES) {
+				process.env.TZ = zoneName;
+				await everyCase(zoneName);
+			}
+		} finally {
+			if (PROCESS_TZ === undefined) { delete process.env.TZ; } else { process.env.TZ = PROCESS_TZ; }
+		}
 		assert.ok(matched / golden.cases.length > 0.84, 'the share that is identical: ' + matched + ' of ' + golden.cases.length);
 	});
 

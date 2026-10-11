@@ -25,6 +25,19 @@ class EventEmitter {
 class ThemeIcon { constructor(id) { this.id = id; } }
 class ThemeColor { constructor(id) { this.id = id; } }
 class TerminalProfile { constructor(options) { this.options = options; } }
+class Position { constructor(line, character) { this.line = line; this.character = character; } }
+class Range { constructor(start, end) { this.start = start; this.end = end; } }
+/** The part of vscode.Uri the link provider uses: parse, path, with, toString. */
+class Uri {
+	constructor(scheme, authority, p) { this.scheme = scheme; this.authority = authority; this.path = p; }
+	static parse(/** @type {string} */ s) {
+		const m = /^([a-z][a-z0-9+.-]*):\/\/([^/]*)(.*)$/i.exec(s);
+		if (!m) { throw new Error('not a uri: ' + s); }
+		return new Uri(m[1], m[2], m[3] || '/');
+	}
+	with(/** @type {{ path?: string }} */ change) { return new Uri(this.scheme, this.authority, change.path === undefined ? this.path : change.path); }
+	toString() { return this.scheme + '://' + this.authority + this.path; }
+}
 
 /**
  * The parts of `vscode` the terminal support uses. `terminals` records what was created and shown.
@@ -42,6 +55,11 @@ function fakeVscode(o) {
 		/** @type {Record<string, any>} */ providers: {},
 		/** @type {string[]} */ messages: [],
 		/** @type {any} */ active: undefined,
+		/** @type {any} */ linkProvider: null,
+		/** What was opened in an editor: { uri, options }. @type {any[]} */ opened: [],
+		/** The uris the fake file system was asked about. @type {string[]} */ stats: [],
+		/** What the fake file system has: uri string -> vscode.FileType (1 file, 2 folder). @type {Record<string, number>} */ files: {},
+		/** Commands run through executeCommand. @type {string[]} */ executed: [],
 	};
 	/** @param {any} options */
 	const makeTerminal = (options) => {
@@ -58,7 +76,7 @@ function fakeVscode(o) {
 		return t;
 	};
 	const vscode = {
-		EventEmitter, ThemeIcon, ThemeColor, TerminalProfile,
+		EventEmitter, ThemeIcon, ThemeColor, TerminalProfile, Uri, Position, Range,
 		window: {
 			createTerminal(/** @type {any} */ options) {
 				const t = makeTerminal(options);
@@ -70,6 +88,14 @@ function fakeVscode(o) {
 			registerTerminalProfileProvider(/** @type {string} */ id, /** @type {any} */ provider) {
 				state.providers[id] = provider;
 				return { dispose() { delete state.providers[id]; } };
+			},
+			registerTerminalLinkProvider(/** @type {any} */ provider) {
+				state.linkProvider = provider;
+				return { dispose() { state.linkProvider = null; } };
+			},
+			showTextDocument(/** @type {any} */ uri, /** @type {any} */ options) {
+				state.opened.push({ uri: String(uri), options });
+				return Promise.resolve({});
 			},
 			onDidOpenTerminal: opened.event,
 			onDidCloseTerminal: closed.event,
@@ -83,8 +109,20 @@ function fakeVscode(o) {
 				state.commands[id] = fn;
 				return { dispose() { delete state.commands[id]; } };
 			},
+			executeCommand(/** @type {string} */ id, /** @type {any[]} */ ...args) {
+				state.executed.push(id + ' ' + args.map(String).join(' '));
+				return Promise.resolve(undefined);
+			},
 		},
 		workspace: {
+			fs: {
+				stat(/** @type {any} */ uri) {
+					const key = String(uri);
+					state.stats.push(key);
+					if (Object.prototype.hasOwnProperty.call(state.files, key)) { return Promise.resolve({ type: state.files[key], size: 1 }); }
+					return Promise.reject(Object.assign(new Error('not found'), { code: 'FileNotFound' }));
+				},
+			},
 			getConfiguration(/** @type {string} */ section) {
 				return { get: (/** @type {string} */ k, /** @type {any} */ d) => (settings[section + '.' + k] !== undefined ? settings[section + '.' + k] : d) };
 			},
@@ -176,7 +214,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 /**
  * A ShellPty on fakes, with a terminal model fed by its output.
- * @param {{ cols?: number, rows?: number, cwd?: string, folders?: any[], info?: any, session?: any, history?: any, open?: boolean | { columns: number, rows: number } | undefined, outputLimit?: number, getRandomValues?: any, onInput?: () => void, complete?: any }} [o]
+ * @param {{ cols?: number, rows?: number, cwd?: string, folders?: any[], info?: any, session?: any, history?: any, open?: boolean | { columns: number, rows: number } | undefined, outputLimit?: number, getRandomValues?: any, onInput?: () => void, onCwd?: (cwd: string) => void, complete?: any }} [o]
  */
 function makePty(o) {
 	const opts = o || {};
@@ -203,6 +241,7 @@ function makePty(o) {
 		clearTimeout: timers.clearTimeout,
 		outputLimit: opts.outputLimit,
 		onInput: opts.onInput,
+		onCwd: opts.onCwd,
 	});
 	const vt = new VT(cols, rows);
 	/** @type {string[]} */ const writes = [];
@@ -219,4 +258,4 @@ function makePty(o) {
 	};
 }
 
-module.exports = { EventEmitter, fakeVscode, fakeSession, manualTimers, makePty, settle, VT, TERMINAL };
+module.exports = { EventEmitter, Uri, fakeVscode, fakeSession, manualTimers, makePty, settle, VT, TERMINAL };

@@ -19,17 +19,47 @@
 //     `bash: p: <reason>` with status 1 and not run the command, exactly as bash does. So a redirection to a missing
 //     folder or to /etc fails the way it would in a real shell, visibly, and is not a silent drop.
 //   * Every thrown error has a message that STARTS with '<CODE>: ' and a `.code` (the engine tests both).
+//   * Which of them are `denied`: only what the shell REFUSES (a path outside the folders, a protected path, a cap).
+//     An ordinary failure of the same call (the parent is missing or is a file, the target is a directory) is what
+//     the command was going to get from a real file system: it is thrown, the command reports it as GNU would, and the
+//     rest of the script's changes still apply.
+//   * Text is lossless: a file that is not valid UTF-8 is decoded with its bad bytes escaped (U+DC80..U+DCFF, Python's
+//     surrogateescape) and encoded back to the same bytes, so a command that reads a file as text and writes it back
+//     (`sed -i` with no match, `tee`, `sort -o`) changes nothing it was not asked to change.
 //
 // And one thing this file adds: a refused read says so in `notes`, because the engine renders EVERY read error as
 // "No such file or directory", which would make the model believe that a file that is there is not.
 'use strict';
 // @ts-check
 
-const enc = new TextEncoder();
+const { decodeBytes: decodeText, encodeText } = require('./text.js');
+/** the times a stat hands out are Dates whose local fields are the shell's zone (engine/zone.js), not the visitor's */
+const { LcDate } = require('./zone.js');
+
 const dec = new TextDecoder('utf-8');
 
 /** The numbers README §7 gives for an agent run; a caller passes its own. */
 const DEFAULT_CAPS = Object.freeze({ readFile: 4 << 20, readRun: 16 << 20, writeFile: 1 << 20, writeRun: 8 << 20, entries: 2000 });
+
+/**
+ * The caps a host asked for, each one only if it is a finite number above zero; anything else (undefined, NaN, a
+ * string, 0, a negative number) is the default. A comparison with NaN is false for every number, so an unvalidated
+ * cap that was mistyped would not be a smaller limit but no limit at all.
+ * @param {any} given
+ * @returns {{ readFile: number, readRun: number, writeFile: number, writeRun: number, entries: number }}
+ */
+function validCaps(given) {
+	/** @type {any} */
+	const out = {};
+	for (const k of Object.keys(DEFAULT_CAPS)) {
+		const v = given && typeof given === 'object' ? given[k] : undefined;
+		out[k] = typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : /** @type {any} */ (DEFAULT_CAPS)[k];
+	}
+	return out;
+}
+
+/** The shell's own mount point for a folder that cannot sit at its own path (the first one nothing is mounted on). */
+const MOUNT_BASES = ['/mnt', '/lc-mnt'];
 
 /** Paths that belong to the shell itself. A workspace folder that would sit on one of them is relocated. */
 const RESERVED = ['/tmp', '/home', '/bin', '/usr', '/dev', '/proc'];
@@ -133,7 +163,7 @@ function toBytes(content, encoding) {
 			for (let i = 0; i < u.length; i++) { u[i] = parseInt(content.substr(i * 2, 2), 16); }
 			return u;
 		}
-		default: return enc.encode(content);
+		default: return encodeText(content);
 	}
 }
 
@@ -143,7 +173,7 @@ function fromBytes(u8, encoding) {
 		case 'binary': case 'latin1': case 'ascii': return latin1(u8);
 		case 'base64': return btoa(latin1(u8));
 		case 'hex': return Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
-		default: return dec.decode(u8);
+		default: return decodeText(u8);
 	}
 }
 
@@ -264,6 +294,12 @@ class MemoryFs {
 	/** @param {string} p @returns {string[]} */
 	list(p) { return [...(this.kids.get(p) || [])].sort(); }
 	get size() { return this.nodes.size; }
+	/** How many files are in p, or under it. */
+	countFiles(p) {
+		let n = 0;
+		for (const [k, v] of this.nodes) { if (v.k === 'file' && isSelfOrUnder(k, p)) { n++; } }
+		return n;
+	}
 }
 
 /* ------------------------------------------------------------------------------------------------------------ */
@@ -288,10 +324,18 @@ function planMounts(folders) {
 		taken.push(host);
 		out.push({ id: f.id, name, host, at: host, relocated: false });
 	}
+	// Where relocated folders go: /mnt, unless a folder is mounted AT or ABOVE it (a folder rooted at /mnt would swallow
+	// every name below it, and the search for a free one would never end), then /lc-mnt, /lc-mnt-2 ...
+	const clash = (p) => taken.some((t) => isSelfOrUnder(p, t) || isUnder(t, p));
+	let base = '';
+	for (let i = 0; i <= taken.length + 1 && !base; i++) {
+		const cand = i < MOUNT_BASES.length ? MOUNT_BASES[i] : MOUNT_BASES[1] + '-' + (i - MOUNT_BASES.length + 2);
+		if (!taken.some((t) => isSelfOrUnder(cand, t))) { base = cand; }
+	}
 	for (const w of waiting) {
 		const slug = w.name.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^\.+/, '_') || 'folder';
-		let at = '/mnt/' + slug;
-		for (let i = 2; taken.some((t) => isSelfOrUnder(at, t) || isUnder(t, at)); i++) { at = '/mnt/' + slug + '-' + i; }
+		let at = base + '/' + slug;
+		for (let i = 2; clash(at); i++) { at = base + '/' + slug + '-' + i; }
 		taken.push(at);
 		out.push({ id: w.f.id, name: w.name, host: w.host, at, relocated: true, reason: w.reason });
 	}
@@ -328,7 +372,7 @@ function planMounts(folders) {
  * @param {() => number} [o.now]
  */
 function createOverlay(o) {
-	const caps = Object.assign({}, DEFAULT_CAPS, o.caps || {});
+	const caps = validCaps(o.caps);
 	const base = o.base;
 	const clock = o.now || (() => Date.now());
 	/**
@@ -342,7 +386,12 @@ function createOverlay(o) {
 
 	/** @type {Map<string, Staged>} overlay entries, by effective path, mounts only */
 	const entries = new Map();
-	/** @type {Map<string, Set<string>>} */
+	/**
+	 * directory -> the names below it that lead to an entry. Every ancestor of an entry is linked, up to the mount, even
+	 * one that has no entry of its own (a file written in a directory the base has): what `rm -rf` and `mv` of an
+	 * ancestor have to find is everything staged under it, however deep.
+	 * @type {Map<string, Set<string>>}
+	 */
 	const kids = new Map();
 	/** @type {Map<string, BaseStat | null>} what the base said, once, for the whole run */
 	const baseStats = new Map();
@@ -500,28 +549,44 @@ function createOverlay(o) {
 		if (next && next.k === 'file') { stagedBytes += next.data.len; }
 		if (next && next.k !== 'gone') { created++; }
 	}
+	/** where the chain of ancestors of p stops: the mount it is in */
+	function topOf(p) {
+		const r = mountOf(p);
+		return r ? r.m.at : '/';
+	}
 	function setEntry(p, e) {
 		account(entries.get(p), e);
 		entries.set(p, e);
-		const par = parentOf(p);
-		let s = kids.get(par);
-		if (!s) { s = new Set(); kids.set(par, s); }
-		s.add(baseName(p));
+		const top = topOf(p);
+		for (let q = p; q !== top && q !== '/';) {
+			const par = parentOf(q);
+			let s = kids.get(par);
+			if (!s) { s = new Set(); kids.set(par, s); }
+			const had = s.has(baseName(q));
+			s.add(baseName(q));
+			if (had) { break; }                  // the rest of the chain is linked already
+			q = par;
+		}
 	}
+	/**
+	 * The link to p stays in its parent's set: p may have entries below it (a directory whose own entry is gone, a file
+	 * under it is staged), and every reader skips a name that has no entry.
+	 */
 	function delEntry(p) {
 		account(entries.get(p), null);
 		entries.delete(p);
-		kids.get(parentOf(p))?.delete(baseName(p));
 	}
-	/** Drops every entry under p (not p itself). */
+	/** Drops every entry under p, at any depth (not p itself). */
 	function dropBelow(p) {
 		const ks = kids.get(p);
 		if (!ks) { return; }
 		for (const k of [...ks]) {
 			const c = join(p, k);
 			dropBelow(c);
-			account(entries.get(c), null);
-			entries.delete(c);
+			if (entries.has(c)) {
+				account(entries.get(c), null);
+				entries.delete(c);
+			}
 		}
 		kids.delete(p);
 	}
@@ -564,13 +629,13 @@ function createOverlay(o) {
 
 	function memStat(p) {
 		const n = memory.get(p);
-		if (n) { return { isFile: n.k === 'file', isDirectory: n.k === 'dir', isSymbolicLink: false, mode: modes.has(p) ? /** @type {number} */ (modes.get(p)) : n.mode, size: n.k === 'file' ? n.data.len : DIR_SIZE, mtime: new Date(mtimes.has(p) ? /** @type {number} */ (mtimes.get(p)) : n.mtime), identity: 'mem:' + p }; }
-		if (vdirs.has(p)) { return { isFile: false, isDirectory: true, isSymbolicLink: false, mode: 0o755, size: DIR_SIZE, mtime: new Date(0), identity: 'virt:' + p }; }
+		if (n) { return { isFile: n.k === 'file', isDirectory: n.k === 'dir', isSymbolicLink: false, mode: modes.has(p) ? /** @type {number} */ (modes.get(p)) : n.mode, size: n.k === 'file' ? n.data.len : DIR_SIZE, mtime: new LcDate(mtimes.has(p) ? /** @type {number} */ (mtimes.get(p)) : n.mtime), identity: 'mem:' + p }; }
+		if (vdirs.has(p)) { return { isFile: false, isDirectory: true, isSymbolicLink: false, mode: 0o755, size: DIR_SIZE, mtime: new LcDate(0), identity: 'virt:' + p }; }
 		return null;
 	}
 
 	function stBase(info, p, mode) {
-		return { isFile: info.type === 'file', isDirectory: info.type === 'dir', isSymbolicLink: false, mode, size: info.size, mtime: new Date(mtimes.has(p) ? /** @type {number} */ (mtimes.get(p)) : info.mtime), identity: 'ws:' + p };
+		return { isFile: info.type === 'file', isDirectory: info.type === 'dir', isSymbolicLink: false, mode, size: info.size, mtime: new LcDate(mtimes.has(p) ? /** @type {number} */ (mtimes.get(p)) : info.mtime), identity: 'ws:' + p };
 	}
 
 	async function modeOfFile(p, host, info, probe) {
@@ -739,8 +804,11 @@ function createOverlay(o) {
 
 	/**
 	 * writeFile / appendFile as the engine calls them. The OPENING of a redirection is `writeFile(p, '', 'binary')` (or
-	 * appendFile): a refusal throws, and patch LC-5 turns that into bash's own `bash: p: Permission denied`. Anything
-	 * else is a content write, which never throws.
+	 * appendFile): a refusal throws, and patch LC-5 turns that into bash's own `bash: p: Permission denied`. Any other
+	 * call is a content write: when the SHELL refuses it (outside the folders, a protected path, a cap) it is dropped
+	 * and recorded, because a throw from the end of a redirection loses the whole script's output; when the file
+	 * system would have said no to anybody (the parent is missing or a file, the target is a directory) it throws, as
+	 * a real one does, and `touch`, `tee`, `sort -o`, `split` report it the way GNU's do.
 	 */
 	async function writeOrAppend(path, content, encoding, append) {
 		const p = norm(path);
@@ -750,7 +818,7 @@ function createOverlay(o) {
 		const t = await writeTarget(p);
 		if ('error' in t) {
 			if (t.error.policy) { explainPolicy(p); }
-			if (opening) { throw fsError(t.error.code, 'open', p, t.error.text); }
+			if (opening || !t.error.policy) { throw fsError(t.error.code, 'open', p, t.error.text); }
 			deny(p, op, t.error.reason, t.error.code, `${p}: ${t.error.text}`);
 			return;
 		}
@@ -924,20 +992,29 @@ function createOverlay(o) {
 			if (inBase) { setEntry(p, { k: 'gone' }); } else { delEntry(p); }
 		},
 
+		/** `options.keepTimes` (what mv passes) gives each copy the modification time of its source. */
 		async cp(src, dst, options) {
 			src = norm(src); dst = norm(dst);
 			const recursive = !!(options && options.recursive);
 			const info = await statPath(src, 'cp', false);
+			const was = await statPath(dst, 'cp', false).then((x) => x, () => null);
 			if (info.isDirectory) {
 				if (!recursive) { throw fsError('EISDIR', 'cp', src, 'is a directory'); }
 				if (isSelfOrUnder(dst, src)) { throw fsError('EINVAL', 'cp', src, 'cannot copy a directory into itself'); }
-				const made = await statPath(dst, 'cp', false).then(() => true, () => false);
-				if (!made) { await fs.mkdir(dst, { recursive: false }); }
+				if (was && !was.isDirectory) { throw fsError('ENOTDIR', 'cp', dst, 'cannot overwrite non-directory with directory'); }
+				if (!was) { await fs.mkdir(dst, { recursive: false }); }
 				for (const d of await listDir(src, 'cp')) { await fs.cp(join(src, d.name), join(dst, d.name), options); }
 				return;
 			}
+			if (was && was.isDirectory) { throw fsError('EISDIR', 'cp', dst, 'cannot overwrite directory with non-directory'); }
 			await strictWrite(dst, await readBytes(src, 'cp'), 'cp');
+			if (options && options.keepTimes) { mtimes.set(dst, +info.mtime); }
 		},
+		/**
+		 * rename(2): a file replaces a file, a directory takes the place of a missing or EMPTY directory. A directory
+		 * onto a directory that has anything in it, a directory onto a file and a file onto a directory are errors, and
+		 * nothing has changed when they are.
+		 */
 		async mv(src, dst) {
 			src = norm(src); dst = norm(dst);
 			if (src === dst) { return; }
@@ -946,10 +1023,17 @@ function createOverlay(o) {
 			if (rs.t === 'mem' && !isScratch(src)) { throw refuse(src, 'mv', OUTSIDE(src)); }
 			const info = await statPath(src, 'mv', false);
 			if (info.isDirectory && isSelfOrUnder(dst, src)) { throw fsError('EINVAL', 'mv', src, 'cannot move a directory into itself'); }
-			await fs.cp(src, dst, { recursive: true });
+			// a directory onto a file, and a file onto a directory, are cp's errors (it is called below, before anything is
+			// removed); a directory onto one that has something in it is rename's own
+			const was = await statPath(dst, 'mv', false).then((x) => x, () => null);
+			if (was && info.isDirectory && was.isDirectory && (await listDir(dst, 'mv')).length > 0) { throw fsError('ENOTEMPTY', 'mv', dst, 'directory not empty'); }
+			// what chmod gave the source (and everything below it) goes with it; removing the source forgets it
+			/** @type {Array<[string, number]>} */
+			const carried = [];
+			for (const [k, v] of modes) { if (isSelfOrUnder(k, src)) { carried.push([dst + k.slice(src.length), v]); } }
+			await fs.cp(src, dst, { recursive: true, keepTimes: true });
 			await fs.rm(src, { recursive: true, force: false });
-			const mode = modes.get(src);
-			if (mode !== undefined) { modes.set(dst, mode); }
+			for (const [k, v] of carried) { modes.set(k, v); }
 		},
 
 		async chmod(p, mode) {
@@ -983,9 +1067,21 @@ function createOverlay(o) {
 	 *
 	 * @returns {Promise<{ changes: Change[], refused: string | null }>}
 	 *   `refused` says why the set cannot be complete or representable (too many deletions under a removed folder, a
-	 *   folder replaced by a file); the changes returned are then only the part that was worked out.
+	 *   folder replaced by a file, a folder below a removed one that could not be listed, the editor failing while it
+	 *   was worked out); the changes returned are then only the part that was worked out. Never throws.
 	 */
 	async function changes() {
+		try {
+			return await workOutChanges();
+		} catch (e) {
+			const why = String(e && /** @type {any} */ (e).message || e).replace(/^[A-Z]+: /, '').slice(0, 160);
+			stats.stagedBytes = stagedBytes;
+			stats.stagedEntries = entries.size;
+			return { changes: [], refused: `the editor could not be read while the changes were worked out (${why})` };
+		}
+	}
+
+	async function workOutChanges() {
 		/** @type {Change[]} */
 		const mk = [];
 		/** @type {Change[]} */
@@ -1017,10 +1113,13 @@ function createOverlay(o) {
 			} catch { return null; }
 		}
 
+		/** the first directory under a removed one that the base would not list */
+		let unlistable = null;
+
 		/** everything the base has below directory p: the overlay is not consulted */
 		async function walkBase(p, host, out) {
 			let list;
-			try { list = await baseList(p, host); } catch { return; }
+			try { list = await baseList(p, host); } catch { unlistable = unlistable || p; return; }
 			for (const [name, type] of list) {
 				if (out.length > walkLimit) { return; }
 				const c = join(p, name);
@@ -1047,6 +1146,7 @@ function createOverlay(o) {
 			if (bs && bs.type === 'dir') {
 				const found = [];
 				await walkBase(p, r.host, found);
+				if (unlistable) { refused = refused || `${unlistable} could not be listed, so what removing ${p} takes with it is not known`; break; }
 				if (found.length > walkLimit) { refused = refused || `${p} holds more than ${walkLimit} files and folders`; break; }
 				for (const f of found) { if (!seen.has(f.p)) { seen.add(f.p); candidates.push({ p: f.p, via: p }); } }
 			}
@@ -1126,4 +1226,4 @@ function createOverlay(o) {
 	};
 }
 
-module.exports = { createOverlay, createMemory: () => new MemoryFs(), planMounts, DEFAULT_CAPS, RESERVED, SCRATCH, DIR_SIZE, norm, fsError, isShellScript };
+module.exports = { createOverlay, createMemory: () => new MemoryFs(), planMounts, validCaps, DEFAULT_CAPS, RESERVED, SCRATCH, MOUNT_BASES, DIR_SIZE, norm, fsError, isShellScript };

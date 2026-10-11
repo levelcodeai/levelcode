@@ -18,14 +18,16 @@
 //   - a terminal made from the '+' menu does not open the panel and takes no focus until it is shown, and showing it at
 //     once loses the focus in about one run in five, so it is shown now and again after 250 ms.
 // There are no commandsToSkipShell entries: measured to have no effect.
+// File links in the output of our terminals are this extension's (links.js): the workbench's own are off.
 // @ts-check
 'use strict';
 
 const { ShellPty, NAME } = require('./pty');
 const { createHistory } = require('./history');
 const { createAgentTab } = require('./agent-tab');
+const { createLinkProvider } = require('./links');
 const sanitize = require('../sanitize');
-const { planMounts } = require('../runtime');
+const { planMounts, toMountPath } = require('../runtime');
 
 const PROFILE_ID = 'levelcode.shell';
 const CWD_KEY = 'levelcode.shell.cwd';
@@ -98,7 +100,8 @@ function createTerminalSupport(opts) {
 	 */
 	function mountedFolders() {
 		const list = runtime.folders();
-		try { return planMounts(list).map((m) => ({ name: m.name, root: m.mount })); } catch (e) { return list; }
+		// `origin` is where the folder is in the workspace: two folders of one name are told apart by what they are in
+		try { return planMounts(list).map((m) => ({ name: m.name, root: m.mount, origin: m.root })); } catch (e) { return list; }
 	}
 
 	/** One shell: its session, its pty and the options the workbench makes the terminal from. */
@@ -117,7 +120,11 @@ function createTerminalSupport(opts) {
 			onInput: () => { activity.lastInput = timers.now(); },
 			onCwd: (cwd) => {
 				lastCwd = cwd;
-				try { if (context && context.workspaceState) { context.workspaceState.update(CWD_KEY, cwd); } } catch (e) { /* not worth failing a command for */ }
+				try {
+					const r = context && context.workspaceState ? context.workspaceState.update(CWD_KEY, cwd) : undefined;
+					// update() answers with a Thenable, and a storage that is full or gone rejects it
+					if (r && typeof r.then === 'function') { r.then(undefined, () => { /* not worth an unhandled rejection */ }); }
+				} catch (e) { /* not worth failing a command for */ }
 			},
 		});
 		const options = {
@@ -172,6 +179,25 @@ function createTerminalSupport(opts) {
 		activity,
 		now: timers.now,
 	});
+
+	// The links are ours alone: a line is only ever looked at when the terminal it is in is one of ours.
+	if (typeof vscode.window.registerTerminalLinkProvider === 'function') {
+		disposables.push(vscode.window.registerTerminalLinkProvider(createLinkProvider({
+			vscode,
+			mounts: () => { try { return planMounts(runtime.folders()); } catch (e) { return []; } },
+			cwdOf(terminal) {
+				for (const s of shells) { if (s.terminal === terminal) { return s.session.cwd; } }
+				const tab = agent.terminal();
+				if (!tab || tab !== terminal) { return undefined; }
+				// the agent's runs are reported in workspace paths; the links are resolved in the engine's
+				const cwd = agent.cwd();
+				if (!cwd) { return undefined; }
+				try { return toMountPath(planMounts(runtime.folders()), cwd) || cwd; } catch (e) { return cwd; }
+			},
+			setTimeout: timers.setTimeout,
+			clearTimeout: timers.clearTimeout,
+		})));
+	}
 
 	disposables.push(
 		vscode.commands.registerCommand('levelcode.shell.new', () => { createShell(); }),

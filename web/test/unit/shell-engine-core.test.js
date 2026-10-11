@@ -664,6 +664,229 @@ async function main() {
 		assert.strictEqual(r.stdout, '0\nfine\n');
 	});
 
+	/* ---------------------------------------------------------------------------------------- round 2: what was found missing */
+
+	test('a second init that fails leaves the engine un-started: a run is answered "has not been started", not run with the old list', async () => {
+		let broken = false;
+		class Flaky extends E.Bash {}
+		const Engine = Object.assign({}, E, { Bash: Flaky, getCommandNames() { if (broken) { throw new Error('the registry is gone'); } return E.getCommandNames(); } });
+		const h = await makeHost({ Engine, tree: makeTree({ '/w': null }) });
+		assert.strictEqual((await h.run('echo hi')).stdout, 'hi\n');
+		broken = true;
+		await h.core.handle({ t: 'init', gen: 2, folders: [{ id: 'f', path: '/w', name: 'w' }] });
+		const ready = h.messages.filter((m) => m.t === 'ready');
+		assert.deepStrictEqual([ready[1].gen, ready[1].commands, ready[1].error], [2, [], 'the registry is gone']);
+		const r = await h.run('echo hi');
+		assert.deepStrictEqual([r.how, r.exitCode, r.stderr], ['error', 1, 'bash: the shell has not been started\n']);
+		assert.deepStrictEqual(h.core.commands, [...h.core.commands]);
+		broken = false;
+		await h.core.handle({ t: 'init', gen: 3, folders: [{ id: 'f', path: '/w', name: 'w' }] });
+		assert.strictEqual((await h.run('echo again')).stdout, 'again\n', 'a good init starts it again');
+	});
+
+	test('how a run ended is decided by status AND words: 124 and the deadline text, 126 and a limit line that starts with "bash: "', async () => {
+		const h = await host();
+		// the words of the engine, printed by a script that ends inside a group (what the statement hook has not seen is
+		// the tail, and only the tail is classified); the status has to agree
+		const a = await h.run("{ echo 'bash: sleep exceeded its execution deadline' >&2; exit 3; }");
+		assert.deepStrictEqual([a.how, a.exitCode], ['exit', 3]);
+		const b = await h.run("{ echo 'bash: sleep exceeded its execution deadline' >&2; exit 124; }");
+		assert.deepStrictEqual([b.how, b.exitCode], ['deadline', 124], 'the engine\'s own words and 124 are a deadline');
+		assert.strictEqual(b.stderr, 'bash: stopped: the command ran for longer than this shell allows\n');
+		const c = await h.run("{ echo 'seq: iteration limit exceeded (3)' >&2; exit 126; }");
+		assert.deepStrictEqual([c.how, c.exitCode], ['exit', 126], 'no \"bash: \" in front: not a line of the engine');
+		const d = await h.run("{ echo 'bash: seq: iteration limit exceeded (3), increase executionLimits.maxLoopIterations' >&2; exit 126; }");
+		assert.deepStrictEqual([d.how, d.exitCode], ['limit', 126]);
+		assert.strictEqual(d.stderr, 'bash: stopped by a limit of this shell: seq: iteration limit exceeded (3)\n');
+		const e = await h.run("{ echo 'bash: seq: iteration limit exceeded (3)' >&2; exit 125; }");
+		assert.deepStrictEqual([e.how, e.exitCode], ['exit', 125], 'the status decides too');
+		const f = await h.run("{ echo 'bash: execution aborted' >&2; exit 124; }");
+		assert.deepStrictEqual([f.how, f.exitCode], ['exit', 124], 'an abort is a message from the host, not the script\'s words');
+		assert.strictEqual(f.stderr, 'bash: execution aborted\n', 'and it is not reworded');
+	});
+
+	test('a script that leaves through exit still has /dev/stdout, /dev/stderr and its refused writes shown', async () => {
+		const h = await host({}, { start: false });
+		await h.core.handle({ t: 'init', gen: 1, folders: [{ id: 'f', path: '/w', name: 'w' }] });
+		// tee writes the path /dev/stdout through the file system (a redirection to it is the engine's own): a device the
+		// overlay collects, and the group that exits is a statement the hook never sees finish
+		const r = await h.run("{ echo to-stdout | tee /dev/stdout > /dev/null; echo to-stderr | tee /dev/stderr > /dev/null; seq 1 5000 > big.txt; exit 3; }", { caps: { writeFile: 1000 } });
+		assert.deepStrictEqual([r.how, r.exitCode], ['exit', 3]);
+		assert.strictEqual(r.stdout, 'to-stdout\n');
+		assert.ok(r.stderr.includes('to-stderr\n'), r.stderr);
+		assert.ok(/bash: \/w\/big\.txt: not written: it would be .+, over the 1000 bytes/.test(r.stderr), r.stderr);
+		assert.strictEqual(r.done.stats.withheld, 'denied');
+		assert.deepStrictEqual(r.done.changes, []);
+		// at the end of a script that does not exit, the same
+		const s = await h.run("echo a | tee /dev/stdout > /dev/null; seq 1 5000 > big2.txt", { caps: { writeFile: 1000 } });
+		assert.strictEqual(s.stdout, 'a\n');
+		assert.ok(/not written/.test(s.stderr));
+	});
+
+	test('the limits table has exactly these numbers (the ones README §7 does not name included)', () => {
+		const KiB = 1024;
+		assert.deepStrictEqual(Object.assign({}, LIMITS), {
+			maxCommandCount: 100000, maxLoopIterations: 100000, maxCallDepth: 100,
+			maxOutputSize: 8 * MiB, maxStringLength: 16 * MiB, maxLiveBytes: 64 * MiB, maxInputBytes: 32 * MiB, maxExecutionTimeMs: 600000,
+			maxAwkIterations: 100000, maxSedIterations: 100000, maxJqIterations: 1000000, maxWorkUnits: 100000000,
+			maxSourceBytes: 8 * MiB, maxExecDepth: 64, maxSubstitutionDepth: 50, maxSourceDepth: 100, maxHeredocSize: 16 * MiB, maxArrayElements: 100000, maxBraceExpansionResults: 100000, maxFileDescriptors: 1024,
+			maxTraversalEntries: 100000, maxTraversalDepth: 256, maxTraversalWork: 100000, maxGlobOperations: 100000,
+			maxQueryTokens: 25000, maxQueryDepth: 256, maxQueryElements: 100000, maxAwkParserTokens: 25000, maxAwkParserDepth: 128, maxAwkParserOperations: 100000, maxCsvRows: 100000, maxCsvCells: 1000000,
+			maxFileSystemBytes: 128 * MiB, maxDatabaseBytes: 64 * MiB, maxDatabaseResultBytes: 16 * MiB, maxArchiveBytes: 128 * MiB, maxArchiveCompressedBytes: 64 * MiB, maxArchiveEntryBytes: 64 * MiB, maxArchiveEntries: 100000,
+			maxWorkerMessageBytes: 16 * MiB, maxSqliteTimeoutMs: 5000, maxPythonTimeoutMs: 10000, maxJsTimeoutMs: 10000, maxJsBridgeRequests: 100000, maxExtensionCleanupTimeMs: 100,
+		});
+		assert.strictEqual(Object.keys(LIMITS).length, 45);
+		assert.ok(Object.isFrozen(LIMITS));
+		void KiB;
+	});
+
+	test('caps in a run message that are not numbers above zero are the defaults: a typo in the host does not remove a limit', async () => {
+		const h = await host();
+		// 1 MiB + 1 to one file: over the default cap whatever the host wrote
+		for (const caps of [{ writeFile: undefined }, { writeFile: NaN }, { writeFile: '1000000000' }, { writeFile: 0 }, { writeFile: -1 }, 'unlimited', null]) {
+			const r = await h.run('{ head -c 1048576 /dev/zero; head -c 1 /dev/zero; } | tr "\\0" x > big.bin; echo end', { caps: /** @type {any} */ (caps) });
+			assert.strictEqual(r.stdout, 'end\n', JSON.stringify(caps));
+			assert.strictEqual(r.done.denied.length, 1, JSON.stringify(caps));
+			assert.strictEqual(r.done.denied[0].reason, 'cap-file');
+			assert.deepStrictEqual(r.done.changes, []);
+		}
+		const ok = await h.run('head -c 100 /dev/zero | tr "\\0" x > small.bin', { caps: { writeFile: 100 } });
+		assert.strictEqual(ok.done.denied.length, 0);
+		const tight = await h.run('head -c 101 /dev/zero | tr "\\0" x > small.bin', { caps: { writeFile: 100 } });
+		assert.strictEqual(tight.done.denied.length, 1);
+	});
+
+	test('init.commands narrows compat.js too: a wrapper is there only with its program, an added program only when named', async () => {
+		const h = await host({ '/w/a.txt': 'hello\n' }, { start: false });
+		await h.core.handle({ t: 'init', gen: 1, folders: [{ id: 'f', path: '/w', name: 'w' }], commands: ['echo', 'cat', 'cmp', 'sort'] });
+		const ready = h.messages.find((m) => m.t === 'ready');
+		assert.deepStrictEqual(ready.commands, ['cat', 'cmp', 'echo', 'sort']);
+		const r = await h.run('grep hello a.txt; echo "rc=$?"; id; echo "rc=$?"; cat a.txt; cmp a.txt a.txt; echo "rc=$?"');
+		assert.ok(/grep: command not found/.test(r.stderr) && /id: command not found/.test(r.stderr), r.stderr);
+		assert.ok(!/internal error/.test(r.stderr), 'no wrapper without its program');
+		assert.strictEqual(r.stdout, 'rc=127\nrc=127\nhello\nrc=0\n');
+		const all = await host({}, {});
+		const names = all.messages.find((m) => m.t === 'ready').commands;
+		for (const n of ['grep', 'id', 'cmp', 'od', 'realpath', 'du', 'sort']) { assert.ok(names.includes(n), n); }
+		// a program named but not in the engine is not made up
+		const h2 = await host({}, { start: false });
+		await h2.core.handle({ t: 'init', gen: 1, folders: [{ id: 'f', path: '/w', name: 'w' }], commands: ['grep', 'nonexistent'] });
+		assert.deepStrictEqual(h2.messages.find((m) => m.t === 'ready').commands, ['grep']);
+	});
+
+	test('a session that keeps /tmp is told how many files it holds, and one that does not says none', async () => {
+		const h = await host();
+		const a = await h.run('echo 1 > /tmp/a; echo 2 > /tmp/b; mkdir /tmp/d; echo 3 > /tmp/d/c; echo 4 > /home/user/h', { keepTmp: true });
+		assert.deepStrictEqual([a.done.stats.tmpFiles, a.done.stats.homeFiles], [3, 1]);
+		const b = await h.run('rm /tmp/a; echo 5 > /tmp/e', { keepTmp: true });
+		assert.deepStrictEqual([b.done.stats.tmpFiles, b.done.stats.homeFiles], [3, 1]);
+		const c = await h.run('echo 1 > /tmp/a');
+		assert.deepStrictEqual([c.done.stats.tmpFiles, c.done.stats.homeFiles], [0, 0], 'nothing is kept: nothing to lose');
+	});
+
+	test('text that is not UTF-8 goes through the engine untouched, and what is shown is U+FFFD, never a lone surrogate', async () => {
+		const bin = (...b) => Uint8Array.from(b);
+		const h = await host({ '/w/lat': bin(0x63, 0x61, 0x66, 0xe9, 0x0a), '/w/two': bin(0xc3, 0xa9, 0xff, 0x0a), '/w/bom': bin(0xef, 0xbb, 0xbf, 0x68, 0x69, 0x0a), '/w/utf': 'café ñ ü 日本\n' });
+		const r = await h.run('sed -i "s/zzz/y/" lat two bom utf; cat lat | cat > c1; x=$(cat two); printf "%s\\n" "$x" > c2; sort -o s1 lat; tee t1 < lat > /dev/null; echo "$(cat bom)" > b2; cat lat; cat utf | sort; cut -f1 utf');
+		assert.deepStrictEqual(r.done.changes.map((c) => c.path).sort(), ['/w/b2', '/w/c1', '/w/c2', '/w/s1', '/w/t1'], 'sed -i with no match changes nothing');
+		const by = Object.fromEntries(r.done.changes.map((c) => [c.path, [...c.after]]));
+		assert.deepStrictEqual(by['/w/c1'], [0x63, 0x61, 0x66, 0xe9, 0x0a]);
+		assert.deepStrictEqual(by['/w/c2'], [0xc3, 0xa9, 0xff, 0x0a]);
+		assert.deepStrictEqual(by['/w/s1'], [0x63, 0x61, 0x66, 0xe9, 0x0a]);
+		assert.deepStrictEqual(by['/w/t1'], [0x63, 0x61, 0x66, 0xe9, 0x0a]);
+		assert.deepStrictEqual(by['/w/b2'], [0xef, 0xbb, 0xbf, 0x68, 0x69, 0x0a]);
+		assert.strictEqual(r.stdout, 'caf\ufffd\ncaf\u00e9 \u00f1 \u00fc \u65e5\u672c\ncaf\u00e9 \u00f1 \u00fc \u65e5\u672c\n');
+		assert.ok(!/[\udc80-\udcff]/.test(r.stdout + r.stderr), 'no lone surrogate reaches the host');
+		for (const m of r.outs) { assert.ok(!/[\udc80-\udcff]/.test(m.text)); }
+	});
+
+	test('a host that cannot list or stat something below a removed folder: the run is withheld as incomplete with a reason, status 1, nothing after the output', async () => {
+		const tree = makeTree({ '/w': null, '/w/d/a.txt': 'a\n', '/w/d/sub/f.txt': 'f\n', '/w/ok.txt': 'ok\n' });
+		for (const fail of [{ op: 'readDir', path: '/w/d/sub', code: 'EACCES' }, { op: 'stat', path: '/w/d/sub/f.txt', code: 'EIO' }]) {
+			const posts = [];
+			const core = createCore({
+				Engine: E,
+				post: (m) => {
+					posts.push(m);
+					if (m.t !== 'fs') { return; }
+					setImmediate(() => {
+						if (m.op === fail.op && m.path === fail.path) { core.handle({ t: 'fsr', rid: m.rid, ok: false, error: { code: fail.code, message: 'the editor said ' + fail.code } }); return; }
+						const n = tree.nodes.get(m.path);
+						if (m.op === 'stat') { core.handle(n === undefined ? { t: 'fsr', rid: m.rid, ok: false, error: { code: 'ENOENT', message: 'no' } } : { t: 'fsr', rid: m.rid, ok: true, value: { type: n === null ? 'dir' : 'file', size: n ? n.length : 0, mtime: 1 } }); } else if (m.op === 'readDir') { core.handle({ t: 'fsr', rid: m.rid, ok: true, value: tree.list(m.path) }); } else { core.handle({ t: 'fsr', rid: m.rid, ok: true, value: n.slice() }); }
+					});
+				},
+			});
+			await core.handle({ t: 'init', gen: 1, folders: [{ id: 'f', path: '/w', name: 'w' }] });
+			await core.handle({ t: 'run', id: 1, script: 'echo new > new.txt; rm -rf d; echo "rc=$?"', cwd: '/w', env: {} });
+			const done = posts.filter((m) => m.t === 'done')[0];
+			const out = posts.filter((m) => m.t === 'out').map((m) => m.text).join('');
+			assert.strictEqual(posts.filter((m) => m.t === 'done').length, 1);
+			assert.strictEqual(out, 'rc=0\n', JSON.stringify(fail) + ': ' + out);
+			assert.deepStrictEqual([done.how, done.exitCode, done.changes.length, done.stats.withheld], ['exit', 1, 0, 'incomplete'], JSON.stringify(fail));
+			assert.ok(done.notes.some((n) => /^None of its file changes were applied: /.test(n)), JSON.stringify(done.notes));
+			assert.ok(done.notes.some((n) => /editor/.test(n)), 'what failed is said: ' + JSON.stringify(done.notes));
+			assert.ok(!/bash: EIO|bash: EACCES/.test(out), 'no raw error line');
+		}
+	});
+
+	test('PATH replaced does not take away the builtins that are programs here (echo, printf, pwd), and the others are not found, as in bash', async () => {
+		const h = await host({ '/w/f': 'x\n' });
+		const r = await h.run('PATH=/nonexistent; echo a; printf "b\\n"; pwd; cat f; echo "rc=$?"; type echo');
+		assert.strictEqual(r.stdout, 'a\nb\n/w\nrc=127\necho is a shell builtin\n');
+		assert.ok(/cat: command not found/.test(r.stderr), r.stderr);
+		const u = await h.run('unset PATH; echo a; printf "b\\n"; pwd');
+		assert.strictEqual(u.stdout, 'a\nb\n/w\n');
+	});
+
+	test('the builtins the engine declares and has not are not offered: help does not list them, command -v and type do not find them', async () => {
+		const h = await host();
+		const r = await h.run('help | tr -s " " "\\n" | grep -x -e trap -e umask -e kill -e jobs -e ulimit | wc -l; help | grep -c -e "^echo" ; command -v trap umask kill jobs; echo "rc=$?"; type trap; echo "rc=$?"; command -v cd export echo; help trap; echo "rc=$?"');
+		const lines = r.stdout.split('\n');
+		assert.strictEqual(lines[0], '0', 'not in the list of help');
+		assert.ok(r.stdout.includes('rc=1\n'), r.stdout);
+		assert.ok(r.stdout.includes('cd\nexport\n') || r.stdout.includes('cd\nexport\necho'), 'real builtins are found: ' + r.stdout);
+		assert.ok(/no help topics match `trap'/.test(r.stderr), r.stderr);
+		// running one is still "command not found", and the script goes on
+		const t = await h.run('trap "echo x" EXIT; echo after; umask 022; echo "rc=$?"');
+		assert.strictEqual(t.stdout, 'after\nrc=127\n');
+	});
+
+	test('a command that fails on a missing folder is reported as GNU does and the rest of the script still applies', async () => {
+		const h = await host({ '/w/a.txt': 'b\na\n' });
+		const r = await h.run('echo kept > ok.txt; touch nodir/f; echo "touch=$?"; echo x | tee nodir/x > /dev/null; echo "tee=$?"; sort a.txt -o nodir/o; echo "sort=$?"; touch a.txt/x; echo "file=$?"; mkdir d; echo y | tee d > /dev/null; echo "dir=$?"; split -l 1 a.txt nodir/p; echo "split=$?"; echo a | awk \'{print > "nodir/x"}\'; echo "awk=$?"; echo end');
+		assert.strictEqual(r.how, 'exit', 'the engine\'s exec() was not rejected by any of them');
+		assert.ok(r.stdout.endsWith('end\n'), r.stdout);
+		for (const k of ['touch', 'tee', 'sort', 'file', 'dir', 'split', 'awk']) { assert.ok(new RegExp(k + '=[1-9]').test(r.stdout), k + ' failed: ' + r.stdout); }
+		assert.deepStrictEqual(r.done.denied, [], 'nothing was refused by the shell');
+		assert.strictEqual(r.done.stats.withheld, null);
+		assert.deepStrictEqual(r.done.changes.map((c) => c.kind + ':' + c.path).sort(), ['mkdir:/w/d', 'write:/w/ok.txt']);
+		assert.ok(/No such file or directory/.test(r.stderr), r.stderr);
+	});
+
+	test('the engine\'s limit messages from sed and awk carry the program name once', async () => {
+		const h = await host();
+		const r = await h.run('echo a | sed ":a;ba"; echo "rc=$?"; echo a | awk "BEGIN{while(1){}}"; echo "rc=$?"');
+		assert.strictEqual(r.stdout, 'rc=126\nrc=126\n');
+		assert.ok(/^sed: command execution exceeded maximum iterations \(100000\)$/m.test(r.stderr), r.stderr);
+		assert.ok(/^awk: while loop exceeded maximum iterations \(100000\)$/m.test(r.stderr), r.stderr);
+		assert.ok(!/sed: sed:|awk: awk:/.test(r.stderr));
+		assert.strictEqual(r.how, 'exit', 'a program-level limit leaves the script going');
+	});
+
+	test('the local time of a shell is UTC whatever the zone of the process, and the script\'s TZ when it has one', async () => {
+		const was = process.env.TZ;
+		try {
+			for (const zone of ['UTC', 'America/New_York', 'Asia/Tokyo', 'Australia/Sydney']) {
+				process.env.TZ = zone;
+				const h = await host();
+				const r = await h.run("date -u -d '2020-02-29 12:00:00' '+%F %T %Z'; touch -d '2020-01-02 03:04:05' t; stat -c '%y %Y' t; touch -t 202001020304.05 u; stat -c %Y u; ls -l t | awk '{print $6, $7, $8}'; TZ=Asia/Tokyo date -d '2020-02-29 12:00:00' '+%F %T'; TZ=America/New_York date -d '2020-06-01 12:00' '+%Z %z'; date -d @1583000000 '+%F %T'; touch -d @1580000000 /tmp/m; ls -l /tmp/m | awk '{print $6, $7, $8}'; TZ=America/New_York ls -l /tmp/m | awk '{print $6, $7, $8}'");
+				assert.strictEqual(r.stdout, '2020-02-29 12:00:00 UTC\n2020-01-02 03:04:05.000000000 +0000 1577934245\n1577934245\nJan 2 2020\n2020-02-29 12:00:00\nEDT -0400\n2020-02-29 18:13:20\nJan 26 2020\nJan 25 2020\n', zone + '\n' + r.stdout);
+			}
+		} finally {
+			if (was === undefined) { delete process.env.TZ; } else { process.env.TZ = was; }
+		}
+	});
+
 	for (const t of tests) {
 		await t.fn();
 		console.log('  ok - ' + t.name);

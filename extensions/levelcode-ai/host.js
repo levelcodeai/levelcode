@@ -174,13 +174,14 @@ const SHELL_API_VERSION = 1;
  * @property {WorkspaceFolderRef[]} [folders]   the workspace folders, live and in order (a shell mounts each at its root)
  * @property {Record<string,string>} [env]      extra environment
  * @property {string} [explanation]             the model's own label for the command (at most 300 characters), for a tab that mirrors it
- * @property {(changes: Change[]) => Promise<{ rest: Change[], notes: string[], failed?: number, refused?: boolean }>} [commit]
+ * @property {(changes: Change[], control?: { cancelled(): boolean }) => Promise<{ rest: Change[], notes: string[], failed?: number, refused?: boolean }>} [commit]
  *     Agent runs only. Called once, after the command has run to its END (never after Stop, a timeout or an engine
  *     limit: those apply nothing) and BEFORE 'close', with the files the command left changed. The caller validates
  *     the whole set and reviews it, or refuses it whole; it returns what the shell still has to do itself (make and
  *     remove directories), lines to append to the command's output, and how many changes it could NOT apply (the
  *     shell then does not report success). Without it the shell writes the changes straight to the workspace (the
- *     user's own terminal).
+ *     user's own terminal). `control.cancelled()` turns true when the run was stopped while the set was being
+ *     checked: the caller then applies nothing (once the first write has begun nothing interrupts it).
  *
  * @typedef {object} ChildLike  The part of a Node ChildProcess that agent.js's runCommand uses.
  * @property {number} [pid]     leave undefined: agent.js then kills with child.kill(signal)

@@ -14,7 +14,7 @@ const assert = require('assert');
 const path = require('path');
 
 const { fakeVscode, manualTimers, VT, TERMINAL } = require('./helpers/shell-terminal-fakes');
-const { findXterm } = require('./helpers/shell-terminal-xterm');
+const { needXterm } = require('./helpers/shell-terminal-xterm');
 const { createAgentTab, shouldReveal, duration, NAME, UNSEEN_NAME } = require(path.join(TERMINAL, 'agent-tab.js'));
 const sanitize = require(path.join(TERMINAL, '..', 'sanitize.js'));
 
@@ -169,8 +169,8 @@ test('what the model wrote and what a file printed reach the tab only through fo
 	assert.ok(!stripped.includes(E), JSON.stringify(stripped));
 	assert.ok(!/‮/.test(w));
 	assert.ok(/␛\[6n/.test(w), 'the command shows the escape as a picture, so the visitor can read what it was');
-	const xt = findXterm();
-	if (!xt) { console.log('    (the real-xterm half is skipped: no xterm checkout)'); return; }
+	const xt = needXterm('the agent tab\'s text against xterm.js');
+	if (!xt) { return; }
 	const term = new xt.Terminal({ cols: 80, rows: 30, allowProposedApi: true });
 	const replies = [];
 	term.onData((d) => replies.push(d));
@@ -308,6 +308,66 @@ test('dispose stops listening and removes the tab', () => {
 	assert.strictEqual(t.listeners.size, 0);
 	assert.strictEqual(term.disposed, true);
 	assert.doesNotThrow(() => t.emit(run(2, 'ls')));
+});
+
+test('at most 8 notes of a run are shown', () => {
+	const t = setup({ mode: 'never' });
+	t.emit(run(1, 'ls'));
+	const a = t.attach();
+	t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: Array.from({ length: 12 }, (_, i) => 'note ' + (i + 1)) });
+	t.timers.drain();
+	const s = a.screen();
+	for (let i = 1; i <= 8; i++) { assert.ok(s.includes('note ' + i), 'note ' + i); }
+	assert.ok(!s.includes('note 9'));
+});
+
+test('an explanation and every note are cut at 300 characters, whatever they are made of; the explanation counts in the run\'s budget', () => {
+	const t = setup({ mode: 'never', outputLimit: 2000 });
+	const huge = 'e'.repeat(5000000);
+	t.emit(run(1, 'ls', { explanation: huge }));
+	const a = t.attach();
+	t.emit({ type: 'chunk', id: 1, stream: 'stdout', text: 'o'.repeat(5000) });
+	t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: ['n'.repeat(3000000), 'second', 'third'] });
+	t.timers.drain();
+	const s = a.screen();
+	assert.ok(s.join('').startsWith('e'.repeat(300) + '…$ ls'), 'exactly 300 characters, then the mark, then the command (the tab is 200 wide: it wrapped)');
+	assert.ok(a.writes.join('').length < 6000, 'what was written: ' + a.writes.join('').length);
+	// the budget: 2000 characters for the run, and the explanation took 301 of them
+	const shown = s.filter((l) => /^o+$/.test(l)).join('').length;
+	assert.ok(shown > 0 && shown <= 2000 - 301, 'output shown: ' + shown);
+	assert.ok(s.join('').includes('n'.repeat(300) + '…second'));
+	assert.ok(/output limit reached/.test(s.join('\n')));
+
+	// what is spelled out longer than it is (an invisible character is [U+XXXX]) is cut on what is shown, and never
+	// inside a surrogate pair
+	const u = setup({ mode: 'never' });
+	u.emit(run(1, 'ls', { explanation: '\u200b'.repeat(200) + '\u{1f600}'.repeat(200) }));
+	const b = u.attach();
+	u.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: ['\u{1f600}'.repeat(300).replace(/^(.)/u, 'a$1')] });
+	u.timers.drain();
+	const first = b.screen().join('').split('$ ls')[0];
+	assert.ok(first.length <= 301, first.length + '');
+	assert.ok(!/[\ud800-\udbff]…$/.test(first) && !/[\ud800-\udbff]$/.test(first), 'no half of a pair');
+	assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(b.all()), 'nowhere');
+});
+
+test('the tab knows the working folder of the last run, for the file links', () => {
+	const t = setup({ mode: 'never' });
+	assert.strictEqual(t.tab.cwd(), undefined);
+	t.emit(run(1, 'ls', { cwd: '/scratch/src' }));
+	assert.strictEqual(t.tab.cwd(), '/scratch/src');
+	t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: [] });
+	t.emit(run(2, 'ls', { cwd: '/scratch' }));
+	assert.strictEqual(t.tab.cwd(), '/scratch');
+});
+
+test('an explanation is one line: line ends and the blanks around them become one space', () => {
+	const t = setup({ mode: 'never' });
+	t.emit(run(1, 'ls', { explanation: 'first  \n   second\r\nthird\rfourth' }));
+	const a = t.attach();
+	t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: [] });
+	t.timers.drain();
+	assert.strictEqual(a.screen()[0], 'first second third fourth');
 });
 
 (async () => {

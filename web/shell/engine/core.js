@@ -18,9 +18,10 @@
 'use strict';
 // @ts-check
 
-const { createOverlay, createMemory, planMounts, DEFAULT_CAPS } = require('./overlay-fs.js');
+const { createOverlay, createMemory, planMounts } = require('./overlay-fs.js');
 const compat = require('./compat.js');
 const { LIMITS } = require('./limits.js');
+const { decodeIfBytes, displayText } = require('./text.js');
 
 /** README §3: what a script starts with, under whatever the host gives. */
 const DEFAULT_ENV = Object.freeze({
@@ -70,19 +71,13 @@ function yieldNow() {
 	});
 }
 
-/** The engine's decode of a byte-shaped string (the same rule it applies to its final result). */
+/**
+ * What the engine printed, as text for a person (or a model): a string that is the bytes of valid UTF-8 is decoded
+ * (the same rule the engine applies to its own final result), and a byte that is not UTF-8, which the engine's text
+ * keeps as an escape (that is for files, not for eyes), is shown as U+FFFD.
+ */
 function decodeBytes(s) {
-	if (!s) { return s; }
-	let high = false;
-	for (let i = 0; i < s.length; i++) {
-		const c = s.charCodeAt(i);
-		if (c > 255) { return s; }
-		if (c > 127) { high = true; }
-	}
-	if (!high) { return s; }
-	const b = new Uint8Array(s.length);
-	for (let i = 0; i < s.length; i++) { b[i] = s.charCodeAt(i); }
-	try { return new TextDecoder('utf-8', { fatal: true }).decode(b); } catch { return s; }
+	return displayText(decodeIfBytes(s));
 }
 
 /** An exception from the engine, as one line a person can read. Never a stack, never a minified name. */
@@ -126,7 +121,8 @@ function createCore(deps) {
 	let limits = Object.assign({}, LIMITS);
 	/** @type {string[] | null} built-in programs in force */
 	let allowed = null;
-	let customNames = [];
+	/** @type {Set<string>} the names of compat.js's commands in force (its wrappers need the program they wrap) */
+	let customNames = new Set();
 	let started = false;
 	let nextRid = 1;
 	/** @type {Map<number, { resolve: (v: any) => void, reject: (e: any) => void }>} */
@@ -174,7 +170,13 @@ function createCore(deps) {
 			}
 		}
 		allowed = programList(msg.commands);
-		customNames = compat.commands(Engine.defineCommand).map((c) => c.name);
+		// A host that named the programs it wants gets only those: a wrapper (grep, sed ...) is there only when what it
+		// wraps is, and a program compat.js adds (cmp, id ...) only when it was named
+		const named = Array.isArray(msg.commands) && msg.commands.length ? new Set(msg.commands) : null;
+		const have = allowed;
+		customNames = new Set(compat.commands(Engine.defineCommand).map((c) => c.name).filter((n) => (
+			compat.WRAPPED.includes(n) ? have.includes(n) : (!named || named.has(n))
+		)));
 		started = true;
 		const commands = [...new Set([...allowed, ...customNames])].sort();
 		post({ t: 'ready', gen, commands, mounts: planMounts(folders).map((m) => ({ id: m.id, name: m.name, path: m.host, at: m.at, relocated: m.relocated })) });
@@ -185,7 +187,7 @@ function createCore(deps) {
 		try {
 			init(msg);
 		} catch (e) {
-			started = false;
+			// `started` is false already: init() clears it first and sets it last
 			post({ t: 'ready', gen, commands: [], mounts: [], error: describeException(e).replace(/^bash: /, '') });
 		}
 	}
@@ -214,14 +216,14 @@ function createCore(deps) {
 		const finish = (r, transfer) => {
 			if (doneSent) { return; }
 			doneSent = true;
-			const base = { t: 'done', id, exitCode: 1, how: 'error', cwd: msg.cwd || '/', env: {}, changes: [], denied: [], notes: [], stats: { durationMs: now() - t0, discarded: 0 } };
+			const failed = { t: 'done', id, exitCode: 1, how: 'error', cwd: msg.cwd || '/', env: {}, changes: [], denied: [], notes: [], stats: { durationMs: now() - t0, discarded: 0 } };
 			try {
-				post(Object.assign({}, base, r), transfer);
+				post(Object.assign({}, failed, r), transfer);
 			} catch (e) {
 				// the host could not take the result (a DataCloneError for a buffer it cannot transfer): a run that is
 				// never answered would hang whoever waits for it, so a smaller answer goes instead
 				try {
-					post(Object.assign({}, base, { notes: [`The result of this command could not be sent (${describeException(e).replace(/^bash: /, '')}). Nothing was changed.`] }));
+					post(Object.assign({}, failed, { notes: [`The result of this command could not be sent (${describeException(e).replace(/^bash: /, '')}). Nothing was changed.`] }));
 				} catch { /* nothing more can be said */ }
 			}
 		};
@@ -250,9 +252,9 @@ function createCore(deps) {
 	}
 
 	async function execute(msg, controller, t0, say, finish) {
-		const caps = Object.assign({}, DEFAULT_CAPS, msg.caps || {});
 		if (!msg.keepTmp || !memory) { memory = createMemory(); }
-		const overlay = createOverlay({ folders, base, caps, memory, now });
+		// the caps are the host's, each one only when it is a number above zero (overlay-fs.js validCaps)
+		const overlay = createOverlay({ folders, base, caps: msg.caps, memory, now });
 		/** @type {string[]} */
 		const notes = [];
 		for (const m of overlay.mounts) {
@@ -285,7 +287,7 @@ function createCore(deps) {
 			env,
 			executionLimits: limits,
 			commands: allowed,
-			customCommands: compat.commands(Engine.defineCommand),
+			customCommands: compat.commands(Engine.defineCommand).filter((c) => customNames.has(c.name)),
 			defenseInDepth: false,
 		});
 
@@ -422,6 +424,10 @@ function createCore(deps) {
 			discarded,
 			withheld,
 			mounts: overlay.mounts.length,
+			// what a session keeps in memory and loses when it is stopped (the host says so once); a run that keeps
+			// nothing reports none
+			tmpFiles: msg.keepTmp ? overlay.memory.countFiles('/tmp') : 0,
+			homeFiles: msg.keepTmp ? overlay.memory.countFiles('/home/user') : 0,
 		});
 		if (!msg.keepTmp) { memory = null; }
 		finish({ exitCode, how, cwd: outEnv.PWD, env: outEnv, changes, denied, notes, stats }, transfer);

@@ -15,7 +15,7 @@ const path = require('path');
 
 const dir = path.join(__dirname, '..', '..', 'shell', 'src', 'terminal');
 const si = require(path.join(dir, 'shell-integration.js'));
-const { createWriter, createRunOutput, CHUNK, OUTPUT_LIMIT } = require(path.join(dir, 'output-sink.js'));
+const { createWriter, createRunOutput, CHUNK, OUTPUT_LIMIT, RESET_TAIL } = require(path.join(dir, 'output-sink.js'));
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -72,7 +72,6 @@ test('the writer keeps order: a small write waits behind a large one, and a writ
 	assert.strictEqual(tasks.length, 1);
 	while (tasks.length) { tasks.shift()(); }
 	assert.deepStrictEqual(fired, ['ab', '01234567', '89ABCDEF', 'xy']);
-	assert.ok(!w.pending());
 	w.write('0123456789');
 	w.clear();
 	while (tasks.length) { tasks.shift()(); }
@@ -107,7 +106,6 @@ test('a run\'s output: LF to CRLF, a newline before what follows, resets at the 
 	const capped = createRunOutput({ write: () => { }, limit: 20 });
 	capped.write('stdout', 'x'.repeat(15));
 	capped.write('stderr', 'y'.repeat(15));
-	assert.ok(capped.truncated());
 	assert.ok(/\[output limit reached: 10 more characters were not shown\]/.test(capped.end()));
 });
 
@@ -119,6 +117,61 @@ test('one stream\'s unfinished escape cannot swallow the other stream, and ends 
 	r.write('stdout', 'swallowed');
 	assert.strictEqual(out.join(''), 'beforeerror: still visible\r\n');
 	r.end();
+});
+
+test('the line break at the end follows the writer that wrote last: stderr after a stdout that ended a line', () => {
+	const out = [];
+	const r = createRunOutput({ write: (s) => out.push(s) });
+	r.write('stdout', 'one\n');
+	r.write('stderr', 'partial');
+	assert.strictEqual(r.end(), '\r\n', 'the prompt would otherwise erase the unfinished line of stderr');
+	const back = createRunOutput({ write: () => { } });
+	back.write('stderr', 'err\n');
+	back.write('stdout', 'partial');
+	assert.strictEqual(back.end(), '\r\n');
+	const clean = createRunOutput({ write: () => { } });
+	clean.write('stdout', 'partial');
+	clean.write('stderr', 'whole\n');
+	assert.strictEqual(clean.end(), '', 'the last text shown ended a line');
+});
+
+test('say(): the terminal\'s own words in the middle of a run, and the line state follows them', () => {
+	const out = [];
+	const r = createRunOutput({ write: (s) => out.push(s) });
+	r.say('');
+	assert.deepStrictEqual(out, []);
+	r.write('stdout', 'a\n');
+	r.say('\x1b[2mnote\x1b[0m');
+	assert.strictEqual(r.end(), '\r\n', 'a notice that did not end its line is followed by a break');
+	const t = createRunOutput({ write: () => { } });
+	t.write('stdout', 'partial');
+	t.say('\r\nnotice\r\n');
+	assert.strictEqual(t.end(), '', 'and one that did, is not');
+});
+
+test('interrupt(): the terminal is put back unconditionally, ^C is where the output stopped, nothing more is shown, and one break follows', () => {
+	assert.strictEqual(RESET_TAIL, E + '[0m' + E + ']8;;' + ST + E + '[?25h');
+	const out = [];
+	const r = createRunOutput({ write: (s) => out.push(s) });
+	r.write('stdout', 'abc' + E + '[31m' + E + ']8;;http://example.com' + ST + E + '[?25l' + 'def' + E + ']0;never ended');
+	out.length = 0;
+	r.interrupt();
+	assert.deepStrictEqual(out, [RESET_TAIL, E + '[2m^C' + E + '[0m']);
+	r.write('stdout', 'late');
+	r.write('stderr', 'late');
+	assert.strictEqual(out.length, 2, 'what comes after is not shown');
+	assert.strictEqual(r.end(), '\r\n', 'what the filters had open was dropped with them: only the break');
+	// an interrupt before any output: the same
+	const empty = createRunOutput({ write: () => { } });
+	empty.interrupt();
+	assert.strictEqual(empty.end(), '\r\n');
+});
+
+test('charge(): text shown outside the filters counts against the run\'s cap', () => {
+	const r = createRunOutput({ write: () => { }, limit: 100 });
+	assert.strictEqual(r.charge('x'.repeat(60)), 'x'.repeat(60));
+	r.write('stdout', 'y'.repeat(60));
+	assert.ok(/\[output limit reached: 20 more characters were not shown\]/.test(r.end()), 'the output had 40 characters left, not 100');
 });
 
 (async () => {

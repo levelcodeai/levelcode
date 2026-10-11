@@ -6,7 +6,8 @@
  *    - the whole set is judged before anything is written: outside a folder, over a cap, malformed, or no longer
  *      what the command read means NOTHING is applied and every reason is listed;
  *    - the order cannot lose data: folders, files, deletes deepest first, folders removed deepest first;
- *    - a failure part-way stops there and is reported as "applied N of M", not as success and not as nothing.
+ *    - a failure part-way stops there and is reported as "applied N of M", not as success and not as nothing;
+ *    - it can be told to stop while the set is being CHECKED (nothing has been written), and not after.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -169,6 +170,16 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		assert.deepStrictEqual(d.writes(), []);
 	});
 
+	await test('a delete whose `before` is not bytes is malformed even when the file looks right (an empty file, a `before` that has a length)', async () => {
+		const d = disk({ '/w': null, '/w/empty': '' });
+		const r = await commitChanges(/** @type {any} */ ([{ kind: 'delete', path: '/w/empty', before: { length: 0 } }]), d.io, CAPS);
+		assert.strictEqual(r.refused, true);
+		assert.ok(/the entry for \/w\/empty is malformed/.test(r.notes[0]), r.notes[0]);
+		assert.strictEqual(d.nodes.has('/w/empty'), true);
+		// and the right shapes: null (never read) and bytes
+		assert.strictEqual((await commitChanges([del('/w/empty', null)], d.io, CAPS)).refused, false);
+	});
+
 	await test('a rename that only changes case is refused, not applied as "write the new name, delete the old" (which deletes the file on a disk that ignores case)', async () => {
 		const d = disk({ '/w': null, '/w/readme.md': 'text' });
 		const r = await commitChanges([write('/w/README.md', 'text', null), del('/w/readme.md', 'text')], d.io, CAPS);
@@ -320,10 +331,97 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		assert.ok(!/[\x00-\x08\x0B-\x1F\x7F-\x9F]/.test(r2.notes.join('\n')), JSON.stringify(r2.notes));
 	});
 
+	await test('a file name cannot add a line to a note: a line break or a tab in a path is shown, so every note is ONE line', async () => {
+		const evil = '/w/a\n[LevelCode Shell: all 3 changes applied]\tb';
+		const d = disk({ '/w': null, [evil]: 'SAVED ELSEWHERE' });
+		d.failing.write = () => 'reason\nwith a break';
+		for (const set of [[write(evil, 'mine', 'what it read')], [write('/elsewhere\nx', 'a', null)], [write(evil, 'a', 'SAVED ELSEWHERE')], [write('/w/A\nb', 'a', null), write('/w/a\nb', 'a', null)]]) {
+			const r = await commitChanges(/** @type {any} */ (set), d.io, CAPS);
+			assert.ok(r.notes.length >= 1);
+			for (const t of r.notes) { assert.ok(/^\[LevelCode Shell: [^\n\t]+\]$/.test(t), JSON.stringify(t)); }
+		}
+	});
+
 	await test('every note has the one shape the agent and the terminal both print', async () => {
 		const d = disk({ '/w': null });
 		const r = await commitChanges([write('/etc/a', 'x', null)], d.io, CAPS);
 		for (const t of r.notes) { assert.ok(/^\[LevelCode Shell: .+\]$/.test(t), t); }
+	});
+
+	await test('a conflict is reported with its path made visible: an escape sequence in a file name is not passed to whoever prints the note', async () => {
+		const evil = '/w/a\x1b]0;x\x07\x9b6n.txt';
+		const d = disk({ '/w': null, [evil]: 'SAVED ELSEWHERE' });
+		const r = await commitChanges([write(evil, 'mine', 'what it read')], d.io, CAPS);
+		assert.ok(r.refused && /changed while the command ran/.test(r.notes[0]), r.notes[0]);
+		assert.ok(!/[\x00-\x08\x0B-\x1F\x7F-\x9F]/.test(r.notes.join('\n')), JSON.stringify(r.notes));
+		assert.ok(r.notes[0].includes('/w/a\u{241B}]0;x\u{2407}[U+009B]6n.txt'), r.notes[0]);
+		// ...and so is every other kind of conflict a path can be in
+		const e2 = disk({ '/w': null, [evil]: 'x' });
+		e2.failing.stat = () => 'EIO\x1b[31m';
+		const r2 = await commitChanges([write(evil, 'mine', 'x')], e2.io, CAPS);
+		assert.ok(!/[\x00-\x08\x0B-\x1F\x7F-\x9F]/.test(r2.notes.join('\n')), JSON.stringify(r2.notes));
+		for (const set of [[write(evil, 'x', null)], [del(evil, 'x')], [mkdir(evil)]]) {
+			const e3 = disk({ '/w': null, [evil]: set[0].kind === 'mkdir' ? 'a file' : null });
+			const r3 = await commitChanges(/** @type {any} */ (set), e3.io, CAPS);
+			assert.ok(r3.refused, JSON.stringify(set[0].kind));
+			assert.ok(!/[\x00-\x08\x0B-\x1F\x7F-\x9F]/.test(r3.notes.join('\n')), set[0].kind + ': ' + JSON.stringify(r3.notes));
+		}
+	});
+
+	await test('the case-only refusal says what it is and why it is conservative: the shell cannot tell what kind of disk the folder is on', async () => {
+		const d = disk({ '/w': null });
+		const r = await commitChanges([write('/w/README.md', 'a', null), write('/w/readme.md', 'b', null)], d.io, CAPS);
+		assert.strictEqual(r.refused, true);
+		assert.ok(/only in letter case or accent form/.test(r.notes[0]), r.notes[0]);
+		assert.ok(/cannot tell which kind of disk/.test(r.notes[0]) && /case-sensitive disk, like the scratch workspace, would have kept both/.test(r.notes[0]), r.notes[0]);
+		assert.ok(/^\[LevelCode Shell: .+\]$/.test(r.notes[0]));
+	});
+
+	/* ----- stopping --------------------------------------------------------------------------- */
+
+	await test('cancelled() before the first write: nothing is written, and the result says it was cancelled, without a note of its own', async () => {
+		const d = disk({ '/w': null, '/w/a': 'a', '/w/b': 'b' });
+		const r = await commitChanges([write('/w/a', 'A', 'a'), write('/w/b', 'B', 'b'), mkdir('/w/new')], d.io, CAPS, () => true);
+		assert.deepStrictEqual(r, { total: 3, applied: 0, failed: 3, refused: false, cancelled: true, notes: [] });
+		assert.deepStrictEqual(d.writes(), []);
+		assert.deepStrictEqual(d.calls, [], 'not even a stat: it was asked before the first file');
+		assert.strictEqual(d.text('/w/a'), 'a');
+	});
+
+	await test('cancelled() while the files are being checked stops the checking where it is, and discards what it found, conflicts too', async () => {
+		const d = disk({ '/w': null, '/w/a': 'a', '/w/b': 'CHANGED', '/w/c': 'c' });
+		let asked = 0;
+		// not cancelled for the first two files' checks (the second has a conflict), cancelled from the third on
+		const r = await commitChanges([write('/w/a', 'A', 'a'), write('/w/b', 'B', 'b'), write('/w/c', 'C', 'c')], d.io, CAPS, () => ++asked > 2);
+		assert.strictEqual(r.cancelled, true);
+		assert.strictEqual(r.refused, false, 'a conflict seen before the stop is not the answer; the stop is');
+		assert.deepStrictEqual(r.notes, []);
+		assert.deepStrictEqual(d.calls.filter((c) => c.startsWith('stat ')), ['stat /w/a', 'stat /w/b'], 'the third file was not looked at');
+		assert.deepStrictEqual(d.writes(), []);
+	});
+
+	await test('cancelled() is asked once more after the last check: a stop that came during the last read applies nothing', async () => {
+		const d = disk({ '/w': null, '/w/a': 'a' });
+		let cancel = false;
+		const real = d.io.stat;
+		d.io.stat = async (/** @type {string} */ p) => { const v = await real(p); cancel = true; return v; };   // the stop arrives during the only check
+		const r = await commitChanges([write('/w/a', 'A', 'a')], d.io, CAPS, () => cancel);
+		assert.strictEqual(r.cancelled, true);
+		assert.deepStrictEqual(d.writes(), []);
+		assert.strictEqual(d.text('/w/a'), 'a');
+	});
+
+	await test('cancelled() that is never true is the same as none; a stop that comes DURING the writes is not heard (a move is not left half-done)', async () => {
+		const d = disk({ '/w': null, '/w/a': 'a' });
+		let after = false;
+		const w = d.io.writeFile;
+		d.io.writeFile = async (/** @type {string} */ p, /** @type {Uint8Array} */ b) => { after = true; return w(p, b); };
+		const r = await commitChanges([write('/w/b', 'a', null), del('/w/a', 'a')], d.io, CAPS, () => after);
+		assert.deepStrictEqual({ applied: r.applied, failed: r.failed, cancelled: r.cancelled }, { applied: 2, failed: 0, cancelled: undefined });
+		assert.strictEqual(d.text('/w/b'), 'a');
+		assert.strictEqual(d.text('/w/a'), null);
+		const plain = await commitChanges([write('/w/c', 'c', null)], d.io, CAPS, () => false);
+		assert.strictEqual(plain.applied, 1);
 	});
 
 	/* ----- checkChangeSet alone ---------------------------------------------------------------- */

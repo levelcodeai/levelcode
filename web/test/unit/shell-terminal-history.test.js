@@ -140,6 +140,76 @@ test('clear forgets the session and the store; a store that fails leaves the his
 	assert.deepStrictEqual(createHistory({ store: fakeStore('not an array') }).list(), []);
 });
 
+test('a cap of 0 hides what an earlier setting stored, and forgets it; a cap under the number stored keeps the newest', () => {
+	const store = fakeStore(['a', 'b', 'c']);
+	const none = createHistory({ store, cap: 0 });
+	assert.deepStrictEqual(none.list(), [], 'slice(-0) is slice(0): the whole list would have come back');
+	assert.deepStrictEqual(store.data.get(KEY), [], 'and the store was emptied, not only hidden');
+	assert.strictEqual(none.add('ls'), false);
+	// the same at the other end: nothing written when there was nothing there
+	const empty = fakeStore([]);
+	createHistory({ store: empty, cap: 0 });
+	assert.strictEqual(empty.writes.length, 0);
+	// a cap under what is stored
+	const two = createHistory({ store: fakeStore(['a', 'b', 'c', 'd']), cap: 2 });
+	assert.deepStrictEqual(two.list(), ['c', 'd']);
+	const one = createHistory({ store: fakeStore(['a', 'b', 'c']), cap: 1 });
+	assert.deepStrictEqual(one.list(), ['c']);
+	// exactly the number stored: all of them
+	assert.deepStrictEqual(createHistory({ store: fakeStore(['a', 'b']), cap: 2 }).list(), ['a', 'b']);
+});
+
+test('add(line, secret): the caller\'s verdict is used, and a secret is kept in memory only', () => {
+	const store = fakeStore();
+	const h = createHistory({ store });
+	assert.strictEqual(h.add('plain', true), true);
+	assert.strictEqual(h.add('other'), true);
+	assert.deepStrictEqual(h.list(), ['plain', 'other']);
+	assert.deepStrictEqual(store.data.get(KEY), ['other'], 'told it was one, it was not written');
+	const b = createHistory({ store: fakeStore() });
+	const looks = cat('export API_', 'KEY=', 'abc123');
+	b.add(looks, false);
+	assert.deepStrictEqual(b.list(), [looks]);
+});
+
+test('looksSecret reads a bounded part of a line, in time bounded by its length: every shape that backtracks', () => {
+	const slow = [
+		'a'.repeat(100000), 'eyJ-'.repeat(25000), 'a://'.repeat(25000), 'a:b@'.repeat(25000), '-----BEGIN ' + 'A'.repeat(100000),
+		'token' + ' '.repeat(100000), 'bearer' + ' '.repeat(100000), '--password' + ' '.repeat(100000), 'x'.repeat(50000) + '://u:' + 'p'.repeat(50000),
+		cat('ey', 'J') + 'a'.repeat(100000), 'sk-' + 'a'.repeat(100000),
+	];
+	for (const line of slow) {
+		const t0 = process.hrtime.bigint();
+		looksSecret(line);
+		const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+		assert.ok(ms < 100, line.slice(0, 20) + '... took ' + ms.toFixed(1) + ' ms');
+	}
+});
+
+test('the bounds are exactly the bounds: what is read, how long a scheme and a token may be', () => {
+	const at = (n, text) => 'x'.repeat(n) + ' ' + text;
+	// the first 4096 characters are read, not one more
+	const secret = cat('export API_', 'KEY=', 'abc123');
+	assert.strictEqual(looksSecret(at(4096 - secret.length - 1, secret)), true, 'ends exactly at 4096');
+	assert.strictEqual(looksSecret(at(4096, secret)), false, 'starts after it');
+	// the scheme of a URL with credentials: 32 characters, not 33
+	const creds = (scheme) => scheme + '://user:pw@host';
+	assert.strictEqual(looksSecret(creds('a'.repeat(32))), true);
+	assert.strictEqual(looksSecret(creds('a'.repeat(33))), false);
+	assert.strictEqual(looksSecret('git clone ' + creds('ssh+git')), true, 'an ordinary scheme after other words');
+	assert.strictEqual(looksSecret('x-' + creds('https')), true, 'a scheme of its own after a punctuation mark');
+	// the user and the password of that URL: 256 each
+	assert.strictEqual(looksSecret('https://' + 'u'.repeat(256) + ':' + 'p'.repeat(256) + '@h'), true);
+	assert.strictEqual(looksSecret('https://' + 'u'.repeat(257) + ':' + 'p'.repeat(256) + '@h'), false);
+	assert.strictEqual(looksSecret('https://' + 'u'.repeat(256) + ':' + 'p'.repeat(257) + '@h'), false);
+	// the first part of a JWT, after "eyJ": 10 to 2000 characters (the rest of it is only looked at for its start)
+	const jwt = (n) => 'echo ' + cat('ey', 'J') + 'a'.repeat(n) + '.' + cat('ey', 'J') + 'b'.repeat(10);
+	assert.strictEqual(looksSecret(jwt(2000)), true);
+	assert.strictEqual(looksSecret(jwt(2001)), false);
+	assert.strictEqual(looksSecret(jwt(10)), true);
+	assert.strictEqual(looksSecret(jwt(9)), false);
+});
+
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }

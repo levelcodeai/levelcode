@@ -167,7 +167,7 @@ test('the cap: output stops at a character, a sequence is never cut, and one bud
 	const f = createOutputFilter({ maxChars: 10 });
 	assert.strictEqual(f.write('0123456789abcdef'), '0123456789');
 	assert.strictEqual(f.write('more'), '');
-	assert.deepStrictEqual(f.stats(), { emitted: 10, dropped: 0, discarded: 10, truncated: true });
+	assert.deepStrictEqual(f.stats(), { discarded: 10 }, 'what arrived after the cap, for the sink\'s notice');
 	// a sequence that would not fit is left out whole
 	const g = createOutputFilter({ maxChars: 5 });
 	assert.strictEqual(g.write('abc' + E + '[38;2;1;2;3m' + 'd'), 'abc');
@@ -239,6 +239,23 @@ test('any input, in any chunking, gives the same output, and the output is only 
 		assert.ok(!CONTROLS.test(rest), 'a control survived: ' + JSON.stringify([data, whole, rest]));
 		assert.ok(!rest.includes(E), 'an escape survived: ' + JSON.stringify([data, whole, rest]));
 	}
+});
+
+test('a string cut off by another escape is dropped, and the escape that cut it is read afresh', () => {
+	// the bytes after the ESC are a sequence of their own: a colour here, which must pass, and not text
+	assert.strictEqual(write(E + ']0;title' + E + '[31mred'), E + '[31mred');
+	assert.strictEqual(write(E + 'Pabc' + E + '[1mbold'), E + '[1mbold');
+	assert.strictEqual(write(E + '_apc' + E + ']8;;https://a.b' + ST + 'link'), E + ']8;;https://a.b' + ST + 'link');
+	// an ESC that is not followed by anything that makes a sequence: nothing is printed for it either
+	assert.strictEqual(write(E + ']0;title' + E + 'x'), '');
+	assert.strictEqual(write('a' + E + ']0;t' + E + E + '[Hb'), 'a' + E + '[Hb');
+});
+
+test('the 8-bit string terminator ends an OSC or DCS as it does in xterm.js, so what follows is shown', () => {
+	assert.strictEqual(write(E + ']0;title\u009cvisible'), 'visible');
+	assert.strictEqual(write(E + 'Pabc\u009cvisible'), 'visible');
+	assert.strictEqual(write('\u009d0;title\u009cvisible'), 'visible');
+	assert.strictEqual(write('\u009bm\u009d0;t' + BEL + 'x'), '\u001b[mx');
 });
 
 (async () => {

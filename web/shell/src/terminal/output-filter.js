@@ -67,8 +67,6 @@ function createOutputFilter(options) {
 	let isOsc = false;        // inside OSC (BEL ends it) as opposed to DCS/APC/PM/SOS (only ST ends them)
 	let lastCR = false;       // the last character written was a CR (so a following LF is already a CRLF)
 	let atLineStart = true;   // nothing written yet, or the last character written was LF
-	let emitted = 0;          // what this filter wrote; the budget counts all the filters that share it
-	let dropped = 0;
 	let discarded = 0;        // input characters that arrived after the cap was reached
 	// terminal state this stream has changed and end() must put back
 	let sgrOpen = false;
@@ -87,7 +85,6 @@ function createOutputFilter(options) {
 				return false;
 			}
 			out += tok;
-			emitted += tok.length;
 			budget.used += tok.length;
 			return true;
 		};
@@ -107,7 +104,6 @@ function createOutputFilter(options) {
 						if (cut > 0 && code >= 0xd800 && code <= 0xdbff) { cut--; }
 						run = run.slice(0, cut);
 						out += run;
-						emitted += run.length;
 						budget.used += run.length;
 						if (run !== '') { lastCR = false; atLineStart = false; }
 						budget.full = true;
@@ -115,7 +111,6 @@ function createOutputFilter(options) {
 						break;
 					}
 					out += run;
-					emitted += run.length;
 					budget.used += run.length;
 					lastCR = false;
 					atLineStart = false;
@@ -143,7 +138,7 @@ function createOutputFilter(options) {
 					if (c === '\u009b') { state = S.CSI; csi = ''; csiOver = false; break; }
 					if (c === '\u009d') { state = S.OSC; body = ''; bodyOver = false; isOsc = true; break; }
 					if (c === '\u0090' || c === '\u0098' || c === '\u009e' || c === '\u009f') { state = S.STRING; isOsc = false; break; }
-					dropped++;           // another C0, DEL, another C1, a bidi control
+					// another C0, DEL, another C1, a bidi control: dropped
 					break;
 				}
 				case S.ESC: {
@@ -151,8 +146,7 @@ function createOutputFilter(options) {
 					if (c === ']') { state = S.OSC; body = ''; bodyOver = false; isOsc = true; break; }
 					if (c === 'P' || c === '_' || c === '^' || c === 'X') { state = S.STRING; isOsc = false; break; }
 					if (c === ESC) { break; }                                         // ESC ESC: the first is nothing
-					dropped++;                                                        // a two-character escape: dropped
-					// charset designators and ESC SP / ESC # / ESC % take one more byte
+					// any other two-character escape is dropped; charset designators and ESC SP / ESC # / ESC % take one more byte
 					state = '()*+#% '.includes(c) ? S.ESC_BYTE : S.GROUND;
 					break;
 				}
@@ -171,7 +165,7 @@ function createOutputFilter(options) {
 						state = S.GROUND;
 						const seq = csi;
 						csi = '';
-						if (csiOver || !csiPasses(seq, c)) { dropped++; break; }
+						if (csiOver || !csiPasses(seq, c)) { break; }
 						if (!put(ESC + '[' + seq + c)) { break; }
 						track(seq, c);
 						lastCR = false;
@@ -180,13 +174,12 @@ function createOutputFilter(options) {
 					// ESC or a control inside a CSI abandons it; the byte is read again from the ground
 					state = S.GROUND;
 					csi = '';
-					dropped++;
 					i--;
 					break;
 				}
 				case S.OSC: case S.STRING: {
 					if (c === ESC) { state = S.STRING_ESC; break; }
-					if (c === '\x18' || c === '\x1a') { dropped++; body = ''; state = S.GROUND; break; }   // CAN and SUB abort a string
+					if (c === '\x18' || c === '\x1a') { body = ''; state = S.GROUND; break; }   // CAN and SUB abort a string
 					if (c === '\x07' && isOsc) { finishString(put); state = S.GROUND; break; }
 					if (c === '\x9c') { finishString(put); state = S.GROUND; break; }
 					if (state === S.OSC) {
@@ -197,7 +190,6 @@ function createOutputFilter(options) {
 				case S.STRING_ESC: {
 					if (c === '\\') { finishString(put); state = S.GROUND; break; }
 					// cut off by another escape: the string is dropped and this byte begins a new sequence
-					dropped++;
 					body = '';
 					state = S.ESC;
 					i--;
@@ -244,15 +236,15 @@ function createOutputFilter(options) {
 		const over = bodyOver;
 		body = '';
 		bodyOver = false;
-		if (!isOsc || over) { dropped++; return; }
+		if (!isOsc || over) { return; }
 		const m = /^8;([^;]*);([\s\S]*)$/.exec(text);
-		if (!m || !OSC8_PARAMS.test(m[1])) { dropped++; return; }
+		if (!m || !OSC8_PARAMS.test(m[1])) { return; }
 		const uri = m[2];
 		if (uri === '') {
 			if (put(ESC + ']8;;' + ST)) { linkOpen = false; lastCR = false; }
 			return;
 		}
-		if (uri.length > 2048 || !URI_OK.test(uri)) { dropped++; return; }
+		if (uri.length > 2048 || !URI_OK.test(uri)) { return; }
 		if (put(ESC + ']8;' + m[1] + ';' + uri + ST)) { linkOpen = true; lastCR = false; }
 	}
 
@@ -279,7 +271,8 @@ function createOutputFilter(options) {
 		end,
 		/** True when nothing has been written or the last character written was a line feed. */
 		endsAtLineStart: () => atLineStart,
-		stats: () => ({ emitted, dropped, discarded, truncated: budget.full }),
+		/** Input characters that arrived after the cap was reached (the sink says how many were not shown). */
+		stats: () => ({ discarded }),
 	};
 }
 

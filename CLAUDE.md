@@ -110,6 +110,19 @@ the desktop app exactly as it was:
   The embedder's command API is the module's `commands` (`api.commands.executeCommand`): `create()` returns a
   disposable, so `workbench.commands` is `undefined` — a helper that used it ran inside a `try` and silently did
   nothing until a browser test asked for its effect.
+- **LevelCode Shell (`web/shell/`, `docs/WEB.md` "LevelCode Shell") is a simulated bash, not a machine.** The
+  contract is `web/shell/README.md`; where code and it disagree one is a bug. Rules: a command's output reaches a
+  terminal **only** through `src/terminal/output-filter.js`, and OSC 633 comes **only** from
+  `shell-integration.js`; a string that is not this extension's own constant (file names, command output, model
+  text, provider errors) goes through `src/sanitize.js` before it is shown or put in a note; the engine worker
+  never writes (the host validates and commits a change set, whole-or-nothing); the vendored `just-bash` is
+  patched only by `engine/vendor/just-bash/<v>/apply-patches.mjs`, anchor-checked; a change to a shared
+  `extensions/levelcode-ai` file that the desktop also runs is its own commit and leaves
+  `agentRunCommand.test.js` untouched. `web/test/e2e-shell.mjs` is the browser check; the unit gate runs with
+  `LEVELCODE_REQUIRE_XTERM=1 LEVELCODE_REQUIRE_WORKER=1` where the Code-OSS checkout is present.
+- The browser's `levelcode.*` settings are `application`-scoped except the display preferences in
+  `WORKSPACE_SETTINGS_OK` (`web/ai-extension/manifest.js`): Workspace Trust is off in a tab, so an unscoped
+  setting would be read from a folder's `.vscode/settings.json`.
 - The session store (`createSecretStorage`) belongs to every tab: no cache, one-key read-modify-write under a
   Web Lock. The refresh token is rotated on use; do not reintroduce a start-up snapshot.
 - Build: `node scripts/build-web.mjs --account <origin>` → `dist-web/`; serve with `node web/serve.mjs --dist dist-web`.

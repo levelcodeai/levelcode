@@ -14,6 +14,7 @@
 
 const vscode = require('vscode');
 const { createRuntime } = require('./runtime');
+const { forDisplay } = require('./sanitize');
 
 /** The engine worker's script, next to this extension's package.json (the build puts it there). */
 const ENGINE_ASSET = 'engine.worker.js';
@@ -131,6 +132,9 @@ function activate(context) {
 		agent: {
 			info: runtime.info,
 			spawn: (/** @type {string} */ command, /** @type {any} */ opts) => runtime.spawnAgent(command, opts),
+			// What the model wrote reaches an approval card and the terminal's history as text a person reads, not as
+			// something a terminal or a bidi-aware renderer obeys: host.displaySafe() is this when it is present.
+			forDisplay,
 		},
 	};
 }

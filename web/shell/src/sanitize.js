@@ -10,33 +10,63 @@
  *
  *    C0 controls (not \n, \t) and DEL   ->  a control picture; ESC becomes U+241B
  *    everything else that is invisible  ->  [U+XXXX]
- *        C1 (U+0080-009F), bidi marks and overrides, zero-width and format characters, tag characters,
- *        variation selectors, the Hangul and Mongolian fillers, the invisible math operators, U+2028/2029,
- *        the blank Braille pattern, interlinear annotation anchors and lone surrogates
+ *        C1 (U+0080-009F), every format character (Unicode category Cf: bidi marks and overrides, zero-width
+ *        space and joiners, the word joiner, the byte-order mark, the Arabic number signs, the shorthand and
+ *        musical format controls, tag characters), everything Unicode lists as default-ignorable (variation
+ *        selectors, the Hangul and Mongolian fillers, the invisible math operators, the combining grapheme
+ *        joiner), U+2028/2029, the blank Braille pattern, interlinear annotation anchors and lone surrogates
  *
- *  The two functions differ in two places, both because the readers differ:
+ *  What is left alone, on purpose: spaces of another width (U+00A0, U+1680, U+2000-200A, U+202F, U+205F,
+ *  U+3000). They are drawn as a gap, which is what they are; marking them would mark all CJK text. They cannot
+ *  reorder or hide anything.
+ *
+ *  The two functions differ in three places, all because the readers differ:
  *    - a carriage return. forTerminal turns it into a line break, so a line cannot overwrite itself
  *      ("rm -rf /\rls"). forDisplay shows it (U+240D): on a card it is part of what is being approved.
  *    - the joiners of an emoji sequence. forTerminal keeps a VS16 after a pictograph and a ZWJ between
  *      pictographs, because a README full of emoji would otherwise be unreadable; forDisplay does not,
  *      because there nothing may be invisible.
+ *    - the joiners of a script that is written with them. forTerminal keeps ONE zero-width non-joiner or
+ *      joiner that stands between two letters or marks of the same script when that script is Arabic (Persian,
+ *      Urdu, Kurdish and Pashto spell words with U+200C) or one of the Indic scripts (conjunct control). Shown
+ *      as [U+200C] every compound word of a Persian README would be unreadable. It stays hidden when it is
+ *      first, last, doubled, or next to anything else, so it cannot carry more than a bit per gap between two
+ *      letters; forDisplay still shows it.
  *
- *  Pure, no vscode, no I/O. The stream filter of the terminal (escape sequences that straddle chunks) is the
- *  terminal's own, in src/terminal.
+ *  A third, forNote, is forDisplay for what is put inside one of the shell's own one-line notes: it also shows the
+ *  line break and the tab, so a name cannot add a line to a note.
+ *
+ *  Pure, no vscode, no I/O. Total: whatever it is given, even an object whose toString throws, it returns a
+ *  string. The stream filter of the terminal (escape sequences that straddle chunks) is the terminal's own, in
+ *  src/terminal.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
 
 /**
- * Everything either function has to look at. \p{Default_Ignorable_Code_Point} is Unicode's own definition of
- * "has no visible glyph of its own" and moves with the engine's Unicode tables, so a character added next year
- * is already covered; the rest are the invisible-ish characters it does not list. Written with \u{...}: in this
- * mode that also matches a LONE surrogate, which is what the last range is for.
+ * Everything either function has to look at. \p{Cf} (format characters) and \p{Default_Ignorable_Code_Point}
+ * are Unicode's own definitions of "has no visible glyph of its own" and move with the engine's Unicode tables,
+ * so a character added next year is already covered; the rest are the invisible-ish characters they do not
+ * list. Written with \u{...}: in this mode that also matches a LONE surrogate, which is what the last range is
+ * for.
  */
-const HAZARD = /[\p{Cc}\p{Default_Ignorable_Code_Point}\u{2028}\u{2029}\u{2800}\u{FFF9}-\u{FFFB}\u{D800}-\u{DFFF}]/gu;
+const HAZARD = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u{2028}\u{2029}\u{2800}\u{FFF9}-\u{FFFB}\u{D800}-\u{DFFF}]/gu;
 
 const PICTOGRAPH = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}]$/u;
 const KEYCAP_BASE = /^[0-9#*]$/;
+
+/** A letter or a combining mark: the joiner follows a virama, a vowel sign or a letter and precedes a letter. */
+const LETTER_OR_MARK = /^[\p{L}\p{M}]$/u;
+/**
+ * The scripts that are written with U+200C / U+200D inside a word, one regexp each, so that "the same script on
+ * both sides" is a test of its own and a Persian letter next to a Devanagari one is not a word.
+ */
+const JOINER_SCRIPTS = [
+	/^\p{Script_Extensions=Arabic}$/u, /^\p{Script_Extensions=Devanagari}$/u, /^\p{Script_Extensions=Bengali}$/u,
+	/^\p{Script_Extensions=Gurmukhi}$/u, /^\p{Script_Extensions=Gujarati}$/u, /^\p{Script_Extensions=Oriya}$/u,
+	/^\p{Script_Extensions=Tamil}$/u, /^\p{Script_Extensions=Telugu}$/u, /^\p{Script_Extensions=Kannada}$/u,
+	/^\p{Script_Extensions=Malayalam}$/u, /^\p{Script_Extensions=Sinhala}$/u,
+];
 
 /** @param {number} cp */
 function bracket(cp) { return '[U+' + cp.toString(16).toUpperCase().padStart(4, '0') + ']'; }
@@ -82,14 +112,38 @@ function joinsEmoji(s, i, cp) {
 }
 
 /**
+ * Is this ZWNJ or ZWJ part of a word written in a script that uses them (and so drawn, not hidden)? Only one
+ * with a letter or mark on each side, both of the same script, from JOINER_SCRIPTS.
+ * @param {string} s @param {number} i  index of the character in `s` @param {number} cp
+ */
+function joinsScript(s, i, cp) {
+	if (cp !== 0x200C && cp !== 0x200D) { return false; }
+	const left = before(s, i);
+	const right = after(s, i + 1);
+	if (!LETTER_OR_MARK.test(left) || !LETTER_OR_MARK.test(right)) { return false; }
+	return JOINER_SCRIPTS.some((script) => script.test(left) && script.test(right));
+}
+
+/**
+ * Any value as text, without being able to throw: an object with no prototype or a toString that throws is
+ * not a reason for the caller to fail. null and undefined are nothing.
+ * @param {unknown} value @returns {string}
+ */
+function textOf(value) {
+	if (typeof value === 'string') { return value; }
+	if (value === null || value === undefined) { return ''; }
+	try { return String(value); } catch { return '[unprintable value]'; }
+}
+
+/**
  * Text that came out of a file or a command, made safe to write to a terminal. Newlines are LF (CRLF and a lone
  * CR both become one), tabs stay; with `crlf` the newline is written as CR LF, which is what a pty wants.
- * @param {string} text
+ * @param {unknown} text
  * @param {{ crlf?: boolean }} [o]
  * @returns {string}
  */
 function forTerminal(text, o) {
-	const s = text === null || text === undefined ? '' : String(text);
+	const s = textOf(text);
 	const nl = o && o.crlf ? '\r\n' : '\n';
 	return s.replace(HAZARD, (ch, i) => {
 		const cp = /** @type {number} */ (ch.codePointAt(0));
@@ -98,7 +152,7 @@ function forTerminal(text, o) {
 		if (cp === 0x0D) { return s.charCodeAt(i + 1) === 0x0A ? '' : nl; }   // CR LF: the LF writes the break
 		if (cp < 0x20) { return String.fromCharCode(0x2400 + cp); }
 		if (cp === 0x7F) { return '\u{2421}'; }
-		if (joinsEmoji(s, i, cp)) { return ch; }
+		if (joinsEmoji(s, i, cp) || joinsScript(s, i, cp)) { return ch; }
 		return bracket(cp);
 	});
 }
@@ -106,11 +160,11 @@ function forTerminal(text, o) {
 /**
  * A command (or a path, or a name) shown to a person who is asked to approve it. Nothing is hidden and nothing
  * is rewritten except to be made visible; line breaks and tabs stay as they are, a CR is shown.
- * @param {string} text
+ * @param {unknown} text
  * @returns {string}
  */
 function forDisplay(text) {
-	return (text === null || text === undefined ? '' : String(text)).replace(HAZARD, (ch) => {
+	return textOf(text).replace(HAZARD, (ch) => {
 		const cp = /** @type {number} */ (ch.codePointAt(0));
 		if (cp === 0x0A || cp === 0x09) { return ch; }
 		if (cp < 0x20) { return String.fromCharCode(0x2400 + cp); }
@@ -119,4 +173,15 @@ function forDisplay(text) {
 	});
 }
 
-module.exports = { forTerminal, forDisplay };
+/**
+ * A name, a path or a reason put INSIDE a note ("[LevelCode Shell: ...]"): what forDisplay makes of it, and on one
+ * line. A note is the shell's own voice; a file called "a\n[LevelCode Shell: all applied]" must not be able to
+ * add a line to it.
+ * @param {unknown} text
+ * @returns {string}
+ */
+function forNote(text) {
+	return forDisplay(text).replace(/\n/g, '\u{240A}').replace(/\t/g, '\u{2409}');
+}
+
+module.exports = { forTerminal, forDisplay, forNote };

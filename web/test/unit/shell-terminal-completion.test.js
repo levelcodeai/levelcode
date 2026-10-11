@@ -31,6 +31,12 @@ test('the word under the cursor: where it starts, what was typed, the quote it i
 		['echo hi && gre', 11, 'gre', '', 'command'],
 		['a | gre', 4, 'gre', '', 'command'],
 		['ls > ou', 5, 'ou', '', 'path'],
+		['> ou', 2, 'ou', '', 'path'],             // a redirection first: its target is a file, not a command
+		['< fi', 2, 'fi', '', 'path'],
+		['2> er', 3, 'er', '', 'path'],
+		['cat < fi', 6, 'fi', '', 'path'],
+		['ls >> lo', 6, 'lo', '', 'path'],
+		['echo a > b; gre', 12, 'gre', '', 'command'],   // and a command again after the `;`
 		['if tr', 3, 'tr', '', 'command'],
 		['while tru', 6, 'tru', '', 'command'],
 		['echo $(ls sr', 10, 'sr', '', 'path'],

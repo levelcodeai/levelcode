@@ -18,7 +18,7 @@ const { isComplete } = require('./completeness');
 const { createCompleter } = require('./completion');
 const { createWriter, createRunOutput, OUTPUT_LIMIT } = require('./output-sink');
 const { strWidth } = require('./width');
-const { promptFor, cwdLabel } = require('./prompt');
+const { promptFor } = require('./prompt');
 const { looksSecret } = require('./history');
 const si = require('./shell-integration');
 
@@ -26,10 +26,11 @@ const ESC = '\x1b';
 const NAME = 'LevelCode Shell';
 /** A sequence cut by the end of a chunk is given this long to be finished before it is taken for what it is. */
 const FLUSH_MS = 50;
+/** A stopped command that has not given the terminal back this long is said to be applying its changes. */
+const STUCK_MS = 5000;
 const DEFAULT_DIMS = { columns: 80, rows: 24 };
 const DIM = ESC + '[2m';
 const YELLOW = ESC + '[33m';
-const RED = ESC + '[31m';
 const RESET = ESC + '[0m';
 
 /** @typedef {import('./prompt').FolderRef} FolderRef */
@@ -79,7 +80,7 @@ class ShellPty {
 	 * @param {{
 	 *   vscode: { EventEmitter: new () => any },
 	 *   session: any,
-	 *   history: { list(): string[], add(line: string): boolean, clear(): void },
+	 *   history: { list(): string[], add(line: string, secret?: boolean): boolean, clear(): void },
 	 *   sanitize: { forTerminal(text: string, o?: { crlf?: boolean }): string },
 	 *   folders: () => FolderRef[],
 	 *   info?: { commands: string[] },
@@ -117,9 +118,15 @@ class ShellPty {
 		this.state = 'new';
 		this.token = 0;
 		this.lastStatus = 0;
+		/** Ctrl+C was pressed for the run in progress. */
 		this.interrupted = false;
+		/** ... and it has not ended STUCK_MS later: a second Ctrl+C gives the prompt back. */
+		this.stuck = false;
+		/** The output of the run in progress, while there is one. @type {ReturnType<typeof createRunOutput> | null} */
+		this.output = null;
 		this.promptText = '$ ';
 		this.flushTimer = /** @type {any} */ (null);
+		this.stuckTimer = /** @type {any} */ (null);
 		this.maxPaste = deps.maxPaste || DEFAULT_MAX_PASTE;
 		this.parser = createInputParser({ maxPaste: this.maxPaste });
 
@@ -165,6 +172,7 @@ class ShellPty {
 		this.token++;
 		this.writer.clear();
 		this._clearFlush();
+		this._clearStuck();
 		try { this.session.dispose(); } catch (e) { /* already gone */ }
 	}
 
@@ -195,6 +203,10 @@ class ShellPty {
 		if (this.flushTimer !== null) { this.clearTimeoutFn(this.flushTimer); this.flushTimer = null; }
 	}
 
+	_clearStuck() {
+		if (this.stuckTimer !== null) { this.clearTimeoutFn(this.stuckTimer); this.stuckTimer = null; }
+	}
+
 	/** @param {any[]} events */
 	_dispatch(events) {
 		if (this.state === 'closed' || !events.length) { return; }
@@ -207,13 +219,40 @@ class ShellPty {
 		this.editor.input(events);
 	}
 
-	/** Ctrl+C while a command runs: the session stops the engine; the pending run settles as aborted. */
+	/**
+	 * Ctrl+C while a command runs: the session stops the engine and the pending run settles as aborted. The terminal is
+	 * put back to what it was (a link or a hidden cursor whose closing sequence was still queued would otherwise stay
+	 * on), `^C` is shown, and what had not been written yet is dropped.
+	 *
+	 * A run that is already applying its changes is not interrupted (half of a `mv` is worse than all of it), so it can
+	 * take a while to settle. After STUCK_MS the terminal says so, and a second Ctrl+C gives the prompt back: the run
+	 * settles later and its result is dropped, by the token.
+	 */
 	_interrupt() {
-		if (this.interrupted) { return; }
+		if (this.interrupted) {
+			if (this.stuck) { this._abandon(); }
+			return;
+		}
 		this.interrupted = true;
-		this.writer.clear();                    // what has not been written yet is not worth the wait
-		this.writer.write(DIM + '^C' + RESET);
+		this.writer.clear();
+		if (this.output) { this.output.interrupt(); }
+		const token = this.token;
+		this.stuckTimer = this.setTimeoutFn(() => {
+			this.stuckTimer = null;
+			if (token !== this.token || this.state !== 'running' || !this.output) { return; }
+			this.stuck = true;
+			this.output.say('\r\n' + DIM + '[LevelCode Shell: still applying the changes of this command. Ctrl+C again gives the prompt back; the changes keep being applied.]' + RESET + '\r\n');
+		}, STUCK_MS);
 		try { this.session.stop(); } catch (e) { /* nothing was running */ }
+	}
+
+	/**
+	 * The second Ctrl+C of a run that does not end: the prompt comes back, and the run's own result is not heard (the
+	 * terminal is no longer running, and the next run has a token of its own).
+	 */
+	_abandon() {
+		const output = /** @type {NonNullable<typeof this.output>} */ (this.output);
+		this._ended(output, { exitCode: 130, how: 'aborted', notes: [] });   // the prompt: `live` is false from now on
 	}
 
 	/* ------------------------------------------------------------------------------------------------ lines */
@@ -228,31 +267,36 @@ class ShellPty {
 		});
 		this.state = 'idle';
 		this.interrupted = false;
+		this.stuck = false;
+		this.output = null;
+		this._clearStuck();
 		this.editor.start();
 	}
 
 	/** @param {string} src one accepted line (or script) */
 	_accept(src) {
 		if (src.trim() === '') { this._prompt(); return; }
-		this.history.add(src);
+		// asked once: for the history and for the command text the workbench is told
+		const secret = looksSecret(src);
+		this.history.add(src, secret);
 		const t = src.trim();
 		const ex = exitRule(t);
 		if (ex) { this._exit(ex.code === null ? this.lastStatus : ex.code); return; }
-		if (t === 'clear' || t === 'clear;') { this._local(src, () => ESC + '[2J' + ESC + '[H'); return; }
-		if (t === 'help' || t === 'help;') { this._local(src, () => this._help()); return; }
+		if (t === 'clear' || t === 'clear;') { this._local(src, secret, () => ESC + '[2J' + ESC + '[H'); return; }
+		if (t === 'help' || t === 'help;') { this._local(src, secret, () => this._help()); return; }
 		const h = /^history(?:[ \t]+(-c|[0-9]+))?[ \t]*;?$/.exec(t);
-		if (h) { this._local(src, () => this._historyText(h[1])); return; }
-		this._run(src);
+		if (h) { this._local(src, secret, () => this._historyText(h[1])); return; }
+		this._run(src, secret);
 	}
 
 	/**
 	 * A line the terminal answers itself. It is told to the workbench like any other command, so the decorations and
 	 * the status marker behave.
-	 * @param {string} src @param {() => string} produce
+	 * @param {string} src @param {boolean} secret @param {() => string} produce
 	 */
-	_local(src, produce) {
+	_local(src, secret, produce) {
 		this.state = 'running';
-		this.writer.write(this._commandMarks(src) + produce());
+		this.writer.write(this._commandMarks(src, secret) + produce());
 		this._epilogue(0, '', []);
 	}
 
@@ -260,19 +304,21 @@ class ShellPty {
 	 * The marks that announce a command (E, C). The workbench keeps the command line of what runs in the "recent
 	 * commands" it persists; a line that looks like it carries a secret is announced without its text, as it is kept out
 	 * of the history.
-	 * @param {string} src
+	 * @param {string} src @param {boolean} secret
 	 */
-	_commandMarks(src) {
-		return si.commandLine(looksSecret(src) ? '' : src, this.nonce) + si.executed();
+	_commandMarks(src, secret) {
+		return si.commandLine(secret ? '' : src, this.nonce) + si.executed();
 	}
 
-	/** @param {string} src */
-	_run(src) {
+	/** @param {string} src @param {boolean} secret */
+	_run(src, secret) {
 		this.state = 'running';
 		this.interrupted = false;
+		this.stuck = false;
 		const token = ++this.token;
 		const output = createRunOutput({ write: (s) => this.writer.write(s), limit: this.deps.outputLimit || OUTPUT_LIMIT });
-		this.writer.write(this._commandMarks(src));
+		this.output = output;
+		this.writer.write(this._commandMarks(src, secret));
 		const live = () => token === this.token && this.state === 'running';
 		let pending;
 		try {
@@ -289,7 +335,9 @@ class ShellPty {
 			(r) => { if (live()) { this._ended(output, r); } },
 			(e) => {
 				if (!live()) { return; }
-				const message = e && /** @type {any} */ (e).message ? String(/** @type {any} */ (e).message) : String(e);
+				const said = e && /** @type {any} */ (e).message ? String(/** @type {any} */ (e).message) : String(e);
+				// `busy` is what a session says while the run before this one is still applying its changes
+				const message = said === 'busy' ? 'the shell is busy: the previous command is still applying its changes. Try again in a moment' : said;
 				this._ended(output, { exitCode: 1, how: 'error', notes: ['[LevelCode Shell: ' + message + ']'] });
 			});
 	}
@@ -331,6 +379,7 @@ class ShellPty {
 		this.token++;
 		this.writer.clear();
 		this._clearFlush();
+		this._clearStuck();
 		try { this.session.dispose(); } catch (e) { /* already gone */ }
 		this._close.fire(code & 255);
 	}

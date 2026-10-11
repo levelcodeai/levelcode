@@ -164,10 +164,11 @@ function wordEngine(/** @type {any} */ r) {
 			['x', { cwd: '/scratch', folders: 'nope' }], ['x', { cwd: '/scratch', folders: [{ nope: 1 }, null] }],
 			['x', { cwd: '/scratch', env: 5, commit: 'nope', timeoutMs: 'soon' }],
 			['x', { cwd: { toString() { throw new Error('no'); } } }],
+			['x', { cwd: '/scratch', folders: [{ get name() { throw new Error('no'); }, root: '/scratch', uri: 'file:///scratch' }, { name: 'b', root: '/b', uri: 'file:///b' }] }],
 		];
 		for (const [cmd, opts] of bad) {
 			/** @type {any} */ let c;
-			assert.doesNotThrow(() => { c = r.rt.spawnAgent(/** @type {any} */ (cmd), /** @type {any} */ (opts)); }, JSON.stringify([typeof cmd, opts]));
+			assert.doesNotThrow(() => { c = r.rt.spawnAgent(/** @type {any} */ (cmd), /** @type {any} */ (opts)); }, 'case ' + bad.findIndex((c) => c[0] === cmd && c[1] === opts) + ' (' + typeof cmd + ')');
 			const o = observe(c, 3000);
 			await o.closed;
 			await flush();
@@ -175,7 +176,7 @@ function wordEngine(/** @type {any} */ r) {
 			if (opts && /** @type {any} */ (opts).cwd === '/scratch' && cmd !== undefined && typeof cmd === 'string') {
 				assert.strictEqual(close.type, 'close');   // these are fine to run; only the options were odd
 			} else {
-				assert.deepStrictEqual({ type: close.type, bad: close.code !== 0 }, { type: 'close', bad: true }, JSON.stringify([typeof cmd, opts]));
+				assert.deepStrictEqual({ type: close.type, bad: close.code !== 0 }, { type: 'close', bad: true }, 'case ' + bad.findIndex((c) => c[0] === cmd && c[1] === opts) + ' (' + typeof cmd + ')');
 			}
 		}
 		r.rt.dispose();
@@ -184,6 +185,17 @@ function wordEngine(/** @type {any} */ r) {
 		await o.closed;
 		assert.strictEqual(/** @type {any} */ (o.events[o.events.length - 1]).code, 1);
 		assert.ok(/shut down/.test(o.stderr), o.stderr);
+	});
+
+	await test('a working directory that cannot even be printed (an object with no text) is a refusal that says so, not a failure to start', async () => {
+		const r = createRig();
+		for (const cwd of [Object.create(null), { toString() { throw new Error('no'); } }]) {
+			const o = observe(r.rt.spawnAgent('x', { cwd: /** @type {any} */ (cwd) }), 3000);
+			await o.closed;
+			assert.strictEqual(/** @type {any} */ (o.events[o.events.length - 1]).code, 1);
+			assert.ok(/working directory \[unprintable value\] is not inside a workspace folder/.test(o.stderr), o.stderr);
+		}
+		r.rt.dispose();
 	});
 
 	await test('a working directory outside the folders is said plainly, with the offending path made safe', async () => {
@@ -283,6 +295,28 @@ function wordEngine(/** @type {any} */ r) {
 		r.rt.dispose();
 	});
 
+	await test('of several idle agent workers the one used last is reused (its engine is the warmest); the busiest-spawned one is not special', async () => {
+		const r = createRig();
+		/** @type {Array<() => void>} */ const gates = [];
+		r.engines.state.onRun = async (run, w, h) => { if (run.script.startsWith('hold')) { await new Promise((res) => gates.push(() => res(undefined))); } h.done({}); };
+		const a = observe(r.rt.spawnAgent('hold a', { cwd: '/scratch' }), 3000);
+		const b = observe(r.rt.spawnAgent('hold b', { cwd: '/scratch' }), 3000);
+		const c = observe(r.rt.spawnAgent('hold c', { cwd: '/scratch' }), 3000);
+		await flush();
+		assert.strictEqual(r.engines.workers.length, 3);
+		gates[0]();                                // the first worker finishes first...
+		await a.closed;
+		await r.clock.advance(1000);
+		gates[1]();                                // ...the second a second later, and the third (the last started) is still busy
+		await b.closed;
+		const d = observe(r.rt.spawnAgent('fourth', { cwd: '/scratch' }), 3000);
+		await d.closed;
+		assert.deepStrictEqual(r.engines.workers.map((w) => w.runs.map((m) => m.script)), [['hold a'], ['hold b', 'fourth'], ['hold c']]);
+		gates[2]();
+		await c.closed;
+		r.rt.dispose();
+	});
+
 	await test('exit codes: the script\'s own; 126 for a limit; 124 for the engine\'s deadline; 130 aborted; 1 for an engine failure', async () => {
 		const r = createRig();
 		const cases = [[{ exitCode: 0, how: 'exit' }, 0], [{ exitCode: 2, how: 'exit' }, 2], [{ exitCode: 256 + 7, how: 'exit' }, 7], [{ exitCode: 'x', how: 'exit' }, 1],
@@ -336,6 +370,40 @@ function wordEngine(/** @type {any} */ r) {
 		assert.deepStrictEqual(log, ['stdout', 'stderr', 'stderr', 'close'], 'the notes are the last stderr, and close is after');
 		sub.dispose();
 		unsubscribed.push(1);
+		r.rt.dispose();
+	});
+
+	await test('the start event carries the model\'s explanation when there is one, capped at 500 characters; the other events never do', async () => {
+		const r = createRig();
+		wordEngine(r);
+		/** @type {any[]} */ const heard = [];
+		r.rt.onAgentRun((e) => heard.push(e));
+		const run = async (/** @type {any} */ explanation) => {
+			heard.length = 0;
+			const o = observe(r.rt.spawnAgent('echo hello', { cwd: '/scratch', explanation }), 3000);
+			await o.closed;
+			return heard.slice();
+		};
+		let ev = await run('Run the unit tests');
+		assert.deepStrictEqual(ev[0], { type: 'start', id: ev[0].id, command: 'echo hello', cwd: '/scratch', explanation: 'Run the unit tests' });
+		assert.deepStrictEqual(ev.slice(1).map((e) => 'explanation' in e), [false, false]);
+		ev = await run('x'.repeat(500));
+		assert.strictEqual(ev[0].explanation.length, 500, 'exactly the cap is kept whole');
+		ev = await run('y'.repeat(501));
+		assert.strictEqual(ev[0].explanation.length, 500, 'and one more is cut');
+		ev = await run('x'.repeat(499) + '\u{1F600}tail');
+		assert.strictEqual(ev[0].explanation, 'x'.repeat(499), 'a pair is not cut in half: no lone surrogate is left at the end');
+		ev = await run('x'.repeat(498) + '\u{1F600}tail');
+		assert.strictEqual(ev[0].explanation, 'x'.repeat(498) + '\u{1F600}', 'and a pair that fits whole is kept');
+		for (const none of [undefined, '', 42, null, {}, ['a']]) {
+			ev = await run(none);
+			assert.ok(!('explanation' in ev[0]), 'no explanation for ' + JSON.stringify(none));
+		}
+		// a failed spawn is still a start with the label, so its tab can say what it was for
+		heard.length = 0;
+		const bad = observe(r.rt.spawnAgent('x', { cwd: '/not/a/folder', explanation: 'Look around' }), 3000);
+		await bad.closed;
+		assert.strictEqual(heard[0].explanation, 'Look around');
 		r.rt.dispose();
 	});
 

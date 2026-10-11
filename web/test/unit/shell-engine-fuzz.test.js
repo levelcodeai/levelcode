@@ -10,7 +10,10 @@
 // @ts-check
 'use strict';
 
-process.env.TZ = 'UTC';
+// the zone of the process is the visitor's, and the shell does not ask it: the first run is in UTC, the others in two
+// that are not (a smaller count each, from other seeds)
+const ZONES = [['UTC', 3000, 20261011], ['America/New_York', 800, 20261012], ['Asia/Tokyo', 800, 20261013]];
+const PROCESS_TZ = process.env.TZ;
 
 const assert = require('assert');
 const fs = require('fs');
@@ -71,6 +74,20 @@ async function main() {
 	const unhandled = [];
 	process.on('unhandledRejection', (e) => { unhandled.push(String(e && /** @type {any} */ (e).stack || e)); });
 	const E = await loadEngine();
+	let ran = 0;
+	try {
+		for (const [zoneName, count, seed] of ZONES) {
+			process.env.TZ = zoneName;
+			ran += await fuzz(E, zoneName, count, seed, unhandled);
+		}
+	} finally {
+		if (PROCESS_TZ === undefined) { delete process.env.TZ; } else { process.env.TZ = PROCESS_TZ; }
+	}
+	assert.deepStrictEqual(unhandled, [], 'unhandled rejections');
+	console.log(`\n${ZONES.length} tests passed (${ran} scripts)`);
+}
+
+async function fuzz(E, zoneName, COUNT, SEED, unhandled) {
 	// the recorded workspace, once; every run reads it and none applies
 	const tree = makeTree({ '/w': null });
 	const h = await makeHost({ Engine: E, tree, start: false });
@@ -80,8 +97,6 @@ async function main() {
 	});
 	await h.run(golden.fixture.script, { apply: true });
 	const corpus = golden.cases.map((c) => c.script).filter((s) => !/sleep|timeout|yes\b/.test(s));
-	const COUNT = 3000;
-	const SEED = 20261011;
 	const r = rng(SEED);
 	const hows = {};
 	let slowest = { ms: 0, script: '' };
@@ -111,12 +126,11 @@ async function main() {
 	await new Promise((resolve) => setTimeout(resolve, 50));
 	if (failures.length && process.env.FUZZ_DUMP) { fs.writeFileSync(process.env.FUZZ_DUMP, JSON.stringify(failures, null, 1)); }
 	const show = (f) => `#${f.i}: ${f.why}\n    ${JSON.stringify(f.script).slice(0, 300)}`;
-	assert.deepStrictEqual(failures.slice(0, 5).map(show), [], `${failures.length} of ${COUNT} scripts misbehaved (seed ${SEED})`);
-	assert.deepStrictEqual(unhandled, [], 'unhandled rejections');
+	assert.deepStrictEqual(failures.slice(0, 5).map(show), [], `${failures.length} of ${COUNT} scripts misbehaved (seed ${SEED}, zone ${zoneName})`);
 	assert.ok(hows.exit > COUNT / 2, 'most scripts run to their end: ' + JSON.stringify(hows));
 	assert.ok(hows.error === undefined || hows.error < COUNT / 50, 'internal errors are rare: ' + JSON.stringify(hows));
-	console.log(`  ok - ${COUNT} scripts, seed ${SEED}: ${JSON.stringify(hows)}, slowest ${slowest.ms} ms, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-	console.log('\n1 tests passed');
+	console.log(`  ok - ${COUNT} scripts, seed ${SEED}, zone of the process ${zoneName}: ${JSON.stringify(hows)}, slowest ${slowest.ms} ms, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+	return COUNT;
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

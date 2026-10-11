@@ -31,7 +31,7 @@ const EXT = path.join(__dirname, '..', '..', 'shell', 'src', 'extension.js');
 /** @type {any} */ let terminalModule;
 /** @type {{ reads: string[], channels: any[], workers: any[], urls: string[], revoked: string[], blobs: any[] }} */
 let seen;
-const SCRIPT = '/* the engine */ self.onmessage = function () {};';
+const SCRIPT = '/* the engine: caf\u{E9} \u{65E5}\u{672C} \u{1F680} */ self.onmessage = function () {};';
 
 class FakeWorker {
 	constructor(/** @type {string} */ url, /** @type {any} */ opts) {
@@ -116,14 +116,24 @@ async function test(/** @type {string} */ name, /** @type {(ext: any) => Promise
 		assert.ok(api);
 	});
 
-	await test('the API is README section 3 and no more: apiVersion 1, agent { info, spawn }', async (ext) => {
+	await test('the API is README section 3 and no more: apiVersion 1, agent { info, spawn, forDisplay }', async (ext) => {
 		const api = ext.activate(context());
 		assert.deepStrictEqual(Object.keys(api).sort(), ['agent', 'apiVersion']);
 		assert.strictEqual(api.apiVersion, 1);
-		assert.deepStrictEqual(Object.keys(api.agent).sort(), ['info', 'spawn']);
+		assert.deepStrictEqual(Object.keys(api.agent).sort(), ['forDisplay', 'info', 'spawn']);
 		assert.strictEqual(api.agent.info.label, 'LevelCode Shell');
 		assert.strictEqual(api.agent.info.background, false);
 		assert.strictEqual(typeof api.agent.spawn, 'function');
+		ext.deactivate();
+	});
+
+	await test('agent.forDisplay is the sanitiser levelcode-ai shows a model-written command through: no control or bidi character survives', async (ext) => {
+		const api = ext.activate(context());
+		const shown = api.agent.forDisplay('echo a\u001b[31mb\u202ec\u0007d\nrm x');
+		assert.strictEqual(typeof shown, 'string');
+		assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(shown), JSON.stringify(shown));
+		assert.ok(shown.includes('echo a') && shown.includes('rm x'), 'the text itself stays readable: ' + JSON.stringify(shown));
+		assert.strictEqual(api.agent.forDisplay('plain text'), 'plain text');
 		ext.deactivate();
 	});
 
@@ -160,6 +170,48 @@ async function test(/** @type {string} */ name, /** @type {(ext: any) => Promise
 		assert.ok(seen.channels.every((c) => c.lines.length === 1 && /^terminal-unavailable /.test(c.lines[0])), JSON.stringify(seen.channels.map((c) => c.lines)));
 		assert.ok(/profile provider already registered/.test(seen.channels[2].lines[0]));
 		void ext;
+	});
+
+	await test('a worker that fails is written to the Output channel (routine start and stop are not): support can see a pattern', async (ext) => {
+		const api = ext.activate(context());
+		const folders = [{ name: 'scratch', root: '/scratch', uri: 'levelcode-scratch:///scratch' }];
+		const first = observe(api.agent.spawn('echo a', { cwd: '/scratch', folders }), 3000);
+		await first.closed;
+		assert.deepStrictEqual(seen.channels, [], 'a worker that started and was reused writes nothing');
+		// the engine dies under the next run
+		const originalPost = FakeWorker.prototype.postMessage;
+		FakeWorker.prototype.postMessage = function (/** @type {any} */ m) {
+			if (m.t === 'init') { Promise.resolve().then(() => this.onmessage({ data: { t: 'ready', gen: m.gen, commands: ['echo'] } })); }
+			if (m.t === 'run') { Promise.resolve().then(() => this.onerror({ message: 'out of memory', preventDefault() { } })); }
+		};
+		try {
+			ext.deactivate();
+			const api2 = fresh().activate(context());
+			const o = observe(api2.agent.spawn('echo b', { cwd: '/scratch', folders }), 3000);
+			await o.closed;
+			assert.strictEqual(/** @type {any} */ (o.events[o.events.length - 1]).code, 1);
+			assert.strictEqual(seen.channels.length, 1);
+			const lines = seen.channels[0].lines;
+			assert.strictEqual(lines.length, 1, lines.join('\n'));
+			assert.ok(/^worker-failed /.test(lines[0]) && /out of memory/.test(lines[0]), lines[0]);
+		} finally { FakeWorker.prototype.postMessage = originalPost; }
+	});
+
+	await test('the Output channel is bounded: after 200 lines it says nothing more', async (ext) => {
+		const originalPost = FakeWorker.prototype.postMessage;
+		FakeWorker.prototype.postMessage = function (/** @type {any} */ m) {
+			if (m.t === 'init') { Promise.resolve().then(() => this.onmessage({ data: { t: 'ready', gen: m.gen, commands: ['echo'] } })); }
+			if (m.t === 'run') { Promise.resolve().then(() => this.onerror({ message: 'out of memory #' + m.id, preventDefault() { } })); }
+		};
+		try {
+			const api = ext.activate(context());
+			const folders = [{ name: 'scratch', root: '/scratch', uri: 'levelcode-scratch:///scratch' }];
+			for (let i = 0; i < 210; i++) { await observe(api.agent.spawn('x', { cwd: '/scratch', folders }), 3000).closed; }
+			assert.strictEqual(seen.channels.length, 1);
+			assert.strictEqual(seen.channels[0].lines.length, 200);
+			assert.ok(seen.channels[0].lines.every((/** @type {string} */ l) => /^worker-failed /.test(l)), 'and only what is worth reporting was in it');
+			ext.deactivate();
+		} finally { FakeWorker.prototype.postMessage = originalPost; }
 	});
 
 	await test('without workers there is no `agent` in the API (the agent keeps its shell tools withheld); the terminal is still offered', async (ext) => {

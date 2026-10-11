@@ -59,6 +59,42 @@ const ids = (out) => out.failed.map((f) => f.c.path).sort();
 		assert.match(out.notes[0], /3 files changed, ready for Keep\/Undo: ~a\.txt \+new\.txt -b\.txt/);
 	});
 
+	await test('a Stop while the files are being compared applies nothing (and says so); it is asked before each check and once more before the first write', async () => {
+		const r = rig({ '/ws/a.txt': 'old', '/ws/b.txt': 'old' });
+		let calls = 0;
+		const io = Object.assign({}, r.io, { cancelled: () => { calls++; return calls > 1; } });   // true from the second question on
+		const out = await commitShellChanges([W('/ws/a.txt', 'new', 'old'), W('/ws/b.txt', 'new', 'old')], r.ctx, io);
+		assert.strictEqual(out.refused, true);
+		assert.deepStrictEqual(r.edits, []);
+		assert.deepStrictEqual(r.deletes, []);
+		assert.strictEqual(r.ctx.editCount, 0);
+		assert.deepStrictEqual(out.rest, [], 'directories are not made either');
+		assert.match(out.notes.join('\n'), /stopped before any file change was applied/);
+		assert.match(out.notes[out.notes.length - 1], /NONE of this command's file changes were applied/);
+	});
+
+	await test('a Stop that arrives after the last check but before the first write also applies nothing', async () => {
+		const r = rig({ '/ws/a.txt': 'old' });
+		let reads = 0;
+		const io = Object.assign({}, r.io, {
+			readNow: async (abs) => { reads++; return r.io.readNow(abs); },
+			cancelled: () => reads > 0,
+		});
+		const out = await commitShellChanges([W('/ws/a.txt', 'new', 'old')], r.ctx, io);
+		assert.strictEqual(out.refused, true);
+		assert.deepStrictEqual(r.edits, []);
+	});
+
+	await test('a cancelled() that throws, or an io without one, is "not cancelled"', async () => {
+		const r1 = rig({ '/ws/a.txt': 'old' });
+		const o1 = await commitShellChanges([W('/ws/a.txt', 'new', 'old')], r1.ctx, Object.assign({}, r1.io, { cancelled: () => { throw new Error('boom'); } }));
+		assert.strictEqual(o1.refused, false);
+		assert.strictEqual(r1.edits.length, 1);
+		const r2 = rig({ '/ws/a.txt': 'old' });
+		const o2 = await commitShellChanges([W('/ws/a.txt', 'new', 'old')], r2.ctx, r2.io);
+		assert.strictEqual(o2.refused, false);
+	});
+
 	await test('a deleted file is no longer verified', async () => {
 		const r = rig({ '/ws/a.txt': 'x' });
 		r.ctx.touched.add('/ws/a.txt');

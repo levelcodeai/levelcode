@@ -304,10 +304,13 @@ function shellSpawnOpts(ctx, info) {
 	const folders = (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath, uri: f.uri.toString() }));
 	return {
 		folders,
-		commit: async (changes) => {
+		// `control.cancelled()` is the shell's own word that the run was stopped while its changes were being
+		// checked: nothing is applied then (see commitShellChanges).
+		commit: async (changes, control) => {
 			const r = await commitShellChanges(changes, ctx, {
 				folders: () => workspaceFolderList(),
-				readNow: async (abs) => { try { return await host.readBytes(abs); } catch { return null; } }
+				readNow: async (abs) => { try { return await host.readBytes(abs); } catch { return null; } },
+				cancelled: () => !!(control && typeof control.cancelled === 'function' && control.cancelled())
 			});
 			return { rest: r.rest, notes: r.notes, failed: r.failed.length, refused: r.refused };
 		}

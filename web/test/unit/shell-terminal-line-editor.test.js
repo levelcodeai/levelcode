@@ -10,9 +10,15 @@
  *    - the cursor lands on a newline of a multi-line buffer without throwing (the reference editor crashed there);
  *    - a paste over the cap is REJECTED with a notice, not cut;
  *    - layout at the edges: a full row, wide characters, combining marks and joined emoji, tabs, a prompt with colours;
- *    - resize, and a buffer taller than the panel;
+ *    - resize, and a buffer taller than the panel: the editor follows xterm.js's own re-wrapping (reflowCursorLine off,
+ *      as VS Code sets it), in both directions, including what it does to the cursor row; the test model terminal does
+ *      the same (it is checked against xterm.js here), and every case that matters is run through both;
+ *    - what may enter the buffer: nothing the screen cannot show;
  *    - a differential: seeded random sessions at three widths, after EVERY step the screen and the cursor equal what a
  *      terminal shows for the same text written once, from scratch. Zero mismatches, zero crashes.
+ *    - real xterm.js (when a checkout is found; LEVELCODE_REQUIRE_XTERM=1 makes not finding one a failure): the
+ *      editor's output equals xterm's, and with resizes at random points, widening and narrowing, the editor knows
+ *      where the cursor is and leaves the prompt on the screen exactly once.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -25,7 +31,7 @@ const { LineEditor } = require(path.join(dir, 'line-editor.js'));
 const { createInputParser } = require(path.join(dir, 'input-parser.js'));
 const { strWidth, stripEscapes } = require(path.join(dir, 'width.js'));
 const { VT } = require('./helpers/shell-terminal-vt');
-const { findXterm } = require('./helpers/shell-terminal-xterm');
+const { needXterm } = require('./helpers/shell-terminal-xterm');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -287,7 +293,7 @@ test('wide characters: the cursor counts cells and one Backspace removes one cha
 	assert.deepStrictEqual(s.vt.text(), ['$ 好a']);
 });
 
-test('combining marks and joined emoji are one step for the cursor and one Backspace', () => {
+test('combining marks are one step for the cursor and one Backspace; the joiners of an emoji sequence are not typed', () => {
 	const s = session();
 	s.send('e\u0301x');
 	assert.strictEqual(s.vt.cursor().col, 2 + 1 + 1);
@@ -295,13 +301,92 @@ test('combining marks and joined emoji are one step for the cursor and one Backs
 	assert.strictEqual(s.ed.cur, 0, 'one Left over the letter and its accent');
 	s.send(key.end, '\x7f', '\x7f');
 	assert.strictEqual(s.ed.text(), '', 'Backspace removes the accent with its letter');
+	// a family is three emoji and two zero-width joiners: the joiners are invisible, so they are not kept (see below)
 	const family = '\u{1f468}\u200d\u{1f469}\u200d\u{1f467}';
 	s.send(family + 'a');
+	assert.strictEqual(s.ed.text(), '\u{1f468}\u{1f469}\u{1f467}a');
 	assert.strictEqual(s.vt.cursor().col, 2 + 6 + 1);
-	s.send(key.left, key.left);
-	assert.strictEqual(s.ed.cur, 0, 'the whole family is one step');
-	s.send(key.end, '\x7f', '\x7f');
+	s.send(key.left, key.left, key.left, key.left);
+	assert.strictEqual(s.ed.cur, 0, 'each emoji is one step');
+	s.send(key.end, '\x7f', '\x7f', '\x7f', '\x7f');
 	assert.strictEqual(s.ed.text(), '');
+});
+
+test('nothing the screen cannot show enters the buffer: what is drawn is what runs', () => {
+	const hidden = {
+		'zero-width space': '\u200b', 'zero-width non-joiner': '\u200c', 'zero-width joiner': '\u200d', 'word joiner': '\u2060',
+		'byte order mark': '\ufeff', 'soft hyphen': '\u00ad', 'left-to-right mark': '\u200e', 'right-to-left mark': '\u200f',
+		'arabic letter mark': '\u061c', 'invisible times': '\u2062', 'hangul filler': '\u3164', 'halfwidth hangul filler': '\uffa0',
+		'variation selector 16': '\ufe0f', 'variation selector 1': '\ufe00', 'tag latin a': '\u{e0061}', 'cancel tag': '\u{e007f}',
+		'line separator': '\u2028', 'paragraph separator': '\u2029', 'blank braille': '\u2800', 'interlinear anchor': '\ufff9',
+		'lone high surrogate': '\ud800', 'lone low surrogate': '\udc00',
+		// the bidi controls: what makes `rm a<RLO>txt.b` read as `rm a b.txt`
+		'right-to-left override': '\u202e', 'left-to-right override': '\u202d', 'left-to-right embedding': '\u202a',
+		'right-to-left embedding': '\u202b', 'pop directional formatting': '\u202c', 'left-to-right isolate': '\u2066',
+		'right-to-left isolate': '\u2067', 'first strong isolate': '\u2068', 'pop directional isolate': '\u2069',
+	};
+	for (const [name, ch] of Object.entries(hidden)) {
+		const s = session();
+		s.send(paste('rm a' + ch + 'b.txt'));
+		assert.strictEqual(s.ed.text(), 'rm ab.txt', name + ' is not in the buffer');
+		assert.deepStrictEqual(s.vt.text(), ['$ rm ab.txt'], name);
+		// typed, from history and from a completion: the same rule
+		const t = session({ history: ['echo a' + ch + 'b'] });
+		t.send(ch + 'x', key.up);
+		assert.strictEqual(t.ed.text(), 'echo ab', name + ' from history');
+	}
+	// what has a glyph stays: accents, emoji, CJK, a no-break space (it is drawn, as a blank, and is not a separator)
+	const s = session();
+	s.send(paste('caf\u00e9 e\u0301 \u{1f600} \u4f60\u597d a\u00a0b'));
+	assert.strictEqual(s.ed.text(), 'caf\u00e9 e\u0301 \u{1f600} \u4f60\u597d a\u00a0b');
+	// a completion cannot put one in either
+	return (async () => {
+		const c = session({ complete: async () => ({ start: 0, candidates: [{ text: 'a\u200bb\u202ec', display: 'x' }] }) });
+		c.send('a', '\t');
+		await wait();
+		assert.strictEqual(c.ed.text(), 'abc ');
+	})();
+});
+
+test('Shift+Tab is not completion: nothing is asked and nothing changes', async () => {
+	let asked = 0;
+	const complete = async (line) => { asked++; return { start: 0, candidates: [{ text: line + 'X', display: line + 'X' }] }; };
+	const s = session({ complete });
+	s.send('ab', E + '[Z');
+	await wait();
+	assert.strictEqual(asked, 0);
+	assert.strictEqual(s.ed.text(), 'ab');
+	assert.deepStrictEqual(s.vt.text(), ['$ ab']);
+	s.send('\t');
+	await wait();
+	assert.strictEqual(asked, 1, 'Tab is');
+	assert.strictEqual(s.ed.text(), 'abX ');
+});
+
+test('Ctrl+K at the end of a line joins the next one; at the end of the buffer it does nothing', () => {
+	const s = session();
+	s.send(paste('one\ntwo\nthree'));
+	s.send(key.up, key.up, key.end);                      // the end of the first line
+	s.send('\x0b');
+	assert.strictEqual(s.ed.text(), 'onetwo\nthree');
+	assert.deepStrictEqual(s.vt.text(), ['$ onetwo', '> three']);
+	s.send('\x0b');                                       // now there is text to the right: it is killed
+	assert.strictEqual(s.ed.text(), 'one\nthree', 'the cursor was between one and two: two goes');
+	s.send(key.down, key.end, '\x0b');
+	assert.strictEqual(s.ed.text(), 'one\nthree', 'the end of the buffer');
+	s.send(key.up, key.end, '\x0b');
+	assert.strictEqual(s.ed.text(), 'onethree');
+});
+
+test('an underscore is a word character: Alt+B, Alt+F and Ctrl+Left move over snake_case as one word', () => {
+	const s = session();
+	s.send('cd my_long_name now');
+	s.send(E + 'b');
+	assert.strictEqual(s.ed.cur, 'cd my_long_name '.length);
+	s.send(E + 'b');
+	assert.strictEqual(s.ed.cur, 'cd '.length, 'the underscores did not split it');
+	s.send(E + 'f');
+	assert.strictEqual(s.ed.cur, 'cd my_long_name'.length);
 });
 
 test('a line that fills a row exactly puts the cursor on the next row, and Enter leaves no blank row', () => {
@@ -469,6 +554,77 @@ test('an answer to Tab that arrives after the line changed is ignored', async ()
 	assert.strictEqual(s.ed.text(), 'abc');
 });
 
+/** A completer whose answers are let go by hand, one at a time. */
+function slowCompleter(list) {
+	const waiting = [];
+	const asked = [];
+	const complete = (line, cursor) => new Promise((resolve) => {
+		asked.push(line);
+		const start = line.lastIndexOf(' ', cursor - 1) + 1;
+		const typed = line.slice(start, cursor);
+		const answer = { start, candidates: list.filter((n) => n.startsWith(typed)).map((n) => ({ text: n.replace(/\/$/, ''), display: n, dir: n.endsWith('/') })) };
+		waiting.push(() => resolve(answer));
+	});
+	return { complete, asked, release: async () => { const f = waiting.shift(); if (f) { f(); } await wait(); } };
+}
+
+test('Tab Tab when the first answer is slow: the second waits for it, so the list still comes (queued, at most one)', async () => {
+	const c = slowCompleter(['src/', 'srv.log']);
+	const s = session({ complete: c.complete, cols: 60 });
+	s.send('cat s', '\t');
+	s.send('\t');                                         // before the first answer
+	s.send('\t');                                         // a third is not kept: one waits at most
+	assert.deepStrictEqual(c.asked, ['cat s'], 'one question at a time');
+	await c.release();                                    // the first answer: the common prefix, which is "sr"
+	assert.strictEqual(s.ed.text(), 'cat sr');
+	assert.deepStrictEqual(c.asked, ['cat s', 'cat sr'], 'the second Tab asked now, about the line as it is');
+	await c.release();
+	assert.deepStrictEqual(s.vt.text(), ['$ cat sr', 'src/     srv.log', '$ cat sr'], 'and it was the second Tab of a pair: the list');
+	assert.strictEqual(c.asked.length, 2, 'the third was dropped');
+});
+
+test('a key typed while a Tab waits drops the queued Tab and makes the answer stale', async () => {
+	const c = slowCompleter(['readme.md', 'README.txt']);
+	const s = session({ complete: c.complete });
+	s.send('cat rea', '\t');
+	s.send('\t');                                         // queued
+	s.send('d');                                          // the line changed: the answer in flight is stale, the queue is gone
+	await c.release();
+	assert.strictEqual(s.ed.text(), 'cat read', 'the late answer was not applied');
+	assert.deepStrictEqual(c.asked, ['cat rea'], 'and the queued Tab never asked');
+	// a Tab after that is a fresh one
+	s.send('\t');
+	assert.deepStrictEqual(c.asked, ['cat rea', 'cat read']);
+	await c.release();
+	assert.strictEqual(s.ed.text(), 'cat readme.md ');
+});
+
+test('a Tab pressed after a key made the answer in flight stale asks at once; it does not wait behind an answer nobody will use', async () => {
+	const c = slowCompleter(['readme.md', 'README.txt']);
+	const s = session({ complete: c.complete });
+	s.send('cat rea', '\t');
+	s.send('d');                                          // the line changed: that answer is stale
+	s.send('\t');
+	assert.deepStrictEqual(c.asked, ['cat rea', 'cat read'], 'both questions are out; the second is not queued');
+	await c.release();                                    // the stale one
+	assert.strictEqual(s.ed.text(), 'cat read');
+	await c.release();
+	assert.strictEqual(s.ed.text(), 'cat readme.md ');
+});
+
+test('Enter while a Tab waits: nothing the answer says is applied to the next prompt', async () => {
+	const c = slowCompleter(['abc']);
+	const s = session({ complete: c.complete });
+	s.send('a', '\t');
+	s.send('\t');
+	s.send('\r');
+	assert.deepStrictEqual(s.submitted, ['a']);
+	s.ed.start();
+	await c.release();
+	assert.strictEqual(s.ed.text(), '');
+	assert.deepStrictEqual(c.asked, ['a']);
+});
+
 test('a report from the workbench between a Tab and its answer, or between two Tabs, changes nothing', async () => {
 	const complete = names(['src/', 'srv.log']);
 	const a = session({ complete, cols: 60 });
@@ -617,35 +773,398 @@ test('differential with resizes: the redraw after a new width is the text writte
 	assert.ok(checked > 200);
 });
 
+/** The terminal as VS Code makes it: Unicode 11, and the erase of a screen scrolls what was on it into the scrollback. */
+function makeXterm(xt, cols, rows) {
+	const term = new xt.Terminal({ cols, rows, allowProposedApi: true, scrollback: 300, scrollOnEraseInDisplay: true });
+	term.loadAddon(new xt.Unicode11Addon());
+	term.unicode.activeVersion = '11';
+	return term;
+}
+const written = (term, s) => new Promise((r) => term.write(s, r));
+const trimRows = (rowsList) => { const r = rowsList.map((l) => l.replace(/\s+$/, '')); while (r.length && r[r.length - 1] === '') { r.pop(); } return r; };
+/** The rows of the viewport of a real xterm, as strings. */
+function viewport(term, rows) {
+	const b = term.buffer.active;
+	const out = [];
+	for (let i = 0; i < rows; i++) { const l = b.getLine(b.baseY + i); out.push(l ? l.translateToString(true) : ''); }
+	return out;
+}
+
 test('differential against the real xterm.js: the model terminal and xterm agree on what the editor wrote (when xterm is found)', async () => {
-	const xt = findXterm();
-	if (!xt) { console.log('    (skipped: no xterm checkout; set LEVELCODE_XTERM_DIR to the @xterm folder)'); return; }
+	const xt = needXterm('the model terminal against xterm.js');
+	if (!xt) { return; }
 	let seed = 4242;
 	const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-	const trimRows = (rowsList) => { const r = rowsList.map((l) => l.replace(/\s+$/, '')); while (r.length && r[r.length - 1] === '') { r.pop(); } return r; };
 	let compared = 0;
 	for (const cols of [20, 27, 33]) {
 		for (let k = 0; k < 25; k++) {
 			const rows = pick(rnd, [24, 8]);
 			const prompt = pick(rnd, [plainPrompt, colourPrompt]);
 			const s = session({ cols, rows, prompt });
-			const term = new xt.Terminal({ cols, rows, allowProposedApi: true, scrollback: 200 });
-			term.loadAddon(new xt.Unicode11Addon());
-			term.unicode.activeVersion = '11';
+			const term = makeXterm(xt, cols, rows);
 			const script = randomSession(rnd);
 			let sent = 0;
 			for (const st of script) { s.send(st); sent++; }
-			await new Promise((r) => term.write(s.writes.join(''), r));
+			await written(term, s.writes.join(''));
 			const b = term.buffer.active;
-			const real = [];
-			for (let i = 0; i < rows; i++) { const l = b.getLine(b.baseY + i); real.push(l ? l.translateToString(true) : ''); }
-			assert.deepStrictEqual(trimRows(real), trimRows(s.vt.lines()), 'screen, cols ' + cols + ' ' + JSON.stringify(script));
+			assert.deepStrictEqual(trimRows(viewport(term, rows)), trimRows(s.vt.lines()), 'screen, cols ' + cols + ' ' + JSON.stringify(script));
 			assert.deepStrictEqual({ row: b.cursorY, col: b.cursorX }, s.vt.cursor(), 'cursor, cols ' + cols + ' ' + JSON.stringify(script));
 			compared += sent;
 			term.dispose();
 		}
 	}
 	assert.ok(compared > 500);
+});
+
+/* ------------------------------------------------------------------------------------------------ resize, against xterm.js */
+
+// The scenarios: [name, columns before, columns after, what was pasted, the keys that put the cursor where it is]. The
+// first six are the ones a reflow that "leaves the cursor's own line alone" gets wrong: it also moves the cursor by the
+// rows a line BELOW it gained or lost, so the cursor can be on a different row of the region than the editor thinks.
+const L45 = 'x'.repeat(45);
+/** @type {Array<[string, number, number, string, string[]]>} */
+const SCENARIOS = [
+	['one line that wraps, narrower', 50, 30, 'y'.repeat(60), []],
+	['two lines, cursor on the last, narrower', 50, 30, 'echo a\n' + L45, []],
+	['two lines, cursor on the FIRST, narrower (the last wraps)', 50, 30, 'echo hello\n' + L45, [key.up]],
+	['three lines, cursor on the FIRST, narrower (the last wraps)', 50, 30, 'one\ntwo\n' + L45, [key.up, key.up]],
+	['three lines, cursor on the middle, narrower (the last wraps)', 50, 30, 'one\n' + 'm'.repeat(10) + '\n' + L45, [key.up]],
+	['two lines, cursor on the first, WIDER (the last is joined)', 30, 50, 'echo hello\n' + L45, [key.up]],
+	['three lines, cursor on the first, WIDER (both below are joined: the cursor is left ABOVE its region)', 30, 70, 'one\n' + L45 + '\n' + L45, [key.up, key.up]],
+	['three lines, cursor on the middle, WIDER', 30, 60, 'one\n' + L45 + '\n' + L45, [key.up]],
+	['two lines, cursor on the last, WIDER (its own line is not joined)', 30, 50, 'echo a\n' + L45, []],
+	['two short lines, cursor on the first, narrower (nothing wraps)', 50, 40, 'a\nb', [key.up]],
+	['first line long, cursor on it, narrower', 50, 30, L45 + '\nb', [key.up]],
+	['first line long, cursor on the last, narrower', 50, 30, L45 + '\nb', []],
+	['a tab that wraps, cursor above it, narrower then wider', 40, 24, 'a\tb\nc\t' + 'd'.repeat(30) + '\te', [key.up]],
+	['a tab keeps the spaces it was drawn with when its line is re-wrapped (8 spaces at 14 columns; at 8 it would be 2)', 14, 8, 'a'.repeat(12) + '\tcccc\nlast', []],
+	['wide characters at the edge, narrower', 40, 21, '你好世界你好世界你好\n' + '界'.repeat(15), [key.up]],
+	['a last line that fills the row exactly (the cursor is on the row made by forcing a wrap), narrower', 40, 30, 'echo\n' + 'z'.repeat(38), []],
+	['a last line that fills the row exactly, wider', 30, 50, 'echo\n' + 'z'.repeat(28), []],
+	['a buffer taller than the panel, narrower', 40, 28, Array.from({ length: 7 }, (_, i) => 'line ' + (i + 1) + ' ' + 'w'.repeat(20)).join('\n'), [key.up, key.up]],
+	['a buffer taller than the panel, wider', 24, 60, Array.from({ length: 7 }, (_, i) => 'line ' + (i + 1) + ' ' + 'w'.repeat(20)).join('\n'), [key.up, key.up, key.up]],
+];
+
+/**
+ * What a screen must look like after the editor has redrawn, from the screen's rows alone (so it serves the model
+ * terminal and xterm.js alike): the whole region once, from the row the cursor says, with the cursor where the text
+ * written once puts it. A region taller than the panel is a window of the written-once rows. Rows above the region are
+ * not looked at, except that the region is not there twice in the viewport (a copy that scrolled into the scrollback
+ * while the buffer was taller than the panel is history, and `ghostsOk`).
+ * @returns {string | null} what is wrong
+ */
+function screenProblem(view, cursor, s, prompt, rows, ghostsOk) {
+	const o = oracle(prompt, '> ', s.ed.text(), s.ed.cur, s.cols);
+	while (o.rows.length <= o.cursor.row) { o.rows.push(''); }
+	const shown = trimRows(view.slice()).length === 0 ? [] : view.map((l) => l.replace(/\s+$/, ''));
+	if (o.rows.length > rows) {
+		for (let t = 0; t + rows <= o.rows.length; t++) {
+			if (JSON.stringify(o.rows.slice(t, t + rows)) === JSON.stringify(shown) && o.cursor.row - t === cursor.row && o.cursor.col === cursor.col) { return null; }
+		}
+		return 'the viewport is not a window of the text written once: ' + JSON.stringify({ view: shown, cursor, want: o.cursor, rows: o.rows.length });
+	}
+	const top = cursor.row - o.cursor.row;
+	if (top < 0) { return 'the cursor is above where the region begins: ' + JSON.stringify({ cursor, want: o.cursor }); }
+	for (let i = 0; i < o.rows.length; i++) {
+		if (shown[top + i] !== o.rows[i]) { return 'the region is not on the screen from row ' + top + ': ' + JSON.stringify({ view: shown, want: o.rows, top }); }
+	}
+	if (cursor.col !== o.cursor.col) { return 'the cursor is in column ' + cursor.col + ', not ' + o.cursor.col; }
+	for (let y = 0; y < top && !ghostsOk; y++) {
+		if (shown[y].startsWith(prompt.trim()) || shown[y].startsWith('> ')) { return 'a copy of the region is on the screen above it: ' + JSON.stringify(shown); }
+	}
+	return null;
+}
+
+/** Output that was there before the prompt (a banner, the last command's output), wrapped lines included. */
+const EARLIER = ['LevelCode Shell: bash over the files of this workspace.', 'o'.repeat(62), 'a prompt line of output', 'o'.repeat(37)];
+
+/**
+ * Run a script on the editor and a terminal, resizing it where the script says. `attach(term)` is what the terminal
+ * has to offer: `write`, `resize`, the viewport rows and the cursor; for xterm.js also a marker on the first row of the
+ * region, with which the editor's idea of where its cursor is can be compared with the terminal's own.
+ * @returns {Promise<string | null>} what is wrong, or null
+ */
+async function runResizeScript(target, spec) {
+	const { cols: cols0, rows, prompt, steps, earlier } = spec;
+	const term = target.make(cols0, rows);
+	let cols = cols0;
+	let out = '';
+	const parser = createInputParser();
+	const ed = new LineEditor({
+		write: (x) => { out += x; },
+		prompt: () => prompt, columns: cols, rows, history: () => ['ls -la', 'echo "two\nlines"'],
+		isComplete: () => ({ complete: true }), onSubmit() { },
+	});
+	const flush = async () => { const x = out; out = ''; await term.write(x); };
+	await term.write((earlier || []).map((l) => l + '\r\n').join(''));
+	ed.start();
+	await flush();
+	let markerOk = true;      // the marker is on the first row of the region and the cursor can reach it
+	let ghostsOk = false;     // the region has been taller than the panel, or its first row has gone into the scrollback
+	let marker = term.marker(0);
+	const resync = () => {
+		const L = ed._layout();
+		const fits = L.end.row + 1 + (L.forced && ed.cur === ed.buf.length ? 1 : 0) <= rows;
+		if (!fits || ed.lastRow + 1 > rows) { ghostsOk = true; }
+		if (term.markerAbove(marker)) { ghostsOk = true; markerOk = false; }
+		if (!markerOk && fits) { marker = term.marker(-ed.cursorRow); markerOk = true; }
+		if (!fits || ed.winTop > 0) { markerOk = false; }
+	};
+	for (let i = 0; i < steps.length; i++) {
+		const st = steps[i];
+		const label = 'step ' + i + ' ' + JSON.stringify(st) + ' (columns ' + cols + ', rows ' + rows + ')';
+		if (st.resize !== undefined) {
+			const nc = st.resize;
+			if (nc === cols) { continue; }
+			const windowed = ed.lastRow + 1 > rows;
+			await term.resize(nc, rows);
+			// where the terminal's cursor is now, in rows below the first row of the region
+			const real = markerOk && !windowed && term.markerVisible(marker) ? term.cursorBelow(marker) : null;
+			cols = nc;
+			ed.resize(nc, rows);
+			const m = /^(?:\x1b\[(\d+)([AB]))?\r\x1b\[J/.exec(out);
+			const said = m ? (m[1] ? (m[2] === 'A' ? Number(m[1]) : -Number(m[1])) : 0) : null;
+			await flush();
+			if (real !== null && said !== real) { return label + ': the editor moved ' + said + ' rows up, the terminal had its cursor ' + real + ' rows below the first row of the region'; }
+			resync();
+		} else {
+			ed.input(parser.feed(st.paste !== undefined ? paste(st.paste) : st.send));
+			ed.input(parser.flush());
+			await flush();
+			resync();
+		}
+		const w = term.view();
+		const problem = screenProblem(w.rows, w.cursor, { ed, cols }, prompt, rows, ghostsOk);
+		if (problem) { return label + ': ' + problem; }
+		if (markerOk && marker && term.markerVisible(marker) && !ed.text().includes('\t')) {
+			// the first row of the region is where the editor believes it is, relative to the cursor
+			const rel = term.cursorBelow(marker);
+			if (rel !== null && rel !== ed.targetRow - ed.winTop && ed.winTop === 0) { return label + ': the cursor is ' + rel + ' rows below the first row of the region, the editor says ' + (ed.targetRow - ed.winTop); }
+		}
+	}
+	term.dispose();
+	return null;
+}
+
+/** The same script, on the model terminal. */
+const modelTarget = {
+	make(cols, rows) {
+		const vt = new VT(cols, rows);
+		return {
+			write: async (x) => { vt.write(x); },
+			resize: async (c, r) => { vt.resize(c, r); },
+			view: () => ({ rows: vt.lines(), cursor: vt.cursor() }),
+			marker: () => null, markerAbove: () => false, markerVisible: () => false, cursorBelow: () => null,
+			dispose() { },
+		};
+	},
+};
+
+/** The same script, on xterm.js, with a marker on the first row of the region. */
+function xtermTarget(xt) {
+	return {
+		make(cols, rows) {
+			const term = makeXterm(xt, cols, rows);
+			return {
+				write: (x) => written(term, x),
+				resize: async (c, r) => { term.resize(c, r); await written(term, ''); },
+				view: () => { const b = term.buffer.active; return { rows: viewport(term, term.rows), cursor: { row: b.cursorY, col: b.cursorX } }; },
+				marker: (offset) => term.registerMarker(offset),
+				markerAbove: (m) => m.line < term.buffer.active.baseY,
+				markerVisible: (m) => m.line >= term.buffer.active.baseY,
+				cursorBelow: (m) => { const b = term.buffer.active; return b.baseY + b.cursorY - m.line; },
+				dispose() { term.dispose(); },
+			};
+		},
+	};
+}
+
+/** @typedef {{ paste?: string, send?: string, resize?: number }} Step */
+
+/** @param {typeof SCENARIOS[number]} sc */
+function scenarioScript(sc) {
+	const [, before, after, pasted, keys] = sc;
+	/** @type {Step[]} */
+	const steps = [{ paste: pasted }];
+	for (const k of keys) { steps.push({ send: k }); }
+	steps.push({ resize: after }, { send: 'Z' }, { resize: before }, { send: '!' });
+	return { cols: before, rows: 12, prompt: plainPrompt, steps, earlier: EARLIER };
+}
+
+test('resize, on the model terminal: every scenario ends with the prompt on the screen once and the cursor where the editor says', async () => {
+	for (const sc of SCENARIOS) {
+		const spec = scenarioScript(sc);
+		if (/** @type {string} */ (sc[0]).startsWith('a buffer taller')) { spec.rows = 6; }
+		const problem = await runResizeScript(modelTarget, spec);
+		assert.strictEqual(problem, null, sc[0] + ': ' + problem);
+	}
+});
+
+test('resize, on the model terminal: widening leaves the cursor ABOVE the region when lines under it are joined, and the editor goes down to it', async () => {
+	// xterm.js moves its cursor up by every row it takes out, whichever side of the cursor the line was on
+	const vt = new VT(30, 12);
+	const out = [];
+	vt.write('earlier output 1\r\nearlier output 2\r\nearlier output 3\r\n');
+	const ed = new LineEditor({ write: (x) => { out.push(x); vt.write(x); }, prompt: () => plainPrompt, columns: 30, rows: 12, onSubmit() { } });
+	ed.start();
+	const parser = createInputParser();
+	ed.input(parser.feed(paste('first\n' + L45 + '\n' + L45)));
+	ed.input(parser.feed(key.up + key.up));
+	assert.strictEqual(ed.cursorRow, 0);
+	vt.resize(70, 12);
+	out.length = 0;
+	ed.resize(70, 12);
+	assert.ok(/^\x1b\[(\d+)B\r\x1b\[J/.test(out[0]), 'down to the first row of the region: ' + JSON.stringify(out[0].slice(0, 20)));
+	assert.deepStrictEqual(vt.text(), ['earlier output 1', 'earlier output 2', 'earlier output 3', '$ first', '> ' + L45, '> ' + L45]);
+});
+
+test('resize: a tab keeps the spaces it was drawn with when the terminal re-wraps them', async () => {
+	const problem = await runResizeScript(modelTarget, { cols: 40, rows: 12, prompt: plainPrompt, earlier: EARLIER, steps: [{ paste: 'ab\tcd\t' + 'e'.repeat(20) + '\tf\nsecond\tline' }, { send: key.up }, { send: key.up }, { resize: 17 }, { send: 'Q' }, { resize: 44 }, { send: 'R' }, { resize: 13 }, { send: 'S' }] });
+	assert.strictEqual(problem, null, String(problem));
+});
+
+test('the spaces of a tab that wrap below the last row of a window are not written (the screen would scroll and the cursor sit a row low)', async () => {
+	const body = 'a\nb\nc\n' + 'z'.repeat(15) + '\tq';        // 5 rows of 20; the tab starts at column 17 of the fourth
+	const run = async (target) => {
+		const problem = await runResizeScript(target, { cols: 20, rows: 4, prompt: plainPrompt, earlier: [], steps: [{ paste: body }, { send: key.up }, { send: key.up }, { send: key.up }, { send: key.down }, { send: key.down }, { send: key.down }, { send: 'X' }] });
+		assert.strictEqual(problem, null, String(problem));
+	};
+	await run(modelTarget);
+	const xt = needXterm('a tab at the bottom of a window against xterm.js');
+	if (xt) { await run(xtermTarget(xt)); }
+	// and the bytes: the last row drawn ends at its last column, not past it
+	const s = session({ cols: 20, rows: 4 });
+	s.send(paste(body), key.up, key.up, key.up, key.down, key.down, key.down);
+	const drawn = s.writes[s.writes.length - 1];
+	assert.ok(!/ {5,}\r/.test(drawn.split('\r\n').pop() || ''), 'no more spaces than the last row has room for: ' + JSON.stringify(drawn.slice(-60)));
+	assert.deepStrictEqual(s.vt.text().length, 4);
+	assert.strictEqual(s.vt.text()[0], '$ a', 'the window did not scroll');
+});
+
+test('resize, against xterm.js: the scenarios, both directions (when xterm is found)', async () => {
+	const xt = needXterm('the resize scenarios against xterm.js');
+	if (!xt) { return; }
+	for (const sc of SCENARIOS) {
+		const spec = scenarioScript(sc);
+		if (/** @type {string} */ (sc[0]).startsWith('a buffer taller')) { spec.rows = 6; }
+		const problem = await runResizeScript(xtermTarget(xt), spec);
+		assert.strictEqual(problem, null, sc[0] + ': ' + problem);
+	}
+});
+
+/**
+ * A script made to put the cursor above lines that wrap and then change the width: a pasted buffer of a few lines of
+ * different lengths, the cursor taken up some of them, and several widths with a key now and then in between.
+ */
+function resizeScript(rnd, widths) {
+	/** @type {Step[]} */
+	const out = [];
+	const parts = ['one', 'two words here', 'x'.repeat(20 + Math.floor(rnd() * 40)), 'y'.repeat(5 + Math.floor(rnd() * 30)), '', '你好世界' + 'z'.repeat(Math.floor(rnd() * 25)), 'a\tb', 'w'.repeat(33)];
+	const n = 2 + Math.floor(rnd() * 4);
+	const lines = [];
+	for (let i = 0; i < n; i++) { lines.push(pick(rnd, parts)); }
+	const steps = out;
+	steps.push({ paste: lines.join('\n') });
+	for (let i = 0, ups = Math.floor(rnd() * (n + 1)); i < ups; i++) { steps.push({ send: key.up }); }
+	for (let r = 0, count = 3 + Math.floor(rnd() * 4); r < count; r++) {
+		steps.push({ resize: pick(rnd, widths) });
+		if (rnd() < 0.35) { steps.push({ send: pick(rnd, ['Z', key.down, key.up, key.left, key.home, key.end, '\x0b', 'ab', '\x15']) }); }
+	}
+	return steps;
+}
+
+test('resize, against xterm.js: seeded random sessions with resizes in both directions (when xterm is found)', async () => {
+	const xt = needXterm('the random resize sessions against xterm.js');
+	if (!xt) { return; }
+	let seed = 20261011;
+	const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+	const prompts = [plainPrompt, colourPrompt, '你好 $ '];
+	let resizes = 0;
+	for (let k = 0; k < 90; k++) {
+		const prompt = pick(rnd, prompts);
+		const widths = [14, 16, 18, 20, 24, 27, 30, 33, 36, 40, 50, 60].filter((w) => w > strWidth(stripEscapes(prompt)) + 2);
+		/** @type {Step[]} */
+		let steps;
+		if (k % 3 === 0) {
+			// anything the editor does, with a resize now and then
+			steps = [];
+			for (const st of randomSession(rnd)) {
+				steps.push(st.startsWith(E + '[200~') ? { paste: st.slice((E + '[200~').length, -(E + '[201~').length) } : { send: st });
+				if (rnd() < 0.3) { steps.push({ resize: pick(rnd, widths) }); }
+			}
+		} else {
+			steps = resizeScript(rnd, widths);
+		}
+		resizes += steps.filter((st) => st.resize !== undefined).length;
+		const spec = { cols: pick(rnd, [20, 27, 33, 40]), rows: pick(rnd, [8, 12, 24]), prompt, steps, earlier: EARLIER.slice(0, 3 + Math.floor(rnd() * 2)) };
+		const problem = await runResizeScript(xtermTarget(xt), spec);
+		assert.strictEqual(problem, null, 'session ' + k + ' ' + JSON.stringify(spec) + ': ' + problem);
+	}
+	assert.ok(resizes > 250, 'resizes: ' + resizes);
+});
+
+test('resize, against xterm.js: the model terminal re-wraps the way xterm.js does, rows and cursor, in both directions (when xterm is found)', async () => {
+	const xt = needXterm('the model terminal\'s resize against xterm.js');
+	if (!xt) { return; }
+	let seed = 99173;
+	const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+	let resizes = 0;
+	for (let k = 0; k < 50; k++) {
+		const cols0 = pick(rnd, [20, 27, 33]);
+		const rows = pick(rnd, [6, 8, 12, 24]);
+		const prompt = pick(rnd, [plainPrompt, colourPrompt]);
+		const term = makeXterm(xt, cols0, rows);
+		const vt = new VT(cols0, rows);
+		let out = '';
+		const parser = createInputParser();
+		const ed = new LineEditor({ write: (x) => { out += x; vt.write(x); }, prompt: () => prompt, columns: cols0, rows, history: () => ['ls -la', 'echo "two\nlines"'], isComplete: () => ({ complete: true }), onSubmit() { } });
+		const earlier = EARLIER.slice(0, Math.floor(rnd() * 5)).map((l) => l + '\r\n').join('');
+		vt.write(earlier);
+		await written(term, earlier);
+		ed.start();
+		const flush = async () => { const x = out; out = ''; await written(term, x); };
+		await flush();
+		const compare = (label) => {
+			const b = term.buffer.active;
+			assert.deepStrictEqual({ rows: trimRows(vt.lines()), cursor: vt.cursor() }, { rows: trimRows(viewport(term, rows)), cursor: { row: b.cursorY, col: b.cursorX } }, 'session ' + k + ' ' + label);
+		};
+		for (const st of randomSession(rnd)) {
+			ed.input(parser.feed(rnd() < 0.08 ? '\x0c' : st));     // now and then Ctrl+L: what is on the screen goes to the scrollback
+			await flush();
+			if (rnd() < 0.3) {
+				const nc = pick(rnd, [14, 16, 18, 20, 24, 27, 30, 33, 36, 40, 50, 60].filter((w) => w > strWidth(stripEscapes(prompt)) + 2));
+				term.resize(nc, rows);
+				await written(term, '');
+				vt.resize(nc, rows);
+				resizes++;
+				compare('just after xterm and the model were resized to ' + nc);
+				ed.resize(nc, rows);
+				await flush();
+				compare('after the editor redrew at ' + nc);
+			}
+		}
+		compare('at the end');
+		term.dispose();
+	}
+	assert.ok(resizes > 100, 'resizes: ' + resizes);
+});
+
+test('a resize that changes nothing writes nothing; nothing smaller than 2 columns or 2 rows is taken', () => {
+	const s = session({ cols: 30, rows: 8 });
+	s.send('abc');
+	const n = s.writes.length;
+	s.ed.resize(30, 8);
+	assert.strictEqual(s.writes.length, n, 'no redraw for the same size');
+	s.ed.resize(31, 8);
+	assert.ok(s.writes.length > n, 'a redraw for another');
+	const tiny = new LineEditor({ write() { }, prompt: () => '', columns: 1, rows: 1, onSubmit() { } });
+	assert.deepStrictEqual([tiny.cols, tiny.rows], [2, 2], 'at the start');
+	tiny.resize(1, 1);
+	assert.deepStrictEqual([tiny.cols, tiny.rows], [2, 2], 'and on a resize');
+	tiny.resize(0, 0);
+	assert.deepStrictEqual([tiny.cols, tiny.rows], [2, 2], 'a panel that reports 0 is not a panel');
+	tiny.resize(5, 3);
+	assert.deepStrictEqual([tiny.cols, tiny.rows], [5, 3]);
 });
 
 (async () => {

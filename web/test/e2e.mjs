@@ -182,7 +182,11 @@ try {
 	check('the agent called the model through the gateway and got the tool result back', turns >= 2, 'turns: ' + turns);
 	check('write_file created hello.txt in the scratch workspace', (await scratchFile('/scratch/hello.txt')) === 'hello from the browser\n', JSON.stringify(await scratchFile('/scratch/hello.txt')));
 	const tools = (stub.state.lastChatBody && stub.state.lastChatBody.tools || []).map((t) => t.function && t.function.name);
-	check('the agent was not offered a shell', tools.length > 0 && !tools.includes('run_command') && !tools.includes('read_command_output') && tools.includes('write_file'), tools.join(','));
+	// A release carries the shell extension; the bare dev layout (levelcode-ai + levelcode-web only) does not.
+	// Either way the agent is never offered a background job: nothing in a tab can run one.
+	const shellLoaded = Boolean(DIST) || /levelcode-shell/.test(args['extension-names'] || '');
+	check(shellLoaded ? 'the agent was offered run_command (the shell), without background jobs' : 'the agent was not offered a shell',
+		tools.length > 0 && tools.includes('write_file') && !tools.includes('read_command_output') && (shellLoaded ? tools.includes('run_command') : !tools.includes('run_command')), tools.join(','));
 	await shot(page, '3-agent');
 
 	await ask('Please list the files');

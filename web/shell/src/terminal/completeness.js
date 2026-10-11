@@ -18,6 +18,13 @@
 'use strict';
 
 const BAIL = { bail: true };
+/**
+ * How deep expansions and command substitutions may nest before the line is given up on as complete (run, so that the
+ * engine reports it). A level of `$(` counts 2 (the expansion and its command list), so 99 of them are followed.
+ * Every level is a few JavaScript frames, and a paste can carry 50,000 of them: the recursion would overflow the stack
+ * at a depth that depends on the browser, and Enter would silently do nothing.
+ */
+const MAX_DEPTH = 200;
 
 /** @typedef {{ complete: boolean, reason: string }} Completeness */
 
@@ -34,6 +41,7 @@ function isComplete(src) {
 	let i = 0;
 	/** @type {Array<{ delim: string, strip: boolean }>} */
 	const heredocs = [];
+	let depth = 0;
 
 	/** @param {string} reason */
 	const incomplete = (reason) => ({ complete: false, reason });
@@ -217,6 +225,12 @@ function isComplete(src) {
 	 * @returns {string} '' or the reason it is unfinished
 	 */
 	function dollar(inDouble) {
+		if (++depth > MAX_DEPTH) { throw BAIL; }
+		try { return expansion(inDouble); } finally { depth--; }
+	}
+
+	/** @param {boolean} inDouble @returns {string} */
+	function expansion(inDouble) {
 		const c = s[i + 1];
 		if (c === '(') {
 			if (s[i + 2] === '(') { i += 3; return skipArith(); }
@@ -238,6 +252,12 @@ function isComplete(src) {
 	 * @returns {string} '' when finished, else the reason it is incomplete
 	 */
 	function list(closer) {
+		if (++depth > MAX_DEPTH) { throw BAIL; }
+		try { return commands(closer); } finally { depth--; }
+	}
+
+	/** @param {')' | '`' | null} closer @returns {string} */
+	function commands(closer) {
 		/** @type {Array<string>} */
 		const stack = [];
 		let cmdPos = true;          // the next word is at command position

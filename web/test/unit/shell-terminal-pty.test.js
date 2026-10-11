@@ -8,7 +8,10 @@
  *    - the engine's 126 and 124 and its notes as a human line;
  *    - hostile output (a file full of escapes) makes the terminal type nothing and change no mode: checked against the
  *      real xterm.js when it is around, with the unfiltered text as the control;
- *    - output is written in 16 KiB macrotask chunks, in order, capped at 1 MiB with a visible notice.
+ *    - output is written in 16 KiB macrotask chunks, in order, capped at 1 MiB with a visible notice;
+ *    - Ctrl+C: the terminal is put back whatever was queued, `^C` has its own line break, only Ctrl+C interrupts, and
+ *      a run that does not end (applying its changes) is let go of by a second Ctrl+C after it has been said;
+ *    - a line is not scanned for secrets for longer than a bounded part of it, and once.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -17,7 +20,7 @@ const assert = require('assert');
 const path = require('path');
 
 const { makePty, fakeSession, settle, TERMINAL } = require('./helpers/shell-terminal-fakes');
-const { findXterm } = require('./helpers/shell-terminal-xterm');
+const { needXterm } = require('./helpers/shell-terminal-xterm');
 const { exitRule, outcomeLine } = require(path.join(TERMINAL, 'pty.js'));
 const { cwdLabel, promptFor } = require(path.join(TERMINAL, 'prompt.js'));
 const sanitize = require(path.join(TERMINAL, '..', 'sanitize.js'));
@@ -26,6 +29,8 @@ const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
 const E = '\x1b';
 const ST = E + '\\';
+const DIM = E + '[2m';
+const RESET = E + '[0m';
 const paste = (s) => E + '[200~' + s + E + '[201~';
 const OSC633 = /\x1b\]633;([A-Z]+)(?:;([^\x1b]*))?\x1b\\/g;
 
@@ -402,8 +407,8 @@ test('hostile output: a file full of escapes makes the terminal type nothing and
 	assert.ok(out.includes('visible text'));
 
 	// the real thing: feed what was written to xterm.js and count what it types back
-	const xt = findXterm();
-	if (!xt) { console.log('    (the real-xterm half is skipped: no xterm checkout)'); return; }
+	const xt = needXterm('hostile output against xterm.js');
+	if (!xt) { return; }
 	const make = () => {
 		const t = new xt.Terminal({ cols: 60, rows: 12, allowProposedApi: true });
 		t.loadAddon(new xt.Unicode11Addon());
@@ -526,6 +531,303 @@ test('help lists the commands the engine has and says what the shell is not', as
 	assert.ok(/no network/.test(s));
 	assert.ok(!h.all().includes(E + '[6n'), 'a command name is data too');
 	assert.strictEqual(h.session.calls.length, 0, 'help is the terminal\'s own');
+});
+
+
+/* ------------------------------------------------------------------------------------------------ Ctrl+C in detail */
+
+const NOTE_STOPPED = '[LevelCode Shell: stopped. Any file changes the command had made were NOT applied.]';
+
+test('Ctrl+C puts the terminal back whatever the filter believes it wrote: colours, a link and the cursor come back, then ^C', async () => {
+	const h = makePty({ cols: 120 });
+	h.type('cat big', '\r');
+	// delivered: a colour, a hidden cursor and an open link. Queued, and so dropped by Ctrl+C: the text and the sequences
+	// that close all three (the filter has "written" them, and thinks the terminal is back to normal)
+	h.session.pending.o.onStdout(E + '[31m' + E + '[?25l' + E + ']8;;http://example.com' + ST + 'x');
+	const delivered = h.writes.length;
+	h.session.pending.o.onStdout('x'.repeat(40000) + E + ']8;;' + ST + E + '[?25h' + E + '[0m');
+	assert.ok(h.timers.queued() > 0, 'the rest of it is still queued');
+	h.pty.handleInput('\x03');
+	assert.strictEqual(h.writes.slice(delivered).join(''), RESET + E + ']8;;' + ST + E + '[?25h' + DIM + '^C' + RESET, 'unconditional, and then ^C');
+	h.timers.drain();
+	assert.strictEqual(h.writes.slice(delivered).join('').includes('xxxx'), false, 'what was queued is gone');
+	h.session.finish({ exitCode: 130, how: 'aborted', notes: [NOTE_STOPPED] });
+	await settle(); h.timers.drain();
+	const screen = h.screen();
+	assert.deepStrictEqual(screen.slice(-4), ['scratch $ cat big', 'x^C', NOTE_STOPPED, 'scratch [130] $'], 'the note has a row of its own');
+
+	// the real thing: xterm.js ends with the cursor shown and no link open; what it had been given before Ctrl+C left both on
+	const xt = needXterm('Ctrl+C against xterm.js');
+	if (!xt) { return; }
+	const feed = async (text) => {
+		const t = new xt.Terminal({ cols: 60, rows: 12, allowProposedApi: true });
+		await new Promise((r) => t.write(text, r));
+		return { hidden: t._core.coreService.isCursorHidden, link: t._core._inputHandler._curAttrData.extended.urlId };
+	};
+	const before = await feed(h.writes.slice(0, delivered).join(''));
+	assert.deepStrictEqual(before, { hidden: true, link: 1 }, 'the control: without the tail the terminal is left like that');
+	assert.deepStrictEqual(await feed(h.all()), { hidden: false, link: 0 });
+});
+
+test('^C has a line break of its own: after output that ended a line, after a partial line, and after none at all', async () => {
+	/** @type {Array<[string, string, string[]]>} */
+	const cases = [
+		['a line start', 'done\n', ['scratch $ yes', 'done', '^C', NOTE_STOPPED, 'scratch [130] $']],
+		['a partial line', 'partial', ['scratch $ yes', 'partial^C', NOTE_STOPPED, 'scratch [130] $']],
+		['no output', '', ['scratch $ yes', '^C', NOTE_STOPPED, 'scratch [130] $']],
+	];
+	for (const [name, out, want] of cases) {
+		const h = makePty({ cols: 120 });
+		h.type('yes', '\r');
+		if (out) { h.session.pending.o.onStdout(out); h.timers.drain(); }
+		h.pty.handleInput('\x03');
+		h.timers.drain();
+		h.session.finish({ exitCode: 130, how: 'aborted', notes: [NOTE_STOPPED] });
+		await settle(); h.timers.drain();
+		assert.deepStrictEqual(h.screen().slice(-want.length), want, String(name));
+	}
+});
+
+test('only Ctrl+C interrupts a running command: Alt+C is a key like any other, and is not heard', async () => {
+	const h = makePty();
+	h.type('sleep 5', '\r');
+	h.type(E + 'c', E + 'C', E + '[99;3u');
+	assert.strictEqual(h.session.stops, 0);
+	h.type('\x03');
+	assert.strictEqual(h.session.stops, 1);
+});
+
+test('a blank line is not run: no engine, no marks of a command, and the status in the prompt stays', async () => {
+	const h = makePty();
+	h.type('false', '\r');
+	h.session.finish({ exitCode: 1 });
+	await settle(); h.timers.drain();
+	assert.strictEqual(h.screen().slice(-1)[0], 'scratch [1] $');
+	const from = h.all().length;
+	h.type('\r');
+	h.type('   ', '\r');
+	h.type('\r');
+	assert.strictEqual(h.session.calls.length, 1);
+	const letters = marks(h.all().slice(from)).map((m) => m[0]);
+	assert.ok(letters.length > 0 && letters.every((l) => l === 'A' || l === 'B'), 'only prompts: ' + letters.join(''));
+	assert.strictEqual(h.screen().slice(-1)[0], 'scratch [1] $', 'the status of the last real command');
+	assert.deepStrictEqual(h.history.list(), ['false'], 'and nothing blank is remembered');
+});
+
+test('`history N` shows the last N lines with their numbers; `history` output is text from a store, so it is sanitised', async () => {
+	const h = makePty();
+	for (const l of ['echo one', 'echo two', 'echo three', 'echo four']) { h.history.add(l); }
+	h.type('history 2', '\r');
+	await settle(); h.timers.drain();
+	let s = h.screen().join('\n');
+	assert.ok(/ 5  history 2/.test(s) && / 4  echo four/.test(s), s);
+	assert.ok(!/echo three|echo two|echo one/.test(s), 'only the last 2: ' + s);
+
+	// a hostile line in the store (it came from globalState, which another window or an older build wrote)
+	h.history.add('echo ' + E + ']0;pwned\x07' + E + '[6n hi');
+	h.type('history', '\r');
+	await settle(); h.timers.drain();
+	assert.ok(!h.all().includes(E + ']0;pwned'), 'no title sequence');
+	assert.ok(!h.all().includes(E + '[6n'), 'no query');
+	s = h.screen().join('\n');
+	assert.ok(/echo ␛\]0;pwned␇␛\[6n hi/.test(s), s);
+});
+
+test('the working folder after a command is reported (it is what the next terminal starts in), also for the terminal\'s own commands', async () => {
+	const seen = [];
+	const h = makePty({ onCwd: (c) => seen.push(c) });
+	h.type('cd src', '\r');
+	h.session.finish({ cwd: '/scratch/src' });
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(seen, ['/scratch/src']);
+	h.type('help', '\r');
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(seen, ['/scratch/src', '/scratch/src']);
+});
+
+test('a sequence completed in time cancels the timer that would have given up on it', () => {
+	const h = makePty();
+	h.type(E + '[1;');
+	assert.strictEqual(h.timers.timers(), 1, 'waiting for the rest');
+	h.type('5D');
+	assert.strictEqual(h.timers.timers(), 0, 'it came: nothing is waited for any more');
+	h.type(E);
+	assert.strictEqual(h.timers.timers(), 1);
+	h.type('[A');
+	assert.strictEqual(h.timers.timers(), 0);
+	h.timers.advance(100);
+	assert.strictEqual(h.screen().slice(-1)[0], 'scratch $', 'and nothing was typed by a late timer');
+});
+
+test('at most 8 of the runtime\'s notes are shown after a command', async () => {
+	const h = makePty({ cols: 100 });
+	h.type('x', '\r');
+	h.session.finish({ exitCode: 0, notes: Array.from({ length: 12 }, (_, i) => '[note ' + (i + 1) + ']') });
+	await settle(); h.timers.drain();
+	const s = h.screen().join('\n');
+	for (let i = 1; i <= 8; i++) { assert.ok(s.includes('[note ' + i + ']'), 'note ' + i); }
+	assert.ok(!s.includes('[note 9]'));
+});
+
+test('dimensions below 2 are never taken (a hidden panel reports 0): the previous ones stay and are what a command is told', async () => {
+	const h = makePty({ cols: 60, rows: 12 });
+	for (const bad of [{ columns: 1, rows: 1 }, { columns: 0, rows: 0 }, { columns: NaN, rows: undefined }, { columns: -5, rows: 9 }]) {
+		h.pty.setDimensions(bad);
+		h.type('echo x', '\r');
+		const call = h.session.calls[h.session.calls.length - 1];
+		assert.strictEqual(call.o.cols, bad.columns === -5 ? 60 : 60, JSON.stringify(bad));
+		assert.strictEqual(call.o.rows, bad.rows === 9 ? 9 : 12, JSON.stringify(bad));
+		h.session.finish();
+		await settle(); h.timers.drain();
+	}
+	h.pty.setDimensions({ columns: 2, rows: 2 });
+	h.type('echo y', '\r');
+	const last = h.session.calls[h.session.calls.length - 1];
+	assert.deepStrictEqual([last.o.cols, last.o.rows], [2, 2], 'exactly 2 is the smallest that is taken');
+});
+
+test('`clear;` and `help;` are the terminal\'s too, with the semicolon', async () => {
+	const h = makePty({ cols: 120 });
+	h.type('echo old', '\r');
+	h.session.finish();
+	await settle(); h.timers.drain();
+	h.type('clear;', '\r');
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(h.screen(), ['scratch $']);
+	h.type('help;', '\r');
+	await settle(); h.timers.drain();
+	assert.strictEqual(h.session.calls.length, 1, 'neither went to the engine');
+	assert.ok(/LevelCode Shell runs shell scripts/.test(h.screen().join('\n')));
+});
+
+test('a run stuck applying its changes: Ctrl+C stops what can be stopped, the terminal says so after 5 s, and a second Ctrl+C gives the prompt back', async () => {
+	// the runtime does not interrupt a commit (half of a `mv` is worse than all of it): stop() returns and nothing settles
+	const session = fakeSession();
+	let pendingRuns = 0;
+	session.run = (script, o) => {
+		session.calls.push({ script, o });
+		if (pendingRuns > 0) { return Promise.reject(new Error('busy')); }
+		pendingRuns++;
+		return new Promise((resolve) => { session.release = resolve; });
+	};
+	const h = makePty({ session, cols: 200 });
+	h.type('mv a b', '\r');
+	h.pty.handleInput('\x03');
+	assert.strictEqual(session.stops, 1);
+	h.type('\x03');
+	assert.strictEqual(h.screen().slice(-1)[0], '^C', 'a second Ctrl+C at once is the same one: still running, nothing said');
+	assert.strictEqual(session.stops, 1);
+	h.timers.advance(4999);
+	assert.ok(!/still applying/.test(h.screen().join('\n')));
+	h.timers.advance(1);
+	h.timers.drain();
+	assert.ok(/still applying the changes of this command. Ctrl\+C again gives the prompt back/.test(h.screen().join('\n')), h.screen().join('\n'));
+	h.type('\x03');
+	await settle(); h.timers.drain();
+	assert.strictEqual(h.screen().slice(-1)[0], 'scratch [130] $', 'the prompt is back');
+	assert.strictEqual(session.stops, 1, 'the engine was not asked again');
+	const marksAfter = marks(h.all()).filter((m) => m[0] === 'D');
+	assert.deepStrictEqual(marksAfter[marksAfter.length - 1], ['D', '130']);
+
+	// the run settles later: its result is not heard
+	const n = h.writes.length;
+	session.release({ exitCode: 0, how: 'exit', notes: ['[LevelCode Shell: 1 of 1 applied]'], cwd: '/scratch/elsewhere' });
+	await settle(); h.timers.drain();
+	assert.strictEqual(h.writes.length, n, 'nothing written');
+	assert.strictEqual(h.screen().slice(-1)[0], 'scratch [130] $');
+
+	// and the prompt is a prompt: the next line goes to the session, which says it is busy, in words
+	h.type('echo next', '\r');
+	await settle(); h.timers.drain();
+	assert.ok(/the shell is busy: the previous command is still applying its changes/.test(h.screen().join('\n')), h.screen().join('\n'));
+	assert.strictEqual(h.screen().slice(-1)[0], 'scratch [1] $');
+});
+
+test('a run that does end after Ctrl+C is not "stuck": no notice, and a late second Ctrl+C has nothing to give back', async () => {
+	const h = makePty();
+	h.type('sleep 9', '\r');
+	h.pty.handleInput('\x03');
+	h.session.finish({ exitCode: 130, how: 'aborted', notes: [NOTE_STOPPED] });
+	await settle(); h.timers.drain();
+	assert.strictEqual(h.timers.timers(), 0, 'the notice is not waiting');
+	h.timers.advance(10000);
+	assert.ok(!/still applying/.test(h.all()));
+	h.type('echo ok', '\r');
+	assert.strictEqual(h.session.calls.length, 2);
+});
+
+/* ------------------------------------------------------------------------------------------------ what is read of a line */
+
+test('a line of 100,000 characters is accepted at once: nothing about it is quadratic', () => {
+	const shapes = [
+		['plain text', 'a'.repeat(100000)],
+		['the shape of a JWT, over and over', 'eyJ-'.repeat(25000)],
+		['the scheme of a URL, over and over', 'a://'.repeat(25000)],
+		['a private key header and a long run', '-----BEGIN ' + 'A'.repeat(99000)],
+		['a secret name and a long run of blanks', 'token' + ' '.repeat(99000)],
+	];
+	for (const [name, text] of shapes) {
+		const h = makePty({ cols: 120 });
+		h.type(paste(text));
+		const t0 = process.hrtime.bigint();
+		h.pty.handleInput('\r');
+		const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+		assert.strictEqual(h.session.calls.length, 1, name);
+		assert.ok(ms < 500, name + ': Enter took ' + ms.toFixed(0) + ' ms (it took seconds when the whole line was scanned)');
+	}
+});
+
+test('a line that looks like a secret is judged once, and the history and the workbench are told the same thing', async () => {
+	const adds = [];
+	const history = { list: () => [], add: (line, secret) => { adds.push([line, secret]); return true; }, clear() { } };
+	const h = makePty({ history });
+	const secret = 'export API_' + 'KEY=' + 'hunter2hunter2';
+	h.type(secret, '\r');
+	h.session.finish();
+	await settle(); h.timers.drain();
+	h.type('echo hi', '\r');
+	h.session.finish();
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(adds, [[secret, true], ['echo hi', false]], 'the verdict goes with the line');
+	const e = marks(h.all()).filter((m) => m[0] === 'E');
+	assert.deepStrictEqual(e.map((m) => m[1]), [';' + h.pty.nonce, 'echo\\x20hi;' + h.pty.nonce]);
+});
+
+test('a pasted line that nests a command substitution 5,000 deep is run (the engine reports it); Enter never does nothing', async () => {
+	const h = makePty({ cols: 120 });
+	h.type(paste('echo ' + '$('.repeat(5000)));
+	h.type('\r');
+	assert.strictEqual(h.session.calls.length, 1, 'it was run, not held back');
+	h.session.finish({ exitCode: 2, notes: ['[syntax error]'] });
+	await settle(); h.timers.drain();
+	assert.strictEqual(h.screen().slice(-1)[0], 'scratch [2] $');
+});
+
+test('two workspace folders of one name are told apart in the prompt by the folder they are in', () => {
+	const folders = [{ name: 'proj', root: '/a/proj', uri: 'file:///a/proj' }, { name: 'proj', root: '/b/proj', uri: 'file:///b/proj' }];
+	const a = makePty({ folders, cwd: '/a/proj/src' });
+	assert.strictEqual(a.screen().slice(-1)[0], 'a/proj/src $');
+	const b = makePty({ folders, cwd: '/b/proj' });
+	assert.strictEqual(b.screen().slice(-1)[0], 'b/proj $');
+	// one of them alone is just its name
+	const c = makePty({ folders: [folders[0]], cwd: '/a/proj' });
+	assert.strictEqual(c.screen().slice(-1)[0], 'proj $');
+	assert.strictEqual(cwdLabel('/x/a/proj/lib', [{ name: 'proj', root: '/x/a/proj' }, { name: 'proj', root: '/y/a/proj' }], 80, sanitize), 'x/a/proj/lib', 'as many folders as it takes');
+	assert.strictEqual(cwdLabel('/mnt/site', [{ name: 'site', root: '/mnt/site', origin: '/' }, { name: 'site', root: '/work/site' }], 80, sanitize), 'site');
+	// the deepest folder that holds the cwd names it (roots that nest: not what the runtime mounts, but a pure function)
+	assert.strictEqual(cwdLabel('/proj/sub/x', [{ name: 'proj', root: '/proj' }, { name: 'sub', root: '/proj/sub' }], 80, sanitize), 'sub/x');
+});
+
+test('the status the terminal closes with is 0..255, whatever the runtime said', async () => {
+	const h = makePty();
+	h.type('x', '\r');
+	h.session.finish({ exitCode: 300 });
+	await settle(); h.timers.drain();
+	h.type('exit', '\r');
+	assert.deepStrictEqual(h.closed, [44]);
+	const g = makePty();
+	g.type('exit -1', '\r');
+	assert.deepStrictEqual(g.closed, [255]);
 });
 
 (async () => {

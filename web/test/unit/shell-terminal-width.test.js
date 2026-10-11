@@ -16,7 +16,7 @@ const { pathToFileURL } = require('url');
 const dir = path.join(__dirname, '..', '..', 'shell', 'src', 'terminal');
 const { cpWidth, strWidth, stripEscapes } = require(path.join(dir, 'width.js'));
 const table = require(path.join(dir, 'width-table.json'));
-const { findXterm } = require('./helpers/shell-terminal-xterm');
+const { needXterm } = require('./helpers/shell-terminal-xterm');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -55,8 +55,8 @@ test('the table is sorted, disjoint and in range, so the binary search is sound'
 });
 
 test('the checked-in table is what the xterm Unicode 11 addon computes (when an xterm checkout is found)', async () => {
-	const xt = findXterm();
-	if (!xt) { console.log('    (skipped: no xterm checkout; set LEVELCODE_XTERM_DIR to the @xterm folder)'); return; }
+	const xt = needXterm('the width table against the Unicode 11 addon');
+	if (!xt) { return; }
 	const gen = await import(pathToFileURL(path.join(dir, 'gen-width.mjs')).href);
 	const fresh = gen.deriveTable(xt.addonFile);
 	assert.deepStrictEqual(fresh, table, 'run: node web/shell/src/terminal/gen-width.mjs <addon-unicode11.js> --write');
@@ -72,6 +72,24 @@ test('the checked-in table is what the xterm Unicode 11 addon computes (when an 
 		checked++;
 	}
 	assert.ok(checked > 100000);
+});
+
+test('without an xterm.js the real-xterm halves say SKIPPED, loudly, and LEVELCODE_REQUIRE_XTERM=1 makes that a failure', () => {
+	const { spawnSync } = require('child_process');
+	const helper = path.join(__dirname, 'helpers', 'shell-terminal-xterm.js');
+	const code = 'const x = require(' + JSON.stringify(helper) + ').needXterm("the thing"); console.log("RESULT " + (x === null ? "null" : "found"));';
+	const run = (env) => spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', env: Object.assign({}, process.env, { LEVELCODE_XTERM_DIR: path.join(__dirname, 'no-such-folder') }, env) });
+	const skipped = run({ LEVELCODE_REQUIRE_XTERM: '' });
+	assert.strictEqual(skipped.status, 0);
+	assert.ok(/RESULT null/.test(skipped.stdout));
+	assert.ok(/SKIPPED: the real-xterm half of "the thing" did not run/.test(skipped.stdout), skipped.stdout);
+	assert.ok(/::warning::SKIPPED/.test(skipped.stdout), 'and an annotation, for CI');
+	const required = run({ LEVELCODE_REQUIRE_XTERM: '1' });
+	assert.notStrictEqual(required.status, 0);
+	assert.ok(/LEVELCODE_REQUIRE_XTERM=1, and no xterm.js was found for: the thing/.test(required.stderr), required.stderr);
+	// LEVELCODE_XTERM_DIR is the only place looked in when it is set: a wrong one is not quietly replaced by another
+	const wrong = run({ LEVELCODE_REQUIRE_XTERM: '' });
+	assert.ok(/RESULT null/.test(wrong.stdout));
 });
 
 (async () => {

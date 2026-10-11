@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const { fakeVscode, fakeSession, manualTimers, TERMINAL } = require('./helpers/shell-terminal-fakes');
+const { fakeVscode, fakeSession, manualTimers, settle, TERMINAL } = require('./helpers/shell-terminal-fakes');
 const { createTerminalSupport, PROFILE_ID } = require(path.join(TERMINAL, 'index.js'));
 const { KEY } = require(path.join(TERMINAL, 'history.js'));
 
@@ -28,19 +28,20 @@ function memento(initial) {
 	return { m, get: (k, d) => (m.has(k) ? m.get(k) : d), update: (k, v) => { m.set(k, v); return Promise.resolve(); } };
 }
 
-/** @param {{ settings?: Record<string, any>, global?: Record<string, any>, workspace?: Record<string, any> }} [o] */
+/** @param {{ settings?: Record<string, any>, global?: Record<string, any>, workspace?: Record<string, any>, folders?: any[], context?: any }} [o] */
 function setup(o) {
 	const opts = o || {};
 	const fv = fakeVscode({ settings: opts.settings });
 	const timers = manualTimers();
 	const listeners = new Set();
 	/** @type {any[]} */ const sessions = [];
+	const folders = opts.folders || [{ name: 'scratch', root: '/scratch', uri: 'file:///scratch' }];
 	const runtime = {
-		folders: () => [{ name: 'scratch', root: '/scratch' }],
-		createSession(/** @type {any} */ so) { const s = fakeSession({ cwd: (so && so.cwd) || '/scratch' }); s.created = so; sessions.push(s); return s; },
+		folders: () => folders,
+		createSession(/** @type {any} */ so) { const s = fakeSession({ cwd: (so && so.cwd) || folders[0].root }); s.created = so; sessions.push(s); return s; },
 		onAgentRun(l) { listeners.add(l); return { dispose() { listeners.delete(l); } }; },
 	};
-	const context = { globalState: memento(opts.global), workspaceState: memento(opts.workspace), subscriptions: [] };
+	const context = opts.context || { globalState: memento(opts.global), workspaceState: memento(opts.workspace), subscriptions: [] };
 	const support = createTerminalSupport({
 		vscode: fv.vscode,
 		runtime,
@@ -222,6 +223,161 @@ test('dispose closes what was made and stops listening', () => {
 	t.support.dispose();
 	assert.strictEqual(term.disposed, true);
 	assert.strictEqual(t.listeners.size, 0);
+});
+
+/** Open the pty of the terminal a command made, as the workbench does, and collect what it writes. */
+function openShell(t) {
+	t.fv.state.commands['levelcode.shell.new']();
+	const term = t.fv.state.terminals[t.fv.state.terminals.length - 1];
+	const pty = term.creationOptions.pty;
+	const written = [];
+	pty.onDidWrite((d) => written.push(d));
+	pty.open({ columns: 100, rows: 20 });
+	return { term, pty, written, text: () => written.join('') };
+}
+
+test('the working folder a command ended in is kept in workspaceState, and the next shell starts there', async () => {
+	const t = setup();
+	const a = openShell(t);
+	a.pty.handleInput('cd src');
+	a.pty.handleInput('\r');
+	t.sessions[0].finish({ cwd: '/scratch/src' });
+	await settle();
+	assert.strictEqual(t.context.workspaceState.m.get('levelcode.shell.cwd'), '/scratch/src');
+	// no LevelCode terminal is the active one: the last working folder is where the new one begins
+	t.fv.state.active = undefined;
+	t.fv.state.commands['levelcode.shell.new']();
+	assert.strictEqual(t.sessions[1].created.cwd, '/scratch/src');
+});
+
+test('a workspaceState that throws or rejects does not fail a command, and is not an unhandled rejection', async () => {
+	const seen = [];
+	const onRejection = (e) => seen.push(e);
+	process.on('unhandledRejection', onRejection);
+	try {
+		for (const update of [() => { throw new Error('storage is gone'); }, () => Promise.reject(new Error('quota'))]) {
+			const context = { globalState: memento(), workspaceState: { get: () => undefined, update }, subscriptions: [] };
+			const t = setup({ context });
+			const a = openShell(t);
+			a.pty.handleInput('echo hi');
+			a.pty.handleInput('\r');
+			t.sessions[0].finish({ cwd: '/scratch/src' });
+			await settle();
+			await settle();
+			assert.ok(/Cwd=\/scratch\/src;[0-9a-f]+\x1b\\\r\x1b\[J\x1b\]633;A\x1b\\.*scratch\/src.* \$ /.test(a.text().slice(-200)), 'the prompt came back: ' + JSON.stringify(a.text().slice(-200)));
+		}
+	} finally {
+		process.off('unhandledRejection', onRejection);
+	}
+	assert.deepStrictEqual(seen, []);
+});
+
+test('the profile provider reserves its terminal\'s name before the workbench opens it, so two made at once are not both "LevelCode Shell"', () => {
+	const t = setup();
+	const first = t.fv.state.providers[PROFILE_ID].provideTerminalProfile();
+	const second = t.fv.state.providers[PROFILE_ID].provideTerminalProfile();
+	assert.strictEqual(first.options.name, 'LevelCode Shell');
+	assert.strictEqual(second.options.name, 'LevelCode Shell (2)');
+	t.fv.openProfileTerminal(first);
+	t.fv.openProfileTerminal(second);
+	t.fv.state.commands['levelcode.shell.new']();
+	assert.deepStrictEqual(t.fv.state.terminals.map((x) => x.name), ['LevelCode Shell', 'LevelCode Shell (2)', 'LevelCode Shell (3)']);
+});
+
+test('historySize 0 hides what is stored, empties the store, and remembers nothing', () => {
+	const t = setup({ settings: { 'levelcode.shell.historySize': 0 }, global: { [KEY]: ['old one', 'old two'] } });
+	assert.deepStrictEqual(t.context.globalState.m.get(KEY), [], 'forgotten, not only hidden');
+	const a = openShell(t);
+	a.pty.handleInput(String.fromCharCode(0x1b) + '[A');
+	assert.ok(!/old one|old two/.test(a.text()), 'Up recalls nothing');
+	a.pty.handleInput('echo hi');
+	a.pty.handleInput('\r');
+	assert.deepStrictEqual(t.context.globalState.m.get(KEY), []);
+	a.pty.handleInput(String.fromCharCode(0x1b) + '[A');
+});
+
+test('two workspace folders of one name get prompts that tell them apart', () => {
+	const t = setup({ folders: [{ name: 'proj', root: '/a/proj', uri: 'file:///a/proj' }, { name: 'proj', root: '/b/proj', uri: 'file:///b/proj' }] });
+	t.fv.state.commands['levelcode.shell.new']();
+	const pty = t.fv.state.terminals[0].creationOptions.pty;
+	const written = [];
+	pty.onDidWrite((d) => written.push(d));
+	t.sessions[0].cwd = '/b/proj/src';
+	pty.open({ columns: 80, rows: 24 });
+	const visible = written.join('').replace(/\x1b\][^\x1b]*\x1b\\/g, '').replace(/\x1b\[[0-9;]*m/g, '').replace(/\r\x1b\[\d+C$/, '');
+	assert.ok(/b\/proj\/src \$ $/.test(visible), JSON.stringify(visible.slice(-40)));
+});
+
+/* ------------------------------------------------------------------------------------------------ file links */
+
+const token = { isCancellationRequested: false };
+
+test('file links: registered once, for our terminals only; a path that exists opens at its line and column', async () => {
+	const t = setup();
+	assert.ok(t.fv.state.linkProvider, 'registered');
+	t.fv.state.files['file:///scratch/src/a.js'] = 1;
+	t.fv.state.files['file:///scratch/src'] = 2;
+	const a = openShell(t);
+	const provider = t.fv.state.linkProvider;
+	const line = 'error at src/a.js:12:5 and src/ (see src/missing.js:3)';
+	const links = await provider.provideTerminalLinks({ line, terminal: a.term }, token);
+	assert.deepStrictEqual(links.map((l) => [line.slice(l.startIndex, l.startIndex + l.length), l.line, l.col]), [['src/a.js:12:5', 12, 5]], 'a file that exists; not a folder, not a file that does not');
+	await provider.handleTerminalLink(links[0]);
+	assert.strictEqual(t.fv.state.opened.length, 1);
+	assert.strictEqual(t.fv.state.opened[0].uri, 'file:///scratch/src/a.js');
+	const sel = t.fv.state.opened[0].options.selection;
+	assert.deepStrictEqual([sel.start.line, sel.start.character], [11, 4], '0-based');
+	// a terminal that is not ours is not looked at at all
+	t.fv.state.stats.length = 0;
+	const foreign = t.fv.vscode.window.createTerminal({ name: 'bash', pty: { onDidWrite() { }, open() { }, close() { } } });
+	assert.deepStrictEqual(await provider.provideTerminalLinks({ line: 'src/a.js:1', terminal: foreign }, token), []);
+	assert.deepStrictEqual(t.fv.state.stats, [], 'not even a stat');
+	t.support.dispose();
+	assert.strictEqual(t.fv.state.linkProvider, null);
+});
+
+test('file links are relative to the working folder of the terminal the line is in, and of the agent\'s tab', async () => {
+	const t = setup({ settings: { 'levelcode.shell.revealAgentRuns': 'never' } });
+	t.fv.state.files['file:///scratch/src/lib/b.js'] = 1;
+	t.fv.state.files['file:///scratch/README.md'] = 1;
+	const a = openShell(t);
+	t.sessions[0].cwd = '/scratch/src';
+	const provider = t.fv.state.linkProvider;
+	const links = await provider.provideTerminalLinks({ line: 'lib/b.js:2 ../README.md /scratch/README.md', terminal: a.term }, token);
+	assert.deepStrictEqual(links.map((l) => String(l.uri)), ['file:///scratch/src/lib/b.js', 'file:///scratch/README.md', 'file:///scratch/README.md']);
+	// the agent's tab: the runs are reported in workspace paths, from the folder of the last run
+	t.emit({ type: 'start', id: 1, command: 'cat lib/b.js', cwd: '/scratch/src' });
+	const agentTab = t.fv.state.terminals.find((x) => x.name === 'LevelCode Agent');
+	const fromAgent = await provider.provideTerminalLinks({ line: 'lib/b.js:7', terminal: agentTab }, token);
+	assert.deepStrictEqual(fromAgent.map((l) => [String(l.uri), l.line]), [['file:///scratch/src/lib/b.js', 7]]);
+	// with the agent's tab there, a terminal that is neither it nor a shell is still nobody's
+	const foreign = t.fv.vscode.window.createTerminal({ name: 'bash', pty: { onDidWrite() { }, open() { }, close() { } } });
+	t.fv.state.stats.length = 0;
+	assert.deepStrictEqual(await provider.provideTerminalLinks({ line: 'lib/b.js:7', terminal: foreign }, token), []);
+	assert.deepStrictEqual(t.fv.state.stats, []);
+});
+
+test('file links in the agent\'s tab: its folder is a workspace path, and is found in the engine through the mount of a folder that was moved', async () => {
+	const t = setup({ folders: [{ name: 'site', root: '/', uri: 'file:///' }], settings: { 'levelcode.shell.revealAgentRuns': 'never' } });
+	t.fv.state.files['file:///src/app.js'] = 1;
+	t.emit({ type: 'start', id: 1, command: 'cat app.js', cwd: '/src' });
+	const agentTab = t.fv.state.terminals.find((x) => x.name === 'LevelCode Agent');
+	const links = await t.fv.state.linkProvider.provideTerminalLinks({ line: 'app.js:3', terminal: agentTab }, token);
+	assert.deepStrictEqual(links.map((l) => String(l.uri)), ['file:///src/app.js']);
+});
+
+test('file links: a folder that is mounted elsewhere (the root of a file system) is found through its mount', async () => {
+	const t = setup({ folders: [{ name: 'site', root: '/', uri: 'file:///' }] });
+	t.fv.state.files['file:///src/app.js'] = 1;
+	t.fv.state.commands['levelcode.shell.new']();
+	const term = t.fv.state.terminals[0];
+	assert.strictEqual(t.sessions[0].created.cwd, undefined);
+	t.sessions[0].cwd = '/mnt/site';
+	const links = await t.fv.state.linkProvider.provideTerminalLinks({ line: 'src/app.js:3', terminal: term }, token);
+	assert.deepStrictEqual(links.map((l) => String(l.uri)), ['file:///src/app.js']);
+	// and a path that leaves every mount is not a link, whatever is there
+	t.fv.state.files['file:///etc/passwd'] = 1;
+	assert.deepStrictEqual(await t.fv.state.linkProvider.provideTerminalLinks({ line: '../../etc/passwd', terminal: term }, token), []);
 });
 
 (async () => {

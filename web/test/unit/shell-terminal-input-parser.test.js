@@ -202,6 +202,23 @@ test('noise cannot throw, hang or make a control character text (seeded)', () =>
 	}
 });
 
+test('a CSI longer than 64 parameter bytes is ignored whole, never dispatched as the key its last byte names', () => {
+	const params = (n) => '1;'.repeat(Math.floor(n / 2)) + (n % 2 ? '1' : '');
+	for (const [final, name] of [['A', 'up'], ['Z', 'tab'], ['D', 'left'], ['H', 'home']]) {
+		assert.strictEqual(parse(E + '[' + params(64) + final).filter((e) => e.t === 'key').length, 1, name + ' with exactly 64: it is a key');
+		assert.deepStrictEqual(parse(E + '[' + params(65) + final), [{ t: 'ignored', kind: 'unknown' }], name + ' with 65: not');
+		assert.deepStrictEqual(parse(E + '[' + params(500) + final), [{ t: 'ignored', kind: 'unknown' }], name + ' with 500: not');
+	}
+	assert.deepStrictEqual(parse(E + '[' + params(100) + '~'), [{ t: 'ignored', kind: 'unknown' }]);
+});
+
+test('ESC ESC is Escape and the start of an escape; ESC O ESC drops the SS3 and starts one', () => {
+	assert.deepStrictEqual(parse(E + E), [key('escape'), key('escape')]);
+	assert.deepStrictEqual(parse(E + E + '[A'), [key('escape'), key('up')]);
+	assert.deepStrictEqual(parse(E + 'O' + E + '[A'), [{ t: 'ignored', kind: 'unknown' }, key('up')], 'the keys after a cut-off SS3 are not lost');
+	assert.deepStrictEqual(parse(E + 'OA'), [key('up')]);
+});
+
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }

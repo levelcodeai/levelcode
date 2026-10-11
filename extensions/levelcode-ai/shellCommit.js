@@ -123,7 +123,9 @@ function isProtected(rel) { return PROTECTED.some((re) => re.test(rel)); }
  *
  * @param {Change[]} changes
  * @param {{ applyEdit?: Function, applyDelete?: Function, touched?: Set<string>, editCount?: number }} ctx
- * @param {{ folders: () => Array<{name:string, root:string}>, readNow: (abs: string) => Promise<Uint8Array|null>, isDirty?: (abs: string) => boolean }} io
+ * @param {{ folders: () => Array<{name:string, root:string}>, readNow: (abs: string) => Promise<Uint8Array|null>, isDirty?: (abs: string) => boolean, cancelled?: () => boolean }} io
+ *   `cancelled` is asked between the read-only checks and once more before the first write: a Stop that arrives
+ *   while the files are being compared applies nothing. Once the first write has begun nothing interrupts it.
  * @returns {Promise<{ rest: Change[], applied: Change[], failed: Refusal[], notes: string[], refused: boolean }>}
  *   `rest` is what the SHELL itself still has to do (create and remove directories). `refused` is true when
  *   nothing was applied because the set as a whole was refused.
@@ -184,14 +186,21 @@ async function commitShellChanges(changes, ctx, io) {
 			}
 		}
 	}
+	const stopped = () => ({
+		rest: /** @type {Change[]} */ ([]), applied: /** @type {Change[]} */ ([]), failed: /** @type {Refusal[]} */ ([]), refused: true,
+		notes: ['[LevelCode Shell: stopped before any file change was applied. NONE of this command\'s file changes were applied.]'],
+	});
+	const isCancelled = () => { try { return !!(io.cancelled && io.cancelled()); } catch { return false; } };
 	// Changed on disk since the command read it (a save, another tab)? Never overwrite what someone else wrote.
 	if (!refusals.length) {
 		for (const { c } of plan) {
+			if (isCancelled()) { return stopped(); }
 			const before = c.kind === 'write' ? (c.existed ? c.before : null) : c.before;
 			const now = await io.readNow(c.path);
 			if (!same(now, before)) { refusals.push({ c, why: 'it changed while the command ran, so the command\'s result is not applied over it' }); }
 		}
 	}
+	if (isCancelled()) { return stopped(); }
 
 	if (refusals.length) {
 		/** @type {string[]} */ const notes = [];
