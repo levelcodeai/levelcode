@@ -163,6 +163,8 @@ const SHELL_API_VERSION = 1;
  * @property {boolean} network        the network is reachable from a command
  * @property {string[]} commands      command names, for the prompt
  * @property {string[]} [missing]     commands the model is likely to try that are NOT here (node, npm, git …)
+ * @property {{ commandCount?: number, loopIterations?: number, outputBytes?: number, fileReadBytes?: number, runReadBytes?: number }} [limits]
+ *     what stops a command, so the prompt can say so
  *
  * @typedef {{ name: string, root: string, uri: string }} WorkspaceFolderRef
  * @typedef {{ kind: 'write'|'delete'|'mkdir'|'rmdir', path: string, existed?: boolean, before?: Uint8Array|null, after?: Uint8Array, viaDir?: string }} Change
@@ -171,11 +173,13 @@ const SHELL_API_VERSION = 1;
  * @property {string} cwd                       absolute path of a workspace folder, or inside one
  * @property {WorkspaceFolderRef[]} [folders]   the workspace folders, live and in order (a shell mounts each at its root)
  * @property {Record<string,string>} [env]      extra environment
- * @property {(changes: Change[]) => Promise<{ rest: Change[], notes: string[] }>} [commit]
- *     Agent runs only. Called once, after the command has ended (also after Stop or a timeout) and BEFORE 'close',
- *     with the files the command left changed. The caller reviews the ones it can and returns the rest, which the
- *     shell applies itself, plus lines to append to the command's output. Without it the shell writes them straight
- *     to the workspace (the user's own terminal).
+ * @property {(changes: Change[]) => Promise<{ rest: Change[], notes: string[], failed?: number, refused?: boolean }>} [commit]
+ *     Agent runs only. Called once, after the command has run to its END (never after Stop, a timeout or an engine
+ *     limit: those apply nothing) and BEFORE 'close', with the files the command left changed. The caller validates
+ *     the whole set and reviews it, or refuses it whole; it returns what the shell still has to do itself (make and
+ *     remove directories), lines to append to the command's output, and how many changes it could NOT apply (the
+ *     shell then does not report success). Without it the shell writes the changes straight to the workspace (the
+ *     user's own terminal).
  *
  * @typedef {object} ChildLike  The part of a Node ChildProcess that agent.js's runCommand uses.
  * @property {number} [pid]     leave undefined: agent.js then kills with child.kill(signal)
@@ -183,6 +187,9 @@ const SHELL_API_VERSION = 1;
  * @property {{ on: (ev: 'data', cb: (chunk: string|Uint8Array) => void) => any }} stderr
  * @property {(ev: 'close'|'error', cb: Function) => any} on   'close'(code) once, after every 'data'
  * @property {(signal?: string) => boolean} kill
+ *     'SIGTERM' (Stop) and 'SIGKILL' (the timeout, or a Stop that was not heard within 1.5 s): the command is stopped
+ *     and NONE of its file changes are applied — they were only ever staged — and the result says so. 'close' is
+ *     emitted once. agent.js reports 130 for a stop and 124 for a timeout whatever the code of 'close'.
  */
 
 /**
@@ -214,28 +221,41 @@ function registerShell(impl) {
 
 /** @type {Promise<boolean> | null} */
 let connecting = null;
+/** How long a run waits for the shell extension to activate before it carries on without one. */
+const CONNECT_TIMEOUT_MS = 10000;
 /**
  * Browser only: find the LevelCode Shell extension, activate it (it is lazily activated, so this is where it
  * first loads), and register what it exports. Idempotent; resolves true when a shell is now available. Never
- * throws: a missing or broken shell is "no shell", which is what the browser build was before it existed.
+ * throws and never waits for ever: a missing, broken or slow shell is "no shell" for this run, which is what the
+ * browser build was before it existed — and the next run asks again (by then it may have finished activating).
+ * @param {{ timeoutMs?: number }} [opts]
  * @returns {Promise<boolean>}
  */
-function connectShell() {
+function connectShell(opts) {
 	if (!isBrowser) { return Promise.resolve(false); }
 	if (shell !== null) { return Promise.resolve(true); }
 	if (connecting) { return connecting; }
-	connecting = (async () => {
+	const timeoutMs = (opts && opts.timeoutMs) || CONNECT_TIMEOUT_MS;
+	const attempt = (async () => {
+		let timer;
 		try {
 			const ext = vscode.extensions.getExtension(SHELL_EXTENSION_ID);
 			if (!ext) { return false; }
-			const api = ext.isActive ? ext.exports : await ext.activate();
+			const api = ext.isActive ? ext.exports : await Promise.race([
+				ext.activate(),
+				new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('the shell extension did not activate in ' + timeoutMs + ' ms')), timeoutMs); }),
+			]);
 			if (!api || api.apiVersion !== SHELL_API_VERSION || !api.agent) { return false; }
 			registerShell(api.agent);
 			return true;
 		} catch { return false; }
-		finally { connecting = null; }
+		finally { if (timer) { clearTimeout(timer); } }
 	})();
-	return connecting;
+	// Cleared AFTER it has settled, from outside: an early `return false` above runs the finally block before this
+	// assignment, so clearing inside it left a settled promise stored and every later run got its stale answer.
+	connecting = attempt;
+	attempt.then(() => { if (connecting === attempt) { connecting = null; } });
+	return attempt;
 }
 
 /* ----- sending the user to sign in ------------------------------------------------------------- */

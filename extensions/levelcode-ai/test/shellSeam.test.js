@@ -24,9 +24,11 @@ const Module = require('module');
 const { EventEmitter } = require('events');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-seam-'));
-const folder = (name, p) => ({ name, uri: { fsPath: p, path: p, toString: () => 'file://' + p } });
+const folder = (name, p) => ({ name, uri: { fsPath: p, path: p, toString: () => 'file://' + p, with: (o) => ({ fsPath: o.path, path: o.path, toString: () => 'file://' + o.path }) } });
 const vscodeMock = {
-	workspace: { workspaceFolders: [folder('app', root)], findFiles: async () => [], asRelativePath: (u) => String(u.fsPath || u) },
+	workspace: { workspaceFolders: [folder('app', root)], findFiles: async () => [], asRelativePath: (u) => String(u.fsPath || u),
+		// the browser build reads through vscode.workspace.fs; here that is the temp directory
+		fs: { readFile: async (u) => fs.promises.readFile(u.fsPath) } },
 	env: { appRoot: '' },
 	Uri: { file: (p) => ({ fsPath: p, path: p }) },
 	extensions: { getExtension: () => undefined },
@@ -150,8 +152,11 @@ function ctxFor(over) {
 			assert.ok(!('background' in rc.input_schema.properties), 'no background argument for a shell that cannot keep a command running');
 			assert.ok(!t.tools.some((x) => x.name === 'read_command_output'));
 			assert.match(t.system, /run_command runs ONE command line in LevelCode Shell/);
-			assert.match(t.system, /does NOT start programs: node, npm, git and the like are not here, there is no network, and nothing runs in the background/);
-			assert.ok(!/dev servers|tail -f|There is no terminal/.test(t.system));
+			assert.match(t.system, /Programs that exist: cat ls grep\. Shell builtins work too\. Everything else answers "command not found" \(exit 127\) — node, npm, git …/);
+			assert.match(t.system, /There is no network\. Nothing runs in the background/);
+			assert.match(t.system, /A stopped command changes nothing/);
+			assert.match(t.system, /NONE of that command's changes are applied/);
+			assert.ok(!/dev servers|tail -f|There is no terminal|Run the extension unit tests/.test(t.system));
 		});
 
 		await test('BROWSER, shell registered: the shell is handed the command, the cwd, the folders and a commit hook — never a process', async () => {
@@ -196,21 +201,74 @@ function ctxFor(over) {
 			const p = agent.runAgent(ctx);
 			await settle(); await settle();
 			const commit = calls[0].opts.commit;
-			// the file the command is about to be told is unchanged on disk: readNow reads through host.readBytes → nothing there → null
+			// the file the command deletes is on disk as the command saw it (readNow reads through host.readBytes)
+			fs.writeFileSync(path.join(root, 'gone.txt'), 'bye\n');
 			const out = await commit([
 				{ kind: 'write', path: root + '/new.txt', existed: false, before: null, after: enc('hi\n') },
 				{ kind: 'delete', path: root + '/gone.txt', existed: true, before: enc('bye\n') },
 				{ kind: 'write', path: root + '/dist/app.js', existed: false, before: null, after: enc('x') },
 				{ kind: 'mkdir', path: root + '/empty' },
 			]);
-			assert.deepStrictEqual(edits, [{ path: 'new.txt', exists: false, proposed: 'hi\n' }]);
+			assert.deepStrictEqual(edits, [{ path: 'dist/app.js', exists: false, proposed: 'x' }, { path: 'new.txt', exists: false, proposed: 'hi\n' }], 'build output is reviewed like any file: there is no unreviewed path');
 			assert.deepStrictEqual(deletes, [{ path: 'gone.txt' }]);
-			assert.deepStrictEqual(out.rest.map((c) => c.kind + ':' + path.basename(c.path)), ['write:app.js', 'mkdir:empty'], 'build output and directories are left to the shell');
+			assert.deepStrictEqual(out.rest.map((c) => c.kind + ':' + path.basename(c.path)), ['mkdir:empty'], 'only directories are left to the shell');
+			assert.strictEqual(out.failed, 0);
+			assert.strictEqual(out.refused, false);
 			assert.ok(ctx.touched.has(root + '/new.txt') && !ctx.touched.has(root + '/gone.txt'));
-			assert.strictEqual(ctx.editCount, 2, 'each reviewed file is an edit: verification and the "N edits" count see them');
-			assert.match(out.notes.join('\n'), /2 files changed, ready for Keep\/Undo: \+new\.txt -gone\.txt/);
+			assert.strictEqual(ctx.editCount, 3, 'each reviewed file is an edit: verification and the "N edits" count see them');
+			assert.match(out.notes.join('\n'), /3 files changed, ready for Keep\/Undo: \+dist\/app\.js \+new\.txt -gone\.txt/);
 			calls[0].child.emit('close', 0);
 			await p;
+		});
+
+		// ---- connecting: the shell extension is found lazily, once per run, and a failure is not remembered ----
+		const fakeShellApi = (over) => ({ apiVersion: 1, agent: { info: { label: 'LevelCode Shell', background: false, programs: false, network: false, commands: ['cat'] }, spawn() { return fakeChild(); } }, ...over });
+
+		await test('BROWSER, connect: no extension now, one a moment later — the second run finds it (a failure is not cached)', async () => {
+			const { host } = load(true);
+			let ext;
+			vscodeMock.extensions.getExtension = () => ext;
+			assert.strictEqual(await host.connectShell(), false);
+			assert.strictEqual(host.caps.shell, false);
+			ext = { isActive: true, exports: fakeShellApi() };
+			assert.strictEqual(await host.connectShell(), true, 'the second ask must look again');
+			assert.strictEqual(host.caps.shell, true);
+			vscodeMock.extensions.getExtension = () => undefined;
+		});
+
+		await test('BROWSER, connect: an API of another version is no shell — and a right one later is', async () => {
+			const { host } = load(true);
+			let ext = { isActive: true, exports: fakeShellApi({ apiVersion: 2 }) };
+			vscodeMock.extensions.getExtension = () => ext;
+			assert.strictEqual(await host.connectShell(), false);
+			assert.strictEqual(host.shellInfo(), null);
+			ext = { isActive: true, exports: fakeShellApi() };
+			assert.strictEqual(await host.connectShell(), true);
+			vscodeMock.extensions.getExtension = () => undefined;
+		});
+
+		await test('BROWSER, connect: an extension that does not activate in time is no shell for this run, and the run is not held for ever', async () => {
+			const { host } = load(true);
+			let release;
+			const ext = { isActive: false, activate: () => new Promise((r) => { release = r; }), exports: undefined };
+			vscodeMock.extensions.getExtension = () => ext;
+			const t0 = Date.now();
+			assert.strictEqual(await host.connectShell({ timeoutMs: 40 }), false);
+			assert.ok(Date.now() - t0 < 1000);
+			assert.strictEqual(host.caps.shell, false);
+			ext.isActive = true; ext.exports = fakeShellApi(); release(ext.exports);
+			assert.strictEqual(await host.connectShell(), true, 'by the next run it has finished activating');
+			vscodeMock.extensions.getExtension = () => undefined;
+		});
+
+		await test('BROWSER, connect: concurrent asks share one attempt', async () => {
+			const { host } = load(true);
+			let calls = 0;
+			vscodeMock.extensions.getExtension = () => { calls++; return { isActive: true, exports: fakeShellApi() }; };
+			const [a, b] = await Promise.all([host.connectShell(), host.connectShell()]);
+			assert.deepStrictEqual([a, b], [true, true]);
+			assert.strictEqual(calls, 1);
+			vscodeMock.extensions.getExtension = () => undefined;
 		});
 
 		await test('BROWSER, shell registered: the verify command runs in the shell, and its changes are reviewed too', async () => {
