@@ -31,7 +31,7 @@ const isBrowser = !!globalThis.__LEVELCODE_BROWSER_HOST__;
 /**
  * A shell the browser build can borrow: a LevelCode-owned extension (web/shell) that exports one. It is
  * connected lazily (connectShell), once, the first time a run needs to know whether there is one.
- * @type {{ info: ShellInfo, spawn: (command: string, opts: SpawnOptions) => ChildLike } | null}
+ * @type {{ info: ShellInfo, spawn: (command: string, opts: SpawnOptions) => ChildLike, forDisplay?: (text: string) => string } | null}
  */
 let shell = null;
 
@@ -173,6 +173,7 @@ const SHELL_API_VERSION = 1;
  * @property {string} cwd                       absolute path of a workspace folder, or inside one
  * @property {WorkspaceFolderRef[]} [folders]   the workspace folders, live and in order (a shell mounts each at its root)
  * @property {Record<string,string>} [env]      extra environment
+ * @property {string} [explanation]             the model's own label for the command (at most 300 characters), for a tab that mirrors it
  * @property {(changes: Change[]) => Promise<{ rest: Change[], notes: string[], failed?: number, refused?: boolean }>} [commit]
  *     Agent runs only. Called once, after the command has run to its END (never after Stop, a timeout or an engine
  *     limit: those apply nothing) and BEFORE 'close', with the files the command left changed. The caller validates
@@ -209,8 +210,21 @@ function spawn(command, opts) {
 function shellInfo() { return shell ? shell.info : null; }
 
 /**
+ * A model-written string as the user is shown it on an approval card or a command card: invisible and
+ * direction-changing characters made visible, so what is approved is what runs. The desktop shows text as it
+ * always has; a shell that brings its own rules (the browser's) supplies them.
+ * @param {string} text
+ * @returns {string}
+ */
+function displaySafe(text) {
+	const f = shell && shell.forDisplay;
+	if (typeof f !== 'function') { return text; }
+	try { const out = f(String(text)); return typeof out === 'string' ? out : text; } catch { return text; }
+}
+
+/**
  * Register a shell. Called by connectShell; exported so a test (or a later in-process engine) can register one.
- * @param {{ info: ShellInfo, spawn: Function }} impl
+ * @param {{ info: ShellInfo, spawn: Function, forDisplay?: (text: string) => string }} impl
  * @returns {{ dispose(): void }}
  */
 function registerShell(impl) {
@@ -302,7 +316,7 @@ function findFiles(glob, exclude, max) {
 
 module.exports = {
 	isBrowser, caps,
-	spawn, shellInfo, registerShell, connectShell,
+	spawn, shellInfo, displaySafe, registerShell, connectShell,
 	uriFor, readBytes, readText, readTextOrNull, stat, exists, isBinary, withReads, findFiles, openAuth,
 	// For tests.
 	_path: path,

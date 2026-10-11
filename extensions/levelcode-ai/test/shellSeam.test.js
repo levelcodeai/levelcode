@@ -271,6 +271,33 @@ function ctxFor(over) {
 			vscodeMock.extensions.getExtension = () => undefined;
 		});
 
+		await test('BROWSER, shell registered: the card and the approval show the command through the shell\'s forDisplay; the shell is still handed the real one', async () => {
+			const { agent, host } = load(true);
+			const calls = registerFake(host, { forDisplay: (t) => t.replace(/\u202e/g, '[U+202E]') });
+			const real = 'echo \u202eevil';
+			script = [tool('d1', 'run_command', { command: real, explanation: 'say \u202ehi', }), say('Done: x')];
+			const approvals = [];
+			const ctx = ctxFor({ approve: async (r) => { approvals.push(r); return true; } });
+			const p = agent.runAgent(ctx);
+			await settle(); await settle();
+			assert.strictEqual(approvals.length, 1);
+			assert.strictEqual(approvals[0].command, 'echo [U+202E]evil');
+			assert.strictEqual(approvals[0].explanation, 'say [U+202E]hi');
+			const card = ctx.posted.find((m) => m.type === 'termRun');
+			assert.strictEqual(card.command, 'echo [U+202E]evil');
+			assert.strictEqual(calls[0].command, real, 'what runs is what the model wrote');
+			assert.strictEqual(calls[0].opts.explanation, 'say \u202ehi', 'the mirror tab gets the label, to make safe itself');
+			calls[0].child.emit('close', 0);
+			await p;
+		});
+
+		await test('DESKTOP: displaySafe is the identity, and nothing is registered', async () => {
+			const { host } = load(false);
+			assert.strictEqual(host.displaySafe('a\u202eb'), 'a\u202eb');
+			const { host: bh } = load(true);
+			assert.strictEqual(bh.displaySafe('x'), 'x', 'a browser with no shell, or one without forDisplay, shows text as it is');
+		});
+
 		await test('BROWSER, shell registered: the verify command runs in the shell, and its changes are reviewed too', async () => {
 			const { agent, host } = load(true);
 			const calls = registerFake(host);

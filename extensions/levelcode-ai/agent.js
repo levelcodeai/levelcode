@@ -459,7 +459,7 @@ function runCommand(root, command, onChunk, onExit, onStart, timeoutMs, opts) {
 		let child;
 		// detached:true → the shell becomes its own process-group leader, so process.kill(-pid) kills the
 		// whole tree (the shell AND the server/children it spawned), not just the shell (which orphans the server).
-		try { child = host.spawn(command, { cwd: root, folders: opts && opts.folders, commit: opts && opts.commit }); }
+		try { child = host.spawn(command, { cwd: root, folders: opts && opts.folders, commit: opts && opts.commit, explanation: opts && opts.explanation }); }
 		catch (e) { if (onExit) { onExit(-1, 0, 'error'); } resolve('ERROR: ' + ((e && e.message) || e)); return; }
 		const killGroup = (sig) => { try { if (child.pid) { process.kill(-child.pid, sig); } else { child.kill(sig); } } catch (e) { try { child.kill(sig); } catch (e2) { /* already gone */ } } };
 		const stop = () => { if (settled || stopped) { return; } stopped = true; killGroup('SIGTERM'); setTimeout(() => { if (!settled) { killGroup('SIGKILL'); } }, 1500); };
@@ -603,11 +603,11 @@ async function runTool(tu, ctx) {
 			// remote|shell, publish, system writes), which always asks. Manual mode asks for everything.
 			const danger = ctx.autopilot ? classifyCommand(cmd) : { dangerous: true, category: null };
 			const approved = danger.dangerous
-				? await ctx.approve({ kind: 'command', command: cmd, explanation: input.explanation || '', danger: danger.category ? dangerLabel(danger.category) : null })
+				? await ctx.approve({ kind: 'command', command: host.displaySafe(cmd), explanation: host.displaySafe(input.explanation || ''), danger: danger.category ? dangerLabel(danger.category) : null })
 				: true;
 			if (!approved) { return 'User skipped this command. Do not retry it.'; }
 			const runId = tu.id || ('run-' + Date.now());
-			ctx.post({ type: 'termRun', id: runId, command: cmd, cwd: path.basename(cwdRoot) || 'workspace', background: bg, explanation: input.explanation || '' });
+			ctx.post({ type: 'termRun', id: runId, command: host.displaySafe(cmd), cwd: path.basename(cwdRoot) || 'workspace', background: bg, explanation: host.displaySafe(input.explanation || '') });
 			const stops = ctx.commandStops;   // shared registry so the Stop button / ■ can kill the process group
 			// Only BACKGROUND commands get a registry entry (read_command_output reads it). Foreground
 			// one-shots keep their old behavior + don't accumulate — the model already gets their output.
@@ -651,7 +651,7 @@ async function runTool(tu, ctx) {
 				ctx.post({ type: 'termExit', id: runId, code: code, ms: ms, how: how });
 			};
 			const onStart = (child, stop) => { if (stops) { stops.set(runId, stop); } };
-			const spawnOpts = Object.assign({ onData }, shellSpawnOpts(ctx, sh));
+			const spawnOpts = Object.assign({ onData, explanation: String(input.explanation || '').slice(0, 300) }, shellSpawnOpts(ctx, sh));
 			if (bg) {
 				// Fire-and-forget: keep streaming + tracking, but return NOW so the agent loop isn't blocked.
 				// No timeout — a background server is meant to run long (Stop / New Chat reap it).
