@@ -15,6 +15,7 @@ const assert = require('assert');
 const path = require('path');
 
 const { createOutputFilter, createBudget } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'terminal', 'output-filter.js'));
+const { everyShape } = require('./helpers/shell-terminal-timing');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -256,6 +257,20 @@ test('the 8-bit string terminator ends an OSC or DCS as it does in xterm.js, so 
 	assert.strictEqual(write(E + 'Pabc\u009cvisible'), 'visible');
 	assert.strictEqual(write('\u009d0;title\u009cvisible'), 'visible');
 	assert.strictEqual(write('\u009bm\u009d0;t' + BEL + 'x'), '\u001b[mx');
+});
+
+test('output of any shape is filtered in linear time, in one piece and a character at a time', () => {
+	everyShape('the filter', (text) => {
+		const f = createOutputFilter({});
+		f.write(text);
+		f.end();
+	});
+	// a character at a time: nothing is carried that grows with what came before it
+	everyShape('the filter, one character at a time', (text) => {
+		const f = createOutputFilter({});
+		for (const ch of text.slice(0, 50000)) { f.write(ch); }
+		f.end();
+	});
 });
 
 (async () => {

@@ -22,6 +22,7 @@ is right and this file is the bug.
 | `pty.js` | `ShellPty`, a `Pseudoterminal` over one `Session` (the `vscode` object is only used for `EventEmitter`, injected) | injected |
 | `agent-tab.js` | the read-only "LevelCode Agent" tab, fed by `runtime.onAgentRun` | injected |
 | `links.js` | the terminal link provider: `path`, `path:line`, `path:line:col`, `(path:line)` in our terminals' output | injected |
+| `line-log.js` | what a terminal printed, by line, with the folder it was printed in (the links ask it) | no |
 | `index.js` | `createTerminalSupport({ vscode, runtime, context, config })`: profile, commands, link provider, wiring | yes |
 
 Everything except `index.js` runs under plain node, which is how it is tested.
@@ -74,10 +75,20 @@ alternative above except Ctrl+T.
   by itself), and a user-visible difference from the built-in shell terminals.
 * What enters the buffer is what the screen can show. Controls, DEL and C1 are dropped; so is every character of
   Unicode's `Default_Ignorable_Code_Point` (zero-width space, joiners, bidi marks and overrides, soft hyphen, variation
-  selectors, tag characters, fillers, BOM), lone surrogates, U+2028/2029, the blank braille pattern and the interlinear
-  anchors. Otherwise `rm a<ZWSP>b.txt` would be drawn as `rm ab.txt` and run against another name. The price: a pasted
-  word that had one is typed without it (a ZWNJ in a Persian word, the joiner of a family emoji, which becomes three
-  emoji). The same rule holds for a line recalled from the history and for a completion.
+  selectors, tag characters, fillers, BOM, the invisible math operators), lone surrogates, U+2028/2029, the blank
+  braille pattern and the interlinear anchors. Otherwise `rm a<ZWSP>b.txt` would be drawn as `rm ab.txt` and run
+  against another name. **Except** what belongs to an emoji or to a word, which is the exception `sanitize.js` makes
+  for `forTerminal` (the editor's rule is tested to equal it on a corpus): U+FE0F/U+FE0E right after a pictograph (or a
+  keycap base before U+20E3), U+200D between two pictographs (a variation selector may sit before it), and U+200C or
+  U+200D with a letter or mark on each side, both of one script of Arabic, Devanagari, Bengali, Gurmukhi, Gujarati,
+  Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala. So `✔️ done.md`, a family emoji and a Persian word with its ZWNJ
+  can be pasted, completed and recalled, and a file named so is addressed by what is on the screen. The neighbours
+  are the ones the text had, so a hidden character next to a joiner makes it hidden too; the other variation
+  selectors (U+FE00-FE0D, the Mongolian and the supplement U+E0100) are not kept, as `forTerminal` shows them in
+  brackets. What is dropped from a paste, a typed chunk or a completion is said once, dim, under the line:
+  `[2 invisible characters were not typed]` (a recalled history entry is cleaned silently). A joiner typed on its own
+  has no letter after it yet and is dropped (with that note); one typed between two letters that are already there is
+  kept. A kept joiner can be left without its neighbour by a Backspace; it stays, as a letter's accent does.
 * While a command runs only Ctrl+C is heard. Other keys are dropped, not kept for the next prompt.
 
 ### Prompt
@@ -85,8 +96,9 @@ alternative above except Ctrl+T.
 `folder-name/relative/path [status] $ `: the workspace folder containing the cwd, by name, else the absolute path;
 `.../a/b` when it would take more than 40% of the width; a short `$ ` when even that does not fit. Not `~`: the shell's
 HOME is `/home/user`, so `~` for "the workspace" would be false. Two workspace folders of the same name are told apart
-by the folders they are in (`a/proj` and `b/proj`, as many as it takes), by their place in the workspace, not by where
-the engine mounted them. Colours are SGR only (bold blue, red for a non-zero status), so both themes apply.
+by the fewest folders they are in that make the labels differ (`a/proj` and `b/proj`; `x/a/proj` and `y/a/proj`), by
+their place in the workspace, not by where the engine mounted them. A label is made in linear time, whatever the
+names: the working folder comes from the engine, and a command can make a directory with a name of any length. Colours are SGR only (bold blue, red for a non-zero status), so both themes apply.
 
 ### Completion
 
@@ -152,7 +164,9 @@ a result line (`✓ exit 0 · 1.4s`, `✗ exit N`, `■ stopped`, `■ timed out
 The command text, explanation, cwd and notes go through `forTerminal`, the output through the filter. Caps: 1 MiB for
 the output; the first line of a command 300 characters; the explanation and each note 300 characters (cut on what is
 shown, with `…`), at most 8 notes. The explanation is written first and **counts in the run's 1 MiB**; the notes come
-after the output, so counting them would change nothing, and they are bounded by 8 x 300 instead.
+after the output, so counting them would change nothing, and they are bounded by 8 x 300 instead. Only the first 4,800
+characters of an explanation or a note are looked at (blank lines past that are not read through), and the join of its
+lines is linear.
 
 Reveal (`levelcode.shell.revealAgentRuns`): `firstRun` (default) opens the tab for the first run of the session,
 `always` for every run, `never` not at all, and none of them within **30 s of the last key typed in one of our shells**
@@ -170,7 +184,7 @@ the built-in toggle does re-show the panel, but it leaves the focus in the chat.
 active one, else the last cwd (workspaceState). There are no `commandsToSkipShell` entries: measured to have no effect.
 Settings are read from `levelcode.shell.*` when they matter: `revealAgentRuns`, `historySize` (0..5000).
 
-### File links (`links.js`)
+### File links (`links.js`, `line-log.js`)
 
 `registerTerminalLinkProvider`. In the output of our terminals (the visitor's shells and the agent's tab) `path`,
 `path:line`, `path:line:col` and `(path:line)` become links that open the file at that line and column. The workbench's
@@ -181,15 +195,44 @@ own file links are off (`enableFileLinks: off`), so this is the only way.
   It looks like a path: it has a `/`, an extension, or a `:line`; it has a letter (`12:30` is not one); it does not start
   with `~` (HOME is not the workspace). URLs, `a:b`, drive letters, version numbers and times are therefore not read.
   Bare words (`Makefile`, `LICENSE`) are links only with a `:line`.
-* It is a link only if the file **exists**, as a file, relative to the terminal's working folder, under a mount. The
-  check is bounded: at most 5 distinct paths per line are `stat`ed (once each), the answers are waited for 500 ms in all
-  (a line that is not answered in time has links only for what was), and only the first 4,000 characters of a line are
-  read. A folder is not a link.
-* For the visitor's shells the folder is the session's cwd (an engine path); for the agent's tab it is the cwd of the
-  last run that started, a workspace path, mapped through the mounts (`toMountPath`). A terminal that is not ours is not
-  looked at at all.
-* The tooltip is a constant: the text of the line is never in it. A file that will not open as text falls back to
-  `vscode.open`.
+* It is a link only if the file **exists**, as a file, relative to the folder **the line was printed in**, under a mount.
+  The check is bounded: at most 5 distinct paths per line are `stat`ed (once each), the answers are waited for 500 ms in
+  all (a line that is not answered in time has links only for what was), and only the first 4,000 characters of a line
+  are read (a word the cut goes through is not read at all: half of `src/a.js` is another file's name). A folder is not
+  a link.
+* **Which folder.** The workbench hands the provider the text of a line and the terminal, no row and no time, so the
+  terminals remember what they print (`line-log.js`): every line that has a path-like word in it, as the cells of its row
+  (tabs as the blanks they move over, marks joined, overwrites and erases applied: compared with xterm.js's own row for
+  36,000 random lines, no difference), with the folder of the run it was in. A line is looked up by its text.
+  - The visitor's shell: a run's output, its notes, and the line that was typed (with the prompt, and `> ` on the
+    continuation lines) are about the folder the command **ended** in, then the folder it **began** in (both are tried,
+    in that order; they are one when it did not `cd`). So after `cd src`, an older `lib/b.js:7` is still about the folder
+    it was printed in.
+  - The agent's tab: every run is about the folder it was started in (a workspace path, mapped through the mounts); the
+    header lines (the command, `in <folder>`), the output and the notes of a run belong to it. Two runs in two folders
+    do not change each other's links.
+  - **What cannot be known**: two lines with the same text printed in two folders (the latest is taken: nothing on the
+    line tells them apart); a line the log has not seen or did not keep (the banner, `help`, `history`, a line that cursor
+    movement or a tab that wraps made differ from its text, the 401st line back); a line that begins before a clear
+    screen. These are resolved against the folder the terminal has when the question is asked, as links always were
+    (the shell's current folder; the agent tab's last run).
+  - The log is memory only, bounded (400 lines of at most 4,000 characters), and holds what the terminal shows.
+* A terminal that is not ours is not looked at at all. The tooltip is a constant: the text of the line is never in it. A
+  file that will not open as text falls back to `vscode.open`.
+
+### Linear time
+
+Everything a terminal is given is untrusted text, and the extension host is one thread that every extension shares: a
+pattern that is quadratic in a run of blanks is a freeze that a model (or a file, or a command) can cause. Pinned by
+`helpers/shell-terminal-timing.js`, which runs every function that sees such text over 23 shapes of 200,000 characters
+(runs of blanks, tabs, line ends, `a:` pairs, parentheses, backslashes, marks, ZWJ chains, unfinished escapes) against
+a budget of 500 ms (a linear pass is tens of ms). What was superlinear and is not any more: the agent tab's one-line
+join of an explanation or a note (`/\s*\r?\n\s*/g`, 5 s for 100,000 blanks; and the text is cut before it is looked at:
+at most 4,800 characters are scanned, so blank lines past that are not looked through), the prompt label for a long
+folder name (cut one character at a time: 85 s for 200,000 characters), the folders-in-common search of the prompt
+(a label per depth), the trailing-blank trim of the candidate list, and `/\.+$/` and `/\/+$/` in the links and the
+prompt. Audited and linear: `cleanText`, completion, completeness, `looksSecret` (bounded to 4,096 characters), the
+output filter, the input parser, `exit`/`history` rules, the link candidates.
 
 ## What it does not do
 
@@ -202,12 +245,29 @@ own file links are off (`enableFileLinks: off`), so this is the only way.
   buffer is taller than the panel (the window then starts mid-prompt).
 * Zero-width and invisible characters in **output** other than the bidi overrides are not removed by the filter (only
   strings that go through `forTerminal` get the longer list). They cannot act on the terminal.
-* Resize follows xterm.js's own re-wrapping exactly (see "Facts"), with two gaps that the editor cannot see: (1) xterm
-  stops the cursor at the top of its whole buffer, so when the region begins in the very first rows of the scrollback
-  and lines below the cursor are joined by a wider panel, the editor goes down further than it should (the banner makes
-  that rare); (2) rows that xterm pushes into the scrollback (a buffer that no longer fits after narrowing) are above the
-  viewport and cannot be erased, so a copy of the prompt's first row stays in the scrollback, and shows again above the
-  region if the panel is widened enough to bring it back.
+* Resize follows xterm.js's own behaviour (see "Facts"), in the order it does it, the height and then the width, with
+  these gaps that the editor cannot see. Measured against xterm.js with seeded sessions (a 3-line banner, pasted lines
+  of up to 200 characters, the panel changing width and height at random points; 1,200 sessions per line):
+  1. **The top of the buffer.** xterm stops its cursor at the first row of the whole buffer, so when the lines below
+     the cursor that a wider panel re-joins are more rows than there are above the cursor (the scrollback counts), the
+     editor goes down further than it should and leaves a stale copy of the first row. It needs a fresh terminal: a
+     multi-line paste of long lines, the cursor taken to the first line, then a much wider panel. 26 of 1,200 sessions of
+     that kind (2%; 7 of the 35 that had already scrolled), 0 of 1,282 when narrowing. A cursor position report does
+     not resolve it: it says where the cursor is, not where the region begins, and learning that takes a report at
+     every prompt and tracking every scroll and every earlier line that re-wraps. It was tried on paper and not built:
+     it would be a timer, a reply that can be a key (Shift+F3 is `CSI 1;2R`), and a redraw that waits, for a case that
+     comes up once in fifty.
+  2. **Rows pushed into the scrollback.** What xterm pushes there (the top of a region that no longer fits after the
+     panel got shorter or narrower, and whatever the re-wrapping of earlier output pushes) cannot be erased. The editor
+     counts the rows of the region it knows were pushed (`ghosts`, a lower bound) and, when the panel grows with the
+     cursor on its last row, starts its redraw at the first of them that came back, so shrinking and growing the panel
+     again leaves the prompt once (before: its first rows twice; 144 of 1,200 sessions with only the height changing, now 0).
+     It is not exact: a stale copy is left above the region when the panel is widened (the rows that come back are
+     joined by xterm in a way the editor cannot see; 5 of 500 sessions of a tall region), and after narrowing, when
+     earlier output wrapped and pushed more rows than the editor counted (0.6% of sessions that only narrow and change
+     height). The copy is in the scrollback, out of sight, until the panel brings it back.
+  Height changes and width changes at the same time are estimated by the same two steps (10 of 1,200 sessions leave a
+  stale row; 42 before).
 * The result of a run that was let go of with a second Ctrl+C is not shown.
 * A terminal's file links need the file to exist under a mount; a path with a space in it is not read as one.
 
@@ -229,6 +289,14 @@ Measured in the release build by the research, and re-checked here against the r
   a line below it that grows moves it down, and one below it that shrinks moves it up, possibly above the first row of
   the editor's region. The editor and the test model terminal reproduce that, and `shell-terminal-line-editor.test.js`
   compares both with xterm.js (scenarios and seeded sessions, both directions); every row is also cut at the new width;
+* the height first (`Buffer.resize`): a shorter panel first removes the blank rows below the cursor, then pushes the top
+  of the screen into the scrollback; a taller one gives rows back **from the scrollback when the cursor is on the last
+  row of the screen**, and adds blank rows below otherwise (the viewport top moves and the cursor with it: a region taller
+  than the panel is a window that fills the screen, so its cursor is on the last row whenever it is on the window's last
+  row);
+* the redraw is written after `CSI J` at column 0, which makes the first row of a window a line of its own for xterm:
+  a logical line that straddles the top of a window is two lines to the re-wrapping, and the rows above the window are
+  not counted;
 * `scrollOnEraseInDisplay` is on in VS Code (`xtermTerminal.ts`): `ESC[2J` scrolls what was on the screen, down to its
   last row with anything on it, into the scrollback; the test terminals are made that way;
 * `Pseudoterminal` events fired before `open()` are lost (the agent tab holds them and re-says its name);
@@ -242,21 +310,23 @@ Measured in the release build by the research, and re-checked here against the r
 | --- | --- |
 | `input-parser` | the byte table, every report swallowed at every cut, the keys a sloppy "drop replies" pattern would eat, paste and its cap |
 | `width` | the 25 measured widths; the table equals the addon (when an xterm checkout is found) |
-| `line-editor` | the keys, the cursor on a newline, the full row, wide/combining characters, what may enter the buffer, tabs, resize (scenarios on the model terminal, and the same on xterm.js), a tall buffer, Tab and the queued second Tab; a seeded differential against an oracle at three widths and with resizes; and, if xterm is found, against the real xterm.js: the editor's output, the model terminal's re-wrapping, and seeded sessions with resizes in both directions |
+| `line-editor` | the keys, the cursor on a newline, the full row, wide/combining characters, what may enter the buffer and what is kept (and the note), tabs (also at the top of a window), resize (scenarios on the model terminal, and the same on xterm.js), a tall buffer, Tab and the queued second Tab; a seeded differential against an oracle at three widths and with resizes; and, if xterm is found, against the real xterm.js: the editor's output, the model terminal's re-wrapping, seeded sessions with resizes in both directions, and a strict harness for the height (after every step the screen is the text written once, nothing of the region is above it, and nothing that was on the terminal before it is lost: shrink and grow, a command, a note, Ctrl+C, Ctrl+L, windows, pinned sequences) |
 | `completeness` | the table of traps and open constructs |
 | `completion` | the word under the cursor and the write-back |
 | `output-filter` | the 25 queries, the modes, the OSC list, links, the cap, a seeded chunking fuzz |
 | `history` | the rules and the secret patterns (assembled from fragments) |
 | `sink` | the OSC 633 escaping, the nonce, the queue and a run's output |
 | `pty` | bytes in, bytes out: prompt, run, history, paste, Ctrl+C (the tail, the break, the stuck run), exit, 126/124, hostile output, a 100,000-character line |
-| `agent-tab` | order, the result lines, sanitising, the caps, the reveal table |
-| `links` | what is a candidate (a table of false positives), the existence check and its bounds, opening at the line and column |
+| `agent-tab` | order, the result lines, sanitising, the caps (and that they cost linear time), the reveal table, the folder of every run |
+| `links` | what is a candidate (a table of false positives), the existence check and its bounds (5 stats, 500 ms, 4,000 characters exactly), the folders a line may be about, opening at the line and column |
+| `line-log` | how the text of a row is made from bytes (and against xterm.js's own rows), what is kept, the latest of two equal lines |
+| `prompt` | the label, the fewest folders that tell two apart, equivalent to the code before it was made linear, linear time |
 | `index` | what is registered, focus rules, the shared history, the last working folder, the agent tab coming up, the links of a shell and of the agent's tab |
 
 `LEVELCODE_XTERM_DIR=<path to node_modules/@xterm>` points the xterm-backed checks at an xterm (and is then the only place
 looked in); without it the tests look in `<repo>/vscode/node_modules/@xterm` and in the main checkout above a worktree.
 When there is none they print `SKIPPED` (and a `::warning::` annotation for CI) and go on; **`LEVELCODE_REQUIRE_XTERM=1`
-makes that a failure** in the width, line-editor, pty and agent-tab suites: a CI that has the checkout must set it, or it
+makes that a failure** in the width, line-editor, line-log, pty and agent-tab suites: a CI that has the checkout must set it, or it
 is green with the staleness guard, the editor differentials and the hostile-output check not run. `node web/shell/src/terminal/gen-width.mjs <addon-unicode11.js> [--write]` regenerates the width table.
 Linux Node 18 (no network): `docker run --rm --network none -v "$PWD":/repo:ro -w /repo catthehacker/ubuntu:act-latest
 bash -lc 'node web/test/unit/shell-terminal-pty.test.js'` (add `-v <@xterm>:/xterm:ro -e LEVELCODE_XTERM_DIR=/xterm`).

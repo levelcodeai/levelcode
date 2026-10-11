@@ -15,6 +15,7 @@
 const { createInputParser } = require('./input-parser');
 const { createWriter, createRunOutput, OUTPUT_LIMIT } = require('./output-sink');
 const { cwdLabel } = require('./prompt');
+const { createLineLog } = require('./line-log');
 
 const NAME = 'LevelCode Agent';
 const UNSEEN_NAME = NAME + ' •';
@@ -23,6 +24,12 @@ const RECENT_INPUT_MS = 30000;
 const MAX_COMMAND_SHOWN = 300;
 /** The most characters of one explanation or one note that are shown; they are not output, and nobody bounds them. */
 const MAX_TEXT_SHOWN = 300;
+/**
+ * The most characters of one explanation or note that are looked at at all: sixteen times what is shown, which is more
+ * than the runtime lets through (an explanation is cut at 500) and leaves room for blank lines in front of the text.
+ * The cut is made before anything is scanned, so a megabyte of blanks costs a slice.
+ */
+const MAX_TEXT_SCAN = 16 * MAX_TEXT_SHOWN;
 /** At most this many notes of a run are shown. */
 const MAX_NOTES = 8;
 
@@ -71,8 +78,15 @@ function createAgentTab(deps) {
 
 	/** @type {any} */ let terminal = null;
 	/** @type {any} */ let pty = null;
-	/** The working folder of the last run that started: where the paths in the tab are relative to (file links). */
+	/** The working folder of the last run that started: where a line the tab has not recorded is taken to be relative to. */
 	let lastCwd = /** @type {string | undefined} */ (undefined);
+	/**
+	 * What every run printed in the tab, with the folder that run was in, so that the paths of an older run are
+	 * resolved against its folder and not against the folder of the run that came after it (file links).
+	 */
+	const log = createLineLog();
+	/** The folders of the run being written, while there is one. @type {{ cwds: string[] } | null} */
+	let runScope = null;
 	let firstRun = true;
 	let unseen = false;
 	let hinted = false;
@@ -148,7 +162,10 @@ function createAgentTab(deps) {
 	}
 
 	/** @param {string} s */
-	function put(s) { if (pty) { pty.writer.write(s); } }
+	function put(s) {
+		if (pty) { pty.writer.write(s); }
+		if (runScope) { log.write(s, runScope); }
+	}
 
 	function markUnseen() {
 		if (!pty || unseen) { return; }
@@ -170,9 +187,18 @@ function createAgentTab(deps) {
 
 	/* ---------------------------------------------------------------------------------------------- runs */
 
-	/** @param {string} text @returns {string} one line, safe to write */
+	/**
+	 * One line, safe to write. Only the first MAX_TEXT_SCAN characters are looked at, and a run of blanks that holds a line
+	 * break becomes one space with a pattern that cannot start again inside the run: `\s*\r?\n\s*` could, and was
+	 * quadratic in a run of blanks (100,000 of them stalled the extension host, which every extension shares, for 5 s).
+	 * @param {string} text @returns {string}
+	 */
 	function oneLine(text) {
-		return sanitize.forTerminal(String(text).replace(/\s*\r?\n\s*/g, ' ')).replace(/[\r\n]+/g, ' ');
+		let head = String(text).slice(0, MAX_TEXT_SCAN);
+		const last = head.charCodeAt(head.length - 1);
+		if (head.length === MAX_TEXT_SCAN && last >= 0xd800 && last <= 0xdbff) { head = head.slice(0, -1); }     // not half of a pair
+		const joined = head.replace(/\s+/g, (run) => (run.includes('\n') ? ' ' : run));
+		return sanitize.forTerminal(joined).replace(/[\r\n]+/g, ' ');
 	}
 
 	/**
@@ -199,6 +225,7 @@ function createAgentTab(deps) {
 
 		const output = createRunOutput({ write: (s) => put(s), limit: deps.outputLimit || OUTPUT_LIMIT });
 		if (e.cwd) { lastCwd = String(e.cwd); }
+		runScope = { cwds: e.cwd ? [String(e.cwd)] : [] };
 		const command = String(e.command === undefined ? '' : e.command);
 		const lines = command.split('\n');
 		let first = lines[0];
@@ -238,6 +265,7 @@ function createAgentTab(deps) {
 					: RED + '✗ exit ' + code + ' · ' + took + RESET + '\r\n';
 		}
 		put(s);
+		runScope = null;
 		current = null;
 		markUnseen();
 		// the next run that was waiting for this one
@@ -290,6 +318,16 @@ function createAgentTab(deps) {
 		terminal: () => terminal,
 		/** The working folder of the last run that started, in the path space the runs are reported in. */
 		cwd: () => lastCwd,
+		/**
+		 * The working folders (in the path space the runs are reported in) a line of the tab was printed in; for a
+		 * line the tab has not recorded, the folder of the last run that started.
+		 * @param {string} line @returns {string[] | undefined}
+		 */
+		cwdsFor(line) {
+			const known = log.find(line);
+			if (known && known.length) { return known; }
+			return lastCwd ? [lastCwd] : undefined;
+		},
 	};
 }
 

@@ -13,7 +13,8 @@
 //   2. trailing dots are not part of the path (`see src/a.js.`);
 //   3. it looks like a path: it has a `/`, or an extension, or a `:line` after it; it has a letter (not `12:30`); it
 //      does not start with `~` (the shell's HOME is not the workspace);
-//   4. it EXISTS, as a file, relative to the working folder of the terminal it is in. That is the check that makes
+//   4. it EXISTS, as a file, relative to the working folder the line was printed in (line-log.js remembers it; a line
+//      it has not seen is resolved against the folder the terminal is in now). That is the check that makes
 //      everything above safe to be generous with, and it is bounded: at most MAX_STATS distinct paths per line, and
 //      the answers are waited for at most STAT_MS. A line that cannot be checked in time has no links.
 // Words that are neither (`Makefile`, `LICENSE`) are linked only with a `:line`; a folder is not linked.
@@ -27,7 +28,7 @@
 const MAX_STATS = 5;
 /** How long the answers are waited for, in all. */
 const STAT_MS = 500;
-/** Longer lines are scanned for their first part only. */
+/** Longer lines are scanned for their first part only; a word the cut goes through is not read. */
 const MAX_LINE = 4000;
 /** More candidates than this on one line are not considered. */
 const MAX_CANDIDATES = 100;
@@ -40,6 +41,8 @@ const FILE = 1;
 const TOKEN = /(?<![\w./~@:+\\-])[^\s"'`<>()[\]{}|;,:*?\\=]+(?::([0-9]{1,7})(?::([0-9]{1,7}))?)?/gu;
 const EXTENSION = /\.[A-Za-z][A-Za-z0-9]{0,15}$/;
 const HAS_LETTER = /\p{L}/u;
+/** What ends a word of TOKEN (the characters it does not take, but ':', which can go on with `:line`). */
+const ENDS_WORD = /[\s"'`<>()[\]{}|;,*?\\=]/;
 
 /**
  * The candidates of a line: where they are, the path as written, and the line and column if there were any. A pure
@@ -48,17 +51,22 @@ const HAS_LETTER = /\p{L}/u;
  * @returns {Array<{ startIndex: number, length: number, path: string, line: number | null, col: number | null }>}
  */
 function findCandidates(text) {
-	const s = text.length > MAX_LINE ? text.slice(0, MAX_LINE) : text;
+	const cut = text.length > MAX_LINE;
+	const s = cut ? text.slice(0, MAX_LINE) : text;
 	/** @type {Array<{ startIndex: number, length: number, path: string, line: number | null, col: number | null }>} */
 	const out = [];
 	TOKEN.lastIndex = 0;
 	let m;
 	while ((m = TOKEN.exec(s)) !== null && out.length < MAX_CANDIDATES) {
 		const whole = m[0];
+		// a word that the cut went through is half a word, and half of `src/a.js` is another file's name
+		if (cut && m.index + whole.length >= s.length && !ENDS_WORD.test(text[MAX_LINE])) { break; }
 		const hasLine = m[1] !== undefined;
 		const written = hasLine ? whole.slice(0, whole.indexOf(':')) : whole;
 		// the dots that end a sentence are not the path's (`see src/a.js.`); with a `:line` after them it is not a path
-		const path = written.replace(/\.+$/, '');
+		let end = written.length;
+		while (end > 0 && written.charCodeAt(end - 1) === 46) { end--; }     // a loop: /\.+$/ is quadratic in a run of dots
+		const path = written.slice(0, end);
 		if (path !== written && hasLine) { continue; }
 		if (path === '' || path.length > MAX_PATH || /^\.+$/.test(path) || path[0] === '~') { continue; }
 		if (!HAS_LETTER.test(path)) { continue; }
@@ -90,12 +98,13 @@ function resolvePath(cwd, p) {
  * @param {{
  *   vscode: any,
  *   mounts: () => Array<{ mount: string, uri: string }>,
- *   cwdOf: (terminal: any) => string | undefined,
+ *   cwdsOf: (terminal: any, line: string) => string[] | undefined,
  *   setTimeout?: (fn: () => void, ms: number) => any,
  *   clearTimeout?: (h: any) => void,
  * }} deps
  *   mounts: where each workspace folder is in the engine, as runtime.planMounts says;
- *   cwdOf: the working folder (an engine path) of a terminal that is one of ours, undefined for any other terminal.
+ *   cwdsOf: the working folders (engine paths, the likeliest first) a line of a terminal that is one of ours was
+ *     printed in; undefined for any other terminal, which is not looked at at all.
  */
 function createLinkProvider(deps) {
 	const vscode = deps.vscode;
@@ -133,19 +142,23 @@ function createLinkProvider(deps) {
 		 * @param {{ isCancellationRequested?: boolean }} [token]
 		 */
 		async provideTerminalLinks(context, token) {
-			const cwd = deps.cwdOf(context.terminal);
-			if (typeof cwd !== 'string' || typeof context.line !== 'string') { return []; }
+			if (typeof context.line !== 'string') { return []; }
+			const known = deps.cwdsOf(context.terminal, context.line);
+			const cwds = Array.isArray(known) ? known.filter((c) => typeof c === 'string') : [];
+			if (cwds.length === 0) { return []; }
 			const candidates = findCandidates(context.line);
 			if (candidates.length === 0) { return []; }
 
-			// one stat per distinct path of the line, the first MAX_STATS of them
+			// one stat per distinct path of the line (the first MAX_STATS of them), in the folders the line may be about
 			/** @type {Map<string, { uri: any, ok: Promise<boolean> }>} */
 			const asked = new Map();
 			for (const c of candidates) {
-				const abs = resolvePath(cwd, c.path);
-				if (asked.has(abs) || asked.size >= MAX_STATS) { continue; }
-				const uri = toUri(abs);
-				if (uri) { asked.set(abs, { uri, ok: isFile(uri) }); }
+				for (const cwd of cwds) {
+					const abs = resolvePath(cwd, c.path);
+					if (asked.has(abs) || asked.size >= MAX_STATS) { continue; }
+					const uri = toUri(abs);
+					if (uri) { asked.set(abs, { uri, ok: isFile(uri) }); }
+				}
 			}
 			if (asked.size === 0) { return []; }
 
@@ -161,10 +174,14 @@ function createLinkProvider(deps) {
 
 			const links = [];
 			for (const c of candidates) {
-				const abs = resolvePath(cwd, c.path);
-				const a = asked.get(abs);
-				if (!a || exists.get(abs) !== true) { continue; }
-				links.push({ startIndex: c.startIndex, length: c.length, tooltip: 'Open in the editor', uri: a.uri, line: c.line, col: c.col });
+				// the first folder that has it: the folder the line was printed in, then the one the command began in
+				for (const cwd of cwds) {
+					const abs = resolvePath(cwd, c.path);
+					const a = asked.get(abs);
+					if (!a || exists.get(abs) !== true) { continue; }
+					links.push({ startIndex: c.startIndex, length: c.length, tooltip: 'Open in the editor', uri: a.uri, line: c.line, col: c.col });
+					break;
+				}
 			}
 			return links;
 		},
@@ -184,4 +201,4 @@ function createLinkProvider(deps) {
 	};
 }
 
-module.exports = { createLinkProvider, findCandidates, resolvePath, MAX_STATS, STAT_MS };
+module.exports = { createLinkProvider, findCandidates, resolvePath, MAX_STATS, STAT_MS, MAX_LINE };

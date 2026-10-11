@@ -287,6 +287,42 @@ try {
 	await press('c', { ctrl: true });   // abandon the buffer
 	await sleep(500);
 
+	/* 3d. the same buffer through a change of HEIGHT only (the panel shorter, then as it was): the prompt is on screen once */
+	await page.eval(`(() => {
+		const ta = document.activeElement;
+		const dt = new DataTransfer();
+		dt.setData('text/plain', ${JSON.stringify('echo h-one\necho h-two\necho h-three\necho h-four\necho h-five\necho h-six')});
+		ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+		return true;
+	})()`);
+	await sleep(700);
+	const hRows = async () => (await screenText()).split('\n').filter((l) => /\$ echo h-one/.test(l)).length;
+	const before = await hRows();
+	const size = await page.eval(`({ w: window.innerWidth, h: window.innerHeight })`);
+	await page.send('Emulation.setDeviceMetricsOverride', { width: size.w, height: 420, deviceScaleFactor: 1, mobile: false });
+	await sleep(1800);
+	await page.send('Emulation.clearDeviceMetricsOverride');
+	await sleep(1800);
+	const after = await hRows();
+	check('a six-line buffer survives the panel getting shorter and taller: the prompt is on screen once', before === 1 && after === 1, JSON.stringify({ before, after }));
+	if (after !== 1) { console.log('  screen after the height change:\n' + (await screenText()).split('\n').filter((l) => l.trim()).map((l) => '    | ' + l.slice(0, 120)).join('\n')); }
+	await press('c', { ctrl: true });
+	await sleep(500);
+
+	/* 3e. a name that holds an emoji with its variation selector can be pasted: it reaches the buffer whole */
+	await page.eval(`(() => {
+		const ta = document.activeElement;
+		const dt = new DataTransfer();
+		dt.setData('text/plain', 'echo \u2714\ufe0f done.md');
+		ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+		return true;
+	})()`);
+	await sleep(500);
+	const pasted = await screenText();
+	check('a pasted emoji name keeps its variation selector (no "invisible characters were not typed" note)', /echo .{1,2} done\.md/.test(pasted) && !/not typed/i.test(pasted), JSON.stringify(pasted.split('\n').slice(-3)));
+	await press('c', { ctrl: true });
+	await sleep(500);
+
 	/* 4. hostile output must not type into the prompt or change the terminal */
 	await typeLine(`printf 'A\\033[6nB\\033[cC\\033]10;?\\007D\\033]0;pwned\\007E\\033[?1000hF\\033]52;c;ZXZpbA==\\007G\\n' > evil.txt; cat evil.txt; echo clean`);
 	await waitScreen(/clean/, 'the output of the hostile file');

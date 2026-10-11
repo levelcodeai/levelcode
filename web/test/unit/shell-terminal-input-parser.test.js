@@ -18,6 +18,7 @@ const assert = require('assert');
 const path = require('path');
 
 const { createInputParser } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'terminal', 'input-parser.js'));
+const { everyShape } = require('./helpers/shell-terminal-timing');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -217,6 +218,18 @@ test('ESC ESC is Escape and the start of an escape; ESC O ESC drops the SS3 and 
 	assert.deepStrictEqual(parse(E + E + '[A'), [key('escape'), key('up')]);
 	assert.deepStrictEqual(parse(E + 'O' + E + '[A'), [{ t: 'ignored', kind: 'unknown' }, key('up')], 'the keys after a cut-off SS3 are not lost');
 	assert.deepStrictEqual(parse(E + 'OA'), [key('up')]);
+});
+
+test('input of any shape is parsed in linear time: as typed text, as a paste, and in single characters', () => {
+	everyShape('the parser', (text) => {
+		createInputParser({ maxPaste: 1e9 }).feed(text);
+		createInputParser({ maxPaste: 1e9 }).feed(E + '[200~' + text + E + '[201~');
+	});
+	everyShape('the parser, a character at a time', (text) => {
+		const p = createInputParser({ maxPaste: 1e9 });
+		for (const ch of text.slice(0, 50000)) { p.feed(ch); }
+		p.flush();
+	});
 });
 
 (async () => {

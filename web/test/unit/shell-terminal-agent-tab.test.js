@@ -15,6 +15,7 @@ const path = require('path');
 
 const { fakeVscode, manualTimers, VT, TERMINAL } = require('./helpers/shell-terminal-fakes');
 const { needXterm } = require('./helpers/shell-terminal-xterm');
+const { everyShape, BUDGET_MS } = require('./helpers/shell-terminal-timing');
 const { createAgentTab, shouldReveal, duration, NAME, UNSEEN_NAME } = require(path.join(TERMINAL, 'agent-tab.js'));
 const sanitize = require(path.join(TERMINAL, '..', 'sanitize.js'));
 
@@ -368,6 +369,90 @@ test('an explanation is one line: line ends and the blanks around them become on
 	t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: [] });
 	t.timers.drain();
 	assert.strictEqual(a.screen()[0], 'first second third fourth');
+});
+
+test('an explanation, a note and the command line take time linear in their length: a long run of blanks does not stall the host', () => {
+	// the first one of these is what a model-written explanation of 100,000 spaces did to the extension host: 5 s, and
+	// 200,000 was 20 s, in a pattern that was quadratic in a run of blanks and ran before the text was cut at 300
+	const slowest = everyShape('an explanation', (text) => {
+		const t = setup({ mode: 'never' });
+		t.emit(run(1, 'ls', { explanation: text }));
+		const a = t.attach();
+		t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: [] });
+		t.timers.drain();
+		assert.ok(a.writes.join('').length < 8000, 'and what is written is bounded: ' + a.writes.join('').length);
+	});
+	const notes = everyShape('a note', (text) => {
+		const t = setup({ mode: 'never' });
+		t.emit(run(1, 'ls'));
+		t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: [text, text] });
+		t.timers.drain();
+	});
+	const commands = everyShape('a command', (text) => {
+		const t = setup({ mode: 'never' });
+		t.emit(run(1, text));
+		t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: [] });
+		t.timers.drain();
+	}, { only: ['a run of spaces', 'a run of tabs', 'a run of line feeds', 'CR LF pairs', 'blank and line feed, in turn', 'letters'] });
+	assert.ok(slowest < BUDGET_MS && notes < BUDGET_MS && commands < BUDGET_MS);
+	// and what is looked at is still read the way it always was: the blanks around a line end are one space
+	const t = setup({ mode: 'never' });
+	t.emit(run(1, 'ls', { explanation: 'a' + ' '.repeat(1000) + '\nb' }));
+	const a = t.attach();
+	t.timers.drain();
+	assert.ok(a.screen().join('').startsWith('a b'), JSON.stringify(a.screen().join('').slice(0, 20)));
+});
+
+test('an explanation of blank lines before its text shows the text; one that is only blanks shows nothing but its dim line', () => {
+	const t = setup({ mode: 'never' });
+	t.emit(run(1, 'ls', { explanation: '\n\n \n\t\nreal text' }));
+	const a = t.attach();
+	t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: [] });
+	t.timers.drain();
+	assert.strictEqual(a.screen()[0], ' real text');
+	// the scan stops at a bound (4,800 characters) that is far past what is shown: blank lines that go on past it are not
+	// read through, and before it they are
+	const u = setup({ mode: 'never' });
+	u.emit(run(1, 'ls', { explanation: '\n'.repeat(5000) + 'x' }));
+	const b = u.attach();
+	u.timers.drain();
+	assert.ok(!b.screen().join('').includes('x'), 'past the bound');
+	const w = setup({ mode: 'never' });
+	w.emit(run(1, 'ls', { explanation: '\n'.repeat(4799) + 'x' }));
+	const d = w.attach();
+	w.timers.drain();
+	assert.strictEqual(d.screen()[0], ' x', 'inside it');
+	// a cut that falls inside a surrogate pair does not leave half of one
+	const v = setup({ mode: 'never' });
+	v.emit(run(1, 'ls', { explanation: '\n' + '\u{1f600}'.repeat(3000) }));
+	const c = v.attach();
+	v.timers.drain();
+	assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(c.all()));
+});
+
+test('file links follow the run: two runs in two folders each resolve against their own, and the lines of a run that was not recorded against the last one', () => {
+	const t = setup({ mode: 'never' });
+	t.emit(run(1, 'ls', { cwd: '/scratch/a' }));
+	t.emit({ type: 'chunk', id: 1, stream: 'stdout', text: 'src/x.js:3\nsee ./lib/y.js\n' });
+	t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: ['wrote notes/n.md'] });
+	t.emit(run(2, 'cat src/x.js', { cwd: '/scratch/b' }));
+	t.emit({ type: 'chunk', id: 2, stream: 'stdout', text: 'src/x.js:9\n' });
+	t.emit({ type: 'end', id: 2, exitCode: 0, how: 'exit', notes: [] });
+	// the lines of the first run are about its folder, whatever the last run was
+	assert.deepStrictEqual(t.tab.cwdsFor('src/x.js:3'), ['/scratch/a']);
+	assert.deepStrictEqual(t.tab.cwdsFor('see ./lib/y.js'), ['/scratch/a']);
+	assert.deepStrictEqual(t.tab.cwdsFor('wrote notes/n.md'), ['/scratch/a'], 'a note is about the run it ended');
+	assert.deepStrictEqual(t.tab.cwdsFor('src/x.js:9'), ['/scratch/b']);
+	// the command line a run shows is about the folder it was started in
+	assert.deepStrictEqual(t.tab.cwdsFor('$ cat src/x.js'), ['/scratch/b']);
+	// the same text printed in both: the latest wins (nothing on the line tells them apart)
+	t.emit(run(3, 'ls', { cwd: '/scratch/a' }));
+	t.emit({ type: 'chunk', id: 3, stream: 'stdout', text: 'src/x.js:9\n' });
+	t.emit({ type: 'end', id: 3, exitCode: 0, how: 'exit', notes: [] });
+	assert.deepStrictEqual(t.tab.cwdsFor('src/x.js:9'), ['/scratch/a']);
+	// a line the tab did not write down is taken to be about the folder of the last run
+	assert.deepStrictEqual(t.tab.cwdsFor('nothing like it in src/other.js'), ['/scratch/a']);
+	assert.strictEqual(setup().tab.cwdsFor('src/x.js:9'), undefined, 'and with no run at all, about nothing');
 });
 
 (async () => {

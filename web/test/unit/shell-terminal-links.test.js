@@ -17,7 +17,8 @@ const assert = require('assert');
 const path = require('path');
 
 const { fakeVscode, manualTimers, TERMINAL } = require('./helpers/shell-terminal-fakes');
-const { createLinkProvider, findCandidates, resolvePath, MAX_STATS, STAT_MS } = require(path.join(TERMINAL, 'links.js'));
+const { createLinkProvider, findCandidates, resolvePath, MAX_STATS, STAT_MS, MAX_LINE } = require(path.join(TERMINAL, 'links.js'));
+const { everyShape } = require('./helpers/shell-terminal-timing');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -87,8 +88,9 @@ function setup(files, o) {
 	const terminal = { name: 'LevelCode Shell' };
 	const provider = createLinkProvider({
 		vscode: fv.vscode,
-		mounts: () => [{ mount: '/scratch', uri: 'file:///scratch' }, { mount: '/mnt/site', uri: 'file:///' }],
-		cwdOf: (t) => (t === terminal ? (opts.cwd || '/scratch') : undefined),
+		mounts: () => opts.mounts || [{ mount: '/scratch', uri: 'file:///scratch' }, { mount: '/mnt/site', uri: 'file:///' }],
+		// the folders the line was printed in: the likeliest first
+		cwdsOf: (t, line) => (t === terminal ? (opts.cwds ? (typeof opts.cwds === 'function' ? opts.cwds(line) : opts.cwds) : [opts.cwd || '/scratch']) : undefined),
 		setTimeout: timers.setTimeout,
 		clearTimeout: timers.clearTimeout,
 	});
@@ -167,6 +169,70 @@ test('only the first 4,000 characters of a line are read', async () => {
 	const line = 'early.js ' + ' '.repeat(4000) + 'late.js';
 	const links = await t.provider.provideTerminalLinks({ line, terminal: t.terminal }, token);
 	assert.deepStrictEqual(links.map((l) => line.slice(l.startIndex, l.startIndex + l.length)), ['early.js']);
+});
+
+test('the bound is exactly 4,000: a word that ends at the last character read is taken, and one the cut goes through is not read as half a word', () => {
+	assert.strictEqual(MAX_LINE, 4000);
+	const word = 'src/a.js';
+	// ends at index 3999, the 4,000th character, and the text goes on with a blank
+	const whole = ' '.repeat(4000 - word.length) + word + ' tail';
+	assert.deepStrictEqual(found(whole).map((h) => h[1]), ['src/a.js']);
+	assert.deepStrictEqual(found(' '.repeat(4000 - word.length) + word).map((h) => h[1]), ['src/a.js'], 'and at the very end of the text');
+	// one character further: the cut would read `src/a.j`, which is another file's name; it is not read at all
+	const through = ' '.repeat(4001 - word.length) + word;
+	assert.deepStrictEqual(found(through), []);
+	// a `:line` the cut goes through is not read as a shorter one
+	const line = ' '.repeat(4000 - 'a.js:12'.length) + 'a.js:123';
+	assert.deepStrictEqual(found(line), []);
+	// a word that ends before the cut and is followed by something that is not a word
+	assert.deepStrictEqual(found(' '.repeat(4000 - 'a.js'.length) + 'a.js' + ',x.js').map((h) => h[1]), ['a.js']);
+	// and nothing is read past it
+	assert.deepStrictEqual(found('a.js' + ' '.repeat(4000) + 'b.js').map((h) => h[1]), ['a.js']);
+});
+
+test('what is a candidate is found in linear time: runs of dots, slashes, colons and blanks do not backtrack', () => {
+	everyShape('findCandidates', (text) => { findCandidates(text); });
+	// ... and the longest line it will read, made of the worst shape for each part of the pattern
+	// (the dots one is /\.+$/ over a run of 3,999 dots that does not end the word: 8 million steps a line, 10 ms)
+	for (const text of ['.'.repeat(3999) + 'a', 'a'.repeat(3999) + '.', '/'.repeat(4000), 'a:'.repeat(2000), '1:'.repeat(2000), 'a.b.'.repeat(1000)]) {
+		const t0 = process.hrtime.bigint();
+		for (let i = 0; i < 300; i++) { findCandidates(text); }
+		const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+		assert.ok(ms < 500, JSON.stringify(text.slice(0, 10)) + ' x300 took ' + ms.toFixed(0) + ' ms');
+	}
+});
+
+test('a line is resolved against the folder it was printed in; the folder the command began in is tried after the one it ended in', async () => {
+	const t = setup({ 'file:///scratch/a/x.js': 1, 'file:///scratch/b/x.js': 1, 'file:///scratch/b/only.js': 1, 'file:///scratch/a/early.js': 1 }, {
+		cwds: (line) => (line.startsWith('A:') ? ['/scratch/a'] : line.startsWith('B:') ? ['/scratch/b'] : ['/scratch/b', '/scratch/a']),
+	});
+	const uris = async (line) => (await t.provider.provideTerminalLinks({ line, terminal: t.terminal }, token)).map((l) => String(l.uri));
+	assert.deepStrictEqual(await uris('A: x.js'), ['file:///scratch/a/x.js']);
+	assert.deepStrictEqual(await uris('B: x.js'), ['file:///scratch/b/x.js']);
+	// ended in b, began in a: what b has is b's, and what only a has is found there
+	assert.deepStrictEqual(await uris('x.js early.js'), ['file:///scratch/b/x.js', 'file:///scratch/a/early.js']);
+	assert.deepStrictEqual(await uris('only.js'), ['file:///scratch/b/only.js']);
+	// no folder at all is a line that is nobody's
+	const none = setup({ 'file:///scratch/a.js': 1 }, { cwds: [] });
+	assert.deepStrictEqual(await none.provider.provideTerminalLinks({ line: 'a.js', terminal: none.terminal }, token), []);
+	assert.deepStrictEqual(none.fv.state.stats, []);
+	// the budget is for paths, not for folders: two folders of one name are two paths
+	const many = {};
+	for (let i = 0; i < 5; i++) { many['file:///scratch/b/f' + i + '.js'] = 1; }
+	const m = setup(many, { cwds: ['/scratch/a', '/scratch/b'] });
+	await m.provider.provideTerminalLinks({ line: 'f0.js f1.js f2.js f3.js f4.js', terminal: m.terminal }, token);
+	assert.strictEqual(m.fv.state.stats.length, MAX_STATS);
+});
+
+test('a terminal that is not ours is not scanned at all, even where a path that is nobody\'s would resolve (a mount at the root)', async () => {
+	// with the guard gone a foreign line is resolved against `undefined`, which is the root: and the root is mounted here
+	const t = setup({ 'file:///undefined/a.js': 1, 'file:///a.js': 1 }, { mounts: [{ mount: '/', uri: 'file:///' }] });
+	const other = { name: 'bash' };
+	assert.deepStrictEqual(await t.provider.provideTerminalLinks({ line: 'a.js:1 undefined/a.js', terminal: other }, token), []);
+	assert.deepStrictEqual(t.fv.state.stats, [], 'not a stat');
+	// ours, in the same set-up, is looked at
+	const ours = await t.provider.provideTerminalLinks({ line: 'a.js:1', terminal: t.terminal }, token);
+	assert.strictEqual(ours.length, 0, 'the folder is /scratch, which is not mounted here');
 });
 
 test('clicking a link opens the file at its line and column, 0-based for the editor; a file that will not open falls back to the workbench', async () => {

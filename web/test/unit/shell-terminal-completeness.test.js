@@ -14,6 +14,7 @@ const assert = require('assert');
 const path = require('path');
 
 const { isComplete } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'terminal', 'completeness.js'));
+const { everyShape } = require('./helpers/shell-terminal-timing');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -178,6 +179,17 @@ test('nesting is bounded: 99 levels are followed, 100 or 50,000 are run (the eng
 	assert.deepStrictEqual(isComplete('${a:-'.repeat(200)), { complete: true, reason: 'error' });
 	// and a closed deep nesting below the bound is complete, as it always was
 	assert.strictEqual(isComplete('echo ' + '$('.repeat(40) + 'echo hi' + ')'.repeat(40)).complete, true);
+});
+
+test('a line of any shape is judged in linear time: runs of blanks, unfinished quotes and expansions, here-document openers', () => {
+	everyShape('isComplete', (text) => { isComplete(text); });
+	// and the openers that each hold something back, 50,000 of them, one after the other
+	for (const text of ['<<a '.repeat(50000), '<<a\n'.repeat(50000), '"a" '.repeat(50000), "'a' ".repeat(50000), 'a=(b) '.repeat(40000), 'if x; then '.repeat(20000), '$(true) '.repeat(25000)]) {
+		const t0 = process.hrtime.bigint();
+		isComplete(text);
+		const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+		assert.ok(ms < 500, JSON.stringify(text.slice(0, 12)) + ' took ' + ms.toFixed(0) + ' ms');
+	}
 });
 
 (async () => {

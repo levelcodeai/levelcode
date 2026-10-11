@@ -27,11 +27,12 @@ const assert = require('assert');
 const path = require('path');
 
 const dir = path.join(__dirname, '..', '..', 'shell', 'src', 'terminal');
-const { LineEditor } = require(path.join(dir, 'line-editor.js'));
+const { LineEditor, cleanText, droppedNote } = require(path.join(dir, 'line-editor.js'));
 const { createInputParser } = require(path.join(dir, 'input-parser.js'));
 const { strWidth, stripEscapes } = require(path.join(dir, 'width.js'));
 const { VT } = require('./helpers/shell-terminal-vt');
 const { needXterm } = require('./helpers/shell-terminal-xterm');
+const { everyShape } = require('./helpers/shell-terminal-timing');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -293,7 +294,7 @@ test('wide characters: the cursor counts cells and one Backspace removes one cha
 	assert.deepStrictEqual(s.vt.text(), ['$ 好a']);
 });
 
-test('combining marks are one step for the cursor and one Backspace; the joiners of an emoji sequence are not typed', () => {
+test('combining marks are one step for the cursor and one Backspace; so is an emoji with the joiner after it', () => {
 	const s = session();
 	s.send('e\u0301x');
 	assert.strictEqual(s.vt.cursor().col, 2 + 1 + 1);
@@ -301,15 +302,16 @@ test('combining marks are one step for the cursor and one Backspace; the joiners
 	assert.strictEqual(s.ed.cur, 0, 'one Left over the letter and its accent');
 	s.send(key.end, '\x7f', '\x7f');
 	assert.strictEqual(s.ed.text(), '', 'Backspace removes the accent with its letter');
-	// a family is three emoji and two zero-width joiners: the joiners are invisible, so they are not kept (see below)
+	// a family is three emoji and two zero-width joiners: the joiners are kept (they are part of the name of a file that
+	// has this emoji in it), and xterm measures code points, so it is 2 + 0 + 2 + 0 + 2 cells; each emoji is a step
 	const family = '\u{1f468}\u200d\u{1f469}\u200d\u{1f467}';
 	s.send(family + 'a');
-	assert.strictEqual(s.ed.text(), '\u{1f468}\u{1f469}\u{1f467}a');
+	assert.strictEqual(s.ed.text(), family + 'a');
 	assert.strictEqual(s.vt.cursor().col, 2 + 6 + 1);
 	s.send(key.left, key.left, key.left, key.left);
-	assert.strictEqual(s.ed.cur, 0, 'each emoji is one step');
+	assert.strictEqual(s.ed.cur, 0, 'each emoji, with the joiner that follows it, is one step');
 	s.send(key.end, '\x7f', '\x7f', '\x7f', '\x7f');
-	assert.strictEqual(s.ed.text(), '');
+	assert.strictEqual(s.ed.text(), '', 'and one Backspace');
 });
 
 test('nothing the screen cannot show enters the buffer: what is drawn is what runs', () => {
@@ -317,7 +319,9 @@ test('nothing the screen cannot show enters the buffer: what is drawn is what ru
 		'zero-width space': '\u200b', 'zero-width non-joiner': '\u200c', 'zero-width joiner': '\u200d', 'word joiner': '\u2060',
 		'byte order mark': '\ufeff', 'soft hyphen': '\u00ad', 'left-to-right mark': '\u200e', 'right-to-left mark': '\u200f',
 		'arabic letter mark': '\u061c', 'invisible times': '\u2062', 'hangul filler': '\u3164', 'halfwidth hangul filler': '\uffa0',
-		'variation selector 16': '\ufe0f', 'variation selector 1': '\ufe00', 'tag latin a': '\u{e0061}', 'cancel tag': '\u{e007f}',
+		'variation selector 16': '\ufe0f', 'variation selector 15': '\ufe0e', 'variation selector 1': '\ufe00', 'tag latin a': '\u{e0061}', 'cancel tag': '\u{e007f}',
+		'variation selector 17': '\u{e0100}', 'mongolian free variation selector': '\u180b', 'combining grapheme joiner': '\u034f',
+		'function application': '\u2061', 'invisible separator': '\u2063', 'invisible plus': '\u2064',
 		'line separator': '\u2028', 'paragraph separator': '\u2029', 'blank braille': '\u2800', 'interlinear anchor': '\ufff9',
 		'lone high surrogate': '\ud800', 'lone low surrogate': '\udc00',
 		// the bidi controls: what makes `rm a<RLO>txt.b` read as `rm a b.txt`
@@ -329,7 +333,10 @@ test('nothing the screen cannot show enters the buffer: what is drawn is what ru
 		const s = session();
 		s.send(paste('rm a' + ch + 'b.txt'));
 		assert.strictEqual(s.ed.text(), 'rm ab.txt', name + ' is not in the buffer');
-		assert.deepStrictEqual(s.vt.text(), ['$ rm ab.txt'], name);
+		// the line is there, and under the old copy of it a note says that a character was left out, once
+		assert.strictEqual(s.vt.text()[s.vt.cursor().row], '$ rm ab.txt', name);
+		const note = s.vt.text().filter((l) => l === '[1 invisible character was not typed]');
+		assert.strictEqual(note.length, 1, name + ': one note');
 		// typed, from history and from a completion: the same rule
 		const t = session({ history: ['echo a' + ch + 'b'] });
 		t.send(ch + 'x', key.up);
@@ -339,13 +346,145 @@ test('nothing the screen cannot show enters the buffer: what is drawn is what ru
 	const s = session();
 	s.send(paste('caf\u00e9 e\u0301 \u{1f600} \u4f60\u597d a\u00a0b'));
 	assert.strictEqual(s.ed.text(), 'caf\u00e9 e\u0301 \u{1f600} \u4f60\u597d a\u00a0b');
-	// a completion cannot put one in either
+	assert.deepStrictEqual(s.vt.text(), ['$ caf\u00e9 e\u0301 \u{1f600} \u4f60\u597d a\u00a0b'], 'and no note');
+	// a completion cannot put one in either, and says so
 	return (async () => {
 		const c = session({ complete: async () => ({ start: 0, candidates: [{ text: 'a\u200bb\u202ec', display: 'x' }] }) });
 		c.send('a', '\t');
 		await wait();
 		assert.strictEqual(c.ed.text(), 'abc ');
+		assert.ok(c.vt.text().includes('[2 invisible characters were not typed]'), JSON.stringify(c.vt.text()));
 	})();
+});
+
+test('what belongs to an emoji or to a word is kept: a name with them can be pasted and completed, and the screen is what runs', async () => {
+	const kept = {
+		'a check mark with its emoji presentation': '\u2714\ufe0f done.md',
+		'a red heart': '\u2764\ufe0f',
+		'a keycap': '1\ufe0f\u20e3',
+		'a family': '\u{1f468}\u200d\u{1f469}\u200d\u{1f467}',
+		'a pictograph, a variation selector and a joiner': '\u2764\ufe0f\u200d\u{1f525}',
+		'a skin tone': '\u{1f44d}\u{1f3fd}',
+		'a Persian word with a ZWNJ': '\u0645\u06cc\u200c\u0631\u0648\u0645',
+		'a Devanagari conjunct with a ZWJ': '\u0915\u094d\u200d\u0937',
+		'a Bengali word with a ZWNJ': '\u0995\u09cd\u200c\u09b7',
+	};
+	for (const [name, text] of Object.entries(kept)) {
+		const s = session({ cols: 60 });
+		s.send(paste('cat ' + text));
+		assert.strictEqual(s.ed.text(), 'cat ' + text, name + ' by paste');
+		assert.ok(!s.vt.text().some((l) => l.includes('invisible')), name + ': no note');
+		const c = session({ complete: async () => ({ start: 4, candidates: [{ text, display: text }] }), cols: 60 });
+		c.send('cat ' + text.slice(0, 1), '\t');
+		await wait();
+		assert.strictEqual(c.ed.text(), 'cat ' + text + ' ', name + ' by completion');
+		const h = session({ history: ['cat ' + text] });
+		h.send(key.up);
+		assert.strictEqual(h.ed.text(), 'cat ' + text, name + ' from history');
+	}
+	// and only where it joins: the same characters in the wrong place are not typed
+	const wrong = {
+		'a variation selector after a letter': ['a\ufe0fb', 'ab'],
+		'a ZWJ between two Latin letters': ['a\u200db', 'ab'],
+		'a ZWNJ between Latin letters': ['a\u200cb', 'ab'],
+		'a ZWNJ between a Persian and a Latin letter': ['\u0645\u200cb', '\u0645b'],
+		'a ZWNJ between Arabic and Devanagari': ['\u0645\u200c\u0915', '\u0645\u0915'],
+		'a ZWNJ between a letter and an Arabic-Indic digit (the digit is of the script, and is not a letter)': ['\u0645\u200c\u0661', '\u0645\u0661'],
+		'a ZWNJ first': ['\u200c\u0645\u06cc', '\u0645\u06cc'],
+		'a ZWNJ last': ['\u0645\u06cc\u200c', '\u0645\u06cc'],
+		'a doubled ZWNJ': ['\u0645\u200c\u200c\u06cc', '\u0645\u06cc'],
+		'a ZWNJ with a hidden character next to it': ['\u0645\u200b\u200c\u06cc', '\u0645\u06cc'],
+		'a ZWJ between an emoji and a letter': ['\u{1f468}\u200da', '\u{1f468}a'],
+		'a ZWJ first of an emoji': ['\u200d\u{1f468}', '\u{1f468}'],
+		'two selectors': ['\u2764\ufe0f\ufe0f', '\u2764\ufe0f'],
+		'a selector after a digit that is not a keycap': ['1\ufe0f', '1'],
+	};
+	for (const [name, [text, want]] of Object.entries(wrong)) {
+		const s = session();
+		s.send(paste(text));
+		assert.strictEqual(s.ed.text(), want, name);
+	}
+});
+
+test('a joiner typed between two letters that are already there is kept; one at the end is not; the note counts what was dropped', () => {
+	const s = session();
+	s.send(paste('\u0645\u06cc'), key.left);
+	s.send('\u200c');
+	assert.strictEqual(s.ed.text(), '\u0645\u200c\u06cc', 'between two Persian letters');
+	const t = session();
+	t.send('\u0645', '\u200c');
+	assert.strictEqual(t.ed.text(), '\u0645', 'nothing follows it yet');
+	assert.ok(t.vt.text().includes('[1 invisible character was not typed]'));
+	const u = session();
+	u.send(paste('a\u200bb\u200bc\u0007d'));
+	assert.strictEqual(u.ed.text(), 'abcd');
+	assert.ok(u.vt.text().includes('[3 invisible characters were not typed]'), JSON.stringify(u.vt.text()));
+	// the same function, the same answer
+	assert.deepStrictEqual(cleanText('a\u200bb'), { cps: ['a', 'b'], dropped: 1 });
+	assert.deepStrictEqual(cleanText('\u200c', '\u0645', '\u06cc'), { cps: ['\u200c'], dropped: 0 });
+	assert.deepStrictEqual(cleanText('\u200c', '\u0645', undefined), { cps: [], dropped: 1 });
+	assert.strictEqual(droppedNote(1), '[1 invisible character was not typed]');
+	assert.strictEqual(droppedNote(2), '[2 invisible characters were not typed]');
+});
+
+test('what is kept is what forTerminal shows as it is (the editor and the output filter of strings agree)', () => {
+	const sanitize = require(path.join(dir, '..', 'sanitize.js'));
+	// a corpus made of the pieces that matter: letters of several scripts, emoji, keycaps, and every kind of invisible
+	const pieces = ['a', 'b', '1', '#', ' ', '\u0645', '\u06cc', '\u0915', '\u094d', '\u0995', '\u{1f468}', '\u{1f469}', '\u2764', '\u{1f44d}', '\u{1f3fd}',
+		'\u20e3', '\u200c', '\u200d', '\ufe0f', '\ufe0e', '\ufe00', '\u200b', '\u2060', '\ufeff', '\u00ad', '\u202e', '\u3164', '\u{e0061}', '\u2062', '\u034f', '\u180b'];
+	let seed = 5150;
+	const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+	let checked = 0;
+	for (let k = 0; k < 3000; k++) {
+		const n = 1 + Math.floor(rnd() * 8);
+		let text = '';
+		for (let i = 0; i < n; i++) { text += pieces[Math.floor(rnd() * pieces.length)]; }
+		// forTerminal writes what it hides as [U+XXXX]; what is left of it, with those taken out, is what the editor keeps
+		const shown = sanitize.forTerminal(text).replace(/\[U\+[0-9A-F]{4,6}\]/g, '');
+		assert.strictEqual(cleanText(text).cps.join(''), shown, JSON.stringify(text));
+		checked++;
+	}
+	assert.strictEqual(checked, 3000);
+});
+
+test('C1 controls and DEL never enter the buffer, whatever they came with: a history entry, a completion (an 8-bit CSI is a CSI to the terminal)', async () => {
+	const dirty = 'echo a\u009b31mb\u007fc\u0090d\u009d0;t\u009c';
+	const h = session({ history: [dirty] });
+	h.send(key.up);
+	assert.strictEqual(h.ed.text(), 'echo a31mbcd0;t', 'from the history');
+	assert.deepStrictEqual(h.vt.text(), ['$ echo a31mbcd0;t']);
+	assert.ok(!/[\u007f-\u009f]/.test(h.writes.join('')), 'and none of them was written');
+	const c = session({ complete: async () => ({ start: 0, candidates: [{ text: 'x\u009b31m\u007fy', display: 'x' }] }) });
+	c.send('x', '\t');
+	await wait();
+	assert.strictEqual(c.ed.text(), 'x31my ', 'from a completion');
+	assert.ok(!/[\u007f-\u009f]/.test(c.writes.join('')));
+	assert.ok(c.vt.text().includes('[2 invisible characters were not typed]'));
+	// the same two, one at a time: DEL, and C1 (each alone is dropped)
+	for (const ch of ['\u007f', '\u0080', '\u0085', '\u009b', '\u009d', '\u009f']) {
+		assert.deepStrictEqual(cleanText('a' + ch + 'b'), { cps: ['a', 'b'], dropped: 1 }, 'U+' + ch.charCodeAt(0).toString(16));
+	}
+});
+
+test('a paste of any shape is taken, drawn and listed in linear time: the text is not trusted and the host is one thread', async () => {
+	// 200,000 characters: blanks, line ends, marks, joiners, unfinished sequences. A linear pass is a few milliseconds
+	everyShape('a paste', (text) => {
+		const ed = new LineEditor({ write() { }, prompt: () => '$ ', columns: 80, rows: 24, onSubmit() { }, maxPaste: 1e9 });
+		ed.start();
+		ed.input([{ t: 'paste', s: text, size: text.length }]);
+		assert.ok(ed.text().length > 0 || text.length === 0);
+	});
+	// the list under the line (a name with a run of blanks in it: the row was cut with /\s+$/, which is quadratic there)
+	everyShape('a list of candidates', (name) => {
+		const rows = [];
+		const ed = new LineEditor({
+			write: (x) => { rows.push(x); }, prompt: () => '$ ', columns: 80, rows: 24, onSubmit() { },
+			complete: async () => ({ start: 0, candidates: [{ text: 'a', display: name }, { text: 'ab', display: 'b' + name }] }),
+		});
+		ed.start();
+		ed.input([{ t: 'text', s: 'a' }]);
+		ed._columns([name, 'x' + name]);
+	}, { only: ['a run of spaces', 'a run of tabs', 'a run of no-break spaces', 'a run of line feeds', 'CR LF pairs', 'blank and line feed, in turn', 'letters'] });
 });
 
 test('Shift+Tab is not completion: nothing is asked and nothing changes', async () => {
@@ -885,7 +1024,8 @@ const EARLIER = ['LevelCode Shell: bash over the files of this workspace.', 'o'.
  * @returns {Promise<string | null>} what is wrong, or null
  */
 async function runResizeScript(target, spec) {
-	const { cols: cols0, rows, prompt, steps, earlier } = spec;
+	const { cols: cols0, rows: rows0, prompt, steps, earlier } = spec;
+	let rows = rows0;
 	const term = target.make(cols0, rows);
 	let cols = cols0;
 	let out = '';
@@ -913,15 +1053,17 @@ async function runResizeScript(target, spec) {
 	for (let i = 0; i < steps.length; i++) {
 		const st = steps[i];
 		const label = 'step ' + i + ' ' + JSON.stringify(st) + ' (columns ' + cols + ', rows ' + rows + ')';
-		if (st.resize !== undefined) {
-			const nc = st.resize;
-			if (nc === cols) { continue; }
+		if (st.resize !== undefined || st.rows !== undefined) {
+			const nc = st.resize === undefined ? cols : st.resize;
+			const nr = st.rows === undefined ? rows : st.rows;
+			if (nc === cols && nr === rows) { continue; }
 			const windowed = ed.lastRow + 1 > rows;
-			await term.resize(nc, rows);
+			await term.resize(nc, nr);
 			// where the terminal's cursor is now, in rows below the first row of the region
 			const real = markerOk && !windowed && term.markerVisible(marker) ? term.cursorBelow(marker) : null;
 			cols = nc;
-			ed.resize(nc, rows);
+			rows = nr;
+			ed.resize(nc, nr);
 			const m = /^(?:\x1b\[(\d+)([AB]))?\r\x1b\[J/.exec(out);
 			const said = m ? (m[1] ? (m[2] === 'A' ? Number(m[1]) : -Number(m[1])) : 0) : null;
 			await flush();
@@ -954,6 +1096,16 @@ const modelTarget = {
 			write: async (x) => { vt.write(x); },
 			resize: async (c, r) => { vt.resize(c, r); },
 			view: () => ({ rows: vt.lines(), cursor: vt.cursor() }),
+			lines: () => {
+				const all = vt.scrollback.concat(vt.grid);
+				/** @type {string[]} */
+				const out = [];
+				for (const row of all) {
+					const text = row.cells.map((c) => (c === undefined ? ' ' : c)).join('');
+					if (row.wrapped && out.length) { out[out.length - 1] += text; } else { out.push(text); }
+				}
+				return out.map((l) => l.replace(/\s+$/, ''));
+			},
 			marker: () => null, markerAbove: () => false, markerVisible: () => false, cursorBelow: () => null,
 			dispose() { },
 		};
@@ -969,6 +1121,17 @@ function xtermTarget(xt) {
 				write: (x) => written(term, x),
 				resize: async (c, r) => { term.resize(c, r); await written(term, ''); },
 				view: () => { const b = term.buffer.active; return { rows: viewport(term, term.rows), cursor: { row: b.cursorY, col: b.cursorX } }; },
+				lines: () => {
+					const b = term.buffer.active;
+					/** @type {string[]} */
+					const out = [];
+					for (let y = 0; y < b.baseY + term.rows; y++) {
+						const l = b.getLine(y);
+						const t = l ? l.translateToString(true) : '';
+						if (l && l.isWrapped && out.length) { out[out.length - 1] += t; } else { out.push(t); }
+					}
+					return out.map((l) => l.replace(/\s+$/, ''));
+				},
 				marker: (offset) => term.registerMarker(offset),
 				markerAbove: (m) => m.line < term.buffer.active.baseY,
 				markerVisible: (m) => m.line >= term.buffer.active.baseY,
@@ -979,7 +1142,7 @@ function xtermTarget(xt) {
 	};
 }
 
-/** @typedef {{ paste?: string, send?: string, resize?: number }} Step */
+/** @typedef {{ paste?: string, send?: string, resize?: number, rows?: number }} Step */
 
 /** @param {typeof SCENARIOS[number]} sc */
 function scenarioScript(sc) {
@@ -1147,6 +1310,365 @@ test('resize, against xterm.js: the model terminal re-wraps the way xterm.js doe
 		term.dispose();
 	}
 	assert.ok(resizes > 100, 'resizes: ' + resizes);
+});
+
+/* ------------------------------------------------------------------------------------------------ a window and a line that starts above it */
+
+// A region taller than the panel is drawn as a window of its rows, and a logical line can begin above the window top
+// and go on in it, or go on below the last row drawn. xterm.js re-wraps what is on the screen: a line that is
+// cut at the top of the window by the redraw is one line of its own for it, so the rows above the window are not
+// counted, and neither are the rows below the last one drawn (the editor wrote none there).
+// [name, columns before, columns after, text, keys]
+/** @type {Array<[string, number, number, string, string[]]>} */
+const WINDOW_SCENARIOS = [
+	['the first row of the window is the second row of a long line, narrower (the line gets a row)', 40, 24, 'l1\nl2\n' + 'm'.repeat(50) + '\na\nb\nc\nd\ne', []],
+	['the same, wider (the long line loses a row)', 24, 60, 'l1\nl2\n' + 'm'.repeat(50) + '\na\nb\nc\nd\ne', []],
+	['a long line that is cut in the middle of the window top, with the cursor in it, narrower', 40, 27, 'x\n' + 'y'.repeat(70) + '\n' + 'z'.repeat(60) + '\nq\nr', [key.up, key.up]],
+	['the cursor on the first line: the window begins at the first row and nothing below it was drawn, narrower', 40, 25, Array.from({ length: 5 }, (_, i) => 'line ' + i + ' ' + 'w'.repeat(20)).join('\n') + '\n' + 'u'.repeat(60) + '\nl7\nl8', [key.up.repeat(8)]],
+	['the same, wider (the lines below the window would be joined, and are not on the screen)', 24, 60, Array.from({ length: 5 }, (_, i) => 'line ' + i + ' ' + 'w'.repeat(20)).join('\n') + '\n' + 'u'.repeat(60) + '\nl7\nl8', [key.up.repeat(8)]],
+	['a line that begins above the window and ends in it, with the cursor on the last line, wider', 30, 70, 'a'.repeat(100) + '\nb\nc\nd\ne\nf', []],
+	['a wrapped last line that is cut at the top of the window, wider then narrower', 24, 50, 'p\nq\n' + 'r'.repeat(80) + '\ns\nt', []],
+	// lines that are wholly above the window are re-wrapped by xterm.js as well, and do not move the cursor of the window
+	['a wrapped line wholly above the window, wider', 24, 70, 'x'.repeat(60) + '\n' + Array.from({ length: 7 }, (_, i) => 'l' + i).join('\n'), []],
+	['two wrapped lines wholly above the window, then lines of the window that wrap', 20, 64, 'x'.repeat(50) + '\n' + 'y'.repeat(45) + '\n' + 'a\nb\nc\n' + 'z'.repeat(40) + '\nd\ne', []],
+	['wrapped lines above the window and the cursor in the window, narrower', 40, 22, 'x'.repeat(70) + '\n' + 'y'.repeat(60) + '\n' + Array.from({ length: 6 }, (_, i) => 'row' + i).join('\n'), [key.up]],
+	['wrapped lines above the window, the cursor on its first row, wider', 24, 90, 'x'.repeat(60) + '\n' + 'y'.repeat(50) + '\n' + Array.from({ length: 6 }, (_, i) => 'row' + i + 'q'.repeat(10)).join('\n'), [key.up.repeat(5)]],
+];
+
+test('a window and a line that begins above it, against xterm.js and the model terminal: narrower and wider, with the cursor in and below the window', async () => {
+	const specs = WINDOW_SCENARIOS.map(([name, before, after, text, keys]) => {
+		/** @type {Array<{ paste?: string, send?: string, size?: [number, number], submit?: string, abort?: boolean, clear?: boolean }>} */
+		const steps = [{ paste: text }];
+		for (const k of keys) { steps.push({ send: k }); }
+		steps.push({ size: [after, 6] }, { send: 'Z' }, { size: [before, 6] }, { send: '!' }, { size: [after + 3, 6] });
+		return /** @type {[string, any]} */ ([name, { cols: before, rows: 6, prompt: plainPrompt, steps, earlier: BANNER }]);
+	});
+	for (const [name, spec] of specs) {
+		const problem = await runStrictScript(modelTarget, spec);
+		assert.strictEqual(problem, null, 'model: ' + name + ': ' + problem);
+	}
+	const xt = needXterm('the window scenarios against xterm.js');
+	if (!xt) { return; }
+	for (const [name, spec] of specs) {
+		const problem = await runStrictScript(xtermTarget(xt), spec);
+		assert.strictEqual(problem, null, 'xterm.js: ' + name + ': ' + problem);
+	}
+});
+
+/* ------------------------------------------------------------------------------------------------ tabs in a window */
+// (runStrictScript is defined below; these tests run after the whole file has been read)
+
+test('a tab that begins above the top of a window and wraps into it is drawn from the first row of the window', async () => {
+	// 10 columns, 2 rows, prompt `$ `: `$ abcdef` is 8 cells, the tab is the 2 that are left and 6 on the next row, and the
+	// window is the last two rows of three. Its first row begins with the 6 spaces of the tab, and `g` is at column 6.
+	const s = session({ cols: 10, rows: 2 });
+	s.send(paste('abcdef\tg\nh'));
+	assert.deepStrictEqual(s.vt.text(), ['      g', '> h']);
+	assert.deepStrictEqual(s.vt.cursor(), { row: 1, col: 3 });
+	// the whole tab above the window, and a tab whose spaces end exactly at the top row of it
+	const t = session({ cols: 10, rows: 2 });
+	t.send(paste('a\tb\n\tc\nd'));
+	assert.deepStrictEqual(t.vt.text(), ['>       c', '> d']);
+	const u = session({ cols: 10, rows: 2 });
+	u.send(paste('abcdefgh\ti\nj'));
+	assert.deepStrictEqual(u.vt.text(), ['        i', '> j'], 'a tab that starts at the last column of a row and has all its spaces in the next');
+});
+
+test('tabs in a window, against xterm.js and the model terminal: seeded sessions of keys and pastes with tabs, after every step (when xterm is found)', async () => {
+	const xt = needXterm('tabs in a window against xterm.js');
+	if (!xt) { return; }
+	let seed = 41;
+	const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+	const keys = [key.up, key.down, key.left, key.right, key.home, key.end, '\x7f', key.del, '\x0b', 'x', 'yy', ' ', paste('a\tb\tc'), paste('\t\tz\nq'), paste('k'.repeat(9) + '\t')];
+	for (const target of [modelTarget, xtermTarget(xt)]) {
+		for (let k = 0; k < 50; k++) {
+			const cols = pick(rnd, [8, 10, 12, 16, 20, 24, 30]);
+			const rows = pick(rnd, [2, 3, 4, 5, 6]);
+			const prompt = pick(rnd, ['$ ', 'p> ', plainPrompt]);
+			const steps = [];
+			for (let i = 0; i < 12; i++) {
+				const st = pick(rnd, keys);
+				steps.push(st.startsWith(E + '[200~') ? { paste: st.slice((E + '[200~').length, -(E + '[201~').length) } : { send: st });
+			}
+			const problem = await runStrictScript(target, { cols, rows, prompt, earlier: [], steps });
+			assert.strictEqual(problem, null, 'session ' + k + ' ' + JSON.stringify({ cols, rows, prompt, steps }) + ': ' + problem);
+		}
+	}
+});
+
+/* ------------------------------------------------------------------------------------------------ the height of the panel */
+
+// The width has its own differentials above. These are about the HEIGHT, which xterm.js changes by taking rows from the
+// top of the screen into the scrollback (a shorter panel) and by giving them back (a taller one, when the cursor is on
+// its last row): a region that went up into the scrollback comes down again, above a redraw that began at the top of
+// its window, and the first rows of the prompt were on the screen twice. Strict, after EVERY step:
+//   - the screen is the text written once, from the row the cursor says, or a window of it when the text is taller than
+//     the panel, and nothing of the region is on the screen above it;
+//   - what the terminal showed before the prompt is still there, whole and in order, in the scrollback or on the
+//     screen (a redraw that starts too high writes over the rows that came back, and they were not the region's).
+// @returns {Promise<string | null>} what is wrong, or null
+
+/**
+ * Steps: `paste`, `send` (keys), `size` ([columns, rows]), `submit` (Enter, the output the command printed, and the
+ * next prompt, the way the pseudoterminal does it), `abort` (Ctrl+C) and `clear` (Ctrl+L): after the last two, what was
+ * on the terminal, the region as it was too, is history that stays.
+ * @param {{ make(cols: number, rows: number): any }} target
+ * @param {{ cols: number, rows: number, prompt: string, earlier?: string[], steps: Array<{ paste?: string, send?: string, size?: [number, number], submit?: string, abort?: boolean, clear?: boolean }>, once?: boolean }} spec
+ */
+async function runStrictScript(target, spec) {
+	const { prompt, steps, once } = spec;
+	const earlier = (spec.earlier || []).slice();
+	/** Rows that were on the screen before a note, and stay there above it: copies of the region that are meant to be. */
+	const shown = new Set();
+	let cols = spec.cols;
+	let rows = spec.rows;
+	const term = target.make(cols, rows);
+	let out = '';
+	/** @type {string[]} */
+	const submitted = [];
+	const parser = createInputParser();
+	const ed = new LineEditor({
+		write: (x) => { out += x; },
+		prompt: () => prompt, columns: cols, rows, history: () => [], isComplete: () => ({ complete: true }), onSubmit(src) { submitted.push(src); },
+	});
+	const flush = async () => { const x = out; out = ''; await term.write(x); };
+	await term.write(earlier.map((l) => l + '\r\n').join(''));
+	ed.start();
+	await flush();
+	const first = stripEscapes(prompt).trim();
+	for (let i = 0; i < steps.length; i++) {
+		const st = steps[i];
+		let label = 'step ' + i + ' ' + JSON.stringify(st).slice(0, 120) + ' (columns ' + cols + ', rows ' + rows + ')';
+		if (st.size) {
+			const [nc, nr] = st.size;
+			await term.resize(nc, nr);
+			cols = nc;
+			rows = nr;
+			ed.resize(nc, nr);
+		} else if (st.abort || st.clear) {
+			const live = (l) => l === first || l === '';
+			if (st.clear) {
+				// the screen goes into the scrollback: what was on it, the region as it was too, is history from here on
+				for (const l of term.lines()) { if (!live(l) && !earlier.includes(l)) { earlier.push(l); } }
+			}
+			ed.input(parser.feed(st.abort ? '\x03' : '\x0c'));
+			await flush();
+			if (st.abort) {
+				// the line that was abandoned stays, with ^C after it, and the prompt that follows is the region
+				for (const l of term.lines()) { if (!live(l) && !earlier.includes(l)) { earlier.push(l); } }
+			}
+		} else if (st.submit !== undefined) {
+			ed.input(parser.feed('\r'));
+			await flush();
+			// what is on the screen from now on is not the region's: the line as it was typed, and what it printed
+			const typed = submitted[submitted.length - 1].split('\n');
+			typed.forEach((l, k) => { earlier.push((k === 0 ? stripEscapes(prompt) : '> ') + l); });
+			await term.write(st.submit + '\r\n');
+			earlier.push(st.submit);
+			ed.start();
+		} else {
+			const text = st.paste !== undefined ? st.paste : /** @type {string} */ (st.send);
+			if (st.paste !== undefined) {
+				const dropped = cleanText(text.replace(/\r\n?/g, '\n'), ed.buf[ed.cur - 1], ed.buf[ed.cur]).dropped;
+				if (dropped > 0) {
+					// the line as it was stays above the note, and the note is the terminal's from then on
+					for (const r of term.view().rows) { shown.add(r.replace(/\s+$/, '')); }
+					earlier.push(droppedNote(dropped));
+				}
+			}
+			ed.input(parser.feed(st.paste !== undefined ? paste(st.paste) : text));
+			ed.input(parser.flush());
+		}
+		await flush();
+		label += ' -> columns ' + cols + ', rows ' + rows;
+		const w = term.view();
+		const view = w.rows.map((l) => l.replace(/\s+$/, ''));
+		const o = oracle(prompt, '> ', ed.text(), ed.cur, cols);
+		while (o.rows.length <= o.cursor.row) { o.rows.push(''); }
+		const n = o.rows.length;
+		if (n > rows) {
+			let ok = false;
+			for (let t = 0; t + rows <= n && !ok; t++) {
+				ok = JSON.stringify(o.rows.slice(t, t + rows)) === JSON.stringify(view) && o.cursor.row - t === w.cursor.row && o.cursor.col === w.cursor.col;
+			}
+			if (!ok) { return label + ': the screen is not a window of the text written once: ' + JSON.stringify({ view, cursor: w.cursor, want: o.cursor, rows: o.rows }); }
+		} else {
+			const top = w.cursor.row - o.cursor.row;
+			if (top < 0) { return label + ': the cursor is above where the region begins: ' + JSON.stringify({ cursor: w.cursor, want: o.cursor }); }
+			for (let j = 0; j < n; j++) {
+				if ((view[top + j] || '') !== o.rows[j]) { return label + ': the region is not on the screen from row ' + top + ': ' + JSON.stringify({ view, want: o.rows }); }
+			}
+			if (w.cursor.col !== o.cursor.col) { return label + ': the cursor is in column ' + w.cursor.col + ', not ' + o.cursor.col; }
+			// (after a note, or a command, the region as it was is history above, and what came back of it is not told apart)
+			for (let y = 0; y < top && shown.size === 0 && submitted.length === 0; y++) {
+				const looksLikeIt = view[y] === o.rows[0] || view[y].startsWith('> ') || view[y].startsWith(first);
+				if (looksLikeIt && !earlier.some((e) => view[y] !== '' && (e.startsWith(view[y]) || view[y].startsWith(e)))) { return label + ': a copy of the region is on the screen above it: ' + JSON.stringify(view); }
+			}
+		}
+		const lines = term.lines();
+		let at = 0;
+		for (const e of earlier) {
+			const j = lines.indexOf(e, at);
+			if (j < 0) { return label + ': what was on the terminal before the prompt is gone or cut: ' + JSON.stringify({ e, lines }); }
+			at = j + 1;
+		}
+		if (once && lines.filter((l) => l.startsWith(first)).length > 1) { return label + ': the first row of the prompt is in the buffer twice: ' + JSON.stringify(lines); }
+	}
+	term.dispose();
+	return null;
+}
+
+const BANNER = ['banner0', 'banner1'];
+const LINES = (n, w = 0) => Array.from({ length: n }, (_, i) => 'line' + (i + 1) + 'w'.repeat(w)).join('\n');
+
+// [name, columns, rows, text, steps]
+/** @type {Array<[string, number, number, string, Array<{ paste?: string, send?: string, size?: [number, number], submit?: string, abort?: boolean, clear?: boolean }>]>} */
+const ROW_SCENARIOS = [
+	['fits in 12, shrink to 4, grow to 12', 40, 12, LINES(6), [{ size: [40, 4] }, { send: 'Z' }, { size: [40, 12] }, { send: '!' }]],
+	['fits in 12, shrink to 4, grow to 24', 40, 12, LINES(6), [{ size: [40, 4] }, { size: [40, 24] }, { send: 'Z' }]],
+	['fits in 12, shrink to 4, grow to 6 (still taller than the panel)', 40, 12, LINES(6), [{ size: [40, 4] }, { size: [40, 6] }, { send: 'Z' }]],
+	['fits in 12, shrink to 4, grow to 7 (one more than the region)', 40, 12, LINES(6), [{ size: [40, 4] }, { size: [40, 7] }, { send: 'Z' }]],
+	['fits in 24, shrink to 5 (a region of 8), grow to 24', 40, 24, LINES(7), [{ size: [40, 5] }, { size: [40, 24] }, { send: 'Z' }]],
+	['the cursor is two lines up: shrink to 4, grow to 12', 40, 12, LINES(6), [{ send: key.up }, { send: key.up }, { size: [40, 4] }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk twice, 12 to 8 to 4, and grown back', 40, 12, LINES(6), [{ size: [40, 8] }, { size: [40, 4] }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, then grown a little twice', 40, 12, LINES(6), [{ size: [40, 4] }, { size: [40, 5] }, { size: [40, 6] }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, then back and forth', 40, 12, LINES(6), [{ size: [40, 4] }, { size: [40, 12] }, { size: [40, 3] }, { size: [40, 12] }, { size: [40, 5] }, { size: [40, 9] }, { send: 'Z' }]],
+	['shrunk, and more is typed before it grows: the window slides', 40, 12, LINES(6), [{ size: [40, 4] }, { paste: '\nmore\nlines\nhere' }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, then the cursor goes up through the window, then it grows', 40, 12, LINES(6), [{ size: [40, 4] }, { send: key.up }, { send: key.up }, { send: key.up }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, the cursor goes to the top and back down, then it grows', 40, 12, LINES(6), [{ size: [40, 4] }, { send: key.up.repeat(5) }, { send: key.down.repeat(5) }, { size: [40, 12] }, { send: 'Z' }]],
+	['a region taller than the panel from the start (no rows were ever pushed): grown, the earlier output stays', 40, 6, LINES(15), [{ size: [40, 12] }, { send: 'Z' }, { size: [40, 24] }, { send: '!' }]],
+	['a region taller than the panel from the start, grown a little and then shrunk', 40, 6, LINES(15), [{ size: [40, 8] }, { size: [40, 4] }, { size: [40, 16] }, { send: 'Z' }]],
+	['a region that fills the panel exactly, grown', 40, 8, LINES(8), [{ size: [40, 12] }, { send: 'Z' }]],
+	['two rows is the least', 40, 12, LINES(6), [{ size: [40, 2] }, { size: [40, 12] }, { send: 'Z' }]],
+];
+
+// The rows the shrink pushed into the scrollback stay there. When the screen then grows with the cursor above its last
+// row nothing is pulled back and the region is drawn whole from the top of the screen, so the buffer holds a stale
+// copy of its first rows above it, out of sight: a later growth with the cursor on the last row pulls it back, and
+// that one is covered (the "twice" is only asked where nothing of the sort happened).
+const LEAVES_A_COPY = new Set(['shrunk, then the cursor goes up through the window, then it grows', 'shrunk, the cursor goes to the top and back down, then it grows']);
+
+test('the height of the panel, on the model terminal: shrunk and grown, the region is on the screen once and what was before it is not written over', async () => {
+	for (const [name, cols, rows, text, steps] of ROW_SCENARIOS) {
+		const problem = await runStrictScript(modelTarget, { cols, rows, prompt: plainPrompt, earlier: BANNER, once: !LEAVES_A_COPY.has(name), steps: [{ paste: text }, ...steps] });
+		assert.strictEqual(problem, null, name + ': ' + problem);
+	}
+});
+
+test('the height of the panel, against xterm.js: the same scenarios (when xterm is found)', async () => {
+	const xt = needXterm('the height scenarios against xterm.js');
+	if (!xt) { return; }
+	for (const [name, cols, rows, text, steps] of ROW_SCENARIOS) {
+		const problem = await runStrictScript(xtermTarget(xt), { cols, rows, prompt: plainPrompt, earlier: BANNER, once: !LEAVES_A_COPY.has(name), steps: [{ paste: text }, ...steps] });
+		assert.strictEqual(problem, null, name + ': ' + problem);
+	}
+});
+
+/** [name, columns, rows, text, steps]: the width changes too, at once or in turn. */
+/** @type {typeof ROW_SCENARIOS} */
+const BOTH_SCENARIOS = [
+	['shrink to 4 rows and 20 columns together, and back', 40, 12, LINES(6), [{ size: [20, 4] }, { send: 'Z' }, { size: [40, 12] }, { send: '!' }]],
+	['shrink to 4 rows, then 80 columns', 40, 12, LINES(6), [{ size: [40, 4] }, { size: [80, 4] }, { send: 'Z' }]],
+	['narrower and taller at once', 40, 12, LINES(6, 30), [{ size: [24, 20] }, { send: 'Z' }, { size: [40, 12] }, { send: '!' }]],
+	['shorter and narrower with long lines, then taller', 40, 12, LINES(5, 50), [{ size: [24, 5] }, { send: 'Z' }, { size: [24, 14] }, { send: '!' }]],
+	['a region that is tall at 40 columns, narrower: still tall, then taller', 40, 6, LINES(10, 20), [{ size: [30, 6] }, { size: [30, 12] }, { send: 'Z' }]],
+	['the cursor on the first line, shorter and narrower', 40, 12, LINES(5, 45), [{ send: key.up.repeat(4) }, { size: [28, 6] }, { send: 'Z' }, { size: [28, 12] }]],
+];
+
+/** [name, columns, rows, text, steps]: what comes after the prompt that was shrunk: a command that was run, a note. */
+/** @type {typeof ROW_SCENARIOS} */
+const AFTER_SCENARIOS = [
+	['shrunk, the line is run, and the panel grows at the next prompt: what the command printed is not written over', 40, 12, LINES(6), [{ size: [40, 4] }, { submit: 'out1' }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, run, and shrunk and grown again at the second prompt', 40, 12, LINES(5), [{ size: [40, 4] }, { submit: 'out1' }, { paste: 'x\ny\nz\nw\nv' }, { size: [40, 3] }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, a paste that loses a character (the note under the line), and the panel grows: the note is not written over', 40, 12, LINES(6), [{ size: [40, 4] }, { paste: 'a\u200bb' }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, Ctrl+C (the line stays with ^C after it, and the next prompt is a new region), and the panel grows', 40, 12, LINES(6), [{ size: [40, 4] }, { abort: true }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, Ctrl+C, a new region that fills the panel exactly, and the panel grows: nothing of the line that was left is written over', 40, 12, LINES(6), [{ size: [40, 4] }, { abort: true }, { paste: 'p1\np2\np3\np4' }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, run, a new region that fills the panel exactly, and the panel grows', 40, 12, LINES(6), [{ size: [40, 4] }, { submit: 'out1' }, { paste: 'p1\np2\np3\np4' }, { size: [40, 12] }, { send: 'Z' }]],
+	['shrunk, Ctrl+L (what was on the screen is history), and the panel grows', 40, 12, LINES(6), [{ size: [40, 4] }, { clear: true }, { size: [40, 12] }, { send: 'Z' }]],
+	['a tall region, narrowed (the rows it adds go into the scrollback), then taller: they are written over', 40, 6, LINES(8, 30), [{ size: [24, 6] }, { size: [24, 24] }, { send: 'Z' }]],
+	['narrowed and shortened, then taller', 40, 8, LINES(8, 30), [{ size: [24, 4] }, { size: [24, 20] }, { send: 'Z' }]],
+];
+
+test('after the panel was shrunk: a command, a note, a narrower panel, and then a taller one (on the model terminal and on xterm.js)', async () => {
+	const xt = needXterm('the scenarios after a shrink against xterm.js');
+	for (const target of xt ? [modelTarget, xtermTarget(xt)] : [modelTarget]) {
+		for (const [name, cols, rows, text, steps] of AFTER_SCENARIOS) {
+			const problem = await runStrictScript(target, { cols, rows, prompt: plainPrompt, earlier: BANNER, steps: [{ paste: text }, ...steps] });
+			assert.strictEqual(problem, null, name + ': ' + problem);
+		}
+	}
+});
+
+test('the height and the width of the panel together, on the model terminal and on xterm.js', async () => {
+	for (const [name, cols, rows, text, steps] of BOTH_SCENARIOS) {
+		const problem = await runStrictScript(modelTarget, { cols, rows, prompt: plainPrompt, earlier: BANNER, steps: [{ paste: text }, ...steps] });
+		assert.strictEqual(problem, null, 'model, ' + name + ': ' + problem);
+	}
+	const xt = needXterm('the height and width scenarios against xterm.js');
+	if (!xt) { return; }
+	for (const [name, cols, rows, text, steps] of BOTH_SCENARIOS) {
+		const problem = await runStrictScript(xtermTarget(xt), { cols, rows, prompt: plainPrompt, earlier: BANNER, steps: [{ paste: text }, ...steps] });
+		assert.strictEqual(problem, null, 'xterm.js, ' + name + ': ' + problem);
+	}
+});
+
+test('the height of the panel, against xterm.js: seeded random sessions, the screen exact and what was before the prompt kept (when xterm is found)', async () => {
+	const xt = needXterm('the random height sessions against xterm.js');
+	if (!xt) { return; }
+	let seed = 20261011;
+	const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+	const parts = ['one', 'two words here', 'x'.repeat(20 + Math.floor(rnd() * 40)), '', '你好世界', 'w'.repeat(33), 'echo a', 'l'];
+	const keys = [key.left, key.right, key.home, key.end, '\x7f', key.up, key.down, '\x0b', 'ab'];
+	let resizes = 0;
+	for (const target of [modelTarget, xtermTarget(xt)]) {
+		for (let k = 0; k < 40; k++) {
+			const cols = pick(rnd, [20, 27, 33, 40]);
+			const rows0 = pick(rnd, [6, 8, 12, 24]);
+			const prompt = pick(rnd, [plainPrompt, colourPrompt]);
+			const lines = [];
+			for (let i = 0, n = 2 + Math.floor(rnd() * 8); i < n; i++) { lines.push(pick(rnd, parts)); }
+			/** @type {Array<{ paste?: string, send?: string, size?: [number, number], submit?: string, abort?: boolean, clear?: boolean }>} */
+			const steps = [{ paste: lines.join('\n') }];
+			for (let i = 0, n = 6 + Math.floor(rnd() * 10); i < n; i++) {
+				const r = rnd();
+				if (r < 0.4) {
+					steps.push({ size: [cols, pick(rnd, [3, 4, 5, 6, 8, 12, 24])] });
+					resizes++;
+				} else if (r < 0.55) { steps.push({ paste: pick(rnd, ['a\nb\nc', 'long ' + 'z'.repeat(30) + '\nq']) }); } else { steps.push({ send: pick(rnd, keys) }); }
+			}
+			const problem = await runStrictScript(target, { cols, rows: rows0, prompt, earlier: BANNER.concat(EARLIER.slice(0, k % 3)), steps });
+			assert.strictEqual(problem, null, 'session ' + k + ' ' + JSON.stringify({ cols, rows0, steps }) + ': ' + problem);
+		}
+	}
+	assert.ok(resizes > 200, 'resizes: ' + resizes);
+});
+
+// Sequences that a search over seeded sessions turned up, each exact on xterm.js. Each one is a case where something
+// the estimate counts (the rows above the top of the window, where a line starts relative to it, the rows below the
+// last one written, the rows a shorter screen no longer has) counted differently leaves the first rows of the region on
+// the screen twice, or writes over what was there before it: they pin what is counted and what is not.
+const A_ = E + '[A';
+const X50 = 'x'.repeat(50);
+/** @type {Array<[string, { cols: number, rows: number, prompt?: string, earlier: string[], steps: Array<{ paste?: string, send?: string, size?: [number, number], submit?: string, abort?: boolean, clear?: boolean }> }]>} */
+const SEQUENCES = [
+	['a region shrunk into the scrollback, narrowed, then widened: the line that begins above the window is a line of its own for xterm', { cols: 60, rows: 8, earlier: ['LevelCode Shell: bash over the files of this workspace.'], steps: [{ paste: 'x'.repeat(25) }, { size: [60, 4] }, { paste: 'x'.repeat(25) }, { size: [18, 4] }, { paste: 'one\ntwo' }, { size: [33, 4] }] }],
+	['wrapped lines wholly above the window, a panel that gets shorter and wider', { cols: 60, rows: 8, earlier: EARLIER, steps: [{ paste: 'w'.repeat(45) + '\n' + 'z'.repeat(30) + '\nq' }, { size: [60, 6] }, { paste: LINES(10) }, { paste: LINES(10) }, { paste: 'ab\n\ncd' }, { size: [40, 8] }] }],
+	['the window at the first line, the lines below it that were not drawn are not counted (one)', { cols: 20, rows: 8, earlier: BANNER, steps: [{ paste: 'y'.repeat(45) + '\n' + 'y'.repeat(45) + '\na\n' + 'x'.repeat(51) }, { send: A_ }, { send: A_ }, { send: A_ }, { size: [60, 8] }, { send: 'Z' }] }],
+	['the window at the first line, the lines below it that were not drawn are not counted (two)', { cols: 20, rows: 6, earlier: BANNER, steps: [{ paste: 'z'.repeat(26) + '\n' + 'x'.repeat(40) + '\n' + 'x'.repeat(41) + '\na' }, { send: A_ }, { send: A_ }, { send: A_ }, { size: [80, 6] }, { send: 'Z' }] }],
+	['a tall region at a narrow, short panel, then wider and shorter at once, a paste, and a taller panel: the rows the wider panel joins are not counted as rows that came back, and what was there before is kept', { cols: 20, rows: 24, prompt: 'proj/src $ ', earlier: ['LevelCode Shell: bash over the files of this workspace.'], steps: [{ size: [18, 6] }, { send: ' ' }, { paste: 'w'.repeat(45) + '\n' + 'z'.repeat(30) + '\nq' }, { size: [50, 5] }, { paste: LINES(6) }, { size: [50, 12] }] }],
+	['a shorter and wider panel: the rows xterm took off the bottom are not counted (the region at the top)', { cols: 24, rows: 12, earlier: [], steps: [{ paste: 'p\nq\nr\ns\n' + X50 + '\n' + X50 }, { send: A_ }, { size: [80, 8] }, { send: 'Z' }] }],
+	['the same, one row shorter', { cols: 24, rows: 12, earlier: [], steps: [{ paste: 'p\nq\nr\ns\n' + X50 + '\n' + X50 }, { send: A_ }, { size: [80, 7] }, { send: 'Z' }] }],
+	['the same, with a line of output above the region', { cols: 24, rows: 12, earlier: ['banner0'], steps: [{ paste: 'p\nq\nr\ns\n' + X50 + '\n' + X50 }, { send: A_ }, { size: [80, 8] }, { send: 'Z' }] }],
+];
+
+test('sequences that pin what the estimate counts, on the model terminal and on xterm.js', async () => {
+	const xt = needXterm('the pinned sequences against xterm.js');
+	for (const target of xt ? [modelTarget, xtermTarget(xt)] : [modelTarget]) {
+		for (const [name, spec] of SEQUENCES) {
+			const problem = await runStrictScript(target, Object.assign({ prompt: plainPrompt }, spec));
+			assert.strictEqual(problem, null, name + ': ' + problem);
+		}
+	}
 });
 
 test('a resize that changes nothing writes nothing; nothing smaller than 2 columns or 2 rows is taken', () => {

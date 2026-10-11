@@ -20,8 +20,8 @@
 //
 // Resize. The workbench re-wraps what is on the screen BEFORE it tells the pty, so the editor has to say where its
 // cursor ended up. xterm.js is run by VS Code with `reflowCursorLine` off (the line the cursor is on is left as it
-// was: a shell redraws its own line), and `resize()` below follows xterm's own loops, quirks included: see
-// `_cursorRowAfterReflow`.
+// was: a shell redraws its own line), and `resize()` below follows xterm's own loops, quirks included: the height
+// first (rows go into the scrollback and come back from it: `ghosts`), then the width (`_cursorRowAfterReflow`).
 // @ts-check
 'use strict';
 
@@ -39,23 +39,80 @@ const WORD = /[\p{L}\p{N}\p{M}_]/u;
 const DIM = '\x1b[2m';
 const RESET = '\x1b[0m';
 
+// What of INVISIBLE is kept. It is the exception sanitize.js makes for forTerminal, and for the same reason: a name
+// with a VS16 (every '\u2714\uFE0F'), a ZWJ emoji or a ZWNJ in a Persian word can only be addressed with the invisible
+// character in it, and what the terminal shows of a listing is what has to be typeable. Nothing else is: anywhere
+// else an invisible character is how `rm a<ZWSP>b.txt` is drawn as `rm ab.txt` and run against another name.
+const PICTOGRAPH = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}]$/u;
+const KEYCAP_BASE = /^[0-9#*]$/;
+const LETTER_OR_MARK = /^[\p{L}\p{M}]$/u;
+/** The scripts that are written with U+200C / U+200D inside a word, one regexp each: "the same script on both sides". */
+const JOINER_SCRIPTS = [
+	/^\p{Script_Extensions=Arabic}$/u, /^\p{Script_Extensions=Devanagari}$/u, /^\p{Script_Extensions=Bengali}$/u,
+	/^\p{Script_Extensions=Gurmukhi}$/u, /^\p{Script_Extensions=Gujarati}$/u, /^\p{Script_Extensions=Oriya}$/u,
+	/^\p{Script_Extensions=Tamil}$/u, /^\p{Script_Extensions=Telugu}$/u, /^\p{Script_Extensions=Kannada}$/u,
+	/^\p{Script_Extensions=Malayalam}$/u, /^\p{Script_Extensions=Sinhala}$/u,
+];
+
+/**
+ * Is the invisible character at index `i` one that is kept: an emoji's variation selector or joiner, or the joiner of a
+ * word in a script that has one?
+ *  - U+FE0F / U+FE0E right after a pictograph (or a keycap base followed by U+20E3);
+ *  - U+200D between two pictographs (a variation selector may sit before it);
+ *  - U+200C or U+200D with a letter or mark on each side, both of the same script of JOINER_SCRIPTS.
+ * The neighbours are the ones the text had (not the ones that are left of it), so a hidden character next to a joiner
+ * makes it hidden too, as in forTerminal; and one that is first, last or doubled has no letter on a side.
+ * @param {(i: number) => string | undefined} at the code point at an index, or undefined past either end
+ * @param {number} i @param {number} cp
+ */
+function keepsInvisible(at, i, cp) {
+	const prev = at(i - 1);
+	const next = at(i + 1);
+	if (cp === 0xFE0F || cp === 0xFE0E) {
+		if (prev === undefined) { return false; }
+		return PICTOGRAPH.test(prev) || (KEYCAP_BASE.test(prev) && next === '\u20E3');
+	}
+	if (cp !== 0x200C && cp !== 0x200D) { return false; }
+	if (cp === 0x200D) {
+		let left = prev;
+		if (left === '\uFE0F' || left === '\uFE0E') { left = at(i - 2); }
+		if (left !== undefined && next !== undefined && PICTOGRAPH.test(left) && PICTOGRAPH.test(next)) { return true; }
+	}
+	if (prev === undefined || next === undefined || !LETTER_OR_MARK.test(prev) || !LETTER_OR_MARK.test(next)) { return false; }
+	return JOINER_SCRIPTS.some((script) => script.test(prev) && script.test(next));
+}
+
 /**
  * What may enter the buffer: tabs and newlines, and text the screen can show. Controls, DEL and C1 are dropped, and so
- * is every invisible character (INVISIBLE), so what is on screen is what will run: `rm a<ZWSP>b.txt` cannot be drawn
- * as `rm ab.txt`. The price is that a pasted word that had one (a ZWNJ in a Persian name, the joiner of a family
- * emoji) is typed without it.
+ * is every invisible character (INVISIBLE) but the ones that belong to an emoji or to a word of a script that is
+ * written with them (keepsInvisible): what is on screen is what will run, so `rm a<ZWSP>b.txt` cannot be drawn as
+ * `rm ab.txt`. The text is judged by itself and by the character before and after the place it goes into, so a joiner
+ * typed between two letters that are already there is kept and one at the end of the text is not.
  * @param {string} s
- * @returns {string[]} code points
+ * @param {string} [before] the character in the buffer before where `s` goes
+ * @param {string} [after] and after it
+ * @returns {{ cps: string[], dropped: number }} the code points that were kept, and how many were not
  */
-function cleanText(s) {
+function cleanText(s, before, after) {
+	const chars = Array.from(s);
+	const n = chars.length;
+	const at = (/** @type {number} */ i) => (i >= 0 && i < n ? chars[i] : i === -1 ? before : i === n ? after : undefined);
+	/** @type {string[]} */
 	const cps = [];
-	for (const ch of s) {
+	let dropped = 0;
+	for (let i = 0; i < n; i++) {
+		const ch = chars[i];
 		const cp = /** @type {number} */ (ch.codePointAt(0));
 		if (ch === '\n' || ch === '\t') { cps.push(ch); continue; }
-		if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f) || INVISIBLE.test(ch)) { continue; }
+		if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f) || (INVISIBLE.test(ch) && !keepsInvisible(at, i, cp))) { dropped++; continue; }
 		cps.push(ch);
 	}
-	return cps;
+	return { cps, dropped };
+}
+
+/** The note under the line when what was typed, pasted or completed lost characters: not a word of what it was. @param {number} n */
+function droppedNote(n) {
+	return '[' + n + ' invisible character' + (n === 1 ? ' was' : 's were') + ' not typed]';
 }
 
 /**
@@ -93,6 +150,7 @@ class LineEditor {
 		this.cursorRow = 0;          // rows between the first row drawn and the terminal cursor (negative: above it, after a resize)
 		this.winTop = 0;             // first row of the region that is drawn (0 unless the region is taller than the panel)
 		this.lastRow = 0;            // last row of the region that was written
+		this.ghosts = 0;             // rows of the region that xterm pushed into the scrollback, right above the screen (see resize)
 		this.targetRow = 0;          // the row the cursor was left on, in region rows
 		this.phantom = false;        // the cursor is on a row made by forcing a wrap
 		this.fresh = false;          // the next draw starts a prompt: write the prompt marks with it
@@ -198,6 +256,7 @@ class LineEditor {
 		if (clear) {
 			out += CSI + '2J' + CSI + 'H';
 			this.cursorRow = 0;
+			this.ghosts = 0;                       // what was on the screen is now the scrollback, and is history
 		}
 		// negative: a resize left the terminal's cursor above the first row of the region (see _cursorRowAfterReflow)
 		if (this.cursorRow > 0) { out += CSI + this.cursorRow + 'A'; } else if (this.cursorRow < 0) { out += CSI + -this.cursorRow + 'B'; }
@@ -222,13 +281,18 @@ class LineEditor {
 			}
 			for (let k = startIdx; k < endIdx; k++) {
 				const p = L.pos[k];
-				if (p.row < winTop) { continue; }
 				if (p.row > winBottom) { break; }
 				if (this.buf[k] === '\t') {
-					// The spaces of a tab that wrap past the last row drawn are not written: the terminal would scroll for
-					// them, and the cursor would end a row too low.
-					out += ' '.repeat(Math.min(L.wid[k], (winBottom - p.row + 1) * this.cols - p.col));
-				} else {
+					// A tab is spaces, one cell each, that wrap like any other cell, so a tab that starts above the window can
+					// end in it, and one that starts in it can end below. The spaces above the first row drawn are not
+					// written, but the ones that land in it are (without them the row and everything after it would be drawn
+					// left of where the cursor is computed). The ones past the last row drawn are not written either: the
+					// terminal would scroll for them, and the cursor would end a row too low.
+					const cellsToEnd = (winBottom - p.row + 1) * this.cols - p.col;
+					const cellsAbove = p.row < winTop ? (winTop - p.row) * this.cols - p.col : 0;
+					const n = Math.min(L.wid[k], cellsToEnd) - cellsAbove;
+					if (n > 0) { out += ' '.repeat(n); }
+				} else if (p.row >= winTop) {
 					out += this.buf[k];
 				}
 			}
@@ -265,6 +329,7 @@ class LineEditor {
 		s += this.phantom ? '\r' + CSI + 'K' : '\r\n';     // a phantom row is the row output starts on
 		this.host.write(s);
 		this.cursorRow = 0;
+		this.ghosts = 0;
 		this.phantom = false;
 	}
 
@@ -277,6 +342,7 @@ class LineEditor {
 		this.hi = -1;
 		this.draft = '';
 		this.cursorRow = 0;
+		this.ghosts = 0;
 		this.fresh = true;
 		this.lastTab = false;
 		this.pendingTab = null;
@@ -288,6 +354,19 @@ class LineEditor {
 	/**
 	 * The workbench has already changed the size of the terminal, and re-wrapped what was on it. Say where the cursor
 	 * is now and draw the region again from its first row.
+	 *
+	 * xterm.js does it in the order of Buffer.resize, and so does this: the HEIGHT first, then the width.
+	 *   - A shorter screen puts the rows at its top into the scrollback, and a narrower one puts there the rows that
+	 *     re-wrapping adds. What of the region goes there stays there: `ghosts` counts those rows, which sit right above
+	 *     the screen and are stale copies of what is redrawn below them.
+	 *   - A taller screen pulls rows back from the scrollback when the cursor is on its last row, as many as there
+	 *     are or as it has grown by, and a wider one pulls them back by every row it takes out. What is pulled is what was
+	 *     pushed (the ghosts) and then what was there before the region, which has to stay. So the redraw starts at the
+	 *     first ghost that came back and writes over them, and not at the top of the window, which would leave them above
+	 *     the region once (the prompt's first rows, twice, after 12 -> 4 -> 12 rows).
+	 * `ghosts` is a LOWER bound: rows it does not know of are left as they are, and a width that grows takes it back to
+	 * 0, for xterm.js pulls back rows the editor cannot count (what earlier output joins) and a ghost that is not there
+	 * would be an earlier line written over.
 	 * @param {number} cols
 	 * @param {number} rows
 	 */
@@ -295,14 +374,37 @@ class LineEditor {
 		const c = Math.max(2, Math.floor(cols) || this.cols);
 		const r = Math.max(2, Math.floor(rows) || this.rows);
 		if (c === this.cols && r === this.rows) { return; }
-		// before the width changes: the layout the terminal had is the one the reflow starts from
-		const reflowed = this.active && c !== this.cols;
-		const row = reflowed ? this._cursorRowAfterReflow(c) : 0;
+		if (!this.active) {
+			this.cols = c;
+			this.rows = r;
+			return;
+		}
+		const t = this.targetRow;
+		// before the size changes: the layout the terminal had is the one the changes start from
+		let row = this.cursorRow;
+		let ghosts = this.ghosts;
+		let back = 0;
+		if (r < this.rows) {
+			ghosts += Math.max(0, t - r + 1 - this.winTop);
+		} else if (r > this.rows && ghosts > 0 && t - this.winTop === this.rows - 1) {
+			// (xterm pulls only when the cursor is on the last row; with it elsewhere the redraw would clamp at the top of
+			// the screen, which is where the window is: the condition is the rule's own, not a guard)
+			back = Math.min(r - this.rows, ghosts);
+		}
+		if (c !== this.cols) {
+			const reflowed = this._cursorRowAfterReflow(c, r);
+			row = reflowed.row;
+			if (c < this.cols) {
+				if (this.lastRow + 1 > r || this.winTop > 0) { ghosts += reflowed.added; }
+			} else if (reflowed.removed > 0) {
+				ghosts = 0;
+				back = 0;
+			}
+		}
 		this.cols = c;
 		this.rows = r;
-		if (!this.active) { return; }
-		// the redraw starts at the first row that is on the screen, which is the first row of a window too
-		if (reflowed) { this.cursorRow = row; }
+		this.ghosts = Math.max(0, ghosts - back);
+		this.cursorRow = row + back;
 		this._draw();
 	}
 
@@ -312,7 +414,8 @@ class LineEditor {
 	 * xterm.js (Buffer._reflowSmaller / _reflowLarger, with `reflowCursorLine` off) walks the screen's lines and moves
 	 * its cursor row by the rows each one gained or lost, whichever side of the cursor the line is on. So, line by line
 	 * (a line is the rows one logical line of the buffer takes on the screen, with its prompt; in a window the first
-	 * and the last may be cut):
+	 * and the last may be cut: what the window's first row begins is a line of its own for xterm.js, because the
+	 * redraw wrote it after an erase at column 0):
 	 *   narrower: from the LAST line up. A line that was wrapped or is now too wide is re-wrapped, unless it holds the
 	 *     cursor, and the cursor row is the running one: every row a lower line gained moved it down, so the line it is
 	 *     on may no longer be the line that holds it. The cursor row grows by the rows the line gained.
@@ -322,14 +425,17 @@ class LineEditor {
 	 * Known gap: xterm.js stops that at the top of its buffer, which the editor cannot see; it only matters when the
 	 * region starts in the very first rows of the whole scrollback and lines under the cursor are re-joined.
 	 * @param {number} cols the new width
-	 * @returns {number}
+	 * @param {number} rows the new height: a shorter screen has lost the rows of the region below the cursor that no longer fit
+	 * @returns {{ row: number, added: number, removed: number }} the row, and the rows the re-wrapping added and took out
 	 */
-	_cursorRowAfterReflow(cols) {
+	_cursorRowAfterReflow(cols, rows) {
 		const top = this.winTop;
 		const before = this._layout(true);
-		const cells = before.cells.filter((c) => c.row >= top && c.row <= this.lastRow);
+		// the rows that are on the screen; on a shorter one no more below the cursor than it has room for
+		const bottom = rows < this.rows ? Math.min(this.lastRow, Math.max(this.targetRow, top + rows - 1)) : this.lastRow;
+		const cells = before.cells.filter((c) => c.row >= top && c.row <= bottom);
 		// the row that was made by forcing a wrap holds a space, which is part of the last line and is re-wrapped with it
-		if (this.phantom) { cells.push({ line: before.lines.length - 1, row: this.lastRow, w: 1 }); }
+		if (this.phantom && this.lastRow <= bottom) { cells.push({ line: before.lines.length - 1, row: this.lastRow, w: 1 }); }
 		/** @type {Array<{ first: number, last: number, widths: number[] }>} */
 		const lines = [];
 		for (const c of cells) {
@@ -354,27 +460,33 @@ class LineEditor {
 		const now = on.map((l) => rowsAt(l.widths));
 		const holds = (/** @type {number} */ row, /** @type {number} */ k) => row >= start[k] && row < start[k] + was[k];
 		let row = this.cursorRow;
+		let added = 0;
+		let removed = 0;
 		if (cols < this.cols) {
 			for (let k = on.length - 1; k >= 0; k--) {
 				if (was[k] === 1 && now[k] === 1) { continue; }              // not wrapped, and not too wide: not touched
 				if (holds(row, k)) { continue; }
-				row += Math.max(0, now[k] - was[k]);
+				const gain = Math.max(0, now[k] - was[k]);
+				row += gain;
+				added += gain;
 			}
-			return row;
+			return { row, added, removed };
 		}
 		const at = row;
 		for (let k = 0; k < on.length; k++) {
 			if (was[k] < 2 || holds(at, k)) { continue; }                   // only wrapped lines are joined
-			row -= Math.max(0, was[k] - now[k]);
+			const loss = Math.max(0, was[k] - now[k]);
+			row -= loss;
+			removed += loss;
 		}
-		return row;
+		return { row, added, removed };
 	}
 
 	text() { return this.buf.join(''); }
 
 	/** Replace the buffer (a history entry, a draft). It is cleaned like anything typed: the store it came from is not trusted. @param {string} s */
 	setText(s) {
-		this.buf = cleanText(s);
+		this.buf = cleanText(s).cps;
 		this.cur = this.buf.length;
 	}
 
@@ -420,11 +532,16 @@ class LineEditor {
 
 	/** @param {string} s */
 	_insert(s) {
-		const cps = cleanText(s);
-		if (!cps.length) { return; }
+		const { cps, dropped } = cleanText(s, this.buf[this.cur - 1], this.buf[this.cur]);
+		if (!cps.length && !dropped) { return; }
 		this._put(this.cur, 0, cps);
 		this.cur += cps.length;
-		this._draw();
+		this._changed(dropped);
+	}
+
+	/** Show the line after an insertion: with a note first when characters were left out of it. @param {number} dropped */
+	_changed(dropped) {
+		if (dropped > 0) { this._notice(droppedNote(dropped)); } else { this._draw(); }
 	}
 
 	/** @param {{ s: string, size?: number }} e */
@@ -749,10 +866,10 @@ class LineEditor {
 
 	/** @param {number} start @param {string} text */
 	_replace(start, text) {
-		const cps = cleanText(text);
+		const { cps, dropped } = cleanText(text, this.buf[start - 1], this.buf[this.cur]);
 		this._put(start, this.cur - start, cps);
 		this.cur = start + cps.length;
-		this._draw();
+		this._changed(dropped);
 	}
 
 	/** @param {string[]} items */
@@ -768,10 +885,11 @@ class LineEditor {
 		const per = Math.max(1, Math.floor(this.cols / w));
 		const rows = [];
 		for (let i = 0; i < items.length; i += per) {
-			rows.push(items.slice(i, i + per).map((s) => s + ' '.repeat(Math.max(0, w - strWidth(s)))).join('').replace(/\s+$/, ''));
+			// trimEnd, not /\s+$/: that is quadratic in a name with a long run of blanks inside it
+			rows.push(items.slice(i, i + per).map((s) => s + ' '.repeat(Math.max(0, w - strWidth(s)))).join('').trimEnd());
 		}
 		return rows.join('\r\n');
 	}
 }
 
-module.exports = { LineEditor };
+module.exports = { LineEditor, cleanText, droppedNote };

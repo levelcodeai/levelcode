@@ -117,8 +117,10 @@ interface ChildLike {          // what agent.js's runCommand uses of a Node Chil
   plus `opts.env` (at most 512 variables and 256 KiB; the ones that did not fit are named in one note — a variable is
   skipped, not everything after it). Never `ctx`, keys, tokens or the `vscode` object.
 * `commit` is asked **once**, after the command ran to its end and before `close`. `control.cancelled()` turns true
-  when the run was stopped while the set was being checked: the review then applies nothing. Once its first write has
-  begun nothing interrupts it.
+  as soon as the run is stopped (Stop, kill, `dispose()`), **and** when the shell gave up on the review after
+  `workers.commitMs`. A review looks at it before each change: while the set is being checked a Stop applies nothing;
+  while it is being applied what is already in the review stays, nothing more is started, and a change in flight is
+  never interrupted. The shell does not wait for a review after a Stop: it settles the run at once (§5).
 
 `Change`:
 
@@ -138,7 +140,9 @@ host translates a relocated mount back before a change reaches the review. `befo
 
 ```ts
 runtime.folders(): Array<{ name: string; root: string; uri: string }>        // live workspace folders, in order
-runtime.mounts(): Array<{ ...folder; mount: string }>                         // where the engine sees each (README §4)
+runtime.mounts(): Array<{ ...folder; mount: string }>                         // where the engine sees each (§4 Mounts)
+runtime.resolve(path: string): Uri | null                                      // an ENGINE path (as a command prints it) -> the workspace Uri; null outside the mounts
+runtime.stat(path: string): Promise<{ type: 'file'|'dir', size: number } | null>  // bounded by fsMs; null for nothing / outside / error / timeout
 runtime.createSession(o?: { cwd?: string }): Session                          // a persistent terminal session
 runtime.onAgentRun(listener: (e: AgentRunEvent) => void): { dispose(): void } // every run_command, for the mirror tab
 runtime.dispose(): void
@@ -190,11 +194,23 @@ The host checks that every `fs` path is inside a mounted folder and that the gen
 sends after `done`, or from a terminated generation, is dropped.
 
 **Mounts.** The engine sees a folder at its real root when that is a path it can host. A root that is `/`, that is
-under one of the engine's own top-level names (`/bin`, `/dev`, `/home`, `/proc`, `/tmp`, `/usr`), or that overlaps an
-earlier folder is **relocated** by the host (`planMounts`, in `runtime.js`) to `/mnt/<slug>` — or to `/lc-mnt/<slug>`,
-`/lc-mnt-2/<slug>`… when a folder is itself rooted at `/mnt`. The plan always terminates and never nests mounts. The
-run's stderr names every relocation once, with the folder's name and path made safe. `Change` paths are translated back
-(§3).
+under one of the engine's own top-level names (`/bin`, `/dev`, `/home`, `/proc`, `/tmp`, `/usr`), or that overlaps
+another folder is **relocated** by the host (`planMounts`, in `runtime.js`) to `<base>/<leaf>`:
+
+* `base` is `/mnt` — or `/lc-mnt`, `/lc-mnt-2`… when a folder that stayed is at or above it;
+* `leaf` is the folder's name with every run of characters outside `[A-Za-z0-9._-]` replaced by `_`, leading dots
+  replaced by `_` (so `.` and `..` are `_`), at most 100 characters, `-2`, `-3`… on a clash; a folder with no name is
+  called by the last segment of its path, else `folder`; case is kept;
+* every folder that **can** stay does, first; a moved folder never displaces one that is fine; the rest are placed in
+  order.
+
+The plan always terminates, never nests mounts, and is the **engine's own algorithm**: the host hands it over in `init`
+and the engine never moves a mount a second time (a fuzz test pins that the two agree). A run that gets a result from
+the engine names every relocation once on stderr, with the folder's name and path made safe; a run that was stopped
+before the engine said `done` says only that it was stopped. `Change` paths are translated back (§3).
+
+The messages beyond the tables above — `ready.mounts`, `ready.error`, `init.commands` filtering (a wrapper is offered
+only when its original is), cap validation, `done.stats` and the rest — are additive and listed in `engine/NOTES.md` §6.
 
 ## 5. Commit
 
@@ -214,10 +230,19 @@ script that ran to its end, whatever its status; otherwise nothing is applied):
    `workspace.fs` — creates, then deletes, deepest paths first, **never recursive and never to the trash** — and reports
    a partial application honestly (`N of M applied`).
 
-While a run is committing, a worker failure or `dispose()` does not settle it with a false "nothing was applied": it
-ends when the commit does, and says how many changes landed. Every provider call has a deadline (`workers.fsMs`, the
-review `workers.commitMs`); a call that outlives it is reported (`stopped at`), and a write that completes later still
-lands — that is not cancellable, and the result says so.
+**The commit is bounded.** Every provider call has a deadline (`workers.fsMs`). The terminal's read-only check has one
+budget in all (`workers.checkMs`, which grows with the set: 60 s up to 120 entries, 500 ms an entry above, at most 120 s;
+the first call that is not answered in `fsMs` ends it): a set that could not be checked in time is **refused whole**
+and nothing is applied. The part that writes — levelcode-ai's review and then the folders it leaves to the shell, or the
+terminal's own writes — has `workers.commitMs` in all. A call that outlives its deadline is reported (`stopped at`);
+a write that completes later still lands — a provider call cannot be cancelled, and the result says so.
+
+**A Stop ends a commit at once.** Stop, Ctrl+C, a kill and `dispose()` during the commit give up every wait and start
+nothing more: a set that was only being checked applies nothing (`stopped before anything was applied`); one that was
+being written says how many changes were confirmed and that the one in flight may still land. The result keeps the
+notes the run already had (moved folders, the engine's notes, output cut, variables not kept) in front of its own. A
+worker that dies *after* `done` changes the wording of the result ("…, after the command had finished"), never what
+is on disk.
 
 Every write the engine attempts outside a mount, to a protected path or past a cap is **dropped and recorded** in
 `denied` (never thrown: just-bash rejects `exec()` for any error from a write in a redirection and loses all output);
@@ -234,13 +259,18 @@ an unterminated quote / here-doc / trailing `\`, `|` or `&&` continues on the ne
 no parser export in the browser build). A pasted chunk with a line end is inserted, never executed.
 
 **`/tmp` belongs to a terminal's worker.** It survives from one line to the next, and is lost when that worker is
-replaced (idle for 60 s — twice that when `/tmp` holds files —, Ctrl+C, a deadline, a crash, eviction). The next line
-says so once, with the number of files it held. An agent run never keeps `/tmp`.
+replaced (idle for 60 s — twice that when `/tmp` holds anything, folders included —, Ctrl+C, a deadline, a crash,
+eviction; at the worker cap the least recently used idle worker *without* `/tmp` content goes first). The next line says
+so once, with the number of files and folders it held (`done.stats.tmpEntries`, else `tmpFiles`). An agent run never
+keeps `/tmp`.
 
 Output to the terminal goes through the allow-list filter of `src/terminal/output-filter.js`, and **every** string that
 did not come from this extension's own constants is untrusted and goes through `src/sanitize.js` (§8). File
 links in output are made only by `src/terminal/links.js`: a path that exists as a file under a mount, at most five per
-line, 500 ms in all.
+line, 500 ms in all. A link is about the folder the line was **printed in** (the end of its command, then its start; per
+run in the agent's tab): `src/terminal/line-log.js` remembers what a terminal printed — 400 lines of at most 4,000
+characters, memory only — so a `cd` does not move older links. Two identical lines printed in two folders cannot be
+told apart (the later wins): the workbench hands the provider a line's text, not its row.
 
 The agent's commands are mirrored into one read-only tab "LevelCode Agent" without taking the focus.
 
@@ -257,11 +287,15 @@ The agent's commands are mirrored into one read-only tab "LevelCode Agent" witho
 | bytes read per run (the script's) / served by the host in all | 16 MiB / 32 MiB | same |
 | bytes staged per file / per run / entries | 1 MiB / 8 MiB / 2000 | 8 MiB / 32 MiB / 2000 |
 | files a reviewed commit may change | 300 | 2000 |
-| a file call to the provider / levelcode-ai's review | 60 s / 120 s | 60 s / – |
+| a file call to the provider | 60 s | 60 s |
+| the read-only check of a set (all of it) | – | 60 s up to 120 entries, 500 ms an entry above, at most 120 s |
+| the part of a commit that writes (all of it) | 120 s (the review, then the folders it leaves) | 120 s |
 | live engine workers / idle before terminate | 4 / 60 s | same |
 | output returned to the model | head+tail window of 8000 chars with the status line last | n/a |
 | output shown in a terminal tab per run | 1 MiB, in 16 KiB macrotask chunks | same |
 | completion | – | 200 names, 2 s |
+| what a terminal remembers for links | – | 400 lines of 4,000 characters |
+| an `explanation` or a note shown in the agent's tab | the first 4,800 characters scanned, 300 shown, at most 8 notes | – |
 
 The engine's own table (`engine/limits.js`) has 45 keys; `LIMITS.engine` above is the ones the shell sets, the engine's
 own values the rest.
@@ -275,7 +309,10 @@ own values the rest.
   (`output-filter.js`; only OSC 633 from `shell-integration.js`, with a random nonce per terminal), a card only
   through `forDisplay`, a one-line note through `forNote`. `sanitize.js` makes control, format (`Cf`), bidi and
   unpaired-surrogate characters visible as `␛` / `[U+XXXX]`; the one exception is a single ZWNJ/ZWJ between two
-  letters of the **same** Arabic or Indic script, which `forTerminal` keeps and `forDisplay` still shows.
+  letters of the **same** Arabic or Indic script (and the joiners of an emoji sequence, VS16 with an emoji), which
+  `forTerminal` keeps and `forDisplay` still shows. The line editor makes the same exception for what is **typed or
+  pasted**, and says once under the line what it did not type. Every function that sees untrusted text is linear
+  (`web/test/unit/helpers/shell-terminal-timing.js`: 23 shapes of 200,000 characters under 500 ms).
 * A command never changes the protected paths (`.git`, `.vscode`, `.levelcode`, `.cursor`, `.husky`,
   `.github/workflows`, `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `.windsurfrules`), whole-set refusal.
 * The browser's settings are **application**-scoped: a folder's `.vscode/settings.json` cannot change the cloud

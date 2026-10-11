@@ -17,7 +17,8 @@ const { createInputParser, DEFAULT_MAX_PASTE } = require('./input-parser');
 const { isComplete } = require('./completeness');
 const { createCompleter } = require('./completion');
 const { createWriter, createRunOutput, OUTPUT_LIMIT } = require('./output-sink');
-const { strWidth } = require('./width');
+const { strWidth, stripEscapes } = require('./width');
+const { createLineLog } = require('./line-log');
 const { promptFor } = require('./prompt');
 const { looksSecret } = require('./history');
 const si = require('./shell-integration');
@@ -124,6 +125,13 @@ class ShellPty {
 		this.stuck = false;
 		/** The output of the run in progress, while there is one. @type {ReturnType<typeof createRunOutput> | null} */
 		this.output = null;
+		/**
+		 * What was printed, with the folder it was printed in, for the file links (README section 6).
+		 * @type {ReturnType<typeof createLineLog>}
+		 */
+		this.log = createLineLog();
+		/** The folders the run in progress is about: where it began, and where it ended once it has. @type {{ cwds: string[] } | null} */
+		this.scope = null;
 		this.promptText = '$ ';
 		this.flushTimer = /** @type {any} */ (null);
 		this.stuckTimer = /** @type {any} */ (null);
@@ -188,6 +196,17 @@ class ShellPty {
 				this._dispatch(this.parser.flush());
 			}, FLUSH_MS);
 		}
+	}
+
+	/**
+	 * The working folders (engine paths, the likeliest first) a line of this terminal was printed in: the folder a
+	 * command ended in, then the one it began in. undefined for a line this terminal did not write down (the file
+	 * links then use the folder the terminal is in now).
+	 * @param {string} line
+	 * @returns {string[] | undefined}
+	 */
+	cwdsFor(line) {
+		return this.log.find(line);
 	}
 
 	/** @param {{ columns: number, rows: number }} dims */
@@ -296,8 +315,17 @@ class ShellPty {
 	 */
 	_local(src, secret, produce) {
 		this.state = 'running';
-		this.writer.write(this._commandMarks(src, secret) + produce());
+		this.writer.write(this._commandMarks(src, secret) + produce());     // (no scope: what it says about itself is not about a folder)
 		this._epilogue(0, '', []);
+	}
+
+	/**
+	 * The line as it stands on the screen after Enter: the prompt, and the continuation prompt on the lines that follow.
+	 * @param {string} src
+	 */
+	_echo(src) {
+		const prompt = stripEscapes(this.promptText);
+		return src.split('\n').map((l, i) => (i === 0 ? prompt : '> ') + l).join('\r\n') + '\r\n';
 	}
 
 	/**
@@ -316,8 +344,12 @@ class ShellPty {
 		this.interrupted = false;
 		this.stuck = false;
 		const token = ++this.token;
-		const output = createRunOutput({ write: (s) => this.writer.write(s), limit: this.deps.outputLimit || OUTPUT_LIMIT });
+		// the folder this line was typed in is the one the prompt names; where it ends is added by _epilogue
+		const scope = { cwds: [String(this.session.cwd || '/')] };
+		this.scope = scope;
+		const output = createRunOutput({ write: (s) => { this.writer.write(s); this.log.write(s, scope); }, limit: this.deps.outputLimit || OUTPUT_LIMIT });
 		this.output = output;
+		this.log.write(this._echo(src), scope);
 		this.writer.write(this._commandMarks(src, secret));
 		const live = () => token === this.token && this.state === 'running';
 		let pending;
@@ -368,6 +400,13 @@ class ShellPty {
 		const cwd = String(this.session.cwd || '/');
 		s += si.finished(code) + si.cwd(cwd, this.nonce);
 		this.writer.write(s);
+		// the notes and the end of the output are about the folder the command ended in too
+		const scope = this.scope;
+		this.scope = null;
+		if (scope) {
+			if (scope.cwds[0] !== cwd) { scope.cwds.unshift(cwd); }
+			this.log.write(s, scope);
+		}
 		if (this.deps.onCwd) { this.deps.onCwd(cwd); }
 		this._prompt();
 	}

@@ -14,6 +14,7 @@ const assert = require('assert');
 const path = require('path');
 
 const { createHistory, looksSecret, KEY } = require(path.join(__dirname, '..', '..', 'shell', 'src', 'terminal', 'history.js'));
+const { everyShape } = require('./helpers/shell-terminal-timing');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -208,6 +209,23 @@ test('the bounds are exactly the bounds: what is read, how long a scheme and a t
 	assert.strictEqual(looksSecret(jwt(2001)), false);
 	assert.strictEqual(looksSecret(jwt(10)), true);
 	assert.strictEqual(looksSecret(jwt(9)), false);
+});
+
+test('the 4,096th character is read and the 4,097th is not: a secret is found when the character that completes it is at index 4095, and not at 4096', () => {
+	// `password=x` is a secret when its `x` is there: the character that completes the pattern is the last of it
+	const secret = cat('pass', 'word=', 'x');
+	const padded = (completesAt) => ' '.repeat(completesAt - (secret.length - 1)) + secret;
+	assert.strictEqual(padded(4095).length, 4096);
+	assert.strictEqual(looksSecret(padded(4095)), true, 'the 4,096th character completes it');
+	assert.strictEqual(looksSecret(padded(4096)), false, 'the 4,097th does not count');
+	assert.strictEqual(looksSecret(padded(4094)), true);
+	assert.strictEqual(looksSecret(padded(0 + secret.length - 1)), true, 'at the start');
+	// and what is past it does not matter to a line that is a secret before it
+	assert.strictEqual(looksSecret(secret + ' '.repeat(100000)), true);
+});
+
+test('looksSecret over the shapes a text can have: lines of blanks, line ends, marks, unfinished sequences', () => {
+	everyShape('looksSecret', (text) => looksSecret(text));
 });
 
 (async () => {

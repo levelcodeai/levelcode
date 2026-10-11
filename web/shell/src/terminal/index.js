@@ -64,7 +64,7 @@ function createTerminalSupport(opts) {
 	/** The last time any of our shells heard a key: the agent's tab does not take the panel from someone typing. */
 	const activity = { lastInput: -Infinity };
 
-	/** @type {Set<{ terminal: any, session: any }>} */
+	/** @type {Set<{ terminal: any, session: any, pty?: any }>} */
 	const shells = new Set();
 	/** Terminals the profile provider made, until the workbench has opened them: pty -> its session and name. */
 	const profileShells = new Map();
@@ -139,7 +139,7 @@ function createTerminalSupport(opts) {
 	function createShell() {
 		const b = build();
 		const terminal = vscode.window.createTerminal(b.options);
-		shells.add({ terminal, session: b.session });
+		shells.add({ terminal, session: b.session, pty: b.pty });
 		reveal(terminal);
 	}
 
@@ -159,7 +159,7 @@ function createTerminalSupport(opts) {
 		const made = pty && profileShells.get(pty);
 		if (!made) { return; }
 		profileShells.delete(pty);
-		shells.add({ terminal, session: made.session });
+		shells.add({ terminal, session: made.session, pty });
 		reveal(terminal);
 	}));
 
@@ -185,14 +185,25 @@ function createTerminalSupport(opts) {
 		disposables.push(vscode.window.registerTerminalLinkProvider(createLinkProvider({
 			vscode,
 			mounts: () => { try { return planMounts(runtime.folders()); } catch (e) { return []; } },
-			cwdOf(terminal) {
-				for (const s of shells) { if (s.terminal === terminal) { return s.session.cwd; } }
+			// The folder a line was printed in, which is not the folder the terminal is in now: after `cd`, older output is
+			// about the folder it was printed in (the terminals recorded it). A line that was not recorded is taken to be
+			// about the folder the terminal has when the question is asked, which is the best that can be known of it.
+			cwdsOf(terminal, line) {
+				for (const s of shells) {
+					if (s.terminal !== terminal) { continue; }
+					const known = s.pty && typeof s.pty.cwdsFor === 'function' ? s.pty.cwdsFor(line) : undefined;
+					if (known && known.length) { return known; }
+					return typeof s.session.cwd === 'string' ? [s.session.cwd] : undefined;
+				}
 				const tab = agent.terminal();
 				if (!tab || tab !== terminal) { return undefined; }
 				// the agent's runs are reported in workspace paths; the links are resolved in the engine's
-				const cwd = agent.cwd();
-				if (!cwd) { return undefined; }
-				try { return toMountPath(planMounts(runtime.folders()), cwd) || cwd; } catch (e) { return cwd; }
+				const cwds = agent.cwdsFor(line);
+				if (!cwds || cwds.length === 0) { return undefined; }
+				try {
+					const mounts = planMounts(runtime.folders());
+					return cwds.map((c) => toMountPath(mounts, c) || c);
+				} catch (e) { return cwds; }
 			},
 			setTimeout: timers.setTimeout,
 			clearTimeout: timers.clearTimeout,

@@ -380,6 +380,92 @@ test('file links: a folder that is mounted elsewhere (the root of a file system)
 	assert.deepStrictEqual(await t.fv.state.linkProvider.provideTerminalLinks({ line: '../../etc/passwd', terminal: term }, token), []);
 });
 
+test('file links follow the folder a line was printed in: after cd, an older line is still about the folder it was printed in', async () => {
+	const t = setup();
+	// the same name in two folders: the older line must open the one of the folder it was printed in
+	t.fv.state.files['file:///scratch/lib/b.js'] = 1;
+	t.fv.state.files['file:///scratch/src/lib/b.js'] = 1;
+	t.fv.state.files['file:///scratch/src/util.js'] = 1;
+	const a = openShell(t);
+	const session = t.sessions[0];
+	const provider = t.fv.state.linkProvider;
+	const line = (text) => provider.provideTerminalLinks({ line: text, terminal: a.term }, token).then((l) => l.map((x) => String(x.uri)));
+	// a first command, in /scratch
+	a.pty.handleInput('grep -rn b .');
+	a.pty.handleInput('\r');
+	session.pending.o.onStdout('lib/b.js:7: b\n');
+	session.finish({});
+	await settle();
+	assert.deepStrictEqual(await line('lib/b.js:7: b'), ['file:///scratch/lib/b.js']);
+	// then `cd src`, and a command there
+	a.pty.handleInput('cd src');
+	a.pty.handleInput('\r');
+	session.finish({ cwd: '/scratch/src' });
+	await settle();
+	a.pty.handleInput('ls');
+	a.pty.handleInput('\r');
+	session.pending.o.onStdout('util.js:2: x\nlib/b.js:9: y\n');
+	session.finish({});
+	await settle();
+	assert.strictEqual(session.cwd, '/scratch/src');
+	assert.deepStrictEqual(await line('util.js:2: x'), ['file:///scratch/src/util.js']);
+	assert.deepStrictEqual(await line('lib/b.js:9: y'), ['file:///scratch/src/lib/b.js'], 'printed in src');
+	// the first one, printed before the cd, is about /scratch, not about where the terminal is now
+	assert.deepStrictEqual(await line('lib/b.js:7: b'), ['file:///scratch/lib/b.js']);
+	// a line the terminal did not write (the banner, a typed line in another terminal) is about where it is now
+	assert.deepStrictEqual(await line('util.js and lib/b.js'), ['file:///scratch/src/util.js', 'file:///scratch/src/lib/b.js']);
+});
+
+test('file links of the agent\'s tab: two runs in two folders, each resolved against its own', async () => {
+	const t = setup({ settings: { 'levelcode.shell.revealAgentRuns': 'never' }, folders: [{ name: 'scratch', root: '/scratch', uri: 'file:///scratch' }] });
+	t.fv.state.files['file:///scratch/one/a.js'] = 1;
+	t.fv.state.files['file:///scratch/two/a.js'] = 1;
+	t.emit({ type: 'start', id: 1, command: 'node check.js', cwd: '/scratch/one' });
+	t.emit({ type: 'chunk', id: 1, stream: 'stdout', text: 'a.js:1: first\n' });
+	t.emit({ type: 'end', id: 1, exitCode: 0, how: 'exit', notes: [] });
+	t.emit({ type: 'start', id: 2, command: 'node check.js', cwd: '/scratch/two' });
+	t.emit({ type: 'chunk', id: 2, stream: 'stdout', text: 'a.js:2: second\n' });
+	t.emit({ type: 'end', id: 2, exitCode: 0, how: 'exit', notes: [] });
+	const tab = t.fv.state.terminals.find((x) => x.name === 'LevelCode Agent');
+	const provider = t.fv.state.linkProvider;
+	const line = (text) => provider.provideTerminalLinks({ line: text, terminal: tab }, token).then((l) => l.map((x) => String(x.uri)));
+	assert.deepStrictEqual(await line('a.js:1: first'), ['file:///scratch/one/a.js'], 'the first run, though the last one began in two');
+	assert.deepStrictEqual(await line('a.js:2: second'), ['file:///scratch/two/a.js']);
+});
+
+test('two workspace folders of one name that the engine had to mount elsewhere are told apart by where they are in the workspace', () => {
+	// both are under /tmp, which the engine keeps for itself, so they are mounted under /mnt: by the mounts they are
+	// /mnt/proj and /mnt/proj-2, and the prompt would name neither of them by the folders they are in
+	const fv = fakeVscode();
+	const folders = [{ name: 'proj', root: '/tmp/a/proj', uri: 'file:///tmp/a/proj' }, { name: 'proj', root: '/tmp/b/proj', uri: 'file:///tmp/b/proj' }];
+	const cwds = [];
+	const runtime = {
+		folders: () => folders,
+		createSession: () => { const s = fakeSession({ cwd: '/mnt/proj-2/src' }); cwds.push(s); return s; },
+		onAgentRun: () => ({ dispose() { } }),
+	};
+	const support = createTerminalSupport({ vscode: fv.vscode, runtime, context: { globalState: memento(), workspaceState: memento() }, getRandomValues: (a) => crypto.webcrypto.getRandomValues(a), timers: manualTimers() });
+	fv.state.commands['levelcode.shell.new']();
+	const pty = fv.state.terminals[0].creationOptions.pty;
+	const written = [];
+	pty.onDidWrite((d) => written.push(d));
+	pty.open({ columns: 80, rows: 24 });
+	const visible = written.join('').replace(/\x1b\][^\x1b]*\x1b\\/g, '').replace(/\x1b\[[0-9;]*m/g, '');
+	assert.ok(/b\/proj\/src \$ /.test(visible), JSON.stringify(visible.slice(-60)));
+	assert.ok(!/mnt\/proj/.test(visible));
+	support.dispose();
+});
+
+test('without registerTerminalLinkProvider (an older workbench) nothing is registered and nothing throws', () => {
+	const fv = fakeVscode();
+	delete fv.vscode.window.registerTerminalLinkProvider;
+	const runtime = { folders: () => [{ name: 'scratch', root: '/scratch', uri: 'file:///scratch' }], createSession: () => fakeSession({}), onAgentRun: () => ({ dispose() { } }) };
+	const support = createTerminalSupport({ vscode: fv.vscode, runtime, context: { globalState: memento(), workspaceState: memento() }, getRandomValues: (a) => crypto.webcrypto.getRandomValues(a), timers: manualTimers() });
+	assert.strictEqual(fv.state.linkProvider, null);
+	fv.state.commands['levelcode.shell.new']();
+	support.dispose();
+});
+
 (async () => {
 	let n = 0;
 	for (const [name, fn] of queue) { await fn(); n++; console.log('  ok - ' + name); }

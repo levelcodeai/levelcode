@@ -13,6 +13,7 @@ const path = require('path');
 const dir = path.join(__dirname, '..', '..', 'shell', 'src', 'terminal');
 const { wordAt, writeBack, createCompleter } = require(path.join(dir, 'completion.js'));
 const sanitize = require(path.join(dir, '..', 'sanitize.js'));
+const { everyShape, pathological } = require('./helpers/shell-terminal-timing');
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -32,6 +33,10 @@ test('the word under the cursor: where it starts, what was typed, the quote it i
 		['a | gre', 4, 'gre', '', 'command'],
 		['ls > ou', 5, 'ou', '', 'path'],
 		['> ou', 2, 'ou', '', 'path'],             // a redirection first: its target is a file, not a command
+		['> out ec', 6, 'ec', '', 'command'],      // ... and the word after the target is the command
+		['2> out ec', 7, 'ec', '', 'command'],
+		['< in > out gre', 11, 'gre', '', 'command'],
+		['ls > out ec', 9, 'ec', '', 'path'],      // after a command it is an argument, as it was
 		['< fi', 2, 'fi', '', 'path'],
 		['2> er', 3, 'er', '', 'path'],
 		['cat < fi', 6, 'fi', '', 'path'],
@@ -91,6 +96,25 @@ test('the completer asks the session for the right kind, keeps what continues th
 	assert.deepStrictEqual(dirResult.candidates, [{ text: 'src/lib/', display: 'src/lib/', dir: true }]);
 	assert.strictEqual(await createCompleter({ complete: async () => { throw new Error('gone'); } }, sanitize)('cat a', 5), null);
 	assert.strictEqual(await createCompleter({ complete: async () => 'nope' }, sanitize)('cat a', 5), null);
+});
+
+test('a name with a C1 control or DEL in it is not offered: the terminal reads U+009B as a CSI', async () => {
+	const complete = createCompleter({ complete: async () => ['src/ok.js', 'src/\u009b31m.js', 'src/a\u007fb.js', 'src/\u0085x', 'src/\u009dtitle', 'src/\u2066x'] }, sanitize);
+	const r = await complete('cat src/', 8);
+	assert.deepStrictEqual(r.candidates.map((c) => c.text), ['src/ok.js']);
+});
+
+test('the word under the cursor, what is written back and the candidates are taken in linear time: the text and the names are not trusted', async () => {
+	everyShape('wordAt', (text) => { wordAt(text, Array.from(text).length); });
+	everyShape('writeBack', (text) => { writeBack(text, '', false); writeBack(text, '"', false); writeBack(text, "'", true); });
+	for (const shape of ['a run of spaces', 'a run of tabs', 'a run of line feeds', 'backslashes', 'letters', 'combining marks']) {
+		const input = pathological()[shape];
+		const t0 = process.hrtime.bigint();
+		const r = await createCompleter({ complete: async () => [input, input + 'x', 'y' + input] }, sanitize)('cat ', 4);
+		const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+		assert.ok(ms < 1000, shape + ': ' + ms.toFixed(0) + ' ms');
+		assert.ok(r === null || r.candidates.length <= 3);
+	}
 });
 
 (async () => {

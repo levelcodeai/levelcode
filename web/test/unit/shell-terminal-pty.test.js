@@ -21,6 +21,7 @@ const path = require('path');
 
 const { makePty, fakeSession, settle, TERMINAL } = require('./helpers/shell-terminal-fakes');
 const { needXterm } = require('./helpers/shell-terminal-xterm');
+const { everyShape } = require('./helpers/shell-terminal-timing');
 const { exitRule, outcomeLine } = require(path.join(TERMINAL, 'pty.js'));
 const { cwdLabel, promptFor } = require(path.join(TERMINAL, 'prompt.js'));
 const sanitize = require(path.join(TERMINAL, '..', 'sanitize.js'));
@@ -775,6 +776,80 @@ test('a line of 100,000 characters is accepted at once: nothing about it is quad
 		assert.strictEqual(h.session.calls.length, 1, name);
 		assert.ok(ms < 500, name + ': Enter took ' + ms.toFixed(0) + ' ms (it took seconds when the whole line was scanned)');
 	}
+});
+
+test('Enter on a line of any shape is quick: runs of blanks, line ends, marks and unfinished sequences are not a stall', () => {
+	// the largest paste that is taken (100,000): every pattern of the line's way in and out sees the text once
+	everyShape('a line of ~90,000 characters', (text) => {
+		const h = makePty({ cols: 120 });
+		h.pty.handleInput(paste(text));
+		h.timers.drain();
+		h.pty.handleInput('\r');
+		h.timers.drain();
+	}, { n: 90000 });
+	// `exit` and `history` have patterns of their own over the whole line
+	for (const t of ['exit' + ' '.repeat(90000) + 'x', 'exit 1' + ' '.repeat(45000) + '1'.repeat(45000) + 'x', 'history' + '\t'.repeat(90000) + 'x']) {
+		const h = makePty({ cols: 120 });
+		h.pty.handleInput(paste(t));
+		h.timers.drain();
+		const t0 = process.hrtime.bigint();
+		h.pty.handleInput('\r');
+		const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+		assert.ok(ms < 500, JSON.stringify(t.slice(0, 12)) + ' took ' + ms.toFixed(0) + ' ms');
+	}
+});
+
+test('what a terminal printed is remembered with the folder it was printed in, for the file links: the end of a command, then where it began', async () => {
+	const h = makePty({ cwd: '/scratch' });
+	// a command in /scratch
+	h.type('grep -n b lib/b.js', '\r');
+	h.session.pending.o.onStdout('lib/b.js:7: b\n');
+	h.session.finish({});
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(h.pty.cwdsFor('lib/b.js:7: b'), ['/scratch']);
+	// the line that was typed is about the folder the prompt named
+	assert.deepStrictEqual(h.pty.cwdsFor('scratch $ grep -n b lib/b.js'), ['/scratch']);
+	// `cd src` changes the folder, and what a command prints after it is about the new one
+	h.type('cd src', '\r');
+	h.session.finish({ cwd: '/scratch/src' });
+	await settle(); h.timers.drain();
+	h.type('ls', '\r');
+	h.session.pending.o.onStdout('util.js:2: x\n');
+	h.session.finish({});
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(h.pty.cwdsFor('util.js:2: x'), ['/scratch/src']);
+	assert.deepStrictEqual(h.pty.cwdsFor('lib/b.js:7: b'), ['/scratch'], 'the older line is still about the folder it was printed in');
+	// one command that goes somewhere and prints: where it ended first, where it began second
+	h.type('cd .. && grep x lib', '\r');
+	h.session.pending.o.onStdout('lib/c.js:1: x\n');
+	h.session.finish({ cwd: '/scratch' });
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(h.pty.cwdsFor('lib/c.js:1: x'), ['/scratch', '/scratch/src']);
+	// the same text in two folders: the latest
+	h.type('ls', '\r');
+	h.session.pending.o.onStdout('util.js:2: x\n');
+	h.session.finish({});
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(h.pty.cwdsFor('util.js:2: x'), ['/scratch']);
+	// what the terminal says itself (help) and a line it never wrote are nobody's
+	h.type('help', '\r');
+	await settle(); h.timers.drain();
+	const said = h.screen().find((l) => l.includes('Up/Down'));
+	assert.ok(said, 'help was shown');
+	assert.strictEqual(h.pty.cwdsFor(said), undefined);
+	assert.strictEqual(h.pty.cwdsFor('something else.js:1'), undefined);
+	// a multi-line command: every line of it as it stands on the screen, the continuation prompt first
+	h.type(paste('echo a\ncat src/x.js'), '\r');
+	h.session.finish({});
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(h.pty.cwdsFor('> cat src/x.js'), ['/scratch']);
+	// a line that is overwritten (a carriage return) is what is left of it on the screen
+	h.type('make', '\r');
+	h.session.pending.o.onStdout('abc src/old.js\rXY\n');
+	h.session.finish({});
+	await settle(); h.timers.drain();
+	assert.deepStrictEqual(h.pty.cwdsFor('XYc src/old.js'), ['/scratch']);
+	assert.strictEqual(h.pty.cwdsFor('abc src/old.js'), undefined);
 });
 
 test('a line that looks like a secret is judged once, and the history and the workbench are told the same thing', async () => {
