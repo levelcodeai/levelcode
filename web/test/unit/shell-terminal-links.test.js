@@ -355,6 +355,15 @@ test('once the 500 ms are spent the next folder is not asked at all (the answers
 	assert.deepStrictEqual(asked, ['/scratch/b/late.js'], 'the second folder was never asked');
 });
 
+test('a file that is in both folders is the one in the folder the line was printed in, even when another word of the line asked about the other', async () => {
+	// `a.js` is /scratch/src/a.js (the folder the line was printed in) and also /scratch/a.js (where the command began);
+	// `../a.js`, from the first folder, is the second one, so both were asked in the same round
+	const t = setup({ 'file:///scratch/src/a.js': 1, 'file:///scratch/a.js': 1 }, { cwds: ['/scratch/src', '/scratch'] });
+	const line = 'a.js ../a.js';
+	const links = await t.provider.provideTerminalLinks({ line, terminal: t.terminal }, token);
+	assert.deepStrictEqual(links.map((l) => [line.slice(l.startIndex, l.startIndex + l.length), String(l.uri)]), [['a.js', 'file:///scratch/src/a.js'], ['../a.js', 'file:///scratch/a.js']]);
+});
+
 test('a path that is in no mount costs nothing: five of them on a line do not use up the budget of the one that is', async () => {
 	const t = setup({ 'file:///scratch/x.js': 1 });
 	const line = '/etc/a.js /etc/b.js /etc/c.js /etc/d.js /etc/e.js x.js';

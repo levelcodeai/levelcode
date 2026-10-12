@@ -156,7 +156,7 @@ class LineEditor {
 		this.ghostLines = 0;         // how many logical lines those rows are the rows of, and how many cells they hold: what a wider
 		this.ghostCells = 0;         // panel can join them to (at least this many lines, and no fewer rows than the cells need)
 		this.blank = 0;              // rows known to be blank under what the region takes of the screen (a lower bound; see resize)
-		this.span = 1;               // the rows the region has on the screen, as the terminal has them until it is drawn again
+		this.span = 0;               // the rows the region has on the screen, as the terminal has them until it is drawn again
 		this.targetRow = 0;          // the row the cursor was left on, in region rows
 		this.phantom = false;        // the cursor is on a row made by forcing a wrap
 		this.fresh = false;          // the next draw starts a prompt: write the prompt marks with it
@@ -317,9 +317,10 @@ class LineEditor {
 		if (target.col > 0) { out += CSI + target.col + 'C'; }
 
 		// What the region takes of the blank rows under it is not blank any more, and what it gives back (it got shorter: the
-		// rows were erased) is; a region that fills the panel leaves none, and Ctrl+L puts it at the top of the screen.
+		// rows were erased) is: the rows from where it begins to the bottom of the panel are the rows it had and the blank
+		// ones under them (Ctrl+L puts it at the top of an empty screen, which is no fewer).
 		const shown = written - winTop + 1;
-		this.blank = shown >= this.rows ? 0 : clear ? this.rows - shown : Math.max(0, this.blank + this.span - shown);
+		this.blank = Math.max(0, this.blank + this.span - shown);
 		this.span = shown;
 		this.winTop = winTop;
 		this.cursorRow = target.row - winTop;
@@ -345,11 +346,10 @@ class LineEditor {
 		this.phantom = false;
 	}
 
-	/** Nothing is known about the rows under what is drawn next, and it is not the region that was: one row, as at a prompt. */
+	/** A new prompt: nothing is known of the rows under what is drawn next, and none of the region that was is a row of it. */
 	_noRegion() {
 		this.blank = 0;
-		this.span = 1;
-		this.lastRow = this.winTop;
+		this.span = 0;
 	}
 
 	/** The rows that were pushed into the scrollback are history from here on. */
@@ -399,14 +399,20 @@ class LineEditor {
 	 *   ghostLines  the logical lines those rows are rows of (a wider panel joins the rows of one line, never two lines,
 	 *               so each stays at least one row);
 	 *   ghostCells  the cells those rows hold (joined, they need at least ceil(cells / width) rows).
-	 * Lines and cells are counted when the rows are pushed and only ever from the rows xterm really pushed: the rows the
-	 * screen had at that moment (`_headRows` of the arrangement `_reflowRows` works out), so a row is never credited with
-	 * more cells than it holds. Counted afterwards, at the width the panel is asked about, they were: a row xterm pushed
-	 * is as wide as the screen was (24 cells, pushed when the panel was 24 wide; and the line of the cursor is never
-	 * re-wrapped, so a wider panel does not make it 64), which is what made two rows into one at 104 columns and the
-	 * redraw start a row too high. Pulled rows are the newest: what is left is at least as many lines, and as many cells,
-	 * as the rows that came back could have held. A narrower panel only splits rows, which makes the floor lower, not
-	 * wrong. `_noGhosts` forgets all three: they say nothing of rows that are no longer there.
+	 * Why none of them can be more than there is:
+	 *   - the cells are counted when the rows are pushed, from the rows xterm really pushed (`_headRows` of what
+	 *     `_reflowRows` works out): a row is credited with the cells it holds, not with what a re-wrap at the width asked
+	 *     about would give. A row xterm pushed is as wide as the screen was (24 cells, pushed when the panel was 24 wide),
+	 *     and the line of the cursor is not re-wrapped (so a wider panel does not make it 64): counted afterwards at the
+	 *     new width they were 105 cells in two rows that join to one at 104 columns, and the redraw started a row high;
+	 *   - lines and cells are only counted from rows that were at or above the cursor (`_headRows`: xterm makes room for
+	 *     the rows a line gains by dropping rows from the bottom of its buffer, and what is left of a line under the cursor
+	 *     is flagged as a continuation of the row above it);
+	 *   - what is pulled back is the newest of them, so what is left is at least the lines and the cells of the rest
+	 *     (a row holds at most as many cells as the wider of the two widths); a narrower panel only splits rows, which
+	 *     leaves the floor low, not wrong; and rows are not cut afterwards, because the editor's own redraw begins every
+	 *     window with a row that is a line of its own for xterm, so they are not the line of the cursor any more;
+	 *   - a new prompt, Ctrl+L and Ctrl+C forget all three (`_noGhosts`): they say nothing of rows that are not there.
 	 * @param {number} cols
 	 * @param {number} rows
 	 */
@@ -515,19 +521,23 @@ class LineEditor {
 	 * scrollback. `arranged` is what `_reflowRows` made of the screen (one arrangement per hypothesis about the blank
 	 * rows under the region): the rows as the re-wrapping left them, line by line, and the first row of a window is a
 	 * line of its own (see `_reflowRows`). The least of the arrangements is taken: each is a floor, and the one that is
-	 * the truth is one of them.
-	 * @param {Array<Array<{ line: number, cells: number }>>} arranged
+	 * the truth is one of them. Only the rows that were at or above the cursor are looked at (`safe`): xterm makes room
+	 * for the rows a line gains by dropping rows from the BOTTOM of its buffer, the blank ones and, when there are not
+	 * enough of them, the rows of the lines under the cursor, and what is left of such a line is the end of it, flagged as
+	 * a continuation of whatever row is above it (a wrapped line that begins with a continuation row has no first row, and
+	 * its first pushed row is one line with the row before it). Rows that were above the cursor are never dropped.
+	 * @param {Array<{ rows: Array<{ line: number, cells: number }>, safe: number }>} arranged
 	 * @param {number} count
 	 * @returns {{ lines: number, cells: number }}
 	 */
 	_headRows(arranged, count) {
 		let lines = Infinity;
 		let cells = Infinity;
-		for (const rows of arranged) {
+		for (const { rows, safe } of arranged) {
 			let seen = 0;
 			let held = 0;
 			let line = -1;
-			for (let i = 0; i < count && i < rows.length; i++) {
+			for (let i = 0; i < count && i < safe && i < rows.length; i++) {
 				if (rows[i].line !== line) { seen++; line = rows[i].line; }
 				held += rows[i].cells;
 			}
@@ -570,32 +580,42 @@ class LineEditor {
 	 * lower of two answers left).
 	 * @param {number} cols the new width
 	 * @param {number} rows the new height
-	 * @returns {{ row: number, added: number, removed: number, span: number, arranged: Array<Array<{ line: number, cells: number }>> }}
+	 * @returns {{ row: number, added: number, removed: number, span: number, arranged: Array<{ rows: Array<{ line: number, cells: number }>, safe: number }> }}
 	 *   the row, the rows the re-wrapping added and took out, how many rows the region has on the screen afterwards (at
-	 *   least), and the rows the screen has
+	 *   least), and the rows the screen has (one arrangement per hypothesis)
 	 */
 	_cursorRowAfterReflow(cols, rows) {
-		if (rows >= this.rows) {
-			const whole = this._reflowRows(cols, this.lastRow);
-			return { row: whole.row, added: whole.added, removed: whole.removed, span: whole.rows.length, arranged: [whole.rows] };
-		}
-		const lost = this.rows - rows;
-		// the most blank rows there can be under the region on the screen (a window fills it), and the fewest
+		// (a panel that is not shorter has lost nothing: both ends are then the whole region)
+		const lost = Math.max(0, this.rows - rows);
+		// the fewest blank rows there are under the region (`blank`: a floor), and the most there can be (a window fills the
+		// screen, and a region on a screen that has not scrolled is at the top of it)
 		const most = Math.max(0, this.rows - 1 - (this.lastRow - this.winTop));
-		const least = Math.min(this.blank, most);
-		const cut = this._reflowRows(cols, Math.max(this.targetRow, this.lastRow - Math.max(0, lost - least)));
-		const kept = this._reflowRows(cols, Math.max(this.targetRow, this.lastRow - Math.max(0, lost - most)));
-		const lower = kept.row < cut.row ? kept : cut;
-		return { row: lower.row, added: lower.added, removed: lower.removed, span: cut.rows.length, arranged: [cut.rows, kept.rows] };
+		const loBottom = Math.max(this.targetRow, this.lastRow - Math.max(0, lost - this.blank));
+		const hiBottom = Math.max(this.targetRow, this.lastRow - Math.max(0, lost - most));
+		const cut = this._reflowRows(cols, loBottom);
+		const kept = hiBottom === loBottom ? cut : this._reflowRows(cols, hiBottom);
+		// the true number of rows that were dropped is anywhere between the two ends, and the row the cursor ends on is not
+		// monotonic in it: take the lowest redraw over all of them
+		let lower = kept.row < cut.row ? kept : cut;
+		for (let b = loBottom + 1; b < hiBottom; b++) {
+			const x = this._reflowRows(cols, b);
+			if (x.row < lower.row) { lower = x; }
+		}
+		// The redraw begins where the lower of the two says the region begins. Where the cut end has the cursor lower, that is
+		// below the first row of ITS region: the rows above it are not erased (they are what a copy of the prompt is) and
+		// are not the rows it takes of the blank ones. (The kept end has the rows of the cut end and more, and a cursor
+		// that is lower by no more than those rows: it is never the one with fewer.)
+		const span = Math.max(0, cut.rows.length - (cut.row - lower.row));
+		return { row: lower.row, added: lower.added, removed: lower.removed, span, arranged: [cut, kept] };
 	}
 
 	/**
 	 * `_cursorRowAfterReflow` for a given last row of the region that is still there.
 	 * @param {number} cols the new width
 	 * @param {number} bottom the last row of the region that the terminal still has (the rows under it were dropped)
-	 * @returns {{ row: number, added: number, removed: number, rows: Array<{ line: number, cells: number }> }}
+	 * @returns {{ row: number, added: number, removed: number, rows: Array<{ line: number, cells: number }>, safe: number }}
 	 *   the row, the rows the re-wrapping added and took out, and the screen's rows afterwards, top to bottom: the logical
-	 *   line each belongs to and the cells it holds
+	 *   line each belongs to and the cells it holds; and how many of the first of them were at or above the cursor
 	 */
 	_reflowRows(cols, bottom) {
 		const top = this.winTop;
@@ -640,7 +660,6 @@ class LineEditor {
 		let removed = 0;
 		if (cols < this.cols) {
 			for (let k = on.length - 1; k >= 0; k--) {
-				if (was[k] === 1 && now[k] === 1) { continue; }              // not wrapped, and not too wide: not touched
 				if (holds(row, k)) { continue; }
 				wrapped[k] = true;
 				const gain = Math.max(0, now[k] - was[k]);
@@ -650,7 +669,7 @@ class LineEditor {
 		} else {
 			const at = row;
 			for (let k = 0; k < on.length; k++) {
-				if (was[k] < 2 || holds(at, k)) { continue; }                   // only wrapped lines are joined
+				if (holds(at, k)) { continue; }
 				wrapped[k] = true;
 				const loss = Math.max(0, was[k] - now[k]);
 				row -= loss;
@@ -660,21 +679,27 @@ class LineEditor {
 		// the rows the screen has afterwards: a line that was not touched has its rows as they were, each cut at the new width
 		/** @type {Array<{ line: number, cells: number }>} */
 		const rows = [];
+		// and how many of the first of them were at or above the cursor row: the lines above its line, and the rows of its
+		// own line down to it (a cursor above the region, which a wider panel can leave it, has none)
+		let safe = 0;
+		const at0 = this.cursorRow;
 		on.forEach((l, k) => {
+			const first = rows.length;
 			if (wrapped[k]) {
 				for (const n of packed[k]) { rows.push({ line: k, cells: n }); }
-				return;
-			}
-			for (const widths of l.byRow) {
-				let held = 0;
-				for (const w of widths || []) {
-					if (held + w > cols) { break; }
-					held += w;
+			} else {
+				for (const widths of l.byRow) {
+					let held = 0;
+					for (const w of widths || []) {
+						if (held + w > cols) { break; }
+						held += w;
+					}
+					rows.push({ line: k, cells: held });
 				}
-				rows.push({ line: k, cells: held });
 			}
+			if (start[k] + was[k] <= at0) { safe += rows.length - first; } else if (start[k] <= at0) { safe += Math.min(rows.length - first, at0 - start[k] + 1); }
 		});
-		return { row, added, removed, rows };
+		return { row, added, removed, rows, safe };
 	}
 
 	text() { return this.buf.join(''); }

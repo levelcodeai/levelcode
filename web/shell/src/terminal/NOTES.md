@@ -87,7 +87,7 @@ alternative above except Ctrl+T.
   selectors (U+FE00-FE0D, the Mongolian and the supplement U+E0100) are not kept, as `forTerminal` shows them in
   brackets. What is dropped from a paste, from a chunk of text that arrives whole (more than one character in one
   event) or from a completion is said once, dim, under the line: `[2 invisible characters were not typed]` (a recalled
-  history entry is cleaned silently). **One key** that types nothing the screen can show does nothing and says
+  history entry is cleaned silently). **One key pressed alone** that types nothing the screen can show does nothing and says
   nothing, as a key that is not mapped does: a ZWNJ pressed on a Persian keyboard or a ZWJ on an Indic one, between
   letters, is not typed (it has no letter after it yet, and a joiner that stayed alone before a blank would be
   invisible: the hole this rule closes), so a word typed key by key has no joiner in it. Paste it, or complete it, to
@@ -209,9 +209,12 @@ own file links are off (`enableFileLinks: off`), so this is the only way.
   spelling of the same file, and a place that was asked about already, are not asked again), the answers are waited for
   500 ms in all, however many rounds (a line that is not answered in time has links only for what was), and only the
   first 4,000 characters of a line are read (a word the cut goes through is not read at all: half of `src/a.js` is
-  another file's name). A path in no mount costs nothing. A folder is not a link. Where a path is and whether a file is
-  there are the runtime's to say (`runtime.resolve`, `runtime.stat`: the mounts and the bound on a file system that does
-  not answer are its own); this module races its own 500 ms clock against them.
+  another file's name). A path in no mount costs nothing. A folder is not a link, and nor is what the runtime does not
+  know to be a file: `runtime.stat` says `'file'` only for the File bit, `'dir'` for the Directory bit and `'other'` for
+  what has neither (a provider that does not say, `FileType.Unknown`; a link to nothing, `SymbolicLink` alone), and
+  this module takes the string `'file'` and nothing else (a link to a file, `File | SymbolicLink`, is a `'file'`).
+  Where a path is and whether a file is there are the runtime's to say (`runtime.resolve`, `runtime.stat`: the mounts and
+  the bound on a file system that does not answer are its own); this module races its own 500 ms clock against them.
 * **Which folder.** The workbench hands the provider the text of a line and the terminal, no row and no time, so the
   terminals remember what they print (`line-log.js`): every line that has a path-like word in it, as the cells of its row
   (tabs as the blanks they move over, marks joined, overwrites and erases applied: compared with xterm.js's own row for
@@ -258,31 +261,47 @@ output filter, the input parser, `exit`/`history` rules, the link candidates.
 * Zero-width and invisible characters in **output** other than the bidi overrides are not removed by the filter (only
   strings that go through `forTerminal` get the longer list). They cannot act on the terminal.
 * Resize follows xterm.js's own behaviour (see "Facts"), in the order it does it, the height and then the width, with
-  these gaps that the editor cannot see. **The rule is that a resize never writes over a row that is not the editor's
+  these gaps that the editor cannot see. **The rule is that a resize does not write over a row that is not the editor's
   own** (earlier output, a command's result, the note under a line): where the emulation is unsure it starts the redraw
   LOWER, and what that costs is a stale copy of the first rows of the prompt, above the region (on the screen, or just
-  above it in the scrollback, until the panel brings it back). Output is not lost to it; a copy is untidy.
-  Measured against xterm.js 6.1 with the re-verifier's seeded sessions (8 seeds of 300 per family; earlier output of 0 to
-  60 lines of which one in five wraps, on a screen of 6 to 30 rows; one to eight pasted lines of up to two panel widths;
-  the cursor taken up, down, home, end; the panel changing at random points, by width, by height, both at once, by a
-  drag in small steps or by a toggle). Sessions of 2,400 in which, at any step, earlier output was written over / a copy
-  of the prompt was left on the screen / a copy was left in the scrollback only (a7f393c, the round-2 checkpoint 648a547,
-  and now):
+  above it in the scrollback, until the panel brings it back). Output is not lost to it; a copy is untidy. The rule is
+  not a proof: the row xterm ends on is not monotonic in the number of rows it dropped from the bottom, so the editor
+  tries EVERY count between its floor and its ceiling and takes the lowest redraw (a verifier found 8 sessions of 20,000
+  of one flow that lost a line when only the two ends were tried; the three minimal sessions are
+  `web/test/fixtures/shell/terminal/resize-chains.json`, in the strict suite). Measured since: 0 lost in those 20,000, in
+  the 33,600 below, and in 16,000 more; one in about 112,000 chains was found before the change and is not an argument
+  that the rate is zero.
 
-  | panel changes by | written over | copy on the screen | copy in the scrollback |
-  | --- | --- | --- | --- |
-  | width and height at once | 6 / 25 / **0** | 200 / 142 / 138 | 377 / 316 / 302 |
-  | the same, the cursor kept at the end of the region | 0 / 21 / **0** | 214 / 144 / 135 | 339 / 278 / 253 |
-  | any of the five, at random | 5 / 8 / **0** | 280 / 32 / 24 | 411 / 123 / 107 |
-  | the same, the cursor kept at the end | 0 / 4 / **0** | 298 / 34 / 22 | 396 / 86 / 66 |
-  | height only | 0 / 0 / **0** | 167 / 1 / 1 | 247 / 57 / 57 |
-  | width only | 1 / 1 / 1 (a) | 43 / 43 / 17 | 124 / 124 / 81 |
-  | a drag (4 to 9 steps of 1 to 5 columns) | 0 / 0 / **0** | 28 / 28 / 12 | 121 / 121 / 67 |
-  | a panel toggled (shorter, a key, as it was) | 0 / 0 / **0** | 711 / 0 / 0 | 1,030 / 0 / 0 |
+  *How the rule is measured.* By a generator that is not the suite's own (the verifier's `rz2.js`), on the real xterm.js
+  6.1: a panel of 20 to 180 columns and 3 to 50 rows, 0 to 90 lines of earlier output of which a quarter wrap, a prompt
+  of 2 to 30 cells, and sessions of 6 to 16 events: lines typed and pasted (up to three panel widths), the cursor taken up,
+  down, home and end, Tab, Ctrl+L, a note under the line, and the panel changed by width, by height, by both at once, by
+  a drag in small steps, by a toggle, by a maximise and a restore. After EVERY step: what was on the terminal before the
+  prompt and the note under the line are there, whole and in order; the region is on the screen where the editor says it
+  is; **what the editor believes of the blank rows under its region and of the rows it pushed into the scrollback is a
+  floor** (never more than there is: it is what the next resize writes over; `blankOver`, `ghostOver`, `cellsOver`,
+  `linesOver` in the helper); and a pasted line is on the screen once. Sessions of 33,600 (7 flows x 12 seeds x 400) in
+  which, at any step, earlier output or the note was written over / a copy of the prompt was left on the screen / a copy
+  was left only above it, at the three checkpoints and now:
 
-  (a) A prompt of 11 cells in a panel of 10 columns, which the editor does not support (a prompt wider than the
-  panel is replaced by `$ ` in the pseudoterminal): the same session at a7f393c and at 648a547.
-  Another 16 seeds of 300 on each of the first four rows, and 8 on the drag and on width only: 0 written over.
+  | flow, 4,800 sessions each | a7f393c | 648a547 | 6afd1c5 | now |
+  | --- | --- | --- | --- | --- |
+  | width and height at once | 4 / 554 / 924 | 168 + 57 / 372 / 749 | 2 / 379 / 721 | **0** / 381 / 721 |
+  | any of the six, at random | 8 / 673 / 900 | 136 + 26 / 258 / 456 | 1 / 179 / 348 | **0** / 174 / 348 |
+  | maximise, type, restore | 35 / 225 / 220 | 40 + 38 / 236 / 231 | 0 / 269 / 145 | **0** / 188 / 119 |
+  | a drag in small steps | 1 / 158 / 425 | 5 + 4 / 117 / 356 | 0 / 66 / 262 | **0** / 66 / 262 |
+  | width only | 0 / 106 / 347 | 0 / 109 / 379 | 0 / 28 / 229 | **0** / 28 / 229 |
+  | height only | 0 / 497 / 719 | 0 / 6 / 59 | 0 / 6 / 59 | **0** / 6 / 59 |
+  | a user's own mix (height, drag, maximise, toggle, width) | 3 / 53 / 70 | 5 + 1 / 5 / 17 | 0 / 4 / 18 | **0** / 4 / 18 |
+  | all 33,600 | 51 / 2,266 / 3,605 | 354 + 126 / 1,103 / 2,247 | 3 / 931 / 1,782 | **0** / 847 / 1,756 |
+
+  ("written over" is earlier output, then the note under a line where a version had one: 648a547 lost a note in the
+  second number of its column; a7f393c dropped the character without a note, so it has none to lose.) Fresh seeds, the
+  same checks and six variants of the generator (more seeds of the same, lengths at the edge of the panel's width,
+  panels of 3 to 40 columns, sessions of 3 to 10 events with a command and its output between, the toggle, chains of
+  three resizes: 172,400 sessions): nothing written over, and the editor never believed more than there was. The suite
+  carries 683 of the sessions, seeded, in about two seconds (`helpers/shell-terminal-resize-sessions.js` is the
+  generator with the same checks), and the three that 6afd1c5 wrote over.
 
   1. **The top of the buffer.** xterm stops its cursor at the first row of the whole buffer, so when the lines below
      the cursor that a wider panel re-joins are more rows than there are above the cursor (the scrollback counts), the
@@ -297,30 +316,58 @@ output filter, the input parser, `exit`/`history` rules, the link candidates.
      waits, for a case that comes up once in thirty to fifty.
   2. **How many blank rows are under the region.** A shorter panel drops the rows under the cursor first, the blank
      ones and then the region's own, and scrolls the top away only for what is left. The editor knows how many rows
-     the region has under its cursor and how many the panel lost, not how many blank rows the screen had: none on a
-     terminal that has scrolled, many on a fresh one. It works out the rows that are left for both ends and takes the
-     redraw that starts lower (`_cursorRowAfterReflow`). Fix round 2 assumed the region was at the top of the screen,
-     which is only so for a window: on a terminal that has scrolled it counted rows that xterm had dropped, took the
-     line that was cut for one that grew, and started one row too high (25 of 2,400 sessions of width and height
-     together wrote over the line before the prompt; a7f393c counted every row as still there, which is right only
-     when nothing is dropped: 6). The price is a copy of the prompt's first row, visible above the region, on a FRESH
-     terminal when the panel gets shorter and narrower at once, the cursor is above the last line and the lines below
-     it wrap: 4 of 1,200 sessions here, among the 138 above (the region-at-the-top assumption has no copy in them and
-     writes over output in 3 others of the 1,200).
+     the region has under its cursor and how many the panel lost, and keeps a FLOOR of the blank rows under the region
+     (`blank`): a taller panel adds blank rows when the cursor is not on the last row of the region (on it, it may be
+     on the last row of the screen and the rows come from the scrollback: nothing is known), the region takes some when
+     it grows and gives them back when it shrinks, and a narrower panel, a shorter one that pushes rows, Ctrl+C and a new
+     prompt leave nothing known. It works out the rows that are left for both ends (the blank rows that are known, and
+     all there could be) and takes the redraw that starts lower (`_cursorRowAfterReflow`); the rows between the
+     region's first row and where that redraw starts are not rows it erases, and are not counted. Fix round 2 assumed the
+     region was at the top of the screen, which is only so for a window: on a terminal that has scrolled it counted rows
+     that xterm had dropped and started one row too high (25 of 2,400 sessions of width and height together wrote over
+     the line before the prompt). **What is left**: a stale copy of the prompt's first row, visible above the region,
+     when the panel was made taller with the cursor ON THE LAST ROW of the region and the screen had not scrolled
+     (nothing says the rows that came are blank rows and not rows of the scrollback), and then made shorter. In the
+     maximise-and-restore flow of the verifier (1,800 sessions of the `maximize` family, seeds 11-16 x 300): a copy on
+     the screen in 41 of them (a7f393c 41, 648a547 37, 6afd1c5 54), of which 20 are sessions in which neither a7f393c
+     nor 648a547 left one (33 at 6afd1c5; two of the 20 are sessions in which they wrote over output). Not resolved: the
+     editor would have to know whether the screen had scrolled, and it cannot see it.
   3. **Rows pushed into the scrollback.** What xterm pushes there (the top of a region that no longer fits after the
      panel got shorter or narrower, and whatever the re-wrapping of earlier output pushes) cannot be erased. The editor
-     counts the rows of the region it knows were pushed (`ghosts`, a lower bound) and, when the panel grows with the
-     cursor on its last row, or a wider one takes rows out of the region, starts its redraw at the first of them that
-     came back, so shrinking and growing the panel again leaves the prompt once. What it does not know is left alone:
-     a wider panel also joins the wrapped rows among the ghosts, which are then fewer (it keeps how many lines they
-     are the rows of and how many cells they hold: at least a row for each line and as many as the cells need), and a
-     row the panel pushed and joined in the same event is not counted. Rows that gaining lines push are counted after
-     the blank rows under the cursor, which take the first of them. Fix round 2 counted the joined rows as still
-     there and went one row too high into the output before the prompt (counted that way again, 23 of 1,200 sessions
-     of width and height together write over output, and 35 if the rows pushed and joined in one event are counted);
-     it also counted the rows that a narrowing gained when a taller panel absorbed them (6 of 1,200). Not exact, on
-     purpose: a stale copy is left when earlier output wrapped and pushed more rows than the editor counted (0.6% of
-     sessions that only narrow and change height).
+     counts the rows of the region it knows were pushed (`ghosts`) and, when the panel grows with the cursor on its last
+     row, or a wider one takes rows out of the region, starts its redraw at the first of them that came back, so
+     shrinking and growing the panel again leaves the prompt once. It keeps three numbers and each is a FLOOR, because
+     the redraw writes over what comes back (one row too many is a line of earlier output): the rows (`ghosts`), the
+     logical lines they are rows of (`ghostLines`: a wider panel joins the rows of a line, never two lines, so each is
+     at least one row), and the cells they hold (`ghostCells`: joined, they need at least ceil(cells / width) rows),
+     and a wider panel leaves `min(ghosts, max(lines, ceil(cells / width)))` of them. Why they cannot be more than
+     there is:
+     - the cells and the lines are counted when the rows are pushed and from the rows xterm really pushed: what the
+       screen is after the re-wrapping, line by line (`_reflowRows`), where the line of the cursor is NOT re-wrapped
+       (`reflowCursorLine` is off) but cut at the new width, and any other is packed at it. The rows of one line that
+       were pushed at 24 columns are 24 cells each, and a wider panel does not make them 64: counted at the width the
+       panel was asked about they were 105 cells in two rows that join to one at 104 columns, and the redraw started a
+       row too high (the verifier's R1, R2 and R3; R2 was worse than both checkpoints before it);
+     - only rows that were at or above the cursor are counted (`safe`). When the screen has not scrolled xterm makes
+       room for the rows a line gains by dropping rows from the BOTTOM of its buffer (`Buffer._reflowSmaller`, the
+       blank ones, and when there are not enough, the rows under the cursor), and what is left of a line under the
+       cursor is the end of it, flagged as a continuation of the row above it: a pushed row of it is not the first row
+       of a line, and a prompt and a row of it are ONE line that a wider panel joins to one row. Counted as two lines
+       they were two rows, and the next taller panel took back a row of output from before the prompt (the sessions
+       `the cursor is on the first of two lines ...` in the suite: a7f393c and 648a547 do not write over it, 6afd1c5
+       does). Found by checking the floors after every step, not by the output (the verifier's generator saw it in
+       none of its 33,600);
+     - what is pulled back is the newest of them, so what is left is at least the lines and the cells of the rest, and
+       a row holds at most as many cells as the wider of the two widths; a narrower panel only splits rows, which leaves
+       the floor low, not wrong; the rows are not cut afterwards (the editor's redraw begins every window with a row
+       that is a line of its own for xterm, so they are not the line of the cursor any more);
+     - a new prompt, Ctrl+L and Ctrl+C forget all three.
+     Not exact, on purpose: a stale copy is left when earlier output wrapped and pushed more rows than the editor
+     counted, and when rows came back that the floor did not know about (the table above: the copies column).
+* The measurements above are on a scrollback of 2,000 rows. xterm.js re-wraps only when it has a scrollback
+  (`terminal.integrated.scrollback` 0 turns it off, and the editor, which assumes it, is then wrong about where the region
+  is); a scrollback that is full trims its top rows, which the editor neither sees nor depends on (the rows it counts are
+  the newest), but that was not measured: a trimmed line looks like a lost one to the generator's check.
 * The result of a run that was let go of with a second Ctrl+C is not shown.
 * A terminal's file links need the file to exist under a mount; a path with a space in it is not read as one.
 
@@ -342,6 +389,13 @@ Measured in the release build by the research, and re-checked here against the r
   a line below it that grows moves it down, and one below it that shrinks moves it up, possibly above the first row of
   the editor's region. The editor and the test model terminal reproduce that, and `shell-terminal-line-editor.test.js`
   compares both with xterm.js (scenarios and seeded sessions, both directions); every row is also cut at the new width;
+* narrower, xterm.js does the re-wrapping over the WHOLE buffer, the scrollback too (rows pushed earlier are split, and
+  the cells stay), and a line that gained rows is not given the room by pushing the top away: while the screen has not
+  scrolled (`ybase` is 0) and the cursor is not on its last row, every row gained moves the cursor down by one and
+  DROPS the last row of the buffer, whichever it is (`this.lines.pop()`: the blank ones, and when there are not enough
+  of them the rows of the lines under the cursor, which are the new ones' own old rows, so what is left of a line is
+  its end, with every row flagged as a continuation of the one above it); only then does the top go into the scrollback.
+  With a scrollback (`ybase` > 0) nothing is dropped and the cursor row does not move: each gained row pushes one;
 * the height first (`Buffer.resize`): a shorter panel first removes the blank rows below the cursor, then pushes the top
   of the screen into the scrollback; a taller one gives rows back **from the scrollback when the cursor is on the last
   row of the screen**, and adds blank rows below otherwise (the viewport top moves and the cursor with it: a region taller
@@ -363,7 +417,7 @@ Measured in the release build by the research, and re-checked here against the r
 | --- | --- |
 | `input-parser` | the byte table, every report swallowed at every cut, the keys a sloppy "drop replies" pattern would eat, paste and its cap |
 | `width` | the 25 measured widths; the table equals the addon (when an xterm checkout is found) |
-| `line-editor` | the keys, the cursor on a newline, the full row, wide/combining characters, what may enter the buffer and what is kept (and the note), tabs (also at the top of a window), resize (scenarios on the model terminal, and the same on xterm.js), a tall buffer, Tab and the queued second Tab; a seeded differential against an oracle at three widths and with resizes; and, if xterm is found, against the real xterm.js: the editor's output, the model terminal's re-wrapping, seeded sessions with resizes in both directions, and a strict harness (after every step the screen is the text written once, nothing of the region is above it, and nothing that was on the terminal before it is lost: shrink and grow, a command, a note, Ctrl+C, Ctrl+L, windows, pinned sequences; and width and height in one event, with earlier output taller than the panel: pinned corner scenarios, each of which guards one of the estimates, and 200 seeded sessions on each terminal, aimed at the cursor above the end of a region on a terminal that has scrolled, in which a copy of the prompt may be left but nothing before it may be lost) |
+| `line-editor` | the keys, the cursor on a newline, the full row, wide/combining characters, what may enter the buffer and what is kept (and the note), tabs (also at the top of a window), resize (scenarios on the model terminal, and the same on xterm.js), a tall buffer, Tab and the queued second Tab; a seeded differential against an oracle at three widths and with resizes; and, if xterm is found, against the real xterm.js: the editor's output, the model terminal's re-wrapping, seeded sessions with resizes in both directions, and a strict harness (after every step the screen is the text written once, nothing of the region is above it, and nothing that was on the terminal before it is lost: shrink and grow, a command, a note, Ctrl+C, Ctrl+L, windows, pinned sequences; and width and height in one event, with earlier output taller than the panel: pinned corner scenarios, each of which guards one of the estimates, and 200 seeded sessions on each terminal, aimed at the cursor above the end of a region on a terminal that has scrolled, in which a copy of the prompt may be left but nothing before it may be lost; then the same scenarios again through the verifier's generator's checker, which asks after every step that what the editor believes of the blank rows and of the pushed rows is a floor and that no copy of a pasted line is left (the corner ones), and 683 of its sessions in about two seconds; and the account of the pushed rows itself, `_ghostsAt` and `_headRows`, as units) |
 | `completeness` | the table of traps and open constructs |
 | `completion` | the word under the cursor and the write-back |
 | `output-filter` | the 25 queries, the modes, the OSC list, links, the cap, a seeded chunking fuzz |
@@ -371,7 +425,7 @@ Measured in the release build by the research, and re-checked here against the r
 | `sink` | the OSC 633 escaping, the nonce, the queue and a run's output |
 | `pty` | bytes in, bytes out: prompt, run, history, paste, Ctrl+C (the tail, the break, the stuck run), exit, 126/124, hostile output, a 100,000-character line |
 | `agent-tab` | order, the result lines, sanitising, the caps (and that they cost linear time), the reveal table, the folder of every run |
-| `links` | what is a candidate (a table of false positives), the existence check and its bounds (5 distinct paths, each in the folder it ended in and then only the misses in the folder it began in; 500 ms for all the rounds; 4,000 characters exactly), what the runtime is asked, opening at the line and column |
+| `links` | what is a candidate (a table of false positives), the existence check and its bounds (5 distinct paths, each in the folder it ended in and then only the misses in the folder it began in; 500 ms for all the rounds; 4,000 characters exactly; six spellings of one file are one of the five), what the runtime is asked, only a `file` is a link (`other`, `dir`, a link to nothing are none; a link to a file is), opening at the line and column |
 | `line-log` | how the text of a row is made from bytes (and against xterm.js's own rows), what is kept, the latest of two equal lines |
 | `prompt` | the label, the fewest folders that tell two apart, equivalent to the code before it was made linear, linear time |
 | `index` | what is registered, focus rules, the shared history, the last working folder, the agent tab coming up, the links of a shell and of the agent's tab |
@@ -436,6 +490,6 @@ chat; Ctrl+C in a running `sleep 30` returns the prompt at once.
 * The prompt label uses the runtime's own `planMounts` (exported by `runtime.js`) so that a folder mounted under `/mnt`
   is still named by its folder; if that export goes away the label falls back to `folders()` and shows `/mnt/...`. The
   agent's tab maps the folder of a run (a workspace path) to the engine's with `toMountPath` the same way.
-* The file links ask `runtime.resolve(path) -> Uri | null` and `runtime.stat(path) -> { type: 'file' | 'dir', size } |
-  null` (engine paths, never throwing; `stat` waits `workers.fsMs` at most). Without them there are no links, and no
-  error.
+* The file links ask `runtime.resolve(path) -> Uri | null` and `runtime.stat(path) -> { type: 'file' | 'dir' | 'other',
+  size } | null` (engine paths, never throwing; `stat` waits `workers.fsMs` at most; only `'file'` makes a link).
+  Without them there are no links, and no error.

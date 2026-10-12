@@ -463,6 +463,15 @@ test('a joiner pressed key by key does nothing and says nothing: a Persian word 
 	d.send(paste('\u0645\u06cc'), key.left, '\u200c');
 	assert.strictEqual(d.ed.text(), '\u0645\u200c\u06cc');
 	assert.ok(!d.vt.text().some((l) => l.includes('invisible')));
+	// one key is one code point, not one UTF-16 unit: an invisible character outside the BMP (a tag character, two units)
+	// pressed alone says nothing either, and two of them that arrive in one chunk say it once
+	const tag = session();
+	tag.send('a', '\u{E0041}', 'b');
+	assert.strictEqual(tag.ed.text(), 'ab');
+	assert.ok(!tag.vt.text().some((l) => l.includes('invisible')), 'a tag character pressed alone: no note');
+	const tags = session();
+	tags.send('a\u{E0041}\u{E0042}b');
+	assert.deepStrictEqual(tags.vt.text(), ['$', '[2 invisible characters were not typed]', '$ ab']);
 });
 
 test('a C1 control typed among text is ignored by the parser, without a word; the same inside a paste is dropped, with the note', () => {
@@ -1763,7 +1772,7 @@ const W = (/** @type {number} */ n) => 'w'.repeat(n);
 const output = (/** @type {number} */ n, /** @type {number} */ cols) => Array.from({ length: n }, (_, i) => 'out' + String(i).padStart(3, '0') + (i % 7 === 3 ? 'x'.repeat(Math.floor(cols * 1.7)) : ''));
 const UP = (/** @type {number} */ n) => key.up.repeat(n);
 
-/** @type {Array<[string, { cols: number, rows: number, prompt?: string, earlier: string[], steps: Array<{ paste?: string, send?: string, size?: [number, number] }> }]>} */
+/** @type {Array<[string, { cols: number, rows: number, prompt?: string, earlier: string[], steps: Array<{ paste?: string, send?: string, size?: [number, number], enter?: boolean, out?: number }> }]>} */
 const CORNER_SCENARIOS = [
 	['a terminal that has scrolled, 100x24 -> 80x3, the cursor on the first of three lines (the rows under it are dropped, and the line that wrapped is not counted as a row that grew)',
 		{ cols: 100, rows: 24, prompt: 'proj/src $ ', earlier: output(20, 100), steps: [{ paste: ['p1l1', 'p1l2' + W(218), 'p1l3'].join('\n') }, { send: 'ab' }, { send: UP(2) }, { size: [80, 3] }, { send: 'Z' }] }],
@@ -1813,12 +1822,39 @@ const CORNER_SCENARIOS = [
 	// rows the maximise added are blank rows under the region, so the restore drops those and not the region's own rows
 	['maximised and restored, a command of four lines and the cursor above the last: the redraw is where the region is, and the prompt is on the screen once',
 		{ cols: 80, rows: 10, prompt: '$ ', earlier: ['ban000'], steps: [{ paste: 'q1n1 \n\n\n' }, { send: 'y'.repeat(80) }, { send: key.up }, { size: [160, 40] }, { size: [80, 10] }, { send: 'Z' }] }],
+	// the same, with a key typed between the maximise and the restore (the rows the region took of the blank ones are the rows
+	// it gives back, and the region it had is the rows it had on the screen, not what it was when the panel grew)
+	['maximised, a line typed in the big panel, restored: the rows the region took are given back, and the prompt is on the screen once',
+		{ cols: 20, rows: 5, prompt: 'proj/src $ ', earlier: [], steps: [{ paste: 'q1n1 \n\n' }, { size: [60, 12] }, { send: 'y'.repeat(59) }, { send: key.up }, { size: [140, 48] }, { send: 'd' }, { size: [60, 12] }, { send: 'Z' }] }],
+	// what is left of the ghosts when one of them comes back and the panel narrows and grows again: at least a line
+	['a few rows of the prompt pushed, a taller panel takes one back and a shorter one pushes it again: the wide panel joins them all',
+		{ cols: 40, rows: 12, prompt: 'levelcode:~/work/project/src $ ', earlier: [], steps: [{ paste: 'q1n1 wwwww\n\n\n\n\n' + W(78) }, { size: [40, 7] }, { size: [40, 8] }, { size: [40, 7] }, { size: [160, 40] }, { send: 'Z' }] }],
+	// a wide character is two cells of one row, and a row that is cut or joined holds the cells it holds
+	['wide characters: narrower and shorter, then wider and much taller, the cells of the rows that were pushed are what the wide panel joins',
+		{ cols: 20, rows: 30, prompt: '\u4e2d\u6587 $ ', earlier: [], steps: [{ paste: 'q1n1 \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb' + 'txt gi hello -name TODO\n' }, { size: [13, 4] }, { size: [20, 44] }, { send: 'Z' }] }],
+	// rows pushed one event after the other: what the first pushed is still counted when the second pushes
+	['rows pushed in two events and then a taller, wider panel: the cells of both are counted',
+		{ cols: 60, rows: 4, prompt: '$ ', earlier: [], steps: [{ paste: 'q1n1 ' + W(94) + '\n\n1n3 w' }, { send: 'ls ' + 'y'.repeat(166) }, { send: 'src/index.js ' + 'y'.repeat(60) }, { size: [160, 48] }, { size: [48, 4] }, { send: 'status ' + 'y'.repeat(93) }, { size: [18, 3] }, { size: [50, 12] }, { send: 'Z' }] }],
+	// the rows of a line that begins under the cursor are none of the rows that are counted, and do not take away from them
+	['the cursor on the first row of a line of two rows with a line under it, narrower and shorter, then wider and taller: the prompt is on the screen once',
+		{ cols: 60, rows: 3, prompt: '$ ', earlier: [], steps: [{ send: 'q1n1 ' + 'y'.repeat(54) }, { paste: '\nq1n2 ' + W(47) }, { send: key.up }, { size: [12, 4] }, { size: [60, 12] }, { send: 'Z' }] }],
+	// the three that the verifier of fix round 3 minimised for the guards of the ghosts at the checkpoint before: a widening
+	// never makes more ghosts than there were; the lines of ghosts that all came back are forgotten; a new prompt forgets
+	// the lines and the cells of the one before. Each wrote over a line of output when its guard was taken away.
+	// a line above the cursor is all of it counted (it is re-wrapped, and every row of it was above the cursor)
+	['a line wider than the panel above the cursor, two panels narrower and taller: the rows pushed are those of the line above',
+		{ cols: 132, rows: 4, prompt: '$ ', earlier: [], steps: [{ paste: W(51) + '\nq1n3 ' + W(282) + '\n' }, { size: [12, 4] }, { size: [13, 44] }, { send: 'Z' }] }],
 ];
+
+// The three sessions the verifier of fix round 4 found that wrote over a line of earlier output at the checkpoint before:
+// the true number of rows xterm dropped is strictly between the floor and the ceiling the editor knows, and the row the
+// cursor ends on is not monotonic in it. They are fixtures (a long paste each), not literals.
+const CHAIN_SCENARIOS = JSON.parse(require('fs').readFileSync(path.join(__dirname, '..', 'fixtures', 'shell', 'terminal', 'resize-chains.json'), 'utf8'));
 
 test('rows and columns in one event, with output before the prompt: it is not written over, and the region is where the cursor says (on the model terminal and on xterm.js)', async () => {
 	const xt = needXterm('the rows and columns scenarios against xterm.js');
 	for (const target of xt ? [modelTarget, xtermTarget(xt)] : [modelTarget]) {
-		for (const [name, spec] of CORNER_SCENARIOS) {
+		for (const [name, spec] of [...CORNER_SCENARIOS, ...CHAIN_SCENARIOS]) {
 			const problem = await runStrictScript(target, Object.assign({ prompt: plainPrompt, once: true }, spec));
 			assert.strictEqual(problem, null, name + ': ' + problem);
 		}
@@ -1830,6 +1866,19 @@ test('rows and columns in one event, with output before the prompt: it is not wr
 /** @type {typeof CORNER_SCENARIOS} */
 const COPY_SCENARIOS = [
 	// (the two rows that were pushed into the scrollback are a copy of the prompt's first row there, which nothing can erase)
+	// (two of the three that the verifier of fix round 3 minimised for the guards of the ghosts at the checkpoint before: each
+	// wrote over a line of output when its guard was taken away; the third is in the corner scenarios)
+	['rows pushed and then a panel that is wider and taller than ever: the rows that came back are not counted again',
+		{ cols: 30, rows: 6, prompt: '$ ', earlier: ['ban000 ' + 'x'.repeat(52)], steps: [{ send: 'y'.repeat(70) }, { send: 'cat TODO -l status' }, { size: [70, 3] }, { size: [13, 5] }, { size: [20, 44] }, { send: 'Z' }] }],
+	['a prompt of a command in a narrow panel, the panel shorter, narrower and then much taller: what is left of the lines after the ghosts came back',
+		{ cols: 40, rows: 6, prompt: 'proj/src $ ', earlier: ['ban000'], steps: [{ send: 'y'.repeat(44) }, { send: '-name ' + 'y'.repeat(100) }, { send: 'find \u00fcn\u00efc\u00f6d\u00e9 a.txt wc ls -rn' }, { size: [40, 5] }, { size: [40, 6] }, { size: [40, 3] }, { size: [180, 40] }, { send: 'Z' }] }],
+	// xterm.js makes room for the rows a line gains by dropping rows from the BOTTOM of its buffer, and when there are no
+	// blank rows left they are the rows of the lines under the cursor: what is left of such a line is its end, flagged as a
+	// continuation of the row above it. So the two rows that were pushed into the scrollback, a prompt and what looks like
+	// the first row of the second line, are ONE line (a wider panel joins them to one row); counted as two lines they were
+	// two rows, and the next taller panel took back a row that was output from before the prompt.
+	['the cursor is on the first of two lines and the second gains rows with no blank row left: what xterm.js keeps of it continues the first, and a wider panel joins the two rows that were pushed',
+		{ cols: 80, rows: 4, prompt: 'proj/src $ ', earlier: ['e0'], steps: [{ paste: '\n' + W(121) }, { send: UP(1) }, { size: [20, 4] }, { send: key.down }, { size: [80, 4] }, { paste: '\nx\ny\nz' }, { size: [80, 12] }, { send: 'Z' }] }],
 	['a prompt of wide characters, narrower, narrower, then much wider: the two rows pushed at 20 columns are 40 cells, one row at 50',
 		{ cols: 30, rows: 12, prompt: '\u4e2d\u6587 $ ', earlier: ['ban000 ' + 'x'.repeat(60)], steps: [{ send: 'y'.repeat(50) }, { send: 'cp ' + 'y'.repeat(60) }, { size: [20, 7] }, { size: [29, 5] }, { size: [50, 8] }, { send: 'Z' }] }],
 	['a long line shorter and a few rows, widened and made taller in several steps: a width that grows twice takes back rows that are wider than the panel was',
@@ -1846,10 +1895,48 @@ test('rows and columns in one event: a copy of the prompt may be left, and what 
 	}
 });
 
+// What the editor believes of the blank rows under its region and of the rows it pushed into the scrollback is a FLOOR: the
+// next resize writes over what it believes. These are sessions in which it believed more than there was at the checkpoint
+// before, with nothing written over yet (the next taller panel would have done it).
+/** @type {typeof CORNER_SCENARIOS} */
+const FLOOR_SCENARIOS = [
+	// the panel made narrower and taller, a note, a wider and shorter one: the redraw starts a row lower than the first row of
+	// the region (a copy of the prompt), and the rows from where it starts are not the rows of the region
+	['wider and shorter after a note: the blank rows under the region are counted from where the redraw begins',
+		{ cols: 20, rows: 10, prompt: '$ ', earlier: ['ban000 \u30c7\u30fc\u30bf src/index.js', 'ban001', 'ban002', 'ban003 README.md \u00fcn\u00efc\u00f6d\u00e9', 'ban004 \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb.txt "*.ts"', 'ban005 ' + 'x'.repeat(28), 'ban006 find status'],
+			steps: [{ paste: 'txt wc \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb.txt \u30c7\u30fc\u30bf\nwww' }, { size: [12, 20] }, { paste: 'a\u200bb b.txt' }, { send: '\x01' }, { send: key.left }, { size: [120, 14] }, { send: 'Z' }] }],
+	// the cursor is on the first of two rows of its line, and the line under it gains rows: xterm.js drops the rows at the bottom
+	// of its buffer for them, which are the second row of the cursor's own line first; only down to the cursor are they counted
+	['the cursor on the first row of a line of two rows, a line under it, a narrower panel: the row under the cursor is not counted',
+		{ cols: 60, rows: 3, prompt: '$ ', earlier: [], steps: [{ send: 'y'.repeat(59) }, { paste: '\n' + 'w'.repeat(47) }, { send: key.up }, { size: [12, 4] }, { send: 'Z' }] }],
+	// a command that was run, and rows pushed again at the next prompt (the third of the verifier's three minimal sessions for
+	// the guards of the ghosts: the lines and the cells of the prompt before are not counted again; the output was written over)
+	['a command that was run, and rows pushed again at the next prompt: the lines and the cells of the one before are not counted',
+		{ cols: 40, rows: 10, prompt: '$ ', earlier: Array.from({ length: 12 }, (_, i) => 'ban' + String(i).padStart(3, '0')), steps: [{ paste: 'a' + W(70) + '\nb' + W(30) + '\nc' + W(70) }, { size: [40, 4] }, { enter: true, out: 2 }, { paste: 'd' + W(150) + '\ne' }, { size: [40, 2] }, { size: [100, 2] }, { size: [100, 10] }, { send: 'Z' }] }],
+	// Ctrl+C abandons the line and starts another prompt: nothing is known of the rows under it
+	['a shorter panel, then Ctrl+C: the new prompt knows nothing of the blank rows under the old region',
+		{ cols: 60, rows: 12, prompt: '$ ', earlier: [], steps: [{ send: 'y'.repeat(59) }, { size: [60, 3] }, { send: '\x03' }, { send: 'Z' }] }],
+];
+
+test('every scenario, with what the editor believes of the rows under its region and of the rows it pushed checked after every step, and copies of a pasted line counted (on xterm.js)', async () => {
+	const xt = needXterm('the floors of the scenarios against xterm.js');
+	if (!xt) { return; }
+	const named = [...CORNER_SCENARIOS, ...COPY_SCENARIOS, ...FLOOR_SCENARIOS];
+	const results = await runSessions(xt, named.map(([, spec]) => ({ prompt: plainPrompt, ...spec })));
+	results.forEach((r, i) => {
+		// the corner scenarios leave no copy of a pasted line, on the screen or above it (the scenarios of the other two lists
+		// may: what is asked of them is that nothing is believed that is not so, and that nothing before the prompt is lost)
+		const strict = i < CORNER_SCENARIOS.length;
+		const bad = r.fails.filter((f) => strict || (f.cat !== 'copyVisible' && f.cat !== 'copyScrollback'));
+		assert.deepStrictEqual(bad, [], named[i][0]);
+	});
+});
+
 // The note under a line is the terminal's from the moment it is written, and a chain of resizes does not write over it
 // (the rows pushed into the scrollback while the note was there were counted at the width of the panel then asked about)
 test('a note under a line is not written over by a chain of three resizes (on the model terminal and on xterm.js)', async () => {
 	const xt = needXterm('the note and the chain of resizes against xterm.js');
+	/** @type {Parameters<typeof runStrictScript>[1]} */
 	const spec = { cols: 60, rows: 8, prompt: plainPrompt, earlier: [], steps: [{ send: 'y'.repeat(54) }, { paste: 'a\u200bb \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb.txt' }, { size: [20, 5] }, { size: [29, 3] }, { size: [50, 24] }, { send: 'Z' }] };
 	for (const target of xt ? [modelTarget, xtermTarget(xt)] : [modelTarget]) {
 		const problem = await runStrictScript(target, spec);
@@ -1902,12 +1989,14 @@ test('rows and columns in one event, seeded sessions: earlier output taller than
 
 // The acceptance run of fix round 4 in miniature: 33,600 sessions of the verifier's generator (7 families x 12 seeds x 400,
 // chains of 6 to 16 events: typed and pasted lines, a Tab, a note, Ctrl+L, and the panel changed by width, by height, by
-// both, by a drag, by a toggle, by a maximise) wrote over output in none. These are 683 of them, taken from other seeds,
-// and the three that the checkpoint before it did write over. After every step of every session: what was on the terminal
-// before the prompt, and the note under a line, are there, whole and in order; the region is where the editor says; and
-// what the editor believes is blank under the region is blank. A copy of the prompt may be left; not more of them than
-// the checkpoint before left (it left 17 on the screen and 32 above it, in these sessions).
-test('seeded chains of resizes of an independent generator: nothing that was on the terminal is written over, and no more copies are left than before (on xterm.js)', async () => {
+// both, by a drag, by a toggle, by a maximise) wrote over output in none (and in none of another 172,400). These are 683 of
+// them, from other seeds, and the three that the checkpoint before it (6afd1c5) did write over. After every step of every
+// session: what was on the terminal before the prompt, and the note under a line, are there, whole and in order; the region
+// is where the editor says; and what the editor believes of the blank rows under the region and of the rows it pushed into
+// the scrollback is a floor. A copy of the prompt may be left; not more of them than there is room for. Sessions with one
+// on the screen / only above it: a7f393c 44 / 68, 648a547 24 / 45, 6afd1c5 17 / 30, and now 16 / 32 (the bounds are those
+// numbers and a quarter).
+test('seeded chains of resizes of an independent generator: nothing that was on the terminal is written over, the editor never believes more than there is, and not many copies are left (on xterm.js)', async () => {
 	const xt = needXterm('the chains of resizes of the independent generator against xterm.js');
 	if (!xt) { return; }
 	// [family, first seed, how many, a chain of 6 to 16 events with no Enter (otherwise 3 to 10, with the command's output)]
@@ -1925,20 +2014,72 @@ test('seeded chains of resizes of an independent generator: nothing that was on 
 	for (const [family, seed, many] of wroteOver) { specs.push(makeSession(seed, family, many)); }
 	const results = await runSessions(xt, specs);
 	const bad = [];
-	let visible = 0;
-	let scrolled = 0;
 	results.forEach((r, i) => {
 		for (const f of r.fails) {
-			if (f.cat === 'copyVisible') { visible++; } else if (f.cat === 'copyScrollback') { scrolled++; } else { bad.push(i + ': ' + f.cat + ' ' + f.label + ' ' + f.detail); }
+			if (f.cat !== 'copyVisible' && f.cat !== 'copyScrollback') { bad.push(i + ': ' + f.cat + ' ' + f.label + ' ' + f.detail); }
 		}
 	});
 	assert.deepStrictEqual(bad.slice(0, 3), [], bad.length + ' of ' + specs.length + ' sessions went wrong; the first: ' + JSON.stringify(bad[0]) + ' of ' + JSON.stringify(specs[parseInt(bad[0] || '0', 10)]).slice(0, 600));
-	assert.ok(specs.length > 650);
-	// (counted once per session and step: a copy that is left stays for the steps after it, so the numbers are a few
-	// times the sessions that have one: 16 and 32 sessions at the checkpoint)
+	assert.strictEqual(specs.length, 683);
 	const sessions = (/** @type {string} */ cat) => results.filter((r) => r.cats.includes(cat)).length;
-	assert.ok(sessions('copyVisible') <= 17, 'sessions with a copy of the prompt left on the screen: ' + sessions('copyVisible') + ' (' + visible + ' steps)');
-	assert.ok(sessions('copyScrollback') <= 32, 'sessions with a copy left only above the screen: ' + sessions('copyScrollback') + ' (' + scrolled + ' steps)');
+	assert.ok(sessions('copyVisible') <= 20, 'sessions with a copy of the prompt left on the screen: ' + sessions('copyVisible'));
+	assert.ok(sessions('copyScrollback') <= 40, 'sessions with a copy left only above the screen: ' + sessions('copyScrollback'));
+});
+
+// What the editor keeps of the rows it pushed into the scrollback (a shorter panel puts the top of the region there): how
+// many (`ghosts`), of how many lines (`ghostLines`), holding how many cells (`ghostCells`). Each is a floor, because the
+// redraw writes over the rows that come back; these are the rules of the account itself, whatever the screen shows.
+test('the account of the rows pushed into the scrollback: counted when they are pushed, forgotten when they all came back and at the next prompt', () => {
+	const mk = () => {
+		const s = session({ cols: 100, rows: 12 });
+		s.send('y'.repeat(390));                     // a prompt and 390 cells: four rows at 100 columns
+		const resize = (c, r) => { s.vt.resize(c, r); s.ed.resize(c, r); };
+		const account = () => [s.ed.ghosts, s.ed.ghostLines, s.ed.ghostCells];
+		return { s, resize, account };
+	};
+	// two rows of one line, 100 cells each, are pushed; a taller panel with the cursor on its last row takes them back
+	let t = mk();
+	t.resize(100, 2);
+	assert.deepStrictEqual(t.account(), [2, 1, 200]);
+	t.resize(100, 12);
+	assert.deepStrictEqual(t.account(), [0, 0, 0], 'they all came back: nothing is counted');
+	// the same when a narrower panel in between split them (they are more rows now, and the cells are the same): the
+	// editor counts the rows it knows came back, and the cells that are left are not more than the rows it counted hold
+	t = mk();
+	t.resize(100, 2);
+	t.resize(40, 2);
+	assert.deepStrictEqual(t.account(), [2, 1, 200], 'a narrower panel splits rows, which does not make the floor wrong');
+	t.resize(40, 12);
+	assert.deepStrictEqual(t.account(), [0, 0, 0], 'all of what was counted came back: the cells of it are gone too');
+	// and a new prompt forgets them: they are history from the moment the line is run
+	t = mk();
+	t.resize(100, 2);
+	t.s.send('\r');
+	assert.deepStrictEqual(t.account(), [0, 0, 0]);
+});
+
+test('what is counted of the rows that were pushed: the least of the two ends, only the first rows asked for, and only those at or above the cursor', () => {
+	const { ed } = session();
+	const row = (line, cells) => ({ line, cells });
+	// one end has three rows of two lines and the other three rows of one line (a wide character that was cut, one cell less)
+	const two = { rows: [row(0, 20), row(0, 20), row(1, 20)], safe: 3 };
+	const one = { rows: [row(0, 20), row(0, 20), row(0, 19)], safe: 3 };
+	assert.deepStrictEqual(ed._headRows([two, one], 3), { lines: 1, cells: 59 });
+	assert.deepStrictEqual(ed._headRows([one, two], 3), { lines: 1, cells: 59 }, 'whichever end is the first');
+	assert.deepStrictEqual(ed._headRows([two], 2), { lines: 1, cells: 40 }, 'the first rows that were pushed, not all of them');
+	assert.deepStrictEqual(ed._headRows([{ rows: two.rows, safe: 1 }], 3), { lines: 1, cells: 20 }, 'only the rows at or above the cursor');
+	assert.deepStrictEqual(ed._headRows([{ rows: two.rows, safe: 0 }], 3), { lines: 0, cells: 0 });
+});
+
+test('how many of the rows that were pushed are still rows once the panel is wider: a row for each line, what the cells need, and never more than there were', () => {
+	const { ed } = session({ cols: 100, rows: 12 });
+	const at = (ghosts, lines, cells, cols) => { ed.ghosts = ghosts; ed.ghostLines = lines; ed.ghostCells = cells; return ed._ghostsAt(cols); };
+	assert.strictEqual(at(2, 1, 200, 100), 2, 'two rows of 100 cells are two rows at 100');
+	assert.strictEqual(at(2, 1, 200, 200), 1, 'and one at 200');
+	assert.strictEqual(at(2, 1, 200, 400), 1, 'a line is never less than a row');
+	assert.strictEqual(at(4, 3, 30, 400), 3, 'three lines are three rows however few the cells');
+	assert.strictEqual(at(2, 1, 500, 100), 2, 'no more than there were: the cells of rows that a narrower panel split are more than these rows hold');
+	assert.strictEqual(at(0, 0, 0, 100), 0);
 });
 
 test('a resize that changes nothing writes nothing; nothing smaller than 2 columns or 2 rows is taken', () => {

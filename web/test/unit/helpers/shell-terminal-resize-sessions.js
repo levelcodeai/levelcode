@@ -5,7 +5,8 @@
 //   - what the terminal showed before the prompt (earlier output, a command's result) is still there, whole and in order,
 //     and so is the note under a line ('lost', 'lostNote': the editor wrote over it);
 //   - the region is on the screen where the editor says, and is what it says ('misplaced');
-//   - what the editor believes about the blank rows under its region is true ('blankOver': a floor, as `ghosts` is);
+//   - what the editor believes about the blank rows under its region and about the rows it pushed into the scrollback
+//     is a floor ('blankOver', 'ghostOver', 'cellsOver', 'linesOver'): they are what the next resize writes over;
 //   - a pasted line is on the screen once: a second one is a copy the editor left above the region ('copyVisible'; one
 //     only in the scrollback is 'copyScrollback'). Copies are untidy, not lost: they are counted, and the caller bounds
 //     the count.
@@ -18,7 +19,7 @@
 const path = require('path');
 
 const TERMINAL = path.join(__dirname, '..', '..', '..', 'shell', 'src', 'terminal');
-const { LineEditor } = require(path.join(TERMINAL, 'line-editor.js'));
+const { LineEditor, droppedNote } = require(path.join(TERMINAL, 'line-editor.js'));
 const { createInputParser } = require(path.join(TERMINAL, 'input-parser.js'));
 const { cpWidth } = require(path.join(TERMINAL, 'width.js'));
 
@@ -247,6 +248,36 @@ async function runSession(xt, spec) {
 				if (r && r.t === '') { blank++; } else { break; }
 			}
 			if (ed.blank > blank) { return { cat: 'blankOver', label, detail: 'the editor counts ' + ed.blank + ' blank rows under the region, there are ' + blank }; }
+		}
+		// 2c. what the editor believes of the rows it pushed into the scrollback is a floor, whatever xterm.js did with
+		// them: the `ghosts` rows right above the screen are not output that was there before the prompt ('ghostOver':
+		// the next taller panel would write over it), and the rows above the screen that are not (the region's, and the
+		// commands' before it: a wider panel joins them, a narrower one splits them) hold at least `ghostCells` cells
+		// and are rows of at least `ghostLines` lines ('cellsOver', 'linesOver': what a wider panel joins them to)
+		if (ed.active && ed.ghosts > 0) {
+			const output = new Set(earlier.map((e) => e.replace(/\s+$/, '')));
+			output.add(droppedNote(1));
+			const logicalAt = (/** @type {number} */ y) => {
+				let a = y;
+				while (a > 0 && all[a].w) { a--; }
+				let b = y;
+				while (b + 1 < all.length && all[b + 1].w) { b++; }
+				let text = '';
+				for (let k = a; k <= b; k++) { text += all[k].t; }
+				return text.replace(/\s+$/, '');
+			};
+			for (let i = 1; i <= ed.ghosts; i++) {
+				const y = g.base - i;
+				if (y < 0 || output.has(logicalAt(y))) { return { cat: 'ghostOver', label, detail: 'ghost ' + i + ' of ' + ed.ghosts + (y < 0 ? ' is above the buffer' : ' is output from before the prompt: ' + logicalAt(y).slice(0, 30)) }; }
+			}
+			let cells = 0;
+			let lines = 0;
+			for (let y = g.base - 1; y >= 0 && !output.has(logicalAt(y)); y--) {
+				for (const ch of all[y].t) { cells += cpWidth(/** @type {number} */ (ch.codePointAt(0))); }
+				if (!all[y].w) { lines++; }
+			}
+			if (cells < ed.ghostCells) { return { cat: 'cellsOver', label, detail: 'the editor counts ' + ed.ghostCells + ' cells in its ' + ed.ghosts + ' ghost rows, the rows above the screen hold ' + cells }; }
+			if (lines < ed.ghostLines) { return { cat: 'linesOver', label, detail: 'the editor counts ' + ed.ghostLines + ' lines in its ' + ed.ghosts + ' ghost rows, the rows above the screen are rows of ' + lines }; }
 		}
 		// 3. a pasted line (the tokens qNnK) is on the screen once: a second one is a copy
 		const seen = new Map();

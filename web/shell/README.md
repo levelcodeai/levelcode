@@ -286,10 +286,14 @@ characters, memory only — so a `cd` does not move older links. Two identical l
 told apart (the later wins): the workbench hands the provider a line's text, not its row.
 
 **Resize.** The editor redraws its region when the panel changes size by emulating xterm's own reflow (the line editor is
-tested against real xterm.js 6.1). The rule is *never write over a row that is not the editor's own*: where the
-emulation is unsure it leaves a stale copy of the prompt's first rows instead (visible in 138 of 2,400 sessions that
-change width and height at once, a copy in the scrollback in more). The one case it cannot do exactly is a widening that
-reaches the top of the whole buffer (about 3 of 100 realistic sessions); `src/terminal/NOTES.md` has the table.
+tested against real xterm.js 6.1). The rule is *do not write over a row that is not the editor's own*: where the
+emulation is unsure it starts the redraw lower and leaves a stale copy of the prompt's first rows instead. Measured on
+the real xterm over 33,600 sessions of 6 to 16 resize events: a copy visible on screen in about 1 session of 12 that
+change width and height at once, a copy in the scrollback in more, and earlier output written over in **0** of them
+(the earlier generations of this code: 51 to 480). Outside those families a very rare chain can still write over a line
+(1 in about 100,000 sessions was found, then fixed; the rate is not zero by construction). The one case it cannot do
+exactly is a widening that reaches the top of the whole buffer (about 3 of 100 realistic sessions, a stale copy);
+`src/terminal/NOTES.md` has the table and the method.
 
 **Typing.** A joiner (ZWNJ/ZWJ) typed key by key is dropped silently; a pasted or completed one is kept where it joins
 letters of its script or an emoji sequence, and anything else that is not typed is said once under the line.

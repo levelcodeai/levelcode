@@ -1,0 +1,130 @@
+[
+ [
+  "a maximise chain: 160x36 then back to 100x18 with the cursor above the last line of a pasted block (the number of rows xterm dropped is between the floor and the ceiling and the row it ends on is not monotonic in it)",
+  {
+   "cols": 100,
+   "rows": 18,
+   "earlier": [
+    "ban000"
+   ],
+   "steps": [
+    {
+     "send": "中文. 日本語のファイル.txt"
+    },
+    {
+     "send": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    },
+    {
+     "send": "ünïcödé git cat hello TODO"
+    },
+    {
+     "send": "\u001b[H"
+    },
+    {
+     "paste": "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\n\n\nn4wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\n\n1wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\n\n\nq1wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+    },
+    {
+     "send": "echo yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    },
+    {
+     "paste": "q2n1 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\nq2n2 w"
+    },
+    {
+     "send": "\u001b[A\u001b[A"
+    },
+    {
+     "size": [
+      160,
+      36
+     ]
+    },
+    {
+     "size": [
+      100,
+      18
+     ]
+    }
+   ],
+   "prompt": "中文 $ "
+  }
+ ],
+ [
+  "paste two lines, Up Up, 180x14, then 70x5 (the true bottom is strictly between the two ends)",
+  {
+   "cols": 120,
+   "rows": 8,
+   "earlier": [
+    "ban000",
+    "ban001"
+   ],
+   "steps": [
+    {
+     "paste": "q1n1 \nq1n2 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\nq1n3 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+    },
+    {
+     "send": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    },
+    {
+     "send": "\u001b[A\u001b[A"
+    },
+    {
+     "size": [
+      180,
+      14
+     ]
+    },
+    {
+     "size": [
+      70,
+      5
+     ]
+    },
+    {
+     "send": "Z"
+    }
+   ],
+   "prompt": "$ "
+  }
+ ],
+ [
+  "80x15, a seven-line paste, typed text, Up six times, 140x36, then 60x9",
+  {
+   "cols": 80,
+   "rows": 15,
+   "earlier": [
+    "ban000",
+    "ban001"
+   ],
+   "steps": [
+    {
+     "paste": "q1n1 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\nq1n2 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\nq1n3 \nq1n4 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\nq1n5 wwwww\nq1n6 wwwwwww\nq1n7 "
+    },
+    {
+     "send": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    },
+    {
+     "send": "\u001b[A\u001b[A\u001b[A\u001b[A\u001b[A\u001b[A"
+    },
+    {
+     "size": [
+      140,
+      36
+     ]
+    },
+    {
+     "size": [
+      60,
+      9
+     ]
+    },
+    {
+     "send": "\u001b[A"
+    },
+    {
+     "send": "Z"
+    }
+   ],
+   "prompt": "$ "
+  }
+ ]
+]
