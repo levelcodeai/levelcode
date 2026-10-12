@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { applyPatches } from './vendor/just-bash/3.6.0/apply-patches.mjs';
+import { applyPatches, applyEdits, HEADER, PATCHES } from './vendor/just-bash/3.6.0/apply-patches.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,4 +73,27 @@ export function loadEngine() {
 		})();
 	}
 	return cached;
+}
+
+/**
+ * The engine WITHOUT some patches (a test of the patch itself: what a case does with the fix taken out). Not cached,
+ * and never used by the worker. `ids` are patch ids (`LC-61`).
+ *
+ * @param {string[]} ids
+ */
+export async function loadEngineWithout(ids) {
+	const rest = PATCHES.filter((p) => !ids.includes(p.id));
+	if (rest.length !== PATCHES.length - ids.length) { throw new Error('no such patch: ' + ids.join(', ')); }
+	let text = HEADER + applyEdits(fs.readFileSync(BROWSER_JS, 'utf8'), rest);
+	for (const [name, file] of Object.entries(EXTERNALS)) {
+		text = text.split(`from"${name}"`).join(`from${JSON.stringify(pathToFileURL(file).href)}`);
+	}
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-shell-engine-'));
+	try {
+		const file = path.join(dir, 'just-bash.lc.mjs');
+		fs.writeFileSync(file, text);
+		return await import(pathToFileURL(file).href);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 }

@@ -153,6 +153,11 @@ const KNOWN_DIFFERENCES = [
 		why: 'by design: hard links cannot be made (the engine says so in its own words), as symbolic ones cannot',
 		cases: { 'r3-gap-ln-hard': 'stdout+stderr+tree' },
 	},
+	// Found by the fifth round's check and settled in the sixth, each with its reason
+	{
+		why: 'by design: grep -r does not enter a folder named .git (its objects would use the traversal limit up and bury what was looked for); `grep -r x .git` names it and searches it, as GNU does',
+		cases: { 'r6-grep-r-git-folder': 'stdout' },
+	},
 	// Found by the fourth round, each with its reason
 	{
 		why: 'wording only: GNU puts curly quotes around the key it rejects (‘0’) in a UTF-8 locale, the engine straight ones; the words, which say which part of a key is wrong, are GNU\'s since the fifth round',
@@ -247,11 +252,11 @@ async function main() {
 		assert.deepStrictEqual(golden.meta.flaky, ['patch', 'tar-gz', 'whoami-uname']);
 		assert.strictEqual(golden.meta.cases, golden.cases.length);
 		assert.ok(golden.cases.length >= 500, 'the batteries and the added cases: ' + golden.cases.length);
-		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra', 'round2', 'round3', 'round4', 'round5']);
+		assert.deepStrictEqual([...new Set(golden.cases.map((c) => c.source))].sort(), ['battery-1', 'battery-2', 'extra', 'round2', 'round3', 'round4', 'round5', 'round6']);
 		const size = fs.statSync(path.join(REPO, 'web', 'test', 'fixtures', 'shell', 'golden', 'golden.json')).size;
 		// what grows with the cases is a case's script, its output and the files it left; a case that ran on a bare workspace
 		// lists no `gone` (it used to list the fixture's 18 paths: a third of the file)
-		assert.ok(size < 448 * 1024, 'fixtures stay small: ' + size);
+		assert.ok(size < 512 * 1024, 'fixtures stay small: ' + size);
 	});
 
 	test('the list of known differences names only cases that exist, and may only shrink', () => {

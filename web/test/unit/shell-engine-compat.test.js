@@ -295,14 +295,15 @@ async function main() {
 		assert.deepStrictEqual(c.parseStat(['--format=%y', 'f']).format, '%y');
 		assert.deepStrictEqual(c.parseStat(['-c%Y', 'f']), { format: '%Y', files: ['f'], other: [] });
 		assert.deepStrictEqual(c.parseTouch(['-t', '202005060708.09', 'f']).time, Date.UTC(2020, 4, 6, 7, 8, 9));
-		assert.deepStrictEqual(c.parseTouch(['-d', '@100', 'f']), { args: ['f'], time: 100000, files: ['f'], reference: null });
+		assert.deepStrictEqual(c.parseTouch(['-d', '@100', 'f']), { args: ['f'], time: 100000, files: ['f'], reference: null, dateText: null, invalidStamp: null });
 		assert.deepStrictEqual(c.parseTouch(['--date=@-5', 'f']).time, -5000);
-		assert.deepStrictEqual(c.parseTouch(['-d', '2020-01-01', 'f']), { args: ['-d', '2020-01-01', 'f'], time: null, files: ['f'], reference: null });
+		// a date string is read by datestr.js, the grammar of `date -d` (it used to be handed to the engine's own reader)
+		assert.deepStrictEqual(c.parseTouch(['-d', '2020-01-01', 'f']), { args: ['f'], time: Date.UTC(2020, 0, 1), files: ['f'], reference: null, dateText: '2020-01-01', invalidStamp: null });
 		// -r REF is taken out of the line (the engine ignored it) and handed to the wrapper, which reads REF's time
-		assert.deepStrictEqual(c.parseTouch(['-r', 'ref', 'f']), { args: ['f'], time: null, files: ['f'], reference: 'ref' });
-		assert.deepStrictEqual(c.parseTouch(['--reference=ref', 'f', 'g']), { args: ['f', 'g'], time: null, files: ['f', 'g'], reference: 'ref' });
-		assert.deepStrictEqual(c.parseTouch(['--reference', 'ref', '-c', 'f']), { args: ['-c', 'f'], time: null, files: ['f'], reference: 'ref' });
-		assert.deepStrictEqual(c.parseTouch(['-rref', 'f']), { args: ['f'], time: null, files: ['f'], reference: 'ref' });
+		assert.deepStrictEqual(c.parseTouch(['-r', 'ref', 'f']), { args: ['f'], time: null, files: ['f'], reference: 'ref', dateText: null, invalidStamp: null });
+		assert.deepStrictEqual(c.parseTouch(['--reference=ref', 'f', 'g']), { args: ['f', 'g'], time: null, files: ['f', 'g'], reference: 'ref', dateText: null, invalidStamp: null });
+		assert.deepStrictEqual(c.parseTouch(['--reference', 'ref', '-c', 'f']), { args: ['-c', 'f'], time: null, files: ['f'], reference: 'ref', dateText: null, invalidStamp: null });
+		assert.deepStrictEqual(c.parseTouch(['-rref', 'f']), { args: ['f'], time: null, files: ['f'], reference: 'ref', dateText: null, invalidStamp: null });
 		const r = await sh("touch -d '@100' a; touch -t 197001010000 z; stat -c '%n %Y' a z; date -u -r a +%s; printf 'BEGIN{print \"p\"}\\n{print $1}\\n' > p.awk; echo 'x y' | awk -f p.awk");
 		assert.strictEqual(r.stdout, 'a 100\nz 0\n100\np\nx\n');
 	});
@@ -552,7 +553,9 @@ async function main() {
 		assert.strictEqual(await run('sort -nrk2 c'), 'x 3\nz 2\ny 1\n');
 		assert.strictEqual(await run('sort -rk2,2 c'), 'x 3\nz 2\ny 1\n');
 		assert.strictEqual(await run("sort -t' ' -k2 c"), 'y 1\nz 2\nx 3\n');
-		assert.strictEqual(await run('sort -t: -k2,2n -r d'), 'b:2\na:2\nc:1\n');
+		// the global -r is not the key's (the key has its own `n`): only the last-resort comparison of the whole line is reversed
+		// (GNU sort 8.32, docker: c:1 b:2 a:2; this line used to expect the engine's own answer, b:2 a:2 c:1)
+		assert.strictEqual(await run('sort -t: -k2,2n -r d'), 'c:1\nb:2\na:2\n');
 		assert.strictEqual(await run('sort -t: -k2n d'), 'c:1\na:2\nb:2\n');
 		assert.strictEqual(await run('sort -ro out c; cat out'), 'z 2\ny 1\nx 3\n');
 		assert.strictEqual((await h.run('sort -nk2 nope; echo "rc=$?"')).stdout, 'rc=1\n');
@@ -706,7 +709,8 @@ async function main() {
 		assert.strictEqual(c.parseTouch(['-t', '6801020304', 'f']).time, ms(2068, 1, 2, 3, 4, 0), '68 is 2068');
 		assert.strictEqual(c.parseTouch(['-t', '0001020304', 'f']).time, ms(2000, 1, 2, 3, 4, 0));
 		assert.strictEqual(c.parseTouch(['-t', '01020304', 'f']).time, ms(new Date().getUTCFullYear(), 1, 2, 3, 4, 0), 'the year is this one');
-		assert.strictEqual(c.parseTouch(['-t', '1', 'f']).time, null, 'not a stamp: the engine says so');
+		assert.strictEqual(c.parseTouch(['-t', '1', 'f']).time, null, 'not a stamp: it is said, as GNU says it');
+		assert.strictEqual(c.parseTouch(['-t', '1', 'f']).invalidStamp, '1');
 		assert.strictEqual(c.statTimeFormat('%y', ms(2020, 1, 2, 3, 4, 5) + 7), '2020-01-02 03:04:05.007000000 +0000');
 		assert.strictEqual(c.statTimeFormat('%y', ms(2020, 1, 2, 3, 4, 5), 'Asia/Tokyo'), '2020-01-02 12:04:05.000000000 +0900');
 		assert.strictEqual(c.statTimeFormat('%y', ms(2020, 6, 1, 12, 0, 0), 'America/New_York'), '2020-06-01 08:00:00.000000000 -0400');
@@ -1630,7 +1634,85 @@ async function main() {
 		]) { assert.deepStrictEqual(k(spec), { error: message }, JSON.stringify(spec)); }
 		assert.deepStrictEqual(c.sortKeys(['-k', '1nM']), { error: "options '-Mn' are incompatible" });
 		assert.deepStrictEqual(c.sortKeys(['-n', '-M']), { error: "options '-Mn' are incompatible" });
-		assert.deepStrictEqual(c.sortKeys(['-k', '+2', '-r']), { args: ['-k', '2', '-r'] });
+		assert.deepStrictEqual(c.sortKeys(['-k', '+2']), { args: ['-k', '2'] });
+		// the global letters go to a key that has none of its own, and what is left of -r is the last resort (a key `-k1r`)
+		assert.deepStrictEqual(c.sortKeys(['-k', '+2', '-r']), { args: ['-k', '2r', '-k', '1r'] });
+	});
+
+	test('round 6: a cluster is cut at the letter that takes a value, `--` ends the options, operands are told from values, a key with no letters of its own gets the global ones', () => {
+		const split = (p, ...a) => c.splitClusters(p, a);
+		assert.deepStrictEqual(split('grep', '-nA1', 'TODO', 'f'), ['-n', '-A', '1', 'TODO', 'f']);
+		assert.deepStrictEqual(split('grep', '-iA2'), ['-i', '-A', '2']);
+		assert.deepStrictEqual(split('grep', '-rnC', '2'), ['-rn', '-C', '2'], 'the letters before the valued one stay together');
+		assert.deepStrictEqual(split('grep', '-cm1'), ['-c', '-m', '1']);
+		assert.deepStrictEqual(split('grep', '-A1', '-B1'), ['-A', '1', '-B', '1']);
+		assert.deepStrictEqual(split('grep', '-e', '-nA1', 'f'), ['-e', '-nA1', 'f'], 'the value of -e is not an option');
+		assert.deepStrictEqual(split('grep', '--', '-nA1'), ['--', '-nA1']);
+		assert.deepStrictEqual(split('grep', '--max-count', '-nA1', 'f'), ['--max-count', '-nA1', 'f']);
+		assert.deepStrictEqual(split('head', '-qn1', 'f', 'g'), ['-q', '-n', '1', 'f', 'g']);
+		assert.deepStrictEqual(split('head', '-n', '-3', 'f'), ['-n', '-3', 'f']);
+		assert.deepStrictEqual(split('tail', '-vc3'), ['-v', '-c', '3']);
+		assert.deepStrictEqual(split('cut', '-sf1', '-d', ','), ['-s', '-f', '1', '-d', ',']);
+		assert.deepStrictEqual(split('cut', '-nc1-3'), ['-c', '1-3'], 'cut -n means nothing and is dropped');
+		assert.deepStrictEqual(split('cut', '-sd,', '-f1'), ['-s', '-d', ',', '-f', '1']);
+		assert.deepStrictEqual(split('cut', '-n'), []);
+		assert.deepStrictEqual(split('touch', '-ct', '202001010000', 'f'), ['-c', '-t', '202001010000', 'f']);
+		assert.deepStrictEqual(split('paste', '-sd,', 'f'), ['-s', '-d', ',', 'f']);
+		assert.deepStrictEqual(split('sed', '-ni', 'p'), ['-n', '-i', 'p'], 'a letter with an optional value ends the cluster: it and its rest are an argument of their own');
+		assert.deepStrictEqual(split('sed', '-ni.bak', 'p'), ['-n', '-i.bak', 'p']);
+		assert.deepStrictEqual(split('date', '-uIminutes'), ['-u', '-Iminutes']);
+		assert.deepStrictEqual(split('date', '-ur', 'f'), ['-u', '-r', 'f']);
+		assert.deepStrictEqual(split('basename', '-as', '.js', 'a.js'), ['-a', '-s', '.js', 'a.js']);
+		assert.deepStrictEqual(split('xargs', '-n1', 'echo', '-nA1'), ['-n', '1', 'echo', '-nA1'], 'xargs stops at its command');
+		assert.deepStrictEqual(c.endOptions('head', ['-n1', '--', '-x', 'f', '-']), ['-n1', './-x', 'f', '-']);
+		assert.deepStrictEqual(c.endOptions('head', ['-n', '--', 'f']), ['-n', '--', 'f'], '`--` is the value of -n here, as in getopt');
+		assert.deepStrictEqual(c.endOptions('head', ['-n1', 'f']), ['-n1', 'f']);
+		assert.deepStrictEqual(c.operandIndexes('sort', ['-k', '2', '-', 'f']), [2, 3]);
+		assert.deepStrictEqual(c.operandIndexes('sort', ['-nk', '2', '--', '-x', '-']), [3, 4]);
+		assert.deepStrictEqual(c.operandIndexes('head', ['-qn1', 'a', '-']), [1, 2]);
+		const keys = (...a) => c.sortKeys(a).args;
+		assert.deepStrictEqual(keys('-n', '-k', '2'), ['-k', '2n']);
+		assert.deepStrictEqual(keys('-n', '-k', '1,1r'), ['-k', '1,1r'], 'a key with its own letters takes none');
+		assert.deepStrictEqual(keys('-r', '-k', '2n'), ['-k', '2n', '-k', '1r'], 'the last resort is what -r reverses');
+		assert.deepStrictEqual(keys('-rs', '-k', '2,2'), ['-s', '-k', '2r,2'], '-s has no last resort');
+		assert.deepStrictEqual(keys('-ru', '-k', '2,2n'), ['-u', '-k', '2,2n']);
+		assert.deepStrictEqual(keys('-nb', '-k', '2,3'), ['-k', '2nb,3b'], 'b is for the start and the end of the key');
+		assert.deepStrictEqual(keys('--reverse', '-t', ',', '-k', '2'), ['-t', ',', '-k', '2r', '-k', '1r']);
+		assert.deepStrictEqual(keys('-n'), ['-n'], 'with no key the engine has it as it is');
+		assert.strictEqual(diffMod.quoteName('a b'), '"a b"');
+		assert.strictEqual(diffMod.quoteName('a"b'), '"a\\"b"');
+		assert.strictEqual(diffMod.quoteName('a\\b'), '"a\\\\b"');
+		assert.strictEqual(diffMod.quoteName('a\tb'), '"a\\tb"');
+		assert.strictEqual(diffMod.quoteName('a\nb'), '"a\\nb"');
+		assert.strictEqual(diffMod.quoteName('a\u0001b'), '"a\\001b"');
+		for (const plain of ["a'b", 'a$b', 'a*b', 'aéb', 'a#b', 'd1/a-b', '-', '/dev/null']) { assert.strictEqual(diffMod.quoteName(plain), plain, plain); }
+	});
+
+	test('round 6: a copy the 8 MiB cap refuses is "memory exhausted" (diff, the -z family), not "no difference" and not an empty file over the real one', async () => {
+		const h = await host({});
+		const r = await h.run("head -c 900000 /dev/zero | tr '\\0' a > x; echo b >> x; head -c 900000 /dev/zero | tr '\\0' a > y; echo c >> y; for i in 1 2 3 4 5 6 7; do cp x big$i; done; echo keep > small; diff -w x y; echo rc=$?; diff -q -i x y; echo rc=$?; sort -z -o small x y; echo rc=$?; cat small; grep -z -c b x y; echo rc=$?");
+		assert.strictEqual(r.stdout, 'rc=2\nrc=2\nrc=2\nkeep\nrc=2\n');
+		for (const who of ['diff', 'sort', 'grep']) { assert.ok(r.stderr.includes(`${who}: memory exhausted\n`), who + ': ' + r.stderr); }
+		// the copies fit and the output file does not: the real file is left alone, not written over with nothing
+		const h2 = await host({});
+		const r2 = await h2.run("head -c 450000 /dev/zero | tr '\\0' a > x; echo b >> x; head -c 450000 /dev/zero | tr '\\0' a > y; echo c >> y; head -c 1000000 /dev/zero | tr '\\0' z > b1; for i in 2 3 4 5 6; do cp b1 b$i; done; echo keep > small; sort -z -o small x y; echo rc=$?; cat small");
+		assert.strictEqual(r2.stdout, 'rc=2\nkeep\n');
+		assert.ok(r2.stderr.includes('sort: memory exhausted\n') && r2.stderr.includes('/out: not written'), r2.stderr);
+	});
+
+	test('round 6: a class name or a repeat count of a million characters is said (tr), never a stack overflow; diff -x reads a glob by table', () => {
+		const big = 'a'.repeat(1000000);
+		const r = trMod.run(['[:' + big + ':]', 'b'], new Uint8Array(0));
+		assert.ok(/^tr: invalid character class '/.test(r.stderr) && r.exitCode === 1, r.stderr.slice(0, 80));
+		const d = trMod.run(['a', '[b*' + '1'.repeat(1000000) + ']'], new Uint8Array(0));
+		assert.ok(/^tr: invalid repeat count '/.test(d.stderr) && d.exitCode === 1, d.stderr.slice(0, 80));
+		const m = diffMod.globMatcher('a*a*a*a*a*a*a*a*a*a*a*a*b');
+		assert.strictEqual(m.test('a'.repeat(5000) + 'c'), false);
+		assert.strictEqual(m.test('a'.repeat(30) + 'b'), true);
+		assert.strictEqual(diffMod.globMatcher('[z-a]').test('m'), false);
+		assert.strictEqual(diffMod.globMatcher('[!z]*').test('abc'), true);
+		assert.strictEqual(diffMod.globMatcher('x\\*').test('x*'), true);
+		assert.strictEqual(diffMod.globMatcher('x\\*').test('xy'), false);
 	});
 
 	test('seq -f: one conversion of e E f F g G, `%%`, width and precision, and GNU\'s words for the rest', () => {

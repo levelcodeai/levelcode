@@ -5,7 +5,7 @@ that the Code-OSS checkout already has. This is everything that ends up in it, w
 
 | Package | Version | Licence | Where it comes from | In the bundle as |
 | --- | --- | --- | --- | --- |
-| just-bash | 3.6.0 | Apache-2.0 (Copyright 2025 Vercel Inc.) | npm tarball, `dist/bundle/browser.js`, **modified by LevelCode** (patches LC-1 .. LC-60, `apply-patches.mjs`) | the interpreter and about 80 commands |
+| just-bash | 3.6.0 | Apache-2.0 (Copyright 2025 Vercel Inc.) | npm tarball, `dist/bundle/browser.js`, **modified by LevelCode** (patches LC-1 .. LC-71, `apply-patches.mjs`) | the interpreter and about 80 commands |
 | re2js | 1.3.3 | MIT | inlined by just-bash's own build | regular expressions (linear time) |
 | ieee754 | 1.x | BSD-3-Clause | inlined by just-bash's own build (and a dependency of buffer, which carries 1.2.1) | number formatting |
 | diff | 8.0.4 | BSD-3-Clause | npm tarball, `libesm/`, vendored as is | the `diff` command |

@@ -331,6 +331,18 @@ function parse(input, nowMs, tz) {
 		if (c.k === 'unit') { addRel(c.unit, c.mult); if (peek() && peek().t === 'word' && peek().v === 'ago') { /** @type {any} */ (lastRel)(); p++; } continue; }
 		if (c.k === 'day') { pc.days++; pc.dayOrdinal = 0; pc.dayNumber = c.n; if (isChar(peek(), ',')) { p++; } continue; }
 		if (c.k === 'month') {
+			// Mon-DD-YYYY: GNU reads the two dashes as the signs of two numbers (`tMONTH tSNUMBER tSNUMBER`)
+			const s1 = peek();
+			const s2 = peek(1);
+			if (isNum(s1, true) && /** @type {any} */ (s1).signed && /** @type {any} */ (s1).sign === '-' && isNum(s2, true) && /** @type {any} */ (s2).signed && /** @type {any} */ (s2).sign === '-') {
+				pc.dates++;
+				pc.month = c.n;
+				pc.day = /** @type {any} */ (s1).value;
+				pc.year = /** @type {any} */ (s2).value;
+				pc.yearDigits = /** @type {any} */ (s2).digits;
+				p += 2;
+				continue;
+			}
 			// Mon D [, YYYY]   (Mon YYYY is not a date)
 			const d = peek();
 			if (!isNum(d, false)) { return invalid; }

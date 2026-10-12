@@ -155,7 +155,8 @@ function canonical(line, o) {
 	let s = line;
 	if (o.stripCr) { s = s.replace(/\r$/, ''); }
 	if (o.w) { s = s.replace(/[ \t\v\f\r]+/g, ''); } else if (o.b) { s = s.replace(/[ \t\v\f\r]+/g, ' ').replace(/ $/, ''); } else if (o.Z) { s = s.replace(/[ \t\v\f\r]+$/, ''); }
-	if (o.i) { s = s.toLowerCase(); }
+	// GNU folds the bytes with tolower(): ASCII only (`é` and `É` differ under -i in a UTF-8 locale)
+	if (o.i) { s = s.replace(/[A-Z]+/g, (m) => m.toLowerCase()); }
 	return s;
 }
 
@@ -398,21 +399,64 @@ function normalBody(changes, a, b, eof) {
 	return out;
 }
 
-/** The glob a name is matched with by --exclude (fnmatch: `*`, `?`, a set; not `/`-special). */
-function globToRegExp(glob) {
-	let re = '^';
+/**
+ * The glob a name is matched with by --exclude (fnmatch: `*`, `?`, a set with ranges and `!`/`^`, a backslash; not
+ * `/`-special). It is matched by table (the pattern's tokens against the name's characters), not by a regular
+ * expression: `a*a*a*a*b` over a long name of a's was a backtracking RegExp that did not return.
+ *
+ * @param {string} glob
+ * @returns {{ test(name: string): boolean }}
+ */
+function globMatcher(glob) {
+	/** @type {Array<{ k: 'any' | 'one' | 'set' | 'lit', c?: string, neg?: boolean, items?: Array<[string, string]> }>} */
+	const tokens = [];
 	for (let i = 0; i < glob.length; i++) {
 		const c = glob[i];
-		if (c === '*') { re += '.*'; } else if (c === '?') { re += '.'; } else if (c === '[') {
+		if (c === '*') { if (!tokens.length || tokens[tokens.length - 1].k !== 'any') { tokens.push({ k: 'any' }); } continue; }
+		if (c === '?') { tokens.push({ k: 'one' }); continue; }
+		if (c === '[') {
 			const close = glob.indexOf(']', i + 2);
-			if (close < 0) { re += '\\['; continue; }
-			let set = glob.slice(i + 1, close);
-			if (set[0] === '!') { set = '^' + set.slice(1); }
-			re += '[' + set.replace(/\\/g, '\\\\') + ']';
+			if (close < 0) { tokens.push({ k: 'lit', c }); continue; }
+			let body = glob.slice(i + 1, close);
+			let neg = false;
+			if (body[0] === '!' || body[0] === '^') { neg = true; body = body.slice(1); }
+			/** @type {Array<[string, string]>} */
+			const items = [];
+			for (let k = 0; k < body.length; k++) {
+				if (k + 2 < body.length && body[k + 1] === '-') { items.push([body[k], body[k + 2]]); k += 2; } else { items.push([body[k], body[k]]); }
+			}
+			tokens.push({ k: 'set', neg, items });
 			i = close;
-		} else if (c === '\\' && i + 1 < glob.length) { re += glob[++i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); } else { re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+			continue;
+		}
+		if (c === '\\' && i + 1 < glob.length) { tokens.push({ k: 'lit', c: glob[++i] }); continue; }
+		tokens.push({ k: 'lit', c });
 	}
-	return new RegExp(re + '$');
+	const one = (t, ch) => {
+		if (t.k === 'one') { return true; }
+		if (t.k === 'lit') { return t.c === ch; }
+		const inSet = t.items.some(([a, b]) => a <= ch && ch <= b);
+		return inSet !== t.neg;
+	};
+	return {
+		test(name) {
+			const chars = Array.from(name);
+			// reach[j]: the first i tokens can have matched the first j characters
+			let reach = new Array(chars.length + 1).fill(false);
+			reach[0] = true;
+			for (const t of tokens) {
+				const next = new Array(chars.length + 1).fill(false);
+				if (t.k === 'any') {
+					let on = false;
+					for (let j = 0; j <= chars.length; j++) { on = on || reach[j]; next[j] = on; }
+				} else {
+					for (let j = 0; j < chars.length; j++) { if (reach[j] && one(t, chars[j])) { next[j + 1] = true; } }
+				}
+				reach = next;
+			}
+			return reach[chars.length];
+		},
+	};
 }
 
 /**
@@ -427,6 +471,24 @@ function globToRegExp(glob) {
  *   quote(word: string): string,
  * }} DiffIO
  */
+
+/**
+ * A name as diffutils 3.8 writes it in the `diff ...` line and in the labels of `---`, `+++` and `***` (not in the
+ * `Only in`, `Files ... differ` and `Common subdirectories` lines): in double quotes when it holds a blank, a double
+ * quote, a backslash or a control character, with C's escapes inside. Anything else (a `'`, a `$`, `é`) is as it is.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+function quoteName(name) {
+	if (!/[ "\\\u0000-\u001f\u007f]/.test(name)) { return name; }
+	const named = { 7: '\\a', 8: '\\b', 9: '\\t', 10: '\\n', 11: '\\v', 12: '\\f', 13: '\\r' };
+	return '"' + name.replace(/[\\"\u0000-\u001f\u007f]/g, (c) => {
+		if (c === '\\') { return '\\\\'; }
+		if (c === '"') { return '\\"'; }
+		return named[c.charCodeAt(0)] || '\\' + c.charCodeAt(0).toString(8).padStart(3, '0');
+	}) + '"';
+}
 
 /**
  * `diff` over the engine: see the header of this file.
@@ -458,7 +520,7 @@ async function run(args, io) {
 			return { stdout: '', stderr: `diff: ${f}: No such file or directory\n`, exitCode: 2 };
 		}
 	}
-	const excluded = excludes.map(globToRegExp);
+	const excluded = excludes.map(globMatcher);
 	const isExcluded = (name) => excluded.some((re) => re.test(name));
 	const hasNul = (u8) => u8.indexOf(0) >= 0;
 	const join = (d, n) => (d.endsWith('/') ? d + n : d + '/' + n);
@@ -540,10 +602,10 @@ async function run(args, io) {
 		}
 		status = Math.max(status, 1);
 		if (o.q) { say(`Files ${saidA} and ${saidB} differ`); return; }
-		if (show) { say(`${header} ${shownA} ${shownB}`); }
+		if (show) { say(`${header} ${quoteName(shownA)} ${quoteName(shownB)}`); }
 		const eof = { noNlA: sa.noNewline, noNlB: sb.noNewline };
-		const labelA = o.labels[0] !== undefined ? o.labels[0] : `${shownA}\t${io.stamp(A.t)}`;
-		const labelB = o.labels[1] !== undefined ? o.labels[1] : `${shownB}\t${io.stamp(B.t)}`;
+		const labelA = o.labels[0] !== undefined ? o.labels[0] : `${quoteName(shownA)}\t${io.stamp(A.t)}`;
+		const labelB = o.labels[1] !== undefined ? o.labels[1] : `${quoteName(shownB)}\t${io.stamp(B.t)}`;
 		if (o.format === 'unified') {
 			out += `--- ${labelA}\n+++ ${labelB}\n` + unifiedBody(changes, sa.lines, sb.lines, eof, o.context);
 		} else if (o.format === 'context') {
@@ -636,4 +698,4 @@ async function run(args, io) {
 	return { stdout: out, stderr: err, exitCode: status };
 }
 
-module.exports = { run, parseOptions, splitLines, canonical, parseNormal, shiftBoundaries, groupChanges, unifiedBody, contextBody, normalBody, globToRegExp };
+module.exports = { run, quoteName, parseOptions, splitLines, canonical, parseNormal, shiftBoundaries, groupChanges, unifiedBody, contextBody, normalBody, globMatcher };

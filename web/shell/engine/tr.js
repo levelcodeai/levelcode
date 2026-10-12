@@ -17,6 +17,13 @@ class TrError extends Error {}
 const die = (message) => { throw new TrError(message); };
 
 /** What `quote()` writes between its marks for a string: straight quotes here, a backslash and control characters escaped. */
+/** the characters of some bytes (`String.fromCharCode(...bytes)` overflows the stack past a hundred thousand) */
+function bytesText(bytes) {
+	let out = '';
+	for (let i = 0; i < bytes.length; i += 8192) { out += String.fromCharCode.apply(null, Array.from(bytes.slice(i, i + 8192))); }
+	return out;
+}
+
 function quote(s) {
 	return "'" + String(s).replace(/[\\\u0000-\u001f\u007f]/g, (c) => {
 		if (c === '\\') { return '\\\\'; }
@@ -155,7 +162,7 @@ function buildSpecList(es) {
 					const operand = p.slice(i + 2, close);
 					if (operand.length === 0) { die(delim === 0x3a ? "missing character class name '[::]'" : "missing equivalence class character '[==]'"); }
 					if (delim === 0x3a) {
-						const name = String.fromCharCode(...operand);
+						const name = bytesText(operand);
 						// The name goes through make_printable_str and then through quote(): a tab is `\\t` there, two backslashes
 						if (!Object.prototype.hasOwnProperty.call(CLASSES, name)) { die(`invalid character class ${quote(makePrintable(operand))}`); }
 						out.push({ type: 'class', name });
@@ -176,7 +183,7 @@ function buildSpecList(es) {
 						const digits = p.slice(i + 3, k);
 						let count = 0;
 						if (digits.length) {
-							const text = String.fromCharCode(...digits);
+							const text = bytesText(digits);
 							const octal = digits[0] === 0x30;
 							// GNU takes every count below 2^64 - 1 (xstrtoumax says that one is an overflow); one that is larger than
 							// the set it is for needs is cut where the set is expanded

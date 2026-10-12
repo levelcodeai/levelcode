@@ -26,7 +26,7 @@ export const UNPATCHED_SHA256 = '38f1ad1e3283980ecdf68cede8a4eed028c6dff6e8c3179
  * file can collide with one. `Nu` is the file's own function (a sed range's key), a hoisted declaration, so it is there.
  */
 export const HEADER = `/*! LevelCode: this is just-bash@3.6.0 dist/bundle/browser.js (Apache-2.0, Copyright 2025 Vercel Inc.) MODIFIED by LevelCode:
- *  patches LC-1 .. LC-60 of web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs (Apache-2.0 section 4(b)).
+ *  patches LC-1 .. LC-71 of web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs (Apache-2.0 section 4(b)).
  *  Unmodified input sha256 ${UNPATCHED_SHA256}. */
 import __lcText from"lc-text";
 import __lcZone from"lc-zone";
@@ -84,6 +84,11 @@ var __lcCpLen=s=>{let n=0;for(let i=0;i<s.length;i++){let c=s.charCodeAt(i);if(c
 var __lcCpSub=(s,a,l)=>{let r="",k=0,i=0;for(;i<s.length;){let c=s.charCodeAt(i),w=c>=55296&&c<=56319&&i+1<s.length&&(s.charCodeAt(i+1)&64512)===56320?2:1;if(k>=a&&(l===void 0||k<a+l))r+=s.slice(i,i+w);k++;i+=w;if(l!==void 0&&k>=a+l)break}return r};
 var __lcInherit=(h,e)=>{let q={...h};delete q.PWD;delete q.OLDPWD;return{...q,...e}};
 var __lcIso=(p,u,a,d)=>{let f=p==="date"?"%Y-%m-%d":p==="hours"?"%Y-%m-%dT%H":p==="minutes"?"%Y-%m-%dT%H:%M":p==="ns"?"%Y-%m-%dT%H:%M:%S,000000000":"%Y-%m-%dT%H:%M:%S",s=As(f,u,a,d);if(p==="date")return s;let z=As("%z",u,a,d);return s+z.slice(0,3)+":"+z.slice(3)};
+var __lcSf=(e,a,v,L)=>{let i=a+1,pad="",up=!1,chg=!1,w=-1,col=0;for(;i<e.length;i++){let c=e[i];if(c==="_"||c==="-"||c==="0"||c==="+"&&!L)pad=c;else if(c==="^")up=!0;else if(c==="#")chg=!0;else break}if(e[i]>="0"&&e[i]<="9"){w=0;for(;e[i]>="0"&&e[i]<="9";i++)w=w*10+(+e[i])}for(;e[i]===":"&&!L;)col++,i++;if(i===a+1&&e[i]!=="E"&&e[i]!=="O"){let p=v(e[i]);return p===null?null:{s:p,end:a+2}}if((e[i]==="E"||e[i]==="O")&&i+1<e.length)i++;let d=e[i];if(d===void 0)return null;if(col>0&&d!=="z")return null;let p=v(d);if(p===null)return null;let end=i+1;if(d==="z"&&col>0){let m=/^([+-])(\\d\\d)(\\d\\d)$/.exec(p);if(!m)return null;p=col===1?m[1]+m[2]+":"+m[3]:col===2?m[1]+m[2]+":"+m[3]+":00":m[3]==="00"?m[1]+m[2]:m[1]+m[2]+":"+m[3];if(col>3)return null}else if(d==="N"){if(L)return null;let n=w<0?9:w;return{s:(p+"0".repeat(n)).slice(0,n),end}}else if("deHIjklmMSUVWyCgGYuws".includes(d)){let n=String(Number(p.trim())),neg=n[0]==="-",dg=neg?n.slice(1):n,dw={d:2,e:2,H:2,I:2,j:3,k:2,l:2,m:2,M:2,S:2,U:2,V:2,W:2,y:2,C:2,g:2,G:4,Y:4,u:1,w:1,s:1}[d],pc=pad==="_"?" ":pad==="0"||pad==="+"?"0":"ekl".includes(d)&&pad!=="-"?" ":"0",wd=pad==="-"?0:w<0?dw:w,len=dg.length+(neg?1:0);if(pad==="+"&&(d==="Y"||d==="G")&&wd>len){neg=!0;dg=(n[0]==="-"?"-":"")+"0".repeat(wd-1-len)+dg;return{s:"+"+dg,end}}let r=wd>len?pc===" "?" ".repeat(wd-len)+(neg?"-":"")+dg:(neg?"-":"")+"0".repeat(wd-len)+dg:(neg?"-":"")+dg;return{s:r,end}}else{if(up)p=p.toUpperCase();else if(chg)p=d==="p"||d==="Z"?p.toLowerCase():p.toUpperCase()}if(w>p.length&&pad!=="-")p=(pad==="0"?"0":" ").repeat(w-p.length)+p;return{s:p,end}};
+var __lcNum=s=>{let m=/^[ \\t]*(-?)(\\d*)(\\.\\d*)?/.exec(s),d=m[2]+(m[3]&&m[3].length>1?m[3]:"");return d===""?0:(m[1]?-1:1)*Number(m[2]+(m[3]||".")+"0")};
+var __lcSh=e=>{let f=x=>typeof x=="string"?"'"+x.replace(/'/g,"'\\\\''")+"'":x===null?"null":typeof x=="boolean"||typeof x=="number"?String(x):void 0;if(Array.isArray(e)){let o=[];for(let x of e){let y=f(x);if(y===void 0)return null;o.push(y)}return o.join(" ")}let y=f(e);return y===void 0?null:y};
+var __lcW=async(e,w)=>{let o="",s=0,i=0;for(;i<w.length;){if(w[i]==="$"&&w[i+1]==="{"){let d=1,k=i+2;for(;k<w.length&&d>0;k++)w[k]==="{"?d++:w[k]==="}"&&d--;o+=await Od(e,w.slice(s,i))+await Jl(e,w.slice(i+2,k-1));i=s=k;continue}if(w[i]==="$"&&w[i+1]==="("&&w[i+2]==="("){let d=2,k=i+3;for(;k<w.length&&d>0;k++)w[k]==="("?d++:w[k]===")"&&d--;o+=await Od(e,w.slice(s,i))+String(await $e(e,_e(new xe,w.slice(i+3,k-2)).expression));i=s=k;continue}i++}return o+await Od(e,w.slice(s))};
+var __lcBr=async(e,t)=>{let m=/^([a-zA-Z_][a-zA-Z0-9_]*)/.exec(t);if(!m)return;let n=m[1],p=n.length,sub=null;if(t[p]==="["){let d=0,k=p;for(;k<t.length;k++){let c=t[k];if(c==="[")d++;else if(c==="]"&&--d===0)break}if(k>=t.length)return;sub=t.slice(p+1,k);p=k+1}let rest=t.slice(p),op=[":-",":=",":?",":+","-","=","?","+"].find(o=>rest.startsWith(o));if(!op)return;let w=rest.slice(op.length),colon=op[0]===":",c=colon?op[1]:op[0],val,set,key=null,name=sub===null?n:n+"["+sub+"]";if(sub===null){val=await je(e,n,!1);set=e.state.env.has(n)||ts(e,n,0)}else{val=await je(e,name,!1);if(sub==="@"||sub==="*")set=Ee(e,n).length>0;else{if(e.state.associativeArrays?.has(n))key=Nw(e,Nl(sub));else if(/^-?[0-9]+$/.test(sub))key=+sub;else try{key=await $e(e,_e(new xe,sub).expression)}catch{key=0}if(typeof key=="number"&&key<0){let u=Dt(e,n);key=u.length?Math.max(...u)+1+key:-1}set=ts(e,n,key)||key===0&&e.state.env.has(n)}}let unset=!set||colon&&val==="";if(c==="-")return unset?await __lcW(e,w):val;if(c==="+")return unset?"":await __lcW(e,w);if(c==="?"){if(!unset)return val;let x=await __lcW(e,w);throw new Error(name+": "+(x||"parameter null or not set"))}if(!unset)return val;let x=await __lcW(e,w);if(sub===null)e.state.env.set(n,x);else if(key!==null)be(e,n,key,x,e.state.associativeArrays?.has(n)?"associative":"indexed");return x};
 `;
 
 /**
@@ -1444,6 +1449,167 @@ export const PATCHES = [
 				name: 'the ISO year of a date before the year 100 (`new Date(6, ...)` is 1906)',
 				from: 'function Ph(e,t,n){let r=new Date(e,t-1,n,12,0,0);',
 				to: 'function Ph(e,t,n){let r=new Date(2e3,0,1,12,0,0);r.setFullYear(e,t-1,n);',
+			},
+		],
+	},
+	{
+		id: 'LC-61',
+		title: 'grep -r: dot entries are searched (`grep -r name .` skipped `.env`, `.github/workflows/*.yml`, everything under a hidden folder; GNU grep skips none), except a folder named `.git` (its objects would use the traversal limit up; `grep -r x .git` still works: an operand is not an entry of a walk)',
+		edits: [
+			{
+				name: 'the recursion skips only a folder named .git, with the entry types the file system gives',
+				from: 'if(Bn(o),h.name.startsWith("."))continue;let m=e==="."?h.name:`${e}/${h.name}`;await va(',
+				to: 'if(Bn(o),h.name===".git"&&h.isFile!==!0)continue;let m=e==="."?h.name:`${e}/${h.name}`;await va(',
+			},
+			{
+				name: 'and with bare names',
+				from: 'if(Bn(o),h.startsWith("."))continue;let m=e==="."?h:`${e}/${h}`;await va(',
+				to: 'if(Bn(o),h===".git")continue;let m=e==="."?h:`${e}/${h}`;await va(',
+			},
+		],
+	},
+	{
+		id: 'LC-62',
+		title: 'arithmetic: `${NAME[SUB]:-W}`, `:=`, `:+`, `:?` and the forms without the colon read the ELEMENT (`c[$w]=$((${c[$w]:-0}+1))` always gave the default, so the word-count idiom counted 1; `${k[-1]:-0}` took `-` for the operator), and the word is expanded (`$((${x:-$y}+1))` took `$y` for text and gave 0); `:=` assigns the element',
+		edits: [
+			{
+				name: 'Jl (a braced expansion inside $(( )) ) asks LevelCode\'s reader first and keeps the old one for what it does not take',
+				from: 'let n=[":-",":=",":?",":+","-","=","?","+"],r=-1,s="";for(let f of n){let d=t.indexOf(f);d>0&&(r===-1||d<r)&&(r=d,s=f)}if(r===-1)return await je(e,t);',
+				to: '{let __b=await __lcBr(e,t);if(__b!==void 0)return __b}let n=[":-",":=",":?",":+","-","=","?","+"],r=-1,s="";for(let f of n){let d=t.indexOf(f);d>0&&(r===-1||d<r)&&(r=d,s=f)}if(r===-1)return await je(e,t);',
+			},
+		],
+	},
+	{
+		id: 'LC-63',
+		title: 'for x; do (no `in`) goes over the positional parameters as they are: the loop split their joined text on spaces (`set -- "a b" c; for x; do echo "<$x>"; done` made three), and dropped an empty one',
+		edits: [
+			{
+				name: 'the implicit list is $1 .. $#',
+				from: 'if(t.words===null)i=(e.state.env.get("@")||"").split(" ").filter(Boolean);else if(t.words.length===0)',
+				to: 'if(t.words===null){let __n=Number.parseInt(e.state.env.get("#")||"0",10);for(let __k=1;__k<=__n;__k++)i.push(e.state.env.get(String(__k))||"")}else if(t.words.length===0)',
+			},
+		],
+	},
+	{
+		id: 'LC-64',
+		title: 'strftime (date, `printf \'%(fmt)T\'`): the flags and the width of GNU (`%-d %-m %-H %-I %_d %_m %^a %^B %^b %#p %5Y %010d %3N %e %k %l`) and `%:z %::z %:::z`; they were printed as they were typed (`date +%-d` gave `%-d`)',
+		edits: [
+			{
+				name: 'the loop reads flags, a width, `E`/`O` and colons before the conversion letter',
+				from: 'if(e[a]==="%"&&a+1<e.length){let d=e[a+1],p;u.has(d)?p=u.get(d)??null:(p=Q8(s,i,d,n),u.set(d,p)),p!==null?(f(p),a+=2):(f(e[a]),a++)}',
+				to: 'if(e[a]==="%"&&a+1<e.length){let __x=__lcSf(e,a,d=>{let p;return u.has(d)?p=u.get(d)??null:(p=Q8(s,i,d,n),u.set(d,p)),p},r.libc);__x!==null?(f(__x.s),a=__x.end):(f(e[a]),a++)}',
+			},
+			{
+				name: 'printf %(...)T is libc\'s strftime: no `%:z`, no `+` flag, no `%N` (the colon and the plus are GNU date\'s)',
+				from: 'let z=As(N,_,r,{maxOperations:s-u,maxOutputBytes:s-u});',
+				to: 'let z=As(N,_,r,{maxOperations:s-u,maxOutputBytes:s-u,libc:!0});',
+			},
+		],
+	},
+	{
+		id: 'LC-65',
+		title: 'find: the status of `-exec ... \\;` is find\'s own (0 unless find failed: the exit status of the last command leaked into it, so `find -exec grep -q x {} \\; && next` and `set -e` stopped), `-exec ... {} +` is 1 when a run failed; `-mtime N` is whole 24-hour periods as GNU counts them (`+0` is a file older than a day, not 2 hours; a file written this second is 0), `-mmin N` is the minute the age ends in (`+N` and `-N` compare the age itself), and `-mmin -amin -cmin -atime -ctime` are there (the file system keeps one time: they read the modification time, as `stat %X` does)',
+		edits: [
+			{
+				name: 'a command run by -exec ... ; does not set find\'s status',
+				from: 'p?p.appendResult(L):(y(L.stdout),w(L.stderr)),L.exitCode!==0&&(d=L.exitCode);break}}}for(let[z,O]of T)',
+				to: 'p?p.appendResult(L):(y(L.stdout),w(L.stderr));break}}}for(let[z,O]of T)',
+			},
+			{
+				name: 'a run of -exec ... + that failed is status 1',
+				from: 'p?p.appendResult(U):(y(U.stdout),w(U.stderr)),U.exitCode!==0&&(d=U.exitCode)}return p?.build(d)',
+				to: 'p?p.appendResult(U):(y(U.stdout),w(U.stderr)),U.exitCode!==0&&(d=1)}return p?.build(d)',
+			},
+			{
+				name: 'the age is counted in whole days (-mtime and its kin, a file written within the second is not in the future); -mmin and its kin compare the age in seconds (a minute count N is the minute the age ends in)',
+				from: 'let r=(Date.now()-t.mtime)/(1e3*60*60*24),s;return e.comparison==="more"?s=r>e.days:e.comparison==="less"?s=r<e.days:s=Math.floor(r)===e.days,',
+				to: 'let r=(Date.now()-t.mtime)/1e3,s;r>-1&&r<.001&&(r=.001);if(e.unit===60)s=e.comparison==="more"?r>e.days*60:e.comparison==="less"?r<e.days*60:Math.ceil(r/60)===e.days;else{let q=Math.floor(r/86400);s=e.comparison==="more"?q>e.days:e.comparison==="less"?q<e.days:q===e.days}return ',
+			},
+			{
+				name: 'the six time predicates are read by one parser',
+				from: 'else if(l==="-mtime"){',
+				to: 'else if(l==="-mtime"||l==="-atime"||l==="-ctime"||l==="-mmin"||l==="-amin"||l==="-cmin"){',
+			},
+			{
+				name: 'and carry their period',
+				from: 'n.push({type:"expr",expr:{type:"mtime",days:f,comparison:c}})}',
+				to: 'n.push({type:"expr",expr:{type:"mtime",days:f,comparison:c,unit:l.endsWith("min")?60:86400}})}',
+			},
+		],
+	},
+	{
+		id: 'LC-66',
+		title: 'printf: `\\"`, `\\?` and `\\\'` in the FORMAT are the character (`printf "\\"%s\\"\\n" a` printed the backslashes, so `printf \'{\\"a\\": 1}\\n\'` was not JSON), and `$\'\\?\'` is `?`',
+		edits: [
+			{
+				name: 'the format reader: a backslash before a quote or a question mark is dropped',
+				from: 'case"e":case"E":n+="\\x1B",r+=2;break;case"0":case"1":case"2":case"3":case"4":case"5":case"6":case"7":{let i="",o=r+1;',
+				to: 'case\'"\':case"?":case"\'":n+=e[r+1],r+=2;break;case"e":case"E":n+="\\x1B",r+=2;break;case"0":case"1":case"2":case"3":case"4":case"5":case"6":case"7":{let i="",o=r+1;',
+			},
+			{
+				name: '$\'...\': \\? is ?',
+				from: 'case\'"\':r+=\'"\',s+=2;break;',
+				to: 'case\'"\':r+=\'"\',s+=2;break;case"?":r+="?",s+=2;break;',
+			},
+		],
+	},
+	{
+		id: 'LC-67',
+		title: 'sort -n reads what coreutils reads: blanks, a minus sign, digits, a decimal point and digits (`1e2` is 1 and `+4` is 0; the engine took JavaScript\'s parseFloat: 100 and 4)',
+		edits: [
+			{
+				name: 'the numeric comparison',
+				from: 'if(n.numeric){let i=parseFloat(r)||0,o=parseFloat(s)||0;',
+				to: 'if(n.numeric){let i=__lcNum(r),o=__lcNum(s);',
+			},
+		],
+	},
+	{
+		id: 'LC-68',
+		title: 'word splitting: blanks at the edge of an unquoted expansion that touches a literal or another expansion are word breaks (`v=" hi"; echo a$v b` is `a hi b`, `$v$v` is two words, `set -- x$v y` is three, `ec$v` is `ec` and `hi`); the splitter joined across the edge',
+		edits: [
+			{
+				name: 'a pending word is ended by a leading delimiter of the value, or by a trailing one of the part before it',
+				from: 'let{words:p,hadLeadingDelimiter:h,hadTrailingDelimiter:m}=_l(d.value,n,e.limits.maxArrayElements);if(f&&h&&a===""&&(en(e,l,""),c=!0),p.length===0)',
+				to: 'let{words:p,hadLeadingDelimiter:h,hadTrailingDelimiter:m}=_l(d.value,n,e.limits.maxArrayElements);if(a!==""&&(h||u)&&p.length>0&&(en(e,l,a),a="",c=!0,u=!1),f&&h&&a===""&&(en(e,l,""),c=!0),p.length===0)',
+			},
+		],
+	},
+	{
+		id: 'LC-69',
+		title: 'tee: a name that cannot be written as typed is refused the way a redirection is (`tee n/` and `tee f/` are `Is a directory`/`Not a directory`, `tee x/../n` with no x is `No such file or directory`, status 1: the engine wrote n and overwrote f)',
+		edits: [
+			{
+				name: 'tee looks at the name as it was typed before it writes',
+				from: 'for(let a of s)try{let c=t.fs.resolvePath(t.cwd,a);r?await t.fs.appendFile(c,i,"binary")',
+				to: 'for(let a of s)try{let __n=await __lcRedirectName({state:{cwd:t.cwd},fs:t.fs},a);if(__n){o+=`tee: ${a}: ${__n}\n`,l=1;continue}let c=t.fs.resolvePath(t.cwd,a);r?await t.fs.appendFile(c,i,"binary")',
+			},
+		],
+	},
+	{
+		id: 'LC-70',
+		title: 'awk printf: the room left for its output is `maxOutputSize` less the length of what was printed: it was less the UTF-8 byte count of ALL of it, counted again by every printf, so a job of n printf calls took n squared (8,000 lines of `printf \"%5d %e\\n\"` a second, 50,000 two minutes); `print` never did',
+		edits: [
+			{
+				name: 'printf asks the length of the output, not its size in bytes',
+				from: 'let o=e.maxOutputSize>0?Math.max(0,e.maxOutputSize-M(e.output)):void 0,l=Ra(s,i,o);',
+				to: 'let o=e.maxOutputSize>0?Math.max(0,e.maxOutputSize-e.output.length):void 0,l=Ra(s,i,o);',
+			},
+		],
+	},
+	{
+		id: 'LC-71',
+		title: 'jq `@csv` quotes every string (`"a","b"`: jq 1.6 does; the engine quoted one that needed it, so a field with a comma was the only quoted one), and `@sh` of an array is its elements quoted and joined by a space, of a number or a boolean as it is (it was null)',
+		edits: [
+			{
+				name: '@csv: a string is always in quotes',
+				from: 'let i=String(s);return i.includes(",")||',
+				to: 'let i=String(s);return typeof s=="string"||i.includes(",")||',
+			},
+			{
+				name: '@sh: strings, numbers, booleans, null and arrays of them',
+				from: 'case"@sh":return typeof e=="string"?[`\'${e.replace(/\'/g,"\'\\\\\'\'")}\'`]:[null];',
+				to: 'case"@sh":return[__lcSh(e)];',
 			},
 		],
 	},

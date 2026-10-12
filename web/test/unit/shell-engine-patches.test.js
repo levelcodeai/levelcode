@@ -91,9 +91,9 @@ async function main() {
 
 	/* ------------------------------------------------------------------------------------------ the patches */
 
-	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9', 'LC-10', 'LC-11', 'LC-12', 'LC-13', 'LC-14', 'LC-15', 'LC-16', 'LC-17', 'LC-18', 'LC-19', 'LC-20', 'LC-21', 'LC-22', 'LC-23', 'LC-24', 'LC-25', 'LC-26', 'LC-27', 'LC-28', 'LC-29', 'LC-30', 'LC-31', 'LC-32', 'LC-33', 'LC-34', 'LC-35', 'LC-36', 'LC-37', 'LC-38', 'LC-39', 'LC-40', 'LC-41', 'LC-42', 'LC-43', 'LC-44', 'LC-45', 'LC-46', 'LC-47', 'LC-48', 'LC-49', 'LC-50', 'LC-51', 'LC-52', 'LC-53', 'LC-54', 'LC-55', 'LC-56', 'LC-57', 'LC-58', 'LC-59', 'LC-60'];
+	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9', 'LC-10', 'LC-11', 'LC-12', 'LC-13', 'LC-14', 'LC-15', 'LC-16', 'LC-17', 'LC-18', 'LC-19', 'LC-20', 'LC-21', 'LC-22', 'LC-23', 'LC-24', 'LC-25', 'LC-26', 'LC-27', 'LC-28', 'LC-29', 'LC-30', 'LC-31', 'LC-32', 'LC-33', 'LC-34', 'LC-35', 'LC-36', 'LC-37', 'LC-38', 'LC-39', 'LC-40', 'LC-41', 'LC-42', 'LC-43', 'LC-44', 'LC-45', 'LC-46', 'LC-47', 'LC-48', 'LC-49', 'LC-50', 'LC-51', 'LC-52', 'LC-53', 'LC-54', 'LC-55', 'LC-56', 'LC-57', 'LC-58', 'LC-59', 'LC-60', 'LC-61', 'LC-62', 'LC-63', 'LC-64', 'LC-65', 'LC-66', 'LC-67', 'LC-68', 'LC-69', 'LC-70', 'LC-71'];
 
-	test('there are sixty patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
+	test('there are seventy patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
 		assert.deepStrictEqual(patchMod.PATCHES.map((p) => p.id), IDS);
 		let edits = 0;
 		for (const p of patchMod.PATCHES) {
@@ -117,7 +117,7 @@ async function main() {
 		assert.ok(r.text.includes('MODIFIED by LevelCode'));
 		assert.ok(r.text.includes('Apache-2.0'));
 		assert.ok(r.text.includes('section 4(b)'));
-		assert.ok(r.text.includes('LC-1 .. LC-60'), 'the notice says how many patches there are');
+		assert.ok(r.text.includes('LC-1 .. LC-71'), 'the notice says how many patches there are');
 		assert.deepStrictEqual(r.patches.map((p) => p.id), IDS);
 	});
 
@@ -429,7 +429,8 @@ async function main() {
 		const steps = [
 			['a glob', 'echo *', 'A B _x a sub z ä'],
 			['find', "find . -type f | tr '\n' ' '", './A ./B ./_x ./a ./sub/.h ./sub/A ./sub/Z ./sub/a ./sub/b ./z ./ä '],
-			['grep -r', "grep -r '' sub | tr '\n' ' '", 'sub/A:a sub/Z:z sub/a:a sub/b:b '],
+			// (LC-61: grep -r reads the dot entries too, as GNU grep does: `.h` is the first by code point)
+			['grep -r', "grep -r '' sub | tr '\n' ' '", 'sub/.h:h sub/A:a sub/Z:z sub/a:a sub/b:b '],
 			['a pattern grep expands itself', "grep '' 'sub/[a-zA-Z]' | tr '\n' ' '", 'sub/A:a sub/Z:z sub/a:a sub/b:b '],
 			['sort -V', "printf 'v10\nv2\nV2\nv1\n' | sort -V | tr '\n' ' '", 'V2 v1 v2 v10 '],
 			['tree', "tree sub | head -n 5 | tr '\n' ' '", 'sub |-- A |-- Z |-- a `-- b '],
@@ -1146,6 +1147,61 @@ async function main() {
 		const r = await sh.exec("export TZ=UTC; for d in @-59011372800 @-30610310400 @-30610224000 @-62135510400 @-46374422400 @-61965475200 @-59011545600 @-62135596800; do date -d \"$d\" '+%F|%Y|%C|%y|%G|%m'; done; date -d @-59011459200 '+%a %b %e %Y'");
 		assert.strictEqual(r.stdout, "0100-01-02|0100|01|00|0099|01\n0999-12-31|0999|09|99|1000|12\n1000-01-01|1000|10|00|1000|01\n0001-01-02|0001|00|01|0001|01\n0500-06-15|0500|05|00|0500|06\n0006-05-24|0006|00|06|0006|05\n0099-12-31|0099|00|99|0099|12\n0001-01-01|0001|00|01|0001|01\nFri Jan  1 0100\n");
 		assert.strictEqual(r.stderr, "");
+	});
+
+	test('LC-61 .. LC-71 (round 6): with a patch taken out the cases GNU answered are different from GNU again, and with it every one is GNU\'s', async () => {
+		const { makeHost } = require('./shell-engine-support.js');
+		const golden = JSON.parse(fs.readFileSync(path.join(REPO, 'web', 'test', 'fixtures', 'shell', 'golden', 'golden.json'), 'utf8'));
+		const byName = new Map(golden.cases.map((c) => [c.name, c]));
+		const CASES = {
+			'LC-61': ['r6-grep-r-dot-entries'],
+			'LC-62': ['r6-arith-assoc-default', 'r6-arith-default-forms', 'r6-arith-assoc-quoted-subscript', 'r6-arith-element-assign-and-plus'],
+			'LC-63': ['r6-for-no-in'],
+			'LC-64': ['r6-date-flags-numbers', 'r6-date-flags-text', 'r6-date-flags-grid', 'r6-date-colon-z'],
+			'LC-65': ['r6-find-exec-status', 'r6-find-mtime-days', 'r6-find-mmin'],
+			'LC-66': ['r6-printf-quote-escapes'],
+			'LC-67': ['r6-sort-numeric-reading'],
+			'LC-68': ['r6-split-edge-blanks', 'r6-split-edge-command-word', 'r6-split-edge-grid', 'r6-split-edge-ifs-and-arrays'],
+			'LC-69': ['r6-tee-slash-names'],
+			'LC-71': ['r6-jq-csv-sh-formats'],
+		};
+		const differs = async (Engine, name) => {
+			const c = byName.get(name);
+			assert.ok(c && typeof c.stdout === 'string', 'a recorded case: ' + name);
+			const tree = makeTree({});
+			const h = await makeHost({ Engine, tree });
+			const r = await h.run(c.script + '\n', { cwd: '/w' });
+			return r.stdout !== c.stdout || r.exitCode !== c.exit;
+		};
+		for (const [id, names] of Object.entries(CASES)) {
+			const without = await loader.loadEngineWithout([id]);
+			let red = 0;
+			for (const n of names) {
+				if (await differs(without, n)) { red++; }
+				assert.strictEqual(await differs(E, n), false, `${id}: ${n} is GNU's with the patch`);
+			}
+			assert.ok(red > 0, `${id}: with the patch taken out none of ${names.join(', ')} differs from GNU: the patch is pinned by nothing`);
+		}
+	});
+
+	test('LC-70 (awk printf): n calls take n times as long, not n squared (the room left was counted in bytes over everything printed, by every call)', async () => {
+		const { makeHost } = require('./shell-engine-support.js');
+		const script = "seq 1 16000 | awk '{printf \"%5d %e %s\\n\", NR, NR*1.5, $1}' | tail -1";
+		const time = async (Engine) => {
+			const h = await makeHost({ Engine, tree: makeTree({}) });
+			const t0 = process.hrtime.bigint();
+			const r = await h.run(script, { cwd: '/w' });
+			assert.strictEqual(r.stdout, '16000 2.400000e+04 16000\n');
+			return Number(process.hrtime.bigint() - t0) / 1e6;
+		};
+		const fast = await time(E);
+		const slow = await time(await loader.loadEngineWithout(['LC-70']));
+		assert.ok(fast < 1500, `16,000 printf calls took ${fast} ms`);
+		assert.ok(slow > fast * 4, `without the patch ${slow} ms, with it ${fast} ms`);
+		// the cap on what a program prints is still there
+		const h = await makeHost({ Engine: E, tree: makeTree({}) });
+		const r = await h.run("awk 'BEGIN { while (1) printf \"%s\", \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" }' | wc -c; echo \"rc=$?\"", { cwd: '/w' });
+		assert.ok(r.how === 'exit' && /rc=0/.test(r.stdout), r.stdout.slice(0, 100));
 	});
 
 	test("LC-35 (sed, the M flag): with it `.` and a list that starts `[^` do not match the newline of a joined pattern space and `^` and `$` match at it; without it `.` matches it; the flag is read whatever flags come with it (`gM`, `Mg`, `gm`, `mg`, `MI`)", async () => {

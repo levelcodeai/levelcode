@@ -11,16 +11,16 @@ the README should say the same.
 | `worker.js` | Wires `self.onmessage` to the core. Five lines of logic; everything else is testable in node. |
 | `core.js` | `createCore({ Engine, post, now })`: the protocol of README §4. One run = one fresh `Bash` over a fresh overlay. Classifies how a run ended, withholds changes, streams per statement. |
 | `overlay-fs.js` | just-bash's `IFileSystem`, from scratch: a copy-on-write overlay over the host's read-only async `fs` RPC, plus memory for `/tmp`, `/home/user`, `/dev`, `/proc`, the program stubs. Produces the net change set. |
-| `compat.js` | What GNU has and the engine lacks: argument normalisers and wrappers around built-ins (`xargs grep egrep fgrep rm cp mv mkdir sed paste head stat awk date uniq wc touch tr ls tail sort du cut comm join basename dirname readlink printenv diff seq`, the list `WRAPPED` exports) and six programs the engine does not have (`od realpath uname id nproc cmp`). `du` and `xargs` are written here whole: `du` prints the numbers of a 4 KiB-block file system, and `xargs` reads its input the way GNU does, builds its command lines by size (`-s`, 128 KiB, `xargsPlan`) and starts each command through the engine with its arguments as an argument LIST (`ctx.exec(name, { args })`, never one string for the parser). `cp` and `mv` have a pre-flight (`preflight`): what GNU says before it does anything and the engine says differently or not at all; `transferEach` does `-u` and `cp -rn` a file at a time. `OPTION_VALUES` + `missingOptionValue` are the one reader of an option that needs a value and has none. |
+| `compat.js` | What GNU has and the engine lacks: argument normalisers and wrappers around built-ins (`xargs grep egrep fgrep rm cp mv mkdir sed paste head stat awk date uniq wc touch tr ls tail sort du cut comm join basename dirname readlink printenv diff seq`, the list `WRAPPED` exports) and six programs the engine does not have (`od realpath uname id nproc cmp`). `du` and `xargs` are written here whole: `du` prints the numbers of a 4 KiB-block file system, and `xargs` reads its input the way GNU does, builds its command lines by size (`-s`, 128 KiB, `xargsPlan`) and starts each command through the engine with its arguments as an argument LIST (`ctx.exec(name, { args })`, never one string for the parser). Every program that has valued short options goes through ONE cluster reader (`splitClusters`, from the `OPTION_VALUES` table: `grep -nA1`, `head -qn1`, `cut -sf1`, `touch -ct`, `paste -sd,`), `--` is read by `endOptions` for the programs that did not, and `-` as an operand is a file that holds standard input (`viaStdinFile`: `sort - f`, `tail -`, `nl -`, `awk '...' -`; the second `-` is the end of the input). A copy the 8 MiB cap refuses is `memory exhausted` (`putCopy`), never "no difference" or an empty file. `cp` and `mv` have a pre-flight (`preflight`): what GNU says before it does anything and the engine says differently or not at all; `transferEach` does `-u` and `cp -rn` a file at a time. `OPTION_VALUES` + `missingOptionValue` are the one reader of an option that needs a value and has none. |
 | `text.js` | Bytes and text without losing a byte: a byte that is not UTF-8 is `U+DC00 + byte` (Python's surrogateescape) and goes back to that byte. Used by `overlay-fs.js`, `core.js` and the patched just-bash (patches LC-10, LC-29). `displayText` is what a person or a model is shown: EVERY lone surrogate (an escape, or half of an emoji that `awk substr` cut) is U+FFFD; `hasLoneSurrogate` is the question the overlay asks of a name; `joinEscapes` makes the escapes of bytes that are UTF-8 together the character (`printf '\303\251'`). `versionCompare` is gnulib's `filevercmp` of coreutils 8.32 (`ls -v`, `sort -V`; patch LC-41). |
 | `zone.js` | Local time that is not the visitor's: `LcDate`, the `Date` of the patched just-bash (patch LC-16), `partsAt`/`instantOf` for compat.js and the overlay, `abbreviation` (`%Z`: JST, EDT, CEST, `+04`). UTC unless the command's `TZ` names a zone file (in the case the file is written in; also the path of one, `/usr/share/zoneinfo/Asia/Tokyo`, and glibc's leading colon), or is a POSIX `NAME+-hh[:mm]`. |
 | `zone-data.js` | GENERATED (`web/test/fixtures/shell/zones/generate.mjs`, from the reference container's tzdata 2024a, `--network none`): the 596 zone names, and tzdata's letters by offset (and by the time a zone that kept its offset renamed it) for 2010-2030. Do not edit. |
 | `tr.js` | GNU `tr` (coreutils 8.32), whole, on bytes: the engine's own worked on characters, took `\0` in the second set for the digit zero, knew no `\NNN`, no `[c*n]`, no `[=c=]`, and took a bad set for a plain one. Every GNU escape, ranges, classes, `-c -C -d -s -t`, the long options with their unique abbreviations, and its messages word for word. Pure: `run(args, input)`. |
 | `zero.js` | Records that end in NUL: `-z` of `sort uniq cut head tail comm join paste sed grep` and `-Z` of grep, `-0` of `printenv`, `-z` of `basename dirname readlink`. The engine's programs split on the newline, so the records are given to them with NUL and newline exchanged (a placeholder for the newline of the data) and what comes out is exchanged back; what cannot be exchanged (sed's `a i c l r w e` and `M`, `grep -z -r`) is refused with GNU's words and status, never run wrong. |
 | `datestr.js` | `date -d STRING` as GNU's parse-datetime.y reads it, for the forms a person types: relative (`yesterday`, `2 days ago`, `next friday`, `last month`, `+1 week`), a date, a time or both (`20240704 1200`, `07/04/2024`, `Jul 4 2024`, `12:30`, `3pm`, ISO with a zone), a date with a relative part; its quirks (a signed number after a time is a zone, `ago` after a bare number is invalid, an hour that does not exist) and "invalid date" for what the grammar does not take. Hands the instant to the engine's `date` as `@SECONDS`. |
-| `diff.js` | GNU diff's options over the engine's normal-format output (which is read back as changed ranges): `-u -U N -c -C N -NUM`, `-r -q -N -s`, `-i -w -b -B -Z --strip-trailing-cr`, `--label`, `-x -X`, folders against folders and against files, the headers `diff -r` prints, `\ No newline at end of file`, and a port of analyze.c's `shift_boundaries` (a change that can sit in more than one place is where GNU puts it). `-y -e -f -n -D -I -F -p -t -T -l -E` and `--color` are said to be invalid. |
+| `diff.js` | GNU diff's options over the engine's normal-format output (which is read back as changed ranges): `-u -U N -c -C N -NUM`, `-r -q -N -s`, `-i -w -b -B -Z --strip-trailing-cr`, `--label`, `-x -X`, folders against folders and against files, the headers `diff -r` prints (a name with a blank, a quote, a backslash or a control character is in double quotes there and in the labels of `---`/`+++`/`***`, as diffutils 3.8 writes it: `quoteName`), `\ No newline at end of file`, and a port of analyze.c's `shift_boundaries` (a change that can sit in more than one place is where GNU puts it). `-y -e -f -n -D -I -F -p -t -T -l -E` and `--color` are said to be invalid. |
 | `limits.js` | Every execution limit, explicit. The engine falls back to "normal" profile values (an hour, 256 MiB of output) for a key that is not given, so the table here is the only thing in force; a test dumps `ctx.limits` of a running command and compares. |
-| `load.mjs` | `loadEngine()`: the patched file imported in node (for tests): temp file, specifiers rewritten to the vendored files, removed again. Also polyfills `globalThis.crypto` on Node 18. |
+| `load.mjs` | `loadEngine()`: the patched file imported in node (for tests): temp file, specifiers rewritten to the vendored files, removed again. Also polyfills `globalThis.crypto` on Node 18. `loadEngineWithout(ids)` is the engine with some patches taken out (the patches suite uses it to show that each of LC-61 .. LC-71 is pinned by a case GNU answered). |
 | `build.mjs` | esbuild: `worker.js` + the above + patched just-bash -> one classic IIFE. Refuses a `node:` import, a forbidden package (by package, from the metafile), a lost licence notice. Returns `{ code, bytes, gzip, brotli, packages, ... }`. |
 | `vendor/just-bash/3.6.0/` | The unmodified npm file, `LICENSE`, `THIRD_PARTY.md` (all licences), `VENDOR.json` (pins), `apply-patches.mjs`. |
 | `vendor/diff/8.0.4`, `vendor/sprintf-js/1.1.3` | The two packages `browser.js` imports without inlining, as published. |
@@ -103,10 +103,21 @@ memory. `VENDOR.json` pins its sha256 (5bfe9875…c76e as of this round) and siz
 | LC-58 | sed, basic expressions (1 edit) | `{` and `}` are plain characters (`s/a{1}/X/` made an interval of the extended expression it is translated to). | LC-58 |
 | LC-59 | sed `l` (2 edits, `__lcList`; LC-51's lexer edit reads the number) | The listing is GNU's: a character that is not ASCII is its UTF-8 bytes in octal (`caf\303\251`; the engine printed the code point, and a byte that is not text came out as `\156377`, the octal of the surrogate it is kept in), and a line is wrapped at 70 with a `\` (`l 5` at 5, `l 0` and `l 1` as GNU takes them). `-l N` and `--line-length` are still refused (§4). | LC-59, tables `sedlist` |
 | LC-60 | date's formatter (4 edits, `__lcY4`) | A year before 1000 is written with four digits by `%F`, `%Y` and `%G` (`0100-01-02`), and the ISO year of a date before the year 100 is its own (`new Date(6, ...)` is 1906). | LC-60, tables `date` |
+| LC-61 | grep's recursive walk (2 edits, the entry types and the bare names) | `grep -r name .` skipped every dot entry (`.env`, `.github/workflows/*.yml`, `.eslintrc`, everything under a hidden folder) silently; GNU grep skips none (only rg does). Now every entry is searched except a folder named `.git` (its objects would use the traversal limit up; `grep -r x .git` is an operand and is searched; a `.git` FILE, as a worktree has, is searched too): the one difference from GNU that is deliberate (§4 item 33). | LC-61, golden (`r6-grep-r-dot-entries`, `r6-grep-r-git-file`; `r6-grep-r-git-folder` is listed) |
+| LC-62 | the braced expansion inside `$(( ))` (`Jl`, 1 edit; `__lcBr` and `__lcW` in the header) | `$((${c[$w]:-0}+1))` always gave the default: the element was looked up as a variable called `c[a]`, so the word-count idiom counted 1 for everything, `${k[-1]:-0}` took the `-` for the operator, `${x:-$y}` took `$y` for text (0), and `${c[q]:=9}` assigned nothing. The name and its subscript are read (a quoted key, `$k`, an arithmetic index, a negative one, `[@]`), set and null are told apart, the word is expanded (`$y`, `${y}`, `$((..))`), and `:=` assigns the element. | LC-62, golden (`r6-arith-*`) |
+| LC-63 | the implicit list of `for` (1 edit) | `for x; do` split the joined positional parameters on spaces (`set -- "a b" c` made three) and dropped an empty one. It is `$1 .. $#`. | LC-63, golden (`r6-for-no-in`) |
+| LC-64 | strftime (1 edit in the loop, 1 in printf's call; `__lcSf`) | The flags and widths of GNU were printed as typed (`date +%-d`, `%_d`, `%^a`, `%#p`, `%5Y`, `%010d`, `%3N`, the `E`/`O` modifiers), and so were `%:z %::z %:::z`. `printf '%(%-d)T'` is libc's strftime: no `:` or `+` flag and no `%N` (typed as they are, as bash prints them). Not done: a flag or a width together with the colons (`%-:z`, `%5:z`). | LC-64, golden (`r6-date-flags-*`, `r6-date-colon-z`, `r6-printf-strftime-flags`) |
+| LC-65 | find (5 edits) | `-exec cmd {} \;` leaked the last command's status into find's own (`find -exec grep -q x {} \; && next`, `set -e`); only `-exec ... {} +` is 1 when a run failed. `-mtime N` counts whole days (`+0` is older than a day, not 2 hours; a file written this second is 0, one in the future is not); `-mmin -amin -cmin -atime -ctime` exist (the file system keeps ONE time: all of them read the modification time, as `stat %X` does; a minute count `N` is the minute the age ends in, `+N` and `-N` compare the age). | LC-65, golden (`r6-find-exec-status`, `r6-find-mtime-days`, `r6-find-mmin`) |
+| LC-66 | printf's format and `$'...'` (2 edits) | `\"`, `\?` and `\'` in the FORMAT kept their backslash (`printf '{\"a\": 1}\n'` was not JSON); `$'\?'` is `?`. `%b` arguments keep them, as in bash. | LC-66, golden (`r6-printf-quote-escapes`) |
+| LC-67 | `sort -n` (1 edit, `__lcNum`) | The number was JavaScript's `parseFloat`: `1e2` was 100 and `+4` was 4. coreutils reads blanks, a minus sign, digits, a decimal point and digits: `1e2` is 1, `+4` is 0. | LC-67, golden (`r6-sort-numeric-reading`) |
+| LC-68 | word splitting (1 edit) | Blanks at the edge of an unquoted expansion that touches a literal or another expansion were dropped instead of splitting: `v=" hi"; echo a$v b` was `ahi b` (GNU `a hi b`), `$v$v` one word, `set -- x$v y` two arguments, `ec$v` the command `echo`. A pending word is ended by a leading delimiter of the value and by a trailing one of the part before it. | LC-68, golden (`r6-split-edge-*`) |
+| LC-69 | tee (1 edit) | `tee n/` wrote `n`, `tee f/` overwrote the file `f`, `tee x/../n` made `n` (x is not there). The name is looked at as it was typed, as a redirection's is (LC-32): `Is a directory`, `Not a directory`, `No such file or directory`, status 1. | LC-69, golden (`r6-tee-slash-names`) |
+| LC-70 | awk `printf` (1 edit) | The room left for the output was the cap less the UTF-8 SIZE of everything printed so far, counted again by every call: n calls of `printf` took n squared (8,000 lines of `printf "%5d %e %s\n"` a second, 50,000 lines two minutes; `print` never did). It is the length now, as the check after the write has it. | LC-70 (patches: a time ratio against the engine without it) |
+| LC-71 | jq `@csv` and `@sh` (2 edits, `__lcSh`) | `@csv` quoted a string only when it needed it (`a,"b"` for `["a","b"]`: jq 1.6 always quotes a string), and `@sh` of an array, a number or a boolean was `null`: an array is its elements quoted and joined by a space. (`@sh "echo \(.)"`, an object's error and `@tsv`'s backslash are still the engine's.) | LC-71, golden (`r6-jq-csv-sh-formats`) |
 
 The README's §9 groups them; this table has one row each.
 `node web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs --check` verifies the hash of the file and that every
-anchor is there exactly once, and writes nothing (60 patches, 198 edits).
+anchor is there exactly once, and writes nothing (71 patches, 218 edits).
 
 ### Bumping just-bash
 
@@ -187,9 +198,11 @@ tail tee time timeout touch tr tree true unalias uname unexpand uniq wc which wh
    here"); a `\+`, `\?` or `*` right after `\b \< \>` is a plain character, as in GNU. `grep -w` is `\b(?:...)\b`:
    a match that starts or ends with a character that is not a word character is accepted where GNU's rule (the
    characters around the match are not word characters, and a shorter match at the same place is tried) rejects it
-   (`grep -ow '[+]\+'` on `a+b` prints `+`). `sed` has no `\U \L \E \u \l`. `find -regex` matches part of
-   the path; `find -perm` takes no symbolic mode; `find -newermt` is not there; `find -printf` does not know `%y` and
-   some other letters. `awk` has no `system()`, reads `/dev/stdin` as empty, and formats `%e` and `%05.1f` its own way.
+   (`grep -ow '[+]\+'` on `a+b` prints `+`). `sed` has `\U \L \E \u \l` (LC-45). `find -regex` matches part of
+   the path (and reads GNU's `\( \|` as nothing: no output, no error); `find -perm` takes no symbolic mode; `find -newermt`,
+   `-user`, `-links`, `-execdir`, `-quit`, `-ls`, `-regextype`, `-fprint` are not there; `find -printf` knows the
+   conversions of item 30. `awk` has no `system()`, reads `/dev/stdin` as empty, and formats `%05.1f` its own way and `%G` as
+   `1.00000E+1` (`%e %E %g` are right: two digits of exponent).
 8. Arithmetic is double precision: past 2^53 it rounds; there is no 64-bit wrap-around.
 9. Bytes: a file that is not UTF-8 goes through `sed -i`, `tee`, `sort -o`, `cat`, a pipe, `$(...)`, `grep`, `awk`,
    `cut -c`, `tr`, `paste` unchanged (a BOM and a NUL too). `printf '\377'`, `printf '\xff'`, `echo -e '\xff'` and
@@ -394,6 +407,63 @@ tail tee time timeout touch tr tree true unalias uname unexpand uniq wc which wh
     pick one, ~5% of random cases here pick the other.
 32. Output that two commands of one pipeline share is the order of the statements, not of the writes (item 11); `exec cmd`
     runs the command and the script goes on (GNU's shell is replaced and nothing after it runs).
+33. `grep -r` (and `-R`, `grep -r PATTERN` with no operand, `--include`) searches the dot entries (`.env`, `.github/workflows/*.yml`,
+    everything under `.vscode/`), as GNU grep does; `rg` skips hidden files as ripgrep does, and `find`, `du`, `ls -R -a`,
+    `tree -a`, `cp -r` never skipped them. THE ONE DELIBERATE DIFFERENCE: a recursive search does not enter a folder named
+    `.git` (its objects would use the traversal limit up and bury what was looked for); `grep -r x .git` names it and searches
+    it, and a `.git` FILE (a worktree's) is searched. `grep -m N -c` counts at most N, `-m 0` reads nothing (status 1); a
+    recursive search says a name that is not there (`grep: nosuch: No such file or directory`, status 2 whatever matched
+    elsewhere, as GNU does); `--label=NAME` names standard input.
+34. Arithmetic: an expansion with a subscript and an operator inside `$(( ))` reads the ELEMENT (`c[$w]=$((${c[$w]:-0}+1))`
+    counts, for associative and indexed arrays, quoted keys, `$k`, arithmetic and negative indexes, `[@]`), the word of
+    `:-`, `:=`, `:+`, `:?` (and the forms without the colon) is expanded (`$y`, `${y}`, `$((..))`), and `:=` assigns the
+    element. What it does not do: the word is not itself evaluated as an expression (`$((${x:-3+4}*2))`, GNU 14), and an
+    expansion that is EMPTY inside an expression is 0 here where GNU says syntax error (`$((${a:+1}+${b:+1}))`).
+    `for x; do` goes over `$1 .. $#` as they are (an empty one too). Blanks at the edge of an unquoted expansion that
+    touches a literal or another expansion are word breaks (`v=" hi"; echo a$v b` is `a hi b`, `set -- x$v y` is three
+    arguments, `ec$v` is the command `ec`).
+35. Options: a cluster is cut at the letter that takes a value, wherever it stands (`grep -nA1 -iA2 -vA1 -rnC2 -cm1`, `head -qn1
+    -vn1`, `tail -qn1`, `cut -sf1 -nc1-3 -sd, -f1`, `touch -ct`, `paste -sd,`, `date -ur F -ud S -uIminutes`,
+    `basename -as .js`: `splitClusters`, one reader over `OPTION_VALUES`; `cut -n` means nothing and is dropped); `cut
+    --fields=LIST --delimiter=C --characters=LIST` are there (`--bytes`, `-b`, `--complement`, `--output-delimiter` are not);
+    `paste -d '\t'` and `'\n'` are escapes; `awk -vNAME=VALUE` is an assignment; `touch -a` alone leaves the modification time
+    of a file that is there (nothing keeps an access time). `--` ends the options of `head tail sed cut md5sum sha1sum
+    sha256sum tac file comm cmp jq env date` (a name that starts with a dash is made `./name` for the programs that open
+    files, so a message shows `./-x` where GNU shows `-x`; `basename -- -x` and `dirname -- -x/y` are still the engine's:
+    `dirname -- -x/y` is an error here). `-` as an operand is standard input for `sort cut tac head tail nl awk fold expand
+    unexpand file wc cat od md5sum sha1sum sha256sum`, and a second `-` is the end of it (`cat f | cat - -` prints it once,
+    `wc - -` counts it once, as GNU does; it is a file under `/tmp/.lc-stdin-N` that is named `-` or `standard input` or
+    `/dev/stdin` again in what the program printed). `tac` is GNU's, here (the engine read the first file and no option): each file reversed, `-b`, `-r`, `-s SEP` (an
+    empty one is NUL), `--before --regex --separator` and their abbreviations, and its messages. `basename` and `dirname` are string functions of their
+    own (`basename /` is `/`, `dirname a/b/` is `a`, `basename .js .js` is `.js`); `stat --format=%F` is `-c %F`.
+36. Time: `date` and `printf '%(..)T'` read GNU's flags and widths (`%-d %_d %^a %#p %5Y %010d %3N %e %k %l`, the `E` and
+    `O` modifiers; date also `%:z %::z %:::z`, the `+` flag; `printf` is libc's: it prints a colon or a plus flag and
+    `%N` as typed, as bash does); not done: a colon together with a flag or a width (`%-:z`). `date -d 'Jul-04-2024'`
+    (`Mon-DD-YYYY`) is read. `touch -d` reads the whole grammar of `date -d` (`'1 day ago'`, `yesterday`, `'next week'`,
+    `'2024-03-05 +1 week'`; with `-r REF` the string is relative to REF's time) and `touch -t` takes only
+    `[[CC]YY]MMDDhhmm[.ss]` (anything else is `invalid date format`). Only a modification time exists: `find -atime
+    -ctime -amin -cmin` and `stat %X %Z` read it (GNU's ctime is the moment of the last change: `find -ctime -1` lists
+    only the files modified in the last day here, all of the ones made today there).
+37. find: `-exec cmd {} \;` does not change find's status (0 unless find itself failed), `-exec cmd {} +` is 1 when a run
+    failed; `-mtime N` is whole days (`+0` is older than a day, a file written this second is `0`), `-mmin N` is the
+    minute the age ends in (`-mmin -5`, `+5` compare the age). `find -name '\*star'` (a backslash-star) matches nothing
+    here, a literal star there.
+38. printf: `\"`, `\?` and `\'` in the format are the character; `%b` arguments keep the backslash (as bash). `sort`:
+    the global ordering options (`-n -r -f -b -d -h -M -V`) are a key's only when the key has none of its own (`sort -r
+    -k2n` leaves key 2 numeric and ascending, `sort -n -k1,1r` compares the field as text), and `-r` reverses the
+    last-resort comparison of the whole line (not under `-s` or `-u`); `sort -n` reads blanks, a minus, digits, a point
+    and digits (`1e2` is 1, `+4` is 0). A key with only `g`, `i` or `R` (letters the engine has not) is read as it always
+    was, with the global ordering.
+39. Errors: `diff` quotes a name with a blank, a quote, a backslash or a control character in the `diff -r` line and in
+    the labels (`--- "a b"`), not in `Only in` / `Files ... differ`; a copy under `/tmp` that the 8 MiB cap refuses is
+    `diff: memory exhausted` (status 2) and `sort: memory exhausted` (the -z family: the real output file is left
+    alone), never "no difference" or an empty file; an option `rm` has not (`rm -rvz a b c`, `rm --bogus`) is said once
+    with the `Try` line; `cp -v f/ x/../h` and `mv` say `cannot stat 'f/': Not a directory` before anything about the
+    destination and print no `-v` line; `tee n/`, `tee f/` and `tee x/../n` are refused like a redirection is. Not done:
+    `cat f/` and `cat < f/` read `f` (GNU: `Not a directory`). `diff -i` folds ASCII only (GNU's `tolower`), `diff -x`
+    reads its globs by table (a pattern of many stars did not return), `date -d` with a count that leaves the range of
+    dates is `invalid date '...'` (it printed `@NaN`), `tr` with a class name of 100,000 characters says so (it was a
+    stack overflow).
 
 ### What a model still meets: the exact words
 
@@ -403,8 +473,8 @@ the command's own unless it says otherwise; `bash: NAME: command not found` is s
 | Command | Here | GNU |
 | --- | --- | --- |
 | `wc -L f` | `wc: invalid option -- 'L'` (1) | the length of the longest line |
-| `cut -b1-2 f` | `cut: invalid option -- 'b1-2'` (1: the whole argument is quoted) | bytes 1 to 2 |
-| `cut --complement -f1`, `--output-delimiter=X` | `cut: unrecognized option '--complement'` (1) | works |
+| `cut -b1-2 f` | `cut: invalid option -- 'b'` (1) | bytes 1 to 2 |
+| `cut --complement -f1`, `--output-delimiter=X`, `--bytes=1-2` | `cut: unrecognized option '--complement'` (1) | works (`--fields`, `--delimiter`, `--characters`, `--only-delimited` work here) |
 | `uniq -f1`, `-s2`, `-w3`, `-D` | `uniq: invalid option -- 'f'` (1) | works |
 | `tail -f f`, `tail -F f` | `tail: invalid option -- 'f'` (1) | follows |
 | `sed -u`, `-l 5`, `--debug` | `sed: invalid option -- 'u'`, `... 'l'`, `sed: unrecognized option '--debug'` (1) | works |
@@ -508,10 +578,25 @@ system's (`grep -r`, `find`, `rm -rv`, `cp -rv`); `exec cmd` goes on with the sc
   "is this a zone", unused since LC-20); `toLocale*` is not called at all; `getTimezoneOffset` is called only by `Y8`;
   every `new Date(` and `Date.now()` is the module's `LcDate` (the header's `const Date`); jq's date functions
   (`gmtime`, `mktime`, `strftime`, `todate`) are UTC only in 3.6.0 (`localtime` and `strflocaltime` are not there).
-* Anything in the golden table's 67 listed cases (842 cases: 775 identical; the table is the authority and may only shrink).
+* Known after the sixth round and not fixed (each was seen against GNU; none is a crash, the first few are the ones a
+  model meets): `jq`'s `@sh` string interpolation (`@sh "echo \(.)"`) is a parse error; `find` has no `-regextype -user
+  -links -execdir -quit -ls -fprint` and `-regex` reads GNU's `\( \|` as nothing; `date -d '31 dec 7:30am'` (GNU: invalid
+  date, `D Mon H:MM` reads H as the year), a zone after a relative part, `TZ="Zone"` in the string, a 12-digit
+  `YYYYMMDDHHMM`, `Jul-04-2024T10:00` (GNU's `T` is a zone there) and an `ago` after one unit of several
+  (`24 hours 2 minutes ago` is +24 hours -2 minutes in GNU: the engine agrees) are read as the engine reads them; the one
+  ambiguous wall-clock hour of a daylight-saving change is the first occurrence (glibc picks by the old `tm_isdst`);
+  `sed` back-references in a pattern fail closed with a message (RE2 has none); `diff -i` folds all of Unicode (GNU: ASCII)
+  and `-y -e -n -p -I -l -t -T --color` say "invalid option" although GNU has them; `tr [c*]` next to a case class is
+  accepted or refused the other way round in 143 of 1,638 grid rows; `x+=(a)` in a loop of 20,000 is quadratic;
+  `local -i n=5; n+=2` is 52; `select`, `bash -x/-n/-s` and `exec` (the script goes on) are not there; `echo hi > $unset`
+  is not "ambiguous redirect"; `awk` splits an emoji into two halves in `split(s,a,"")`, `FS=""` and `%5s`/`%c`; `sort -z -k`
+  orders a record that holds a newline differently (GNU takes it for a blank); `awk -v RS='[0-9]+'` over 100,000 records is
+  refused (`record array limit`); `uniq -f -s -w`, `sort -m -R -g`, `grep -b -T`, `stat -t -L`, `join -e -j`, `cmp -n -i`
+  and `cut -b` are "invalid option"; `wc -l -` with a file that does not exist pads as `wc` does for a known size.
+* Anything in the golden table's 68 listed cases (905 cases: 837 identical; the table is the authority and may only shrink).
 * The fuzz run is 3000 scripts of one seed in UTC and 800 in each of two other zones (about 9 s). It proves no crash, no
   stack in the output, no hang past two seconds under tightened limits; it does not prove the output is right (the
-  golden suite does, for 842 cases, the cp/mv matrix for 1,778 command lines, the xargs matrix for 14,256, the tables
+  golden suite does, for 905 cases, the cp/mv matrix for 1,778 command lines, the xargs matrix for 14,256, the tables
   for 3,500 rows (`tr`, `sort -k`, paths through `..`, `date -d`, TZ, `xargs -t` quoting, 800 regular expressions through
   sed and grep, 271 sed one-liners, 300 sed addresses, 155 awk programs, the options that take a value), and the
   consistency suite does for the change set of 300 nested scripts).
@@ -575,12 +660,12 @@ whole (a view into a larger buffer is copied first). If posting `done` throws, a
 
 ## 7. Size and speed
 
-* `engine.worker.js`: 1,415,401 bytes raw, 407,869 gzip (level 9), 326,553 brotli (level 11), measured on this
-  checkout with `node web/shell/engine/build.mjs --out <dir> --vscode <Code-OSS checkout>` (esbuild, minified, es2022; it
-  prints the three numbers; patched just-bash sha256 `16121431664e...`; `scripts/build-web.mjs` prints the same three).
-  Building twice gives the same bytes (`cmp`).
-  The earlier figures in the notes of the rounds (1,374,439; 1,395,093) were of other checkouts and are not comparable:
-  this is the one number. Of it, just-bash is about 1.27 MB; the `buffer` package (+ base64-js, ieee754) is 50 KB;
+* `engine.worker.js`: 1,522,716 bytes raw, 445,559 gzip, 355,814 brotli, measured on this checkout with `node
+  web/shell/engine/build.mjs --out <dir> --vscode <Code-OSS checkout>` (esbuild, minified, es2022; it prints the three
+  numbers; patched just-bash sha256 `46d96fa2c16a...`; `scripts/build-web.mjs` prints the same three). Building twice
+  gives the same bytes (`cmp`). The sixth pass added 14,657 bytes raw (5,298 gzip, 3,640 brotli) to the 1,508,059 of the
+  tree before it (440,261 gzip, 352,174 brotli); the figures of the earlier rounds (1,415,401; 1,395,093; 1,374,439) were
+  of other checkouts and other trees and are not comparable: this is the one number. Of it, just-bash is about 1.27 MB; the `buffer` package (+ base64-js, ieee754) is 50 KB;
   `text.js`, `zone.js`, `zone-data.js` (596 zone names and 69 groups of letters: 13.7 KB, 5.5 KB gzip) and compat.js
   (`xargs`, `du`, `preflight`, `transferEach`, the table of options that need a value) are the rest.
 * In node, in-process, with a host that answers at once: loading and patching 45 ms; `init` 2 ms; `echo hi` 7 ms
@@ -593,13 +678,13 @@ whole (a view into a larger buffer is copied first). If posting `done` throws, a
 
 | File | Tests | What |
 | --- | --- | --- |
-| `shell-engine-patches.test.js` | 89 | the vendored file (size, sha256, integrity), imports, anchors counted independently of the script, the patched hash, `--check`, refusal of a wrong file, each patch's behaviour (LC-1 .. LC-60; LC-19 and LC-20 under three process zones; LC-29 in every place that makes an escape; LC-31 against bash's own answers; LC-32 .. LC-60 each against what GNU printed for the same script, recorded once) |
+| `shell-engine-patches.test.js` | 94 | the vendored file (size, sha256, integrity), imports, anchors counted independently of the script, the patched hash, `--check`, refusal of a wrong file, each patch's behaviour (LC-1 .. LC-71; LC-19 and LC-20 under three process zones; LC-29 in every place that makes an escape; LC-31 against bash's own answers; LC-32 .. LC-60 each against what GNU printed for the same script, recorded once; LC-61 .. LC-71 each by a case GNU answered, which is different from GNU again with the patch taken out (`loadEngineWithout`), and LC-70 by a time ratio) |
 | `shell-engine-overlay.test.js` | 66 | mounts and relocation (both directions of overlap, `/proc`, a folder at `/mnt`), layout, caps before reads and their boundaries, notes and their cap, denied and its de-duplication, writes that are refused by the shell and writes a file system would refuse, the content write of a redirection after its opening, tombstones, opaque folders, staged files below a removed or moved folder, net change set and its order, a name with a lone surrogate, memory areas and their byte accounting, identity, devices, bytes that are not UTF-8, a base that fails |
 | `shell-engine-core.test.js` | 59 | handshake, program list pinned by name, streaming, decoding, limits table (every number), limit/deadline/abort/error classification and wording, exit-path flushes, never rejects, seven redirections whose target the command removes, late answers, env/cwd round trip, `/tmp`, relocation, change-set hand-over, caps from the host, `init.commands`, `tmpFiles` and `tmpEntries`, the zone of the process, names that are not UTF-8 (and bytes that are UTF-8: `dé` made with printf), a working directory that is canonical, `du` and `cp -u` at the traversal limit (the limit exactly, and one over), the stand-in engine contract |
-| `shell-engine-compat.test.js` | 89 | every normaliser case by case (including what is NOT dropped), wrappers through the engine, `od`, `cmp`, `du`, the sed scanner and its `-f` files, `cp`/`mv` onto `name/`, same file, `-T`, `-rv`, `mkdir -pv`, `touch -r -d -t`, `head`/`tail` long forms, `sort -k` (`parseSortKey`, the 72-spec grid), `xargs` (options, input, batches by size, `-s` at 1310/1311 items, 4-byte characters, `-t` order, NUL and `-E` warnings, status codes, `-p`/`-o`, the quote), the sweep of every option that needs a value, the `-z` family (`zero.plan`, refusals, `tail -z` headers, `grep -Z -z`, `sed -z`), `tr.js`, `datestr.parse` and `diff.parseOptions`/`shiftBoundaries`, `ls -v` and `sort -V` (`versionCompare`: six recorded sets and every pair antisymmetric), `ls -I --hide -X -w -n`, `seq -f`, `touch`/`tee` outside the folders, awk operands repeated, the exported lists pinned; run under three process zones. Expected text of the GNU-recorded tests: GNU as docker ran it, once |
+| `shell-engine-compat.test.js` | 94 | every normaliser case by case (including what is NOT dropped), wrappers through the engine, `od`, `cmp`, `du`, the sed scanner and its `-f` files, `cp`/`mv` onto `name/`, same file, `-T`, `-rv`, `mkdir -pv`, `touch -r -d -t`, `head`/`tail` long forms, `sort -k` (`parseSortKey`, the 72-spec grid), `xargs` (options, input, batches by size, `-s` at 1310/1311 items, 4-byte characters, `-t` order, NUL and `-E` warnings, status codes, `-p`/`-o`, the quote), the sweep of every option that needs a value, the `-z` family (`zero.plan`, refusals, `tail -z` headers, `grep -Z -z`, `sed -z`), `tr.js`, `datestr.parse` and `diff.parseOptions`/`shiftBoundaries`, `ls -v` and `sort -V` (`versionCompare`: six recorded sets and every pair antisymmetric), `ls -I --hide -X -w -n`, `seq -f`, `touch`/`tee` outside the folders, awk operands repeated, the exported lists pinned; run under three process zones. Expected text of the GNU-recorded tests: GNU as docker ran it, once |
 | `shell-engine-cpmv.test.js` | 4 | 1,778 `cp`/`mv` command lines (every source shape against every destination shape, a seeded sample of the options, and the same file and the repeated source under `-u`/`-n`) against GNU coreutils 8.32, compared on status, what -v printed, the listing, what each changed file holds and what was said; 24 listed with a reason, the list may only shrink (`web/test/fixtures/shell/cpmv/`, recorded once) |
 | `shell-engine-xargs.test.js` | 2 | 568 groups, 14,256 `xargs` command lines recorded from GNU findutils 4.8.0: `-s 1..30` against one to three items with `-I` and thirteen commands, `-n`, `-L`, `-x`, `-t` with each, `--replace=`, and a quote that is never closed; the first, middle and last size of each run of equal behaviour (4,987 lines) are replayed and every one is GNU's (`web/test/fixtures/shell/xargs/`, recorded once) |
-| `shell-engine-golden.test.js` | 4 | 842 cases against GNU bash 5.1.16 / coreutils 8.32 (docker, recorded once): 775 identical, 67 listed with a reason and the differing fields, the list may only shrink; run under three process zones |
+| `shell-engine-golden.test.js` | 4 | 905 cases against GNU bash 5.1.16 / coreutils 8.32 (docker, recorded once): 837 identical, 68 listed with a reason and the differing fields, the list may only shrink; run under three process zones |
 | `shell-engine-tables.test.js` | 18 | tables of command lines that have a grammar of their own, recorded once from GNU (`web/test/fixtures/shell/tables/`): `tr` 781 programs (the edge of every class: all 255 bytes through each; what a message shows of an operand; repeat counts to 2^64; `[:upper:]`/`[:lower:]` alignment; the long options and their abbreviations), `sort -k` 114, paths typed through `..` 194, `date -d` 1064 (blanks of every kind, military zones, offsets, two-digit years, am/pm, weekdays with counts, digit times, `@` with blanks, years before 1000), TZ 50, `xargs -t` quoting 296, sed regular expressions 400 and grep's 400 (57 differ, each listed with its reason in `known.json`), sed one-liners 271, sed addresses 300, sed and grep at the edges of the grammar 1191 + 562 (89 listed: a word edge beside a quantifier or an anchor, a numeric escape that makes a metacharacter, `\c` at the end, RE2's repeat limit, a back-reference, an interval after an interval, the words of a rare script error), sed `l` 19, diff 717 (46 listed: the options it has not), awk programs 155 (7 listed), the options that take a value 27 + 192; the list of known rows may only shrink (199) |
 | `shell-engine-consistency.test.js` | 4 | 300 seeded random nested scripts: the change set, applied by the real `src/commit.js` over a map with a delete that takes a file or an EMPTY folder, leaves the tree GNU left (`web/test/fixtures/shell/consistency/`, recorded once) |
 | `shell-engine-fuzz.test.js` | 3 | 3000 mutated and token-soup scripts in UTC, 800 in each of two other zones (`FUZZ_DUMP=file` writes failures) |
@@ -615,10 +700,10 @@ catthehacker/ubuntu:act-latest node web/test/unit/shell-engine-core.test.js`; No
 The golden file is regenerated with `node web/test/fixtures/shell/golden/generate.mjs` (docker, the image above already
 pulled, `--network none`, every case run twice; a case whose output differs between the runs is left out and named in
 `meta.flaky`). Review the diff: a changed expected output is a new GNU, not a regression. New cases go in
-`golden/cases/round5.mjs` (or `round4.mjs`, `round3.mjs`, `round2.mjs`, `extra.mjs`); give a case that needs a time an explicit
+`golden/cases/round6.mjs` (or `round5.mjs`, `round4.mjs`, `round3.mjs`, `round2.mjs`, `extra.mjs`); give a case that needs a time an explicit
 `touch -d '@N'`. A byte that is not UTF-8 can be made with printf now (`printf '\xff'` is one byte), or with `base64 -d`.
 A case that depends on the locale or the order of a directory in GNU (a copy of a directory into itself, `grep` of a
-latin-1 file, `rev`) is not a good case. The size of `golden.json` is bounded (448 KiB; it is 437 KB for 842 cases): the
+latin-1 file, `rev`) is not a good case. The size of `golden.json` is bounded (512 KiB; it is 485 KB for 904 cases): the
 `gone` of a case that ran on a bare workspace once listed the fixture's 18 paths, which it never had; only a case that
 runs on the fixture can remove them, and records them now. A case that puts GNU's and the engine's stderr in one stream
 (`2>&1`) is not a good case either (the engine orders a statement's stdout before its stderr, item 11); capture the
@@ -666,3 +751,22 @@ gone-source checks inside the per-file copy (preflight and the loop say them fir
 `ArithmeticExpansion` alternative of LC-31's name test (a number has no blank and no glob character, so splitting it
 changes nothing), and the `quoted` flag that LC-31 passes along for the extra words of a split name (the same flag
 `dr` gives for an argument; 38 builtins were run with it forced to true and none answered differently).
+
+The fix round after the fifth verification (the sixth engine pass) ran 104 such edits on a copy of `web/`, at least one
+for every fix, each with the golden, compat and patches suites (one runner, four copies at a time): the dot-entry walk
+(three), the element reader of `$(( ))` (nine: the colon forms, a negative index, `:+`, `:=`, the raw word, the key of an
+associative array, the scalar's element 0, the nested `$((`), `for x;` (two), strftime (eleven: every flag, the width of
+text, `%:z`, the modifiers, the `+` flag, libc's printf, `%N`), find (seven), printf's quotes (two), `sort -n` (two), the
+splitter (two), tee, the cluster reader and its table, `endOptions` and what it prefixes, the stdin file (the names, the
+table, the second `-`, `wc`'s width), `tac`, the inherited sort letters (nine), `touch` (four), `grep -m`, `rm`'s probe
+and `Try` line, the order of `cp`/`mv`'s checks, `putCopy` and the output file of the -z family, `paste`'s escapes, awk's
+attached `-v`, cut's long options, diff's quotes, `-i` and `-x`, `Mon-DD-YYYY`, jq's `@csv` and `@sh`, awk's printf room,
+`basename`/`dirname`, `stat --format`, grep's missing operands and `--label`, date's range, tr's chunks, `tac`'s options
+(four). 101 were killed (96 by the golden suite, 4 by the compat suite, 1 by the patches suite). Three were not: `-mmin +N` at an age of exactly
+N minutes (`>` against `>=`: equivalent, an age of exactly N*60 seconds is not reachable with a clock that moves), a
+mutant that was a no-op (redone as another and killed), and cut's own `--only-delimited` (the engine reads it itself,
+so the mapping was dead code and is deleted). Three stayed green the first time and each was a missing test, added and
+red now: a scalar read as element 0 (`${a:-0}` of an array), the output file of `sort -z -o` that the cap refuses after
+the copies fit, and a class name of a million characters in `tr` (a stack overflow depends on the stack of the engine
+that runs it: the test calls the module with the million). The single `-` of a program that reads `-` itself (`cat -`,
+`head -`) is equivalent under the file that holds standard input: it says the same.
