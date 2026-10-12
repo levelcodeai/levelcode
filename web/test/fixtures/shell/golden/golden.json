@@ -14633,7 +14633,7 @@
 			"name": "r6-touch-date-relative",
 			"source": "round6",
 			"fixture": false,
-			"script": "touch -d '1 day ago' a; touch -d yesterday b; touch -d 'next week' c; touch -d '2 hours ago' f; touch -d 'tomorrow 10:00' g; touch -d '3 days ago 12:00' k; touch -cd '1 day ago' l; [ -e l ] || echo 'no l'; [ a -nt c ] || echo \"a older than c\"; [ c -nt a ] && echo \"c newer than a\"; [ f -nt a ] && echo \"f newer than a\"; [ g -nt f ] && echo \"g newer than f\"; [ k -nt a ] || echo \"k older than a\"; echo $(( ($(date +%s) - $(stat -c %Y a)) / 3600 )) $(( ($(date +%s) - $(stat -c %Y f)) / 3600 )) $(( ($(stat -c %Y c) - $(date +%s)) / 86400 ))",
+			"script": "touch -d '1 day ago' a; touch -d yesterday b; touch -d 'next week' c; touch -d '2 hours ago' f; touch -d 'tomorrow 10:00' g; touch -d '3 days ago 12:00' k; touch -cd '1 day ago' l; [ -e l ] || echo 'no l'; [ a -nt c ] || echo \"a older than c\"; [ c -nt a ] && echo \"c newer than a\"; [ f -nt a ] && echo \"f newer than a\"; [ g -nt f ] && echo \"g newer than f\"; [ k -nt a ] || echo \"k older than a\"; echo $(( ($(date +%s) - $(stat -c %Y a)) / 3600 )) $(( ($(date +%s) - $(stat -c %Y f)) / 3600 )) $(( ($(stat -c %Y c) - $(date +%s) + 3600) / 86400 ))",
 			"stdout": "no l\na older than c\nc newer than a\nf newer than a\ng newer than f\nk older than a\n24 2 7\n",
 			"stderr": "",
 			"exit": 0,
