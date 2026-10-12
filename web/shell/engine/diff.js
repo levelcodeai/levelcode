@@ -32,6 +32,12 @@ const { decodeBytes } = require('./text.js');
 function parseOptions(args) {
 	/** @type {DiffOptions} */
 	const o = { r: false, N: false, q: false, s: false, i: false, w: false, b: false, B: false, Z: false, stripCr: false, text: false, format: 'normal', context: 3, labels: [], exclude: [], excludeFrom: [] };
+	// the number of context lines is the greatest of what -U N and -C N said, or the number of -NUM; a bare -u or -c is
+	// three lines, but only when there is no -NUM (`-u -U1` is three, `-U0 -u` is three, `-1 -u` is one, `-U1` is one)
+	let contextValue = -1;
+	let contextDigits = -1;
+	let bareStyle = false;
+	const more = (n) => { if (n > contextValue) { contextValue = n; } };
 	/** @type {string[]} */
 	const operands = [];
 	/** @type {string[]} */
@@ -64,13 +70,13 @@ function parseOptions(args) {
 				case 'unified': case 'context': {
 					const e = style(name);
 					if (e) { return e; }
-					if (value !== null) { if (!/^\d+$/.test(value)) { return { error: `diff: invalid context length '${value}'\n` }; } o.context = Number(value); }
+					if (value !== null) { if (!/^\d+$/.test(value)) { return { error: `diff: invalid context length '${value}'\ndiff: Try 'diff --help' for more information.\n` }; } more(Number(value)); } else { bareStyle = true; }
 					break;
 				}
 				case 'label': { const v = need(); if (v === undefined) { return { unknown: true }; } o.labels.push(v); break; }
 				case 'exclude': { const v = need(); if (v === undefined) { return { unknown: true }; } o.exclude.push(v); break; }
 				case 'exclude-from': { const v = need(); if (v === undefined) { return { unknown: true }; } o.excludeFrom.push(v); break; }
-				case 'no-dereference': break;
+				case 'no-dereference': case 'minimal': case 'speed-large-files': break;
 				default: return { unknown: true };
 			}
 			continue;
@@ -90,7 +96,7 @@ function parseOptions(args) {
 			if (ch >= '0' && ch <= '9') {
 				// -NUM is the number of context lines, and nothing more: the format is what -c or -u says
 				const m = /^\d+/.exec(a.slice(c));
-				o.context = Number(m && m[0]);
+				contextDigits = Number(m && m[0]);
 				c += (m ? m[0].length : 1) - 1;
 				continue;
 			}
@@ -106,15 +112,15 @@ function parseOptions(args) {
 				case 'Z': o.Z = true; break;
 				case 'a': o.text = true; break;
 				case 'd': case 'H': case 'v': break;
-				case 'u': { const e = style('unified'); if (e) { return e; } break; }
-				case 'c': { const e = style('context'); if (e) { return e; } break; }
+				case 'u': { const e = style('unified'); if (e) { return e; } bareStyle = true; break; }
+				case 'c': { const e = style('context'); if (e) { return e; } bareStyle = true; break; }
 				case 'U': case 'C': {
 					const v = takeValue();
 					if (v === undefined) { return { unknown: true }; }
-					if (!/^\d+$/.test(v)) { return { error: `diff: invalid context length '${v}'\n` }; }
+					if (!/^\d+$/.test(v)) { return { error: `diff: invalid context length '${v}'\ndiff: Try 'diff --help' for more information.\n` }; }
 					const e = style(ch === 'U' ? 'unified' : 'context');
 					if (e) { return e; }
-					o.context = Number(v);
+					more(Number(v));
 					break;
 				}
 				case 'L': { const v = takeValue(); if (v === undefined) { return { unknown: true }; } o.labels.push(v); break; }
@@ -125,6 +131,8 @@ function parseOptions(args) {
 			}
 		}
 	}
+	if (o.labels.length > 2) { return { error: 'diff: too many file label options\n' }; }
+	o.context = contextDigits >= 0 ? Math.max(contextValue, contextDigits) : bareStyle ? Math.max(contextValue, 3) : contextValue >= 0 ? contextValue : 3;
 	return { o, operands, words };
 }
 
@@ -171,6 +179,88 @@ function parseNormal(text) {
 		hunks.push({ a1: m[3] === 'a' ? a1 + 1 : a1, a2: m[3] === 'a' ? a1 : a2, b1: m[3] === 'd' ? b1 + 1 : b1, b2: m[3] === 'd' ? b1 : b2 });
 	}
 	return hunks;
+}
+
+/**
+ * GNU's `shift_boundaries` (analyze.c): where a change could be put in more than one place (the added line is the same as
+ * the one before or after it, a blank line, a `}`), a run of changed lines is slid back as far as the line before it
+ * equals its last line, which joins it with a change it meets, and then forward as far as its first line equals the one
+ * after it, and so on until it does not move; a run that was joined is put back to where it lines up with a change on the
+ * other side. Two diffs of the same size that differ only in where such a run sits come out as GNU's. The ranges are the
+ * engine's own (its comparison is what finds them); `same(x, y)` says two lines are equal for the options.
+ *
+ * @param {Array<{ a1: number, a2: number, b1: number, b2: number }>} changes
+ * @param {number} n lines on the left
+ * @param {number} m lines on the right
+ * @param {(left: boolean, i: number, j: number) => boolean} same lines i and j (0-based) of one side are equal
+ * @returns {Array<{ a1: number, a2: number, b1: number, b2: number }>}
+ */
+function shiftBoundaries(changes, n, m, same) {
+	const ca = new Uint8Array(n + 2);
+	const cb = new Uint8Array(m + 2);
+	for (const c of changes) {
+		for (let k = c.a1; k <= c.a2; k++) { ca[k - 1] = 1; }
+		for (let k = c.b1; k <= c.b2; k++) { cb[k - 1] = 1; }
+	}
+	// the same pass for each side, with the other side's marks as `other`
+	const pass = (changed, other, len, left) => {
+		let i = 0;
+		let j = 0;
+		const end = len;
+		for (;;) {
+			let runlength;
+			let start;
+			let corresponding;
+			// to the beginning of the next run, keeping the place on the other side
+			while (i < end && !changed[i]) {
+				while (other[j++]) { /* skip */ }
+				i++;
+			}
+			if (i === end) { break; }
+			start = i;
+			while (changed[++i]) { /* the end of the run */ }
+			while (other[j]) { j++; }
+			do {
+				runlength = i - start;
+				// back, while the line before the run is the run's last: merges with what is before
+				while (start > 0 && same(left, start - 1, i - 1)) {
+					changed[--start] = 1;
+					changed[--i] = 0;
+					while (start > 0 && changed[start - 1]) { start--; }
+					while (j > 0 && other[--j]) { /* skip */ }
+				}
+				corresponding = j > 0 && other[j - 1] ? i : end;
+				// forward, while the run's first line is the one after it: merges with what is after
+				while (i !== end && same(left, start, i)) {
+					changed[start++] = 0;
+					changed[i++] = 1;
+					while (changed[i]) { i++; }
+					while (other[++j]) { corresponding = i; }
+				}
+			} while (runlength !== i - start);
+			// a merged run goes back to where it lines up with a change on the other side
+			while (corresponding < i) {
+				changed[--start] = 1;
+				changed[--i] = 0;
+				while (j > 0 && other[--j]) { /* skip */ }
+			}
+		}
+	};
+	pass(ca, cb, n, true);
+	pass(cb, ca, m, false);
+	// the script: runs that sit at the same place on both sides are one change
+	const out = [];
+	let i = 0;
+	let j = 0;
+	while (i < n || j < m) {
+		if (!ca[i] && !cb[j]) { i++; j++; continue; }
+		const i0 = i;
+		const j0 = j;
+		while (i < n && ca[i]) { i++; }
+		while (j < m && cb[j]) { j++; }
+		out.push({ a1: i0 + 1, a2: i, b1: j0 + 1, b2: j });
+	}
+	return out;
 }
 
 /**
@@ -222,7 +312,7 @@ function unifiedBody(changes, a, b, eof, context) {
 		const endB = last.b2 + (endA - last.a2);
 		const countA = endA - startA + 1;
 		const countB = endB - startB + 1;
-		out += `@@ -${range(countA === 0 ? startA : startA, countA)} +${range(startB, countB)} @@\n`;
+		out += `@@ -${range(startA, countA)} +${range(startB, countB)} @@\n`;
 		let at = startA;
 		for (const c of group) {
 			for (; at < c.a1; at++) { out += lineA(' ', at); }
@@ -379,6 +469,9 @@ async function run(args, io) {
 	 * (`/dev/null` for a missing one), `shownA` and `shownB` what is said; `show` puts the `diff ...` line first.
 	 */
 	const compareFiles = async (nameA, nameB, shownA, shownB, show) => {
+		// what the one-line messages call the files: the label of each, when there is one
+		const saidA = o.labels[0] !== undefined ? o.labels[0] : shownA;
+		const saidB = o.labels[1] !== undefined ? o.labels[1] : shownB;
 		const load = async (name) => {
 			if (name === '-') { return { b: Uint8Array.from(io.stdin, (ch) => ch.charCodeAt(0) & 0xff), t: null }; }
 			if (name === '/dev/null') { return { b: new Uint8Array(0), t: 0, missing: true }; }
@@ -399,8 +492,8 @@ async function run(args, io) {
 		const identical = same(A.b, B.b);
 		const say = (m) => { out += m + '\n'; };
 		if (!o.text && (hasNul(A.b) || hasNul(B.b))) {
-			if (identical) { if (o.s) { say(`Files ${shownA} and ${shownB} are identical`); } return; }
-			say(o.q ? `Files ${shownA} and ${shownB} differ` : `Binary files ${shownA} and ${shownB} differ`);
+			if (identical) { if (o.s) { say(`Files ${saidA} and ${saidB} are identical`); } return; }
+			say(o.q ? `Files ${saidA} and ${saidB} differ` : `Binary files ${saidA} and ${saidB} differ`);
 			status = Math.max(status, 1);
 			return;
 		}
@@ -431,12 +524,22 @@ async function run(args, io) {
 				}
 			}
 		}
+		// where the engine put a change that could be somewhere else is moved to where GNU puts it
+		if (changes.length) {
+			const key = (side, k) => {
+				const lines = side === sa ? sa : sb;
+				return canonical(lines.lines[k], o) + (!(o.w || o.b || o.Z) && lines.noNewline && k === lines.lines.length - 1 ? '\uE000' : '');
+			};
+			const keysA = sa.lines.map((_l, k) => key(sa, k));
+			const keysB = sb.lines.map((_l, k) => key(sb, k));
+			changes = shiftBoundaries(changes, keysA.length, keysB.length, (left, x, y) => (left ? keysA[x] === keysA[y] : keysB[x] === keysB[y]));
+		}
 		if (!changes.length) {
-			if (o.s) { say(`Files ${shownA} and ${shownB} are identical`); }
+			if (o.s) { say(`Files ${saidA} and ${saidB} are identical`); }
 			return;
 		}
 		status = Math.max(status, 1);
-		if (o.q) { say(`Files ${shownA} and ${shownB} differ`); return; }
+		if (o.q) { say(`Files ${saidA} and ${saidB} differ`); return; }
 		if (show) { say(`${header} ${shownA} ${shownB}`); }
 		const eof = { noNlA: sa.noNewline, noNlB: sb.noNewline };
 		const labelA = o.labels[0] !== undefined ? o.labels[0] : `${shownA}\t${io.stamp(A.t)}`;
@@ -465,8 +568,9 @@ async function run(args, io) {
 	const compareDirs = async (A, B) => {
 		let namesA;
 		let namesB;
-		try { namesA = await io.readdir(A); } catch { trouble(`diff: ${A}: No such file or directory\n`); return; }
-		try { namesB = await io.readdir(B); } catch { trouble(`diff: ${B}: No such file or directory\n`); return; }
+		// with -N a folder that is not there is an empty one
+		try { namesA = await io.readdir(A); } catch { if (o.N && !(await io.stat(A))) { namesA = []; } else { trouble(`diff: ${A}: No such file or directory\n`); return; } }
+		try { namesB = await io.readdir(B); } catch { if (o.N && !(await io.stat(B))) { namesB = []; } else { trouble(`diff: ${B}: No such file or directory\n`); return; } }
 		const names = [...new Set([...namesA, ...namesB])].filter((n) => !isExcluded(n)).sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
 		for (const name of names) {
 			const pa = join(A, name);
@@ -480,7 +584,8 @@ async function run(args, io) {
 					out += `Only in ${sa ? A : B}: ${name}\n`;
 					status = Math.max(status, 1);
 				} else if (dirA || dirB) {
-					await compareOneSided(sa ? pa : pb, sa ? pb : pa, !sa);
+					// a folder that one side lacks is, with -N, an empty one: with -r it is walked, and without it is "common"
+					if (o.r) { await compareOneSided(sa ? pa : pb, sa ? pb : pa, !sa); } else { out += `Common subdirectories: ${pa} and ${pb}\n`; }
 				} else {
 					await compareFiles(sa ? pa : '/dev/null', sb ? pb : '/dev/null', pa, pb, !o.q);
 				}
@@ -506,7 +611,11 @@ async function run(args, io) {
 			await compareFiles(sa ? A : '/dev/null', sb ? B : '/dev/null', A, B, false);
 			return { stdout: out, stderr: err, exitCode: status };
 		}
-		return { stdout: '', stderr: `diff: ${!sa ? A : B}: No such file or directory\n`, exitCode: 2 };
+		if (o.N && (sa ? sa.isDirectory : sb && sb.isDirectory)) {
+			await compareDirs(A, B);
+			return { stdout: out, stderr: err, exitCode: status };
+		}
+		return { stdout: '', stderr: (!sa ? `diff: ${A}: No such file or directory\n` : '') + (!sb ? `diff: ${B}: No such file or directory\n` : ''), exitCode: 2 };
 	}
 	if (sa.isDirectory && sb.isDirectory) {
 		await compareDirs(A, B);
@@ -527,4 +636,4 @@ async function run(args, io) {
 	return { stdout: out, stderr: err, exitCode: status };
 }
 
-module.exports = { run, parseOptions, splitLines, canonical, parseNormal, groupChanges, unifiedBody, contextBody, normalBody, globToRegExp };
+module.exports = { run, parseOptions, splitLines, canonical, parseNormal, shiftBoundaries, groupChanges, unifiedBody, contextBody, normalBody, globToRegExp };

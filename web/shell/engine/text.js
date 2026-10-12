@@ -196,4 +196,93 @@ function hasLoneSurrogate(s) {
 	return false;
 }
 
-module.exports = { decodeBytes, encodeText, decodeByteString, decodeIfBytes, joinEscapes, displayText, hasLoneSurrogate };
+/**
+ * `ls -v` / `--sort=version` and `sort -V`: gnulib's `filevercmp` as coreutils 8.32 has it (not glibc's `strverscmp`).
+ * Leading zeros make no difference to a number, and names equal as versions fall back to their bytes, so `w0 w00 w000`
+ * (not the other way round) and `file01.txt` is not `file1.txt` for `sort -u`; `~` sorts before the end of a name and a
+ * letter before any other mark; a file suffix (`.tar.gz`, `.txt`) is left out of the comparison unless what is before
+ * it is the same; a name with a leading dot sorts before any other, `.` and `..` first. Compared as UTF-8 bytes.
+ * Recorded against GNU on 1,000 random sets of names and on the lists of shell-engine-compat.test.js.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {number} negative, zero or positive
+ */
+function versionCompare(a, b) {
+	const isDigit = (/** @type {number} */ c) => c >= 48 && c <= 57;
+	const isAlpha = (/** @type {number} */ c) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+	/** where the file suffix `(\.[A-Za-z~][A-Za-z0-9~]*)*` of the name starts (-1: there is none) */
+	const suffixAt = (/** @type {Uint8Array} */ s) => {
+		let match = -1;
+		let afterDot = false;
+		for (let i = 0; i < s.length; i++) {
+			const c = s[i];
+			if (afterDot) {
+				afterDot = false;
+				if (!isAlpha(c) && c !== 126) { match = -1; }
+			} else if (c === 46) {
+				if (match < 0) { match = i; }
+				afterDot = true;
+			} else if (!isDigit(c) && !isAlpha(c) && c !== 126) {
+				match = -1;
+			}
+		}
+		return match;
+	};
+	const weight = (/** @type {number} */ c) => (isDigit(c) ? 0 : isAlpha(c) ? c : c === 126 ? -1 : c + 256);
+	const at = (/** @type {Uint8Array} */ s, /** @type {number} */ p) => (p < s.length ? s[p] : 0);
+	/** dpkg's comparison: marks and letters first, then the digits as numbers */
+	const compare = (/** @type {Uint8Array} */ s1, /** @type {number} */ l1, /** @type {Uint8Array} */ s2, /** @type {number} */ l2) => {
+		let p1 = 0;
+		let p2 = 0;
+		while (p1 < l1 || p2 < l2) {
+			let first = 0;
+			while ((p1 < l1 && !isDigit(s1[p1])) || (p2 < l2 && !isDigit(s2[p2]))) {
+				const w1 = p1 === l1 ? 0 : weight(s1[p1]);
+				const w2 = p2 === l2 ? 0 : weight(s2[p2]);
+				if (w1 !== w2) { return w1 - w2; }
+				p1++;
+				p2++;
+			}
+			while (at(s1, p1) === 48) { p1++; }
+			while (at(s2, p2) === 48) { p2++; }
+			while (isDigit(at(s1, p1)) && isDigit(at(s2, p2))) {
+				if (!first) { first = s1[p1] - s2[p2]; }
+				p1++;
+				p2++;
+			}
+			if (isDigit(at(s1, p1))) { return 1; }
+			if (isDigit(at(s2, p2))) { return -1; }
+			if (first) { return first; }
+		}
+		return 0;
+	};
+	const b1 = encodeText(a);
+	const b2 = encodeText(b);
+	let simple = 0;
+	for (let i = 0; i < Math.min(b1.length, b2.length) && simple === 0; i++) { simple = b1[i] - b2[i]; }
+	simple = simple || b1.length - b2.length;
+	if (simple === 0) { return 0; }
+	if (b1.length === 0) { return -1; }
+	if (b2.length === 0) { return 1; }
+	if (a === '.') { return -1; }
+	if (b === '.') { return 1; }
+	if (a === '..') { return -1; }
+	if (b === '..') { return 1; }
+	if (b1[0] === 46 && b2[0] !== 46) { return -1; }
+	if (b1[0] !== 46 && b2[0] === 46) { return 1; }
+	const s1 = b1[0] === 46 ? b1.subarray(1) : b1;
+	const s2 = b2[0] === 46 ? b2.subarray(1) : b2;
+	const m1 = suffixAt(s1);
+	const m2 = suffixAt(s2);
+	let l1 = m1 < 0 ? s1.length : m1;
+	let l2 = m2 < 0 ? s2.length : m2;
+	// the suffixes count when what is before them is the same
+	if ((m1 >= 0 || m2 >= 0) && l1 === l2 && s1.subarray(0, l1).every((c, i) => c === s2[i])) {
+		l1 = s1.length;
+		l2 = s2.length;
+	}
+	return compare(s1, l1, s2, l2) || simple;
+}
+
+module.exports = { decodeBytes, encodeText, decodeByteString, decodeIfBytes, joinEscapes, displayText, hasLoneSurrogate, versionCompare };

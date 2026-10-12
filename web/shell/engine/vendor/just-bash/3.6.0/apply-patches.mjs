@@ -26,12 +26,13 @@ export const UNPATCHED_SHA256 = '38f1ad1e3283980ecdf68cede8a4eed028c6dff6e8c3179
  * file can collide with one. `Nu` is the file's own function (a sed range's key), a hoisted declaration, so it is there.
  */
 export const HEADER = `/*! LevelCode: this is just-bash@3.6.0 dist/bundle/browser.js (Apache-2.0, Copyright 2025 Vercel Inc.) MODIFIED by LevelCode:
- *  patches LC-1 .. LC-33 of web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs (Apache-2.0 section 4(b)).
+ *  patches LC-1 .. LC-60 of web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs (Apache-2.0 section 4(b)).
  *  Unmodified input sha256 ${UNPATCHED_SHA256}. */
 import __lcText from"lc-text";
 import __lcZone from"lc-zone";
 const Date=__lcZone.LcDate;
 var __lcUtf8=__lcText.decodeByteString;
+var __lcVer=__lcText.versionCompare;
 var __lcOpenError=l=>{let c=l&&l.code;return c==="ENOENT"?"No such file or directory":c==="EACCES"||c==="EPERM"?"Permission denied":c==="EISDIR"?"Is a directory":c==="ENOTDIR"?"Not a directory":c==="EROFS"?"Read-only file system":c==="ENOSPC"?"No space left on device":"cannot open redirect target"};
 var __lcCmp=(a,b)=>{if(a===b)return 0;let n=a.length<b.length?a.length:b.length,i=0;for(;i<n&&a.charCodeAt(i)===b.charCodeAt(i);)i++;if(i===n)return a.length<b.length?-1:a.length>b.length?1:0;let x=a.charCodeAt(i),y=b.charCodeAt(i);x>=55296&&y>=55296&&(x+=x>=57344?-2048:8192,y+=y>=57344?-2048:8192);return x<y?-1:1};
 var __lcMode=s=>{let m=typeof s.mode=="number"?s.mode:s.isDirectory?493:420,r=s.isDirectory?"d":"-";for(let i=8;i>=0;i--)r+=m>>i&1?"rwxrwxrwx"[8-i]:"-";return r};
@@ -41,6 +42,37 @@ var __lcNoBuiltin=new Set(["bg","caller","disown","enable","fc","fg","jobs","kil
 var __lcWordB=e=>{if(!e.includes("\\\\<")&&!e.includes("\\\\>"))return e;let t="",n=!1;for(let r=0;r<e.length;r++){let s=e[r];if(s==="\\\\"&&r+1<e.length){let i=e[++r];t+=!n&&(i==="<"||i===">")?"\\\\b":s+i;continue}if(n)s==="]"&&(n=!1);else if(s==="["){n=!0,t+=s,e[r+1]==="^"&&(t+="^",r++),e[r+1]==="]"&&(t+="]",r++);continue}t+=s}return t};
 var __lcQuant=e=>{if(!/[*+?}][*+?{]|^[*+?{]|[(|][*+?{]|\\{,/.test(e))return e;let o="",at=-1,q=!1,st=[],i=0;for(;i<e.length;){let c=e[i];if(c==="\\\\"){o+=c+(e[i+1]===void 0?"":e[i+1]),at=o.length-(e[i+1]===void 0?1:2),q=!1,i+=2;continue}if(c==="["){let j=i+1;for(e[j]==="^"&&j++,e[j]==="]"&&j++;j<e.length&&e[j]!=="]";){if(e[j]==="["&&(e[j+1]===":"||e[j+1]==="."||e[j+1]==="=")){let k=e.indexOf(e[j+1]+"]",j+2);j=k<0?e.length:k+2}else e[j]==="\\\\"?j+=2:j++}let w=e.slice(i,j+1);at=o.length,o+=w,q=!1,i=j+1;continue}if(c==="("){if(st.push(o.length),o+=c,i++,e[i]==="?"){for(;i<e.length&&e[i]!==":"&&e[i]!==")"&&e[i]!==">";)o+=e[i++];i<e.length&&(o+=e[i++])}at=-1,q=!1;continue}if(c===")"){o+=c,at=st.length?st.pop():-1,q=!1,i++;continue}if(c==="|"||c==="^"||c==="$"){o+=c,at=-1,q=!1,i++;continue}let m=c==="{"?/^\\{(?:\\d+(?:,\\d*)?|,\\d*)\\}/.exec(e.slice(i)):null;if(c==="*"||c==="+"||c==="?"||m){let t=m?m[0]:c,n=t.length;if(at<0){i+=n;continue}t[0]==="{"&&t[1]===","&&(t="{0"+t.slice(1)),at>=0&&q&&(o=o.slice(0,at)+"(?:"+o.slice(at)+")"),o+=t,at>=0&&(q=!0),i+=n;continue}at=o.length,o+=c,q=!1,i++}return o};
 var __lcRe=e=>__lcQuant(__lcWordB(e));
+var __lcAwkRecords=(e,r)=>{if(r===void 0||r==="\\n")return e.split("\\n");if(r==="")return e.replace(/^\\n+/,"").replace(/\\n+$/,"").split(/\\n\\n+/);if(r.length===1)return e.split(r);try{return oe(r).split(e)}catch{return e.split("\\n")}};
+var __lcLead=e=>{let a=!0;for(let i=0;i<e.length;i++){let c=e[i];if(c==="\\\\"){a=!1;i++;continue}if(c==="["){let j=i+1;for(e[j]==="^"&&j++,e[j]==="]"&&j++;j<e.length&&e[j]!=="]";){if(e[j]==="["&&(e[j+1]===":"||e[j+1]==="."||e[j+1]==="=")){let k=e.indexOf(e[j+1]+"]",j+2);j=k<0?e.length:k+2}else j++}i=j,a=!1;continue}if(a&&(c==="*"||c==="+"||c==="?"))throw Object.assign(new Error("Invalid preceding regular expression"),{lcRegex:!0});a=c==="("||c==="|"||c==="^"&&a}};
+var __lcReMsg=e=>{if(e&&e.lcRegex)return e.message;let m=String(e&&e.message||""),g=/invalid repeat count: .\\{(\\d+)(?:,(\\d*))?\\}./.exec(m);return/__lcccs/.test(m)?"character class syntax is [[:space:]], not [:space:]":/missing closing \\)/.test(m)?"Unmatched ( or \\\\(":/unexpected \\)/.test(m)?"Unmatched ) or \\\\)":/missing closing \\]/.test(m)?"Unmatched [, [^, [:, [., or [=":g?+g[1]>32767||g[2]&&+g[2]>32767?"Regular expression too big":g[2]&&+g[2]<+g[1]?"Invalid content of \\\\{\\\\}":"a repeat count over 1000 is not supported by this shell":/Backreferences/.test(m)?"back-references in a pattern are not supported by this shell":/invalid character class range: .\\[:/.test(m)?"Invalid character class name":/invalid character class range/.test(m)?"Invalid range end":"Invalid regular expression"};
+var __lcRepl=(e,t,n)=>{let r="",s=0,m="",o="",f=x=>{if(x==="")return;if(o){let c=x[0];c=o==="u"?c.toUpperCase():c.toLowerCase();o="";x=c+(m==="U"?x.slice(1).toUpperCase():m==="L"?x.slice(1).toLowerCase():x.slice(1))}else if(m)x=m==="U"?x.toUpperCase():x.toLowerCase();r+=x},hx=c=>/[0-9a-fA-F]/.test(c||"");for(;s<e.length;){let c=e[s];if(c==="\\\\"&&s+1<e.length){let i=e[s+1];if(i==="&"){f("&");s+=2;continue}if(i==="n"){f("\\n");s+=2;continue}if(i==="t"){f("\\t");s+=2;continue}if(i==="r"){f("\\r");s+=2;continue}if(i==="a"){f("\\x07");s+=2;continue}if(i==="f"){f("\\f");s+=2;continue}if(i==="v"){f("\\v");s+=2;continue}if(i==="L"||i==="U"){m=i;o="";s+=2;continue}if(i==="l"||i==="u"){o=i;s+=2;continue}if(i==="E"){m="";o="";s+=2;continue}if(i==="c"&&s+2<e.length){f(__lcByte(e[s+2].toUpperCase().charCodeAt(0)^64));s+=3;continue}if(i==="x"&&hx(e[s+2])){let h=e[s+2]+(hx(e[s+3])?e[s+3]:"");f(__lcByte(parseInt(h,16)));s+=2+h.length;continue}if(i==="o"&&/[0-7]/.test(e[s+2]||"")){let h=/^[0-7]{1,3}/.exec(e.slice(s+2))[0];f(__lcByte(parseInt(h,8)));s+=2+h.length;continue}if(i==="d"&&/[0-9]/.test(e[s+2]||"")){let h=/^[0-9]{1,3}/.exec(e.slice(s+2))[0];f(__lcByte(parseInt(h,10)));s+=2+h.length;continue}let d=parseInt(i,10);if(d===0){f(t);s+=2;continue}if(d>=1&&d<=9){f(n[d-1]||"");s+=2;continue}f(i);s+=2;continue}if(c==="&"){f(t);s++;continue}f(c);s++}return r};
+var __lcIv=(p,x,g)=>{if(p.indexOf("{")<0&&!/\\\\[1-9]/.test(p))return"";let a=!1,i=0,n=p.length,cl=0;for(;i<n;){let c=p[i];if(c==="["){let j=i+1;p[j]==="^"&&j++;p[j]==="]"&&j++;for(;j<n&&p[j]!=="]";){if(p[j]==="["&&(p[j+1]===":"||p[j+1]==="."||p[j+1]==="=")){let k=p.indexOf(p[j+1]+"]",j+2);j=k<0?n:k+2}else j++}i=j+1;a=!0;continue}if(c==="\\\\"){let d=p[i+1];if(!x&&d==="{"){if(!a){if(g){a=!0;i+=2;continue}return"Invalid preceding regular expression"}let k=p.indexOf("\\\\}",i+2);if(k<0)return"Unmatched \\\\{";let b=p.slice(i+2,k);if(b===""||!/^\\d*(,\\d*)?$/.test(b))return"Invalid content of \\\\{\\\\}";i=k+2;continue}if(!x&&(d==="("||d==="|")){a=!1;i+=2;continue}if(!x&&d===")"){a=!0;cl++;i+=2;continue}if(d>="1"&&d<="9"&&+d>cl)return"Invalid back reference";a=!0;i+=2;continue}if(x&&c==="{"){if(!a){if(g){a=!0;i++;continue}return"Invalid preceding regular expression"}let k=p.indexOf("}",i+1);if(k<0){if(g){i++;continue}return"Unmatched \\\\{"}let b=p.slice(i+1,k);if(/^[0-9,]*$/.test(b)){if(b===""||!/^\\d*(,\\d*)?$/.test(b))return"Invalid content of \\\\{\\\\}"}else if(!g)return"Invalid content of \\\\{\\\\}";i=k+1;continue}if(x&&c===")"){a=!0;cl++;i++;continue}if(x&&(c==="("||c==="|")||c==="^"&&(x||!a)){a=!1;i++;continue}a=!0;i++}return""};
+var __lcPat=(e,x,g)=>{{let __v=__lcIv(e,x,g);if(__v)throw Object.assign(new Error(__v),{lcRegex:!0})}if(e.indexOf("\\\\")<0&&!(g&&x&&/[){]/.test(e))&&!/\\[[.=:]/.test(e)&&!/(^|[^[])\\[\\^?:/.test(e))return e;let T=[],i=0,sp=c=>/[.^$*+?(){}|[\\]\\\\\\/-]/.test(c)?"\\\\"+c:c,num=(re,b,k)=>{let h=re.exec(e.slice(k));return h?[String.fromCharCode(parseInt(h[0],b)),h[0].length]:null};for(;i<e.length;){let c=e[i];if(c==="["){let j=i+1,ng=!1,body="";e[j]==="^"&&(ng=!0,j++);e[j]==="]"&&(body="]",j++);for(;j<e.length&&e[j]!=="]";){if(e[j]==="["&&(e[j+1]===":"||e[j+1]==="."||e[j+1]==="=")){let k=e.indexOf(e[j+1]+"]",j+2);if(k>=0){let w=e.slice(j+2,k);if(e[j+1]!==":"&&w.length!==1)throw Object.assign(new Error("Invalid collation character"),{lcRegex:!0});if(e[j+1]!==":"&&w.length===1){body+=/[\\]\\\\^-]/.test(w)?"\\\\"+w:w}else body+=e.slice(j,k+2);j=k+2;continue}throw Object.assign(new Error("Unmatched [, [^, [:, [., or [="),{lcRegex:!0})}if(e[j]==="\\\\"&&j+1<e.length){let d=e[j+1];if(!g&&"ntrfva".includes(d)){body+="\\\\"+d,j+=2;continue}if(!g&&(d==="o"||d==="d"||d==="x")){let m=num(d==="o"?/^[0-7]{1,3}/:d==="x"?/^[0-9a-fA-F]{1,2}/:/^[0-9]{1,3}/,d==="o"?8:d==="x"?16:10,j+2);if(m){body+=m[0]==="\\\\"?"\\\\\\\\":m[0],j+=2+m[1];continue}body+=d,j+=2;continue}body+="\\\\\\\\",j++;continue}body+=e[j],j++}if(j>=e.length)throw Object.assign(new Error("Unmatched [, [^, [:, [., or [="),{lcRegex:!0});{let __r=e.slice(i+1+(ng?1:0),j);if(__r.length>2&&__r[0]===":"&&__r[__r.length-1]===":"&&/[^:]/.test(__r)&&__r.indexOf("-")<0&&!/\\[[:.=]/.test(__r))return"[[:__lcccs:]]"}T.push({t:ng?"neg":"br",b:body}),i=j+1;continue}if(c==="\\\\"&&i+1>=e.length)throw Object.assign(new Error("Trailing backslash"),{lcRegex:!0});if(c==="\\\\"&&i+1<e.length){let d=e[i+1];if(d==="<"){T.push({t:"ws"}),i+=2;continue}if(d===">"){T.push({t:"we"}),i+=2;continue}if(!x&&d==="("){T.push({t:"open",s:"\\\\("}),i+=2;continue}if(!x&&d===")"){T.push({t:"close",s:"\\\\)"}),i+=2;continue}if(!x&&d==="|"){T.push({t:"bar",s:"\\\\|"}),i+=2;continue}if(!g&&(d==="o"||d==="d"||d==="x")){let m=num(d==="o"?/^[0-7]{1,3}/:d==="x"?/^[0-9a-fA-F]{1,2}/:/^[0-9]{1,3}/,d==="o"?8:d==="x"?16:10,i+2);if(m){T.push({t:"lit",s:m[0]==="\\\\"?"\\\\\\\\":m[0]}),i+=2+m[1];continue}T.push({t:"lit",s:d}),i+=2;continue}if(!g&&d==="c"&&i+2<e.length){let q=String.fromCharCode(e[i+2].toUpperCase().charCodeAt(0)^64);T.push({t:"lit",s:q==="\\\\"?"\\\\\\\\":q}),i+=3;continue}T.push(/[A-Za-z]/.test(d)&&!(g?"wWsSbB":"wWsSbBntrfva").includes(d)?{t:"lit",s:d}:{t:"esc",s:"\\\\"+d}),i+=2;continue}if(c==="."){T.push({t:"dot"}),i++;continue}if(x&&c==="("){T.push({t:"open",s:c}),i++;continue}if(x&&c===")"){T.push({t:"close",s:c}),i++;continue}if(g&&x&&c==="{"&&!/^\\{(\\d+(,\\d*)?|,\\d*)\\}/.test(e.slice(i))){T.push({t:"lit",s:"\\\\{"}),i++;continue}if(x&&c==="|"){T.push({t:"bar",s:c}),i++;continue}T.push({t:"lit",s:c}),i++}if(g&&x){let dp=0;for(let o of T){if(o.t==="open")dp++;else if(o.t==="close"){if(dp>0)dp--;else o.s="\\\\)"}}}let nwb=b=>{let c=b.replace(/^-|-$/g,"");return c!==""&&!/[A-Za-z0-9_\\\\[\\]-]/.test(c)},nw=o=>o&&(o.t==="lit"&&/^[^A-Za-z0-9_]$/.test(o.s)&&!(o.s==="*"||o.s==="{"||o.s==="}"||o.s==="^"||o.s==="$"||x&&(o.s==="+"||o.s==="?"))||o.t==="esc"&&/^\\\\[^A-Za-z0-9_]$/.test(o.s)&&!(!x&&/^\\\\[+?{}]$/.test(o.s))||o.t==="br"&&nwb(o.b)),nq=o=>o&&(o.t==="lit"&&(o.s==="*"||o.s==="{"||x&&(o.s==="+"||o.s==="?"))||o.t==="esc"&&!x&&/^\\\\[+?{]$/.test(o.s));for(let k=0;k<T.length;k++){let o=T[k];if(o.t==="ws"){let q=k+1;for(;T[q]&&T[q].t==="open";)q++;if(nw(T[q])||nq(T[q])||T[q]&&T[q].t==="we")o.t="never"}else if(o.t==="we"){let q=k-1;for(;T[q]&&T[q].t==="close";)q--;if(nw(T[q])||T[q]&&T[q].t==="ws")o.t="never"}}let w=!1;for(let k=0;k<T.length;k++){let o=T[k];if(o.t==="ws"){w=!0;continue}if(o.t==="we"){let p=T[k-1];p&&(p.t==="dot"?p.t="wordchar":p.t==="neg"&&(p.w=!0));continue}if(w){if(o.t==="open")continue;o.t==="dot"?o.t="wordchar":o.t==="neg"&&(o.w=!0);w=!1}}let r="";for(let o of T)r+=o.t==="never"?"\\\\b\\\\B":o.t==="ws"||o.t==="we"?"\\\\b":o.t==="dot"?".":o.t==="wordchar"?"\\\\w":o.t==="br"?"["+o.b+"]":o.t==="neg"?"[^"+o.b+(o.w?"\\\\W":"")+"]":o.s;return r};
+var __lcRef=(r,p,x)=>{let g=0;for(let i=0;i<p.length;i++){let c=p[i];if(c==="\\\\"){x||p[i+1]!=="("||g++;i++;continue}if(c==="["){let j=i+1;for(p[j]==="^"&&j++,p[j]==="]"&&j++;j<p.length&&p[j]!=="]";){if(p[j]==="["&&(p[j+1]===":"||p[j+1]==="."||p[j+1]==="=")){let k=p.indexOf(p[j+1]+"]",j+2);j=k<0?p.length:k+2}else j++}i=j;continue}x&&c==="("&&g++}for(let i=0;i<r.length;i++)if(r[i]==="\\\\"){let d=r.charCodeAt(i+1)-48;if(d>g&&d<=9)return d;i++}return 0};
+var __lcOff=(l,t)=>l.multiple!==void 0?l.multiple>0?l.multiple-t%l.multiple:0:l.offset;
+var __lcDev=(A,f,m)=>{let d=m&&f.__lcTake(m);if(!d||!d.stdout&&!d.stderr)return A;let b=A.stdoutEncoding==="binary"?x=>Array.from(__lcText.encodeText(x),c=>String.fromCharCode(c)).join(""):x=>x;return{...A,stdout:(A.stdout||"")+b(d.stdout),stderr:(A.stderr||"")+d.stderr}};
+var __lcWs=(r,m)=>{r=r.replace(/^[ \\t\\n]+|[ \\t\\n]+$/g,"");return r===""?[]:r.split(/[ \\t\\n]+/,m)};
+var __lcRedir=e=>{let t=e.parsePrimary();for(;e.match(le.NUMBER,le.STRING,le.IDENT,le.DOLLAR,le.LPAREN);){let n=e.parsePrimary();t={type:"binary",operator:" ",left:t,right:n}}return t};
+var __lcPipe=async(e,n,r)=>{let c=et(await ke(e,n)),m=e.__lcPipes||(e.__lcPipes=new Map);m.has(c)||(e.__lcF=e.output.length);m.set(c,(m.get(c)||"")+r)};
+var __lcRun=async(e,c,x)=>{if(!e.exec)return;let r=await e.exec(c,x),f=e.__lcF||0,o=r.stdout||"";e.output=e.output.slice(0,f)+o+e.output.slice(f);e.__lcF=f+o.length;r.stderr&&(e.__lcErr=(e.__lcErr||"")+r.stderr)};
+var __lcFlush=async e=>{let m=e.__lcPipes;if(!m||m.size===0)return;let a=[...m];m.clear();for(let[c,x]of a)await __lcRun(e,c,x);zu(e)};
+var __lcFrac=ms=>String(((ms%1e3)+1e3)%1e3).padStart(3,"0")+"0000000";
+var __lcPct=e=>e.indexOf("\\\\")<0?e:e.replace(/\\\\(?:[0-7]{1,3}|x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[^0-7xuU])/g,m=>{let c=m[1];return(c==="x"||c==="u"||c==="U"?parseInt(m.slice(2),16):parseInt(m.slice(1),8))===37?"%%":m});
+var __lcBrk=L=>{let c=L.input[L.pos+1],e=L.input.indexOf(c+"]",L.pos+2),n=L.input.indexOf("\\n",L.pos),s="";e=e>=0&&(n<0||e<n)?e+2:n<0?L.input.length:n;for(;L.pos<e;)s+=L.advance();return s};
+var __lcSedFail=(t,e,c)=>{t.errorMessage="sed: -e expression #1, char "+c+": "+__lcReMsg(e);t.quit=!0};
+var __lcWhere2=(ps,a,m,z)=>{ps=ps||[0];let o=0,k=0;for(;k<ps.length-1&&a>o+ps[k];k++)o+=ps[k]+1;return"-e expression #"+(k+1)+", char "+(z?0:a-o)+": "+m};
+var __lcWhere=(P,a,m,z)=>__lcWhere2(P.__lcP,a,m,z);
+var __lcAbs=(P,t)=>{let a=(P.scripts[0]||"").split("\\n"),o=0;for(let k=1;k<t.line&&k<=a.length;k++)o+=a[k-1].length+1;return o+t.column};
+var __lcB=(P,t)=>{if(!t||t.type!=="NEWLINE")return-1;let a=__lcAbs(P,t),ps=P.__lcP||[0],o=0;for(let k=0;k<ps.length-1;k++){if(a===o+ps[k]+1)return o+ps[k];o+=ps[k]+1}return-1};
+var __lcAt=(P,t)=>{if(!t||t.type==="EOF")return(P.scripts[0]||"").length;let b=__lcB(P,t);return b>=0?b:__lcAbs(P,t)};
+var __lcUnk=P=>{let t=P.peek(),a=__lcAbs(P,t),c=(P.scripts[0]||"")[a-1];return __lcWhere(P,a,c?"unknown command: "+String.fromCharCode(96)+c+"'":"missing command")};
+var __lcBrace=P=>{let d=0;for(let k=0;k<P.pos;k++){let t=P.tokens[k].type;t==="LBRACE"?d++:t==="RBRACE"&&d--}return d};
+var __lcAfter=(P,t)=>{let b=__lcB(P,t);return b>=0?__lcWhere(P,b,"missing command"):__lcWhere(P,__lcAbs(P,t),"unknown command: "+String.fromCharCode(96)+(t.type==="NEWLINE"?"\\n":";")+"'")};
+var __lcNl=s=>{let o="",i=0,n=s.length;for(;i<n;){let c=s[i];if(c==="\\\\"){o+=c+(s[i+1]===void 0?"":s[i+1]);i+=2;continue}if(c!=="["){o+=c;i++;continue}o+="[";i++;if(s[i]==="^"){o+="^\\\\n";i++}if(s[i]==="]"){o+="]";i++}for(;i<n&&s[i]!=="]";){let d=s[i];if(d==="\\\\"){o+=d+(s[i+1]===void 0?"":s[i+1]);i+=2}else if(d==="["&&s[i+1]===":"){let k=s.indexOf(":]",i+2);k<0?(o+=s.slice(i),i=n):(o+=s.slice(i,k+2),i=k+2)}else{o+=d;i++}}if(i<n){o+="]";i++}}return o};
+var __lcList=(s,w)=>{let b=__lcText.encodeText(s),n=w===void 0?70:w,o="",c=0,N={7:"\\\\a",8:"\\\\b",12:"\\\\f",10:"\\\\n",13:"\\\\r",9:"\\\\t",11:"\\\\v"};for(let i=0;i<b.length;i++){let x=b[i],t=x===92?"\\\\\\\\":N[x]||(x>=32&&x<127?String.fromCharCode(x):"\\\\"+x.toString(8).padStart(3,"0"));if(n>0&&c+t.length>n-1){o+="\\\\\\n";c=0}o+=t;c+=t.length}return o+"$"};
+var __lcY4=y=>y>=0&&y<1000?String(y).padStart(4,"0"):String(y);
+var __lcXtra=(P,s)=>{let L=P.tokens[P.pos-1],N=P.tokens[P.pos];if(P.pos<=s||!L||!N||N.type==="EOF")return"";if(!(L.type==="COMMAND"||L.type==="SUBSTITUTE"||L.type==="TRANSLITERATE"||L.type==="RBRACE"))return"";if(N.type==="NEWLINE"||N.type==="SEMICOLON"||N.type==="RBRACE")return"";if(L.type==="SUBSTITUTE"&&(N.type==="FILE_WRITE"||N.type==="EXECUTE"))return"";return __lcWhere(P,__lcAbs(P,N),"extra characters after command")};
+var __lcChk=(cs,pc)=>{for(let c of cs){let ps=[],a=c.address;if(a)for(let x of[a.start,a.end])x&&typeof x=="object"&&typeof x.pattern=="string"&&x.pattern!==""&&ps.push([x.pattern,x.extendedRegex,x.end,null]);c.type==="substitute"&&c.pattern!==""&&ps.push([c.pattern,c.extendedRegex,c.__lcEnd,c.replacement]);for(let[p,x,en,rp]of ps){let at=en||p.length+2,m="";try{let k=ku(x?__lcPat(p,!0):vu(__lcPat(p,!1)));x&&__lcLead(p);oe(k,"")}catch(e){if(e&&e.lcRegex)m=e.message;else if(String(e&&e.message).startsWith("Invalid regular expression")){m=__lcReMsg(e);if(/^(back-references|a repeat count over|Invalid regular expression)/.test(m))m=""}}if(m)return m.startsWith("character class syntax")?m:__lcWhere2(pc,at,m);if(rp!==null){let d=__lcRef(rp,p,x);if(d)return __lcWhere2(pc,at,"invalid reference \\\\"+d+" on "+String.fromCharCode(96)+"s' command's RHS")}}if(c.type==="group"){let r=__lcChk(c.commands,pc);if(r)return r}}return""};
 var __lcKey=(e,t,n,g)=>{let l=e.length,a=n===null?null:n[0],b=c=>c===" "||c==="\\t",f=(p,k)=>{if(a!==null){for(;p<l&&k--;){for(;p<l&&e[p]!==a;)p++;p<l&&p++}}else{for(;p<l&&k--;){for(;p<l&&b(e[p]);)p++;for(;p<l&&!b(e[p]);)p++}}return p},sb=t.ignoreLeading||g,eb=t.ignoreLeadingEnd||g,s=f(0,t.startField-1);if(sb)for(;s<l&&b(e[s]);)s++;if(s=Math.min(l,s+(t.startChar===void 0?0:t.startChar-1)),t.endField===void 0)return e.slice(s);let w=t.endField-1,c=t.endChar===void 0?0:t.endChar,p=0;if(c===0&&w++,a!==null){for(;p<l&&w--;){for(;p<l&&e[p]!==a;)p++;p<l&&(w||c)&&p++}}else{for(;p<l&&w--;){for(;p<l&&b(e[p]);)p++;for(;p<l&&!b(e[p]);)p++}}if(c!==0){if(eb)for(;p<l&&b(e[p]);)p++;p=Math.min(l,p+c)}return e.slice(s,Math.max(s,p))};
 var __lcKeySpec=e=>{let t={},p=e.split(","),fl=(f,end)=>{f.includes("n")&&(t.numeric=!0),f.includes("r")&&(t.reverse=!0),f.includes("f")&&(t.ignoreCase=!0),f.includes("b")&&(t[end?"ignoreLeadingEnd":"ignoreLeading"]=!0),f.includes("h")&&(t.humanNumeric=!0),f.includes("V")&&(t.versionSort=!0),f.includes("d")&&(t.dictionaryOrder=!0),f.includes("M")&&(t.monthSort=!0)},pos=s=>{let m=/^(\\d*)(?:\\.(\\d*))?([A-Za-z]*)$/.exec(s);return m?{f:m[1]===""?NaN:parseInt(m[1],10),c:m[2]?parseInt(m[2],10):void 0,o:m[3]}:null},a=pos(p[0]);if(p.length>2||!a||!(a.f>=1))return null;if(t.startField=a.f,a.c>=1&&(t.startChar=a.c),fl(a.o,!1),p.length>1&&p[1]!==""){let b=pos(p[1]);if(!b)return null;b.f>=1&&(t.endField=b.f,b.c>=1&&(t.endChar=b.c)),fl(b.o,!0)}return t};
 var __lcBytes=a=>__lcText.decodeBytes(Uint8Array.from(a));
@@ -536,22 +568,22 @@ export const PATCHES = [
 			{
 				name: 'the flags of s: w takes the rest of the line as the file name and belongs to the substitution',
 				from: 'if(a==="g"||a==="i"||a==="p"||a==="I"||this.isDigit(a))l+=this.advance();else break}return{type:ce.SUBSTITUTE,value:`s${r}${s}${r}${o}${r}${l}`,pattern:s,replacement:o,flags:l,line:t,column:n}}',
-				to: 'if(a==="g"||a==="i"||a==="p"||a==="I"||this.isDigit(a))l+=this.advance();else if(a==="w"){this.advance();for(;this.peek()===" "||this.peek()==="\\t";)this.advance();let f="";for(;this.pos<this.input.length&&this.peek()!=="\\n";)f+=this.advance();return{type:ce.SUBSTITUTE,value:`s${r}${s}${r}${o}${r}${l}w`,pattern:s,replacement:o,flags:l,wfile:f,line:t,column:n}}else break}return{type:ce.SUBSTITUTE,value:`s${r}${s}${r}${o}${r}${l}`,pattern:s,replacement:o,flags:l,line:t,column:n}}',
+				to: 'if(a==="g"||a==="p"){if(l.includes(a))return{type:ce.ERROR,value:"multiple `"+a+"\' options to `s\' command",line:t,column:this.pos+1,abs:!0};l+=this.advance()}else if(a==="i"||a==="I"||a==="m"||a==="M")l+=this.advance();else if(this.isDigit(a)){if(/\\d/.test(l))return{type:ce.ERROR,value:"multiple number options to `s\' command",line:t,column:this.pos+1,abs:!0};let q="";for(;this.isDigit(this.peek());)q+=this.advance();if(+q===0)return{type:ce.ERROR,value:"number option to `s\' command may not be zero",line:t,column:this.pos,abs:!0};l+=q}else if(a===" "||a==="\\t")this.advance();else if(a==="w"){this.advance();for(;this.peek()===" "||this.peek()==="\\t";)this.advance();let f="";for(;this.pos<this.input.length&&this.peek()!=="\\n";)f+=this.advance();return{type:ce.SUBSTITUTE,value:`s${r}${s}${r}${o}${r}${l}w`,pattern:s,replacement:o,flags:l,wfile:f,end:this.pos,line:t,column:n}}else break}let __c=this.peek();if(__c&&!";\\n}#\\r wWeE".includes(__c))return{type:ce.ERROR,value:"unknown option to `s\'",line:t,column:this.pos+1,abs:!0};return{type:ce.SUBSTITUTE,value:`s${r}${s}${r}${o}${r}${l}`,pattern:s,replacement:o,flags:l,end:this.pos,line:t,column:n}}',
 			},
 			{
 				name: 'the command carries the file',
 				from: 'printOnMatch:r.includes("p"),nthOccurrence:s,extendedRegex:this.extendedRegex}}}',
-				to: 'printOnMatch:r.includes("p"),nthOccurrence:s,writeFile:t.wfile,extendedRegex:this.extendedRegex}}}',
+				to: 'printOnMatch:r.includes("p"),nthOccurrence:s,writeFile:t.wfile,multiline:r.includes("m")||r.includes("M"),extendedRegex:this.extendedRegex,__lcEnd:t.end}}}',
 			},
 			{
 				name: 'a substitution that was made writes the pattern space to the file',
-				from: 'o.printOnMatch&&t.lineNumberOutput.push(t.patternSpace)}}catch{}break}case"print":',
-				to: 'o.printOnMatch&&t.lineNumberOutput.push(t.patternSpace),o.writeFile!==void 0&&t.pendingFileWrites.push({filename:o.writeFile,content:`${t.patternSpace}\\n`})}}catch{}break}case"print":',
+				from: 'o.printOnMatch&&t.lineNumberOutput.push(t.patternSpace)}}',
+				to: '__no?t.substitutionMade=__sm:(o.printOnMatch&&t.lineNumberOutput.push(t.patternSpace),o.writeFile!==void 0&&t.pendingFileWrites.push({filename:o.writeFile,content:`${t.patternSpace}\\n`}))}}',
 			},
 			{
 				name: 'a range that starts on a line at or after its numeric end is closed on that line',
 				from: 'h?(p.active=!0,p.startLine=t,s.set(d,p),yi(l,t,n,r,i)&&(p.active=!1,typeof o=="number"&&(p.completed=!0),s.set(d,p)),!0):!1',
-				to: 'h?(p.active=!0,p.startLine=t,s.set(d,p),(yi(l,t,n,r,i)||typeof l=="number"&&l<=t)&&(p.active=!1,typeof o=="number"&&(p.completed=!0),s.set(d,p)),!0):!1',
+				to: 'h?(p.active=!0,p.startLine=t,s.set(d,p),(((typeof l!="object"||!("pattern"in l)||o===0)&&yi(l,t,n,r,i))||typeof l=="number"&&l<=t)&&(p.active=!1,typeof o=="number"&&(p.completed=!0),s.set(d,p)),!0):!1',
 			},
 		],
 	},	{
@@ -692,12 +724,12 @@ export const PATCHES = [
 	},
 	{
 		id: 'LC-31',
-		title: 'a command word that is an expansion is split into words (and globbed) as bash splits it (`c="ls -l"; $c` ran a command named "ls -l" and said "command not found"): the first word is the command and the rest are its first arguments. A quoted list is words too (`"$@"`, `"${cmd[@]}"`, `"x$@"`: `run() { "$@"; }` could not run what it was given), and one that is empty is no command at all',
+		title: 'a command word that has an expansion in it is split into words (and globbed) as bash splits it (`c="ls -l"; $c` ran a command named "ls -l" and said "command not found"): the first word is the command and the rest are its first arguments. A quoted list is words too (`"$@"`, `"${cmd[@]}"`, `"x$@"`, `x"$@"`: `run() { "$@"; }` could not run what it was given), and one that is empty is no command at all',
 		edits: [
 			{
 				name: 'simple command: the command name is expanded with field splitting when it is only expansions',
 				from: 'let u=await Be(this.ctx,t.name),f=[],d=[],p=(N,$)=>{',
-				to: 'let __nm=t.name.parts.every(N=>N.type==="CommandSubstitution"||N.type==="ParameterExpansion"||N.type==="ArithmeticExpansion"||N.type==="DoubleQuoted"&&N.parts.every(P=>P.type==="CommandSubstitution"||P.type==="ParameterExpansion"||P.type==="ArithmeticExpansion"||P.type==="Literal")),__ex=__nm?await dr(this.ctx,t.name):null,__z=__ex!==null&&__ex.values.length===0,u=__ex?__ex.values[0]??"":await Be(this.ctx,t.name),f=[],d=[],p=(N,$)=>{',
+				to: 'let __xp=P=>P.type==="CommandSubstitution"||P.type==="ParameterExpansion"||P.type==="ArithmeticExpansion",__nm=t.name.parts.some(N=>__xp(N)||N.type==="DoubleQuoted"&&N.parts.some(__xp)),__ex=__nm?await dr(this.ctx,t.name):null,__z=__ex!==null&&__ex.values.length===0,u=__ex?__ex.values[0]??"":await Be(this.ctx,t.name),f=[],d=[],p=(N,$)=>{',
 			},
 			{
 				name: 'simple command: the words after the first one of such a name are the first arguments',
@@ -729,7 +761,7 @@ export const PATCHES = [
 			{
 				name: 'length()',
 				from: 'function rE(e,t,n){return e.length===0?t.line.length:jt(await n.evalExpr(e[0])).length}',
-				to: 'function rE(e,t,n){return __lcCpLen(e.length===0?t.line:jt(await n.evalExpr(e[0])))}',
+				to: 'function rE(e,t,n){return e.length>0&&e[0].type==="variable"&&t.arrays[yo(t,e[0].name)]!==void 0?Object.keys(t.arrays[yo(t,e[0].name)]).length:__lcCpLen(e.length===0?t.line:jt(await n.evalExpr(e[0])))}',
 			},
 			{
 				name: 'substr(): the slice of code points',
@@ -745,6 +777,673 @@ export const PATCHES = [
 				name: 'match(): RSTART and RLENGTH',
 				from: 'return t.RSTART=o.index+1,t.RLENGTH=o[0].length,t.RSTART',
 				to: 'return t.RSTART=__lcCpLen(r.slice(0,o.index))+1,t.RLENGTH=__lcCpLen(o[0]),t.RSTART',
+			},
+		],
+	},
+	{
+		id: 'LC-34',
+		title: 'sed: `H` appends a newline and the pattern space to the hold space whatever it holds (with the hold space empty it stored the pattern space alone, so `sed -n \'H;${x;s/\\n/,/g;p}\'` had no leading comma, and `x;G` and `H;x` made other lines than GNU\'s)',
+		edits: [
+			{
+				name: 'H: the newline comes first even when the hold space is empty',
+				from: 'case"holdAppend":t.holdSpace?t.holdSpace+=`\n${t.patternSpace}`:t.holdSpace=t.patternSpace,Rm(',
+				to: 'case"holdAppend":t.holdSpace+=`\n${t.patternSpace}`,Rm(',
+			},
+		],
+	},
+	{
+		id: 'LC-35',
+		title: 'sed: `.` matches a newline in the pattern space, as it does in a POSIX regular expression without REG_NEWLINE (`N;s/a.b/X/` and `/a.b/` on two joined lines, `:a;N;$!ba;s/foo.*bar/X/` across lines, found nothing)',
+		edits: [
+			{
+				name: 's: the regular expression is compiled with the dot-all flag',
+				from: 'case"substitute":{let o=e,l="";o.global&&(l+="g"),o.ignoreCase&&(l+="i");',
+				to: 'case"substitute":{let o=e,l=o.multiline?"m":"s";o.global&&(l+="g"),o.ignoreCase&&(l+="i");',
+			},
+			{
+				name: 's with a number: the global copy it counts matches with has the flag too',
+				from: 'p=o.nthOccurrence,h=oe(c,`g${o.ignoreCase?"i":""}`);t.patternSpace=h.replace(',
+				to: 'p=o.nthOccurrence,h=oe(c,`g${o.multiline?"m":"s"}${o.ignoreCase?"i":""}`);t.patternSpace=h.replace(',
+			},
+			{
+				name: 's with g: the same',
+				from: 'let d=oe(c,`g${o.ignoreCase?"i":""}`);t.patternSpace=G9(',
+				to: 'let d=oe(c,`g${o.multiline?"m":"s"}${o.ignoreCase?"i":""}`);t.patternSpace=G9(',
+			},
+			{
+				name: 'an address /re/',
+				from: 'return oe(o).test(r)}',
+				to: 'return oe(/M/.test(e.flags||"")?__lcNl(o):o,(/M/.test(e.flags||"")?"m":"s")+(e.flags||"").replace(/I/g,"i").replace(/M/g,"")).test(r)}',
+			},
+		],
+	},
+	{
+		id: 'LC-36',
+		title: 'the array literal of a declaration (`local a=("$@")`, `declare -a c=($x "${b[@]}")`, `readonly`, `export`) is made of the words the elements expand to, as `a=("$@")` was: each element was expanded to one string (`"$@"` joined, an unquoted `$x` not split or globbed, `("${arr[@]}")` one element), so `local args=("$@"); "${args[@]}"` ran a command named `echo hi there`',
+		edits: [
+			{
+				name: 'the state of the scan: the parts of the element that is being read',
+				from: 'p=!1,h=!0,m=E=>{let A=M(E);',
+				to: 'p=!1,h=!0,__lcE=[],m=E=>{let A=M(E);',
+			},
+			{
+				name: 'the end of an element: an element that has an expansion in it is expanded as an argument is (several words, none, split, globbed)',
+				from: 'b=()=>{g(u,h),u="",f=0,p=!1,h=!0};',
+				to: 'b=async()=>{if(__lcE.length>0){u!==""&&__lcE.push({type:"Literal",value:u});let __w=await dr(e,{type:"Word",parts:__lcE});__lcE=[],u="",f=0,p=!1,h=!0;for(let __v of __w.values)g(__v);return}g(u,h),u="",f=0,p=!1,h=!0};',
+			},
+			{
+				name: 'a blank ends the element (the end is awaited now)',
+				from: '/\\s/.test(I)?(u||p)&&b():m(I)',
+				to: '/\\s/.test(I)?(u||p)&&await b():m(I)',
+			},
+			{
+				name: 'a part that is not text is kept with the element, to be expanded when it ends; the last element is ended with an await',
+				from: 'else{(u||p)&&b();let I=await dr(e,{type:"Word",parts:[E]});for(let R of I.values)g(R)}else{(E.type==="SingleQuoted"||E.type==="DoubleQuoted"||E.type==="Escaped")&&(p=!0),h=!1;let A=await Be(e,{type:"Word",parts:[E]});m(A)}(u||p)&&b();let y=l.splice(0)',
+				to: 'else{(u||p)&&await b();let I=await dr(e,{type:"Word",parts:[E]});for(let R of I.values)g(R)}else{p=!0,h=!1,u!==""&&(__lcE.push({type:"Literal",value:u}),u="",f=0),__lcE.push(E)}(u||p)&&await b();let y=l.splice(0)',
+			},
+			{
+				name: 'the reader of the elements: a backslash inside single quotes is a backslash (the elements are written in single quotes, and `local a=(\'x\\ny\')` lost it)',
+				from: 'if(o){r+=a,o=!1,l=!0;continue}if(a==="\\\\"){o=!0;continue}if(a==="\'"&&!i)',
+				to: 'if(o){r+=a,o=!1,l=!0;continue}if(a==="\\\\"&&!s){o=!0;continue}if(a==="\'"&&!i)',
+			},
+		],
+	},
+	{
+		id: 'LC-37',
+		title: 'sed: a `*` that has nothing before it in a basic regular expression (at the start, after `\\(`, after `\\|`, after `^`) is a plain asterisk (`s/*//g` took it for nothing and used the last regular expression), and one in an extended expression (`sed -E \'s/*b/X/\'`) is GNU\'s error: "Invalid preceding regular expression", status 1, where the substitution was silently not made',
+		edits: [
+			{
+				name: 'the basic-to-extended translation: the star that quantifies nothing is escaped',
+				from: 'if(!s&&!i){t+="\\\\$",n++;continue}}t+=e[n],n++}return t}',
+				to: 'if(!s&&!i){t+="\\\\$",n++;continue}}if(e[n]==="*"&&(t===""||t==="^"||/(^|[^\\\\])[(|]\\^?$/.test(t))){t+="\\\\*",n++;continue}t+=e[n],n++}return t}',
+			},
+			{
+				name: 's: the regular expression is looked at for a quantifier with nothing before it, and the script ends with the message',
+				from: 'let c=ku(o.extendedRegex?a:vu(a));try{let u=oe(c,l),f=u.test(t.patternSpace);',
+				to: 'let c;try{c=ku(o.extendedRegex?__lcPat(a,!0):vu(__lcPat(a,!1))),o.extendedRegex&&__lcLead(a),o.multiline&&(c=__lcNl(c))}catch(__e){if(__e&&__e.lcRegex){t.errorMessage=`sed: -e expression #1, char ${4+o.pattern.length+o.replacement.length+(o.global?1:0)+(o.printOnMatch?1:0)+(o.ignoreCase?1:0)}: ${__e.message}`,t.quit=!0;break}throw __e}{let __d=__lcRef(o.replacement,a,o.extendedRegex);if(__d){t.errorMessage="sed: -e expression #1, char "+(4+o.pattern.length+o.replacement.length+(o.global?1:0)+(o.printOnMatch?1:0)+(o.ignoreCase?1:0))+": invalid reference \\\\"+__d+" on `s\' command\'s RHS",t.quit=!0;break}}try{let u=oe(c,l),f=u.test(t.patternSpace);',
+			},
+		],
+	},
+	{
+		id: 'LC-38',
+		title: 'awk: the record separator RS is read: one character (`RS=","`, `RS=";"`, `RS="\\0"`), the empty string (paragraphs: records are separated by blank lines), or a regular expression of more than one character (`-v RS=\'[0-9]+\'`); the records were always lines',
+		edits: [
+			{
+				name: 'the input is cut into records by RS (read after BEGIN, where it may be set)',
+				from: 'let R=E.split(`\n`);if(R.length>0&&R[R.length-1]===""&&R.pop(),R.length>y)',
+				to: 'let R=__lcAwkRecords(E,p.vars.RS);if(R.length>0&&R[R.length-1]===""&&R.pop(),R.length>y)',
+			},
+		],
+	},
+	{
+		id: 'LC-39',
+		title: 'the elements of an array literal in a declaration (`local a=($(cmd))`, `declare -a b=("$(cmd)" "${x:-d}" $((1+2)))`, `readonly`) keep what they expand: the parser wrote the text of each element back with the NAME of a part it had no case for (`CommandSubstitution`, `ArithmeticExpansion`), dropped a command substitution inside double quotes and the operation of `${x:-d}`, `${#a[@]}`, `${@:2}`',
+		edits: [
+			{
+				name: 'an element is written back as the source text of each of its parts',
+				from: 'case"Escaped":n+=r.value;break;case"DoubleQuoted":n+=\'"\';for(let s of r.parts)s.type==="Literal"||s.type==="Escaped"?n+=s.value:s.type==="ParameterExpansion"&&(n+=`\\${${s.parameter}}`);n+=\'"\';break;case"ParameterExpansion":n+=`\\${${r.parameter}}`;break;case"Glob":',
+				to: 'case"Escaped":n+=Ll(r,!1);break;case"DoubleQuoted":n+=Ll(r,!1);break;case"ParameterExpansion":n+=Ll(r,!1);break;case"Glob":',
+			},
+			{
+				name: 'and a part it knows no case for as its own source text',
+				from: 'default:n+=r.type}return n}function ew(',
+				to: 'default:n+=Ll(r,!1)}return n}function ew(',
+			},
+		],
+	},
+	{
+		id: 'LC-40',
+		title: 'a command given by a path that is a directory is `bash: /tmp/: Is a directory`, status 126 (it was "Permission denied": `"$dir"/` , `/usr/bin/`, `./src`)',
+		edits: [
+			{
+				name: 'the lookup says why: a directory',
+				from: 'try{let l=await e.fs.stat(o);if(l.isDirectory)return{error:"permission_denied",path:o};',
+				to: 'try{let l=await e.fs.stat(o);if(l.isDirectory)return{error:"is_directory",path:o};',
+			},
+			{
+				name: 'and the message says it',
+				from: 'if("error"in c)return c.error==="permission_denied"?K(`bash: ${t}: Permission denied\n`,126):',
+				to: 'if("error"in c)return c.error==="is_directory"?K(`bash: ${t}: Is a directory\n`,126):c.error==="permission_denied"?K(`bash: ${t}: Permission denied\n`,126):',
+			},
+		],
+	},
+	{
+		id: 'LC-41',
+		title: 'sort -V is GNU\'s `filevercmp` (coreutils 8.32): numbers by value with leading zeros ignored, equal numbers by their bytes (`sort -Vu` kept one of `file01.txt` and `file1.txt`), `~` before the end of a name, a letter before any other mark, the file suffix out of the comparison unless the rest is the same, leading dots first; `ls -v` is the same function (compat.js)',
+		edits: [
+			{
+				name: 'the version comparison of two strings',
+				from: 'if(n.versionSort)return fS(r,s);',
+				to: 'if(n.versionSort)return __lcVer(r,s);',
+			},
+		],
+	},
+	{
+		id: 'LC-42',
+		title: 'find -size counts in whole units, rounded UP, as GNU does: `-size -1M` is the empty files (it was every file under a mebibyte), `-size 2k` is a file of 1025 to 2048 bytes (it was exactly 2048), `-size 1` is one 512-byte block, and `w` (two bytes) is a unit; the size of what `-size +1M` finds is as before',
+		edits: [
+			{
+				name: 'the argument: a unit may be w',
+				from: 'let f=u.match(/^(\\d+)([ckMGb])?$/);if(!f)return i(l,a);',
+				to: 'let f=u.match(/^(\\d+)([ckMGbw])?$/);if(!f)return i(l,a);',
+			},
+			{
+				name: 'the test: the size in units of the unit, rounded up, against the number',
+				from: 'case"size":{let n=e.value;switch(e.unit){case"c":n=e.value;break;case"k":n=e.value*1024;break;case"M":n=e.value*1024*1024;break;case"G":n=e.value*1024*1024*1024;break;case"b":n=e.value*512;break}let r;return e.comparison==="more"?r=t.size>n:e.comparison==="less"?r=t.size<n:e.unit==="b"?r=Math.ceil(t.size/512)===e.value:r=t.size===n,{matches:r,pruned:!1,printed:!1}}',
+				to: 'case"size":{let n=Math.ceil(t.size/({c:1,w:2,k:1024,M:1048576,G:1073741824}[e.unit]||512)),r=e.comparison==="more"?n>e.value:e.comparison==="less"?n<e.value:n===e.value;return{matches:r,pruned:!1,printed:!1}}',
+			},
+		],
+	},
+	{
+		id: 'LC-43',
+		title: 'sed: a regular expression that does not compile ends the script with a message and status 1, as GNU\'s does (`sed \'s/\\(a/X/\'`, `sed -E \'s/a{2,1}/X/\'`, `/\\(/p`): the engine swallowed the failure and went on as if nothing had matched, status 0, the line unchanged. A pattern with a back-reference (RE2 has none) says so',
+		edits: [
+			{
+				name: 's: the failure of the compile or the replace ends the script',
+				from: 'catch{}break}case"print"',
+				to: 'catch(__e){String(__e&&__e.message).startsWith("Invalid regular expression")&&__lcSedFail(t,__e,4+o.pattern.length+o.replacement.length+(o.global?1:0)+(o.printOnMatch?1:0)+(o.ignoreCase?1:0))}break}case"print"',
+			},
+			{
+				name: 'an address /re/: the same',
+				from: 'catch{return!1}return!1}function Nu(e){',
+				to: 'catch(__e){s&&String(__e&&__e.message).startsWith("Invalid regular expression")&&__lcSedFail(s,__e,e.pattern.length+2);return!1}return!1}function Nu(e){',
+			},
+		],
+	},
+	{
+		id: 'LC-44',
+		title: 'sed -E and -r: an address /re/ is an extended regular expression (the address was always a basic one: `sed -E \'/^(foo|bar)/d\'` deleted nothing, `sed -nE \'/a|b/p\'` printed nothing, and `sed -E \'/a+/p\'` looked for a plus sign)',
+		edits: [
+			{
+				name: 'the address carries the mode the script was parsed in',
+				from: 'case ce.PATTERN:return this.advance(),{pattern:t.pattern||t.value};',
+				to: 'case ce.PATTERN:return this.advance(),{pattern:t.pattern||t.value,extendedRegex:this.extendedRegex,flags:t.flags||"",end:t.end};',
+			},
+			{
+				name: 'and the match reads it as the s command does',
+				from: 'let o=ku(vu(i));',
+				to: 'let o=ku(e.extendedRegex?__lcPat(i,!0):vu(__lcPat(i,!1)));',
+			},
+		],
+	},
+	{
+		id: 'LC-45',
+		title: 'sed s: the replacement is read as GNU reads it: `\\\\` is a backslash and what follows is not escaped again (`s/[\\/&]/\\\\&/g`, the idiom that escapes a string for another sed, made `&` of every match: the reader took the pair `\\\\` for one backslash and `\\&` was then a literal ampersand), `\\U \\L \\u \\l \\E` change the case (`s/\\w\\+/\\u&/g`; they were `U` and `L`), and `\\xHH \\oNNN \\dNNN \\cX \\a \\f \\v` are the characters they name',
+		edits: [
+			{
+				name: 'the reader of the replacement keeps the pair `\\\\` (the escapes are read once, where the text is used)',
+				from: '(o+=`\n`,this.advance()):o+="\\\\"):a===',
+				to: '(o+=`\n`,this.advance()):o+="\\\\\\\\"):a===',
+			},
+			{
+				name: 'the use of the replacement: the header\'s reader (the one of the file stays, unused)',
+				from: 'function Iu(e,t,n){let r="",s=0;for(;s<e.length;){',
+				to: 'function Iu(e,t,n){return __lcRepl(e,t,n)}function __lcIuOld(e,t,n){let r="",s=0;for(;s<e.length;){',
+			},
+		],
+	},
+	{
+		id: 'LC-46',
+		title: 'sed: a backslash inside a bracket expression is a backslash (POSIX; `s/[\\.]/X/g` and `[^\\]` skipped the backslashes of the text, `[a\\]` was an unterminated command and `\\]` could not end a bracket), `\\n \\t` in it are the control characters, and the `\\oNNN`, `\\dNNN` and `\\cX` of a pattern are the characters they name (RE2 has none of them); `\\/` in a bracket of an s command keeps both characters, as GNU does, and `^` and `$` are anchors next to `\\|` (`s/^a\\|^b/X/`)',
+		edits: [
+			{
+				name: 'the pattern of s: a backslash before the `]` that closes a bracket is the backslash of the set',
+				from: 'this.peek()===r&&!i?s+=this.advance():(s+="\\\\",s+=this.advance())',
+				to: 'this.peek()===r&&!i?s+=this.advance():(s+="\\\\",i||(s+=this.advance()))',
+			},
+			{
+				name: '`^` is an anchor after `\\|` too (`s/^a\\|^b/X/`: the second `^` was a plain character)',
+				from: 'if(e[n]==="^"&&!(t===""||t.endsWith("("))){',
+				to: 'if(e[n]==="^"&&!(t===""||t.endsWith("(")||t.endsWith("|")&&!t.endsWith("\\\\|"))){',
+			},
+			{
+				name: 'and `$` before `\\|` is one',
+				from: 'i=n+2<e.length&&e[n+1]==="\\\\"&&e[n+2]===")";',
+				to: 'i=n+2<e.length&&e[n+1]==="\\\\"&&(e[n+2]===")"||e[n+2]==="|");',
+			},
+		],
+	},
+	{
+		id: 'LC-47',
+		title: 'sed addresses: `\\cREGEXc` with any delimiter (`\\,/usr,d`, `\\#etc#p`: "invalid command: \\"), the flags `I` and `M` after `/re/` (`/error/Ip` was "invalid command: I"), `addr1,~N`, and a range whose end is a regular expression does not look at the line it started on (`1,/e/d` ended at once when line 1 had an e)',
+		edits: [
+			{
+				name: 'the tokens: `~N` after a comma, and `\\cREGEXc` with any delimiter c',
+				from: 'r==="+"&&this.isDigit(this.input[this.pos+1]||"")?this.readRelativeOffset():r==="/"?this.readPattern():',
+				to: '(r==="+"||r==="~")&&this.isDigit(this.input[this.pos+1]||"")?this.readRelativeOffset():r==="/"?this.readPattern():r==="\\\\"&&this.pos+1<this.input.length&&this.input[this.pos+1]!==`\n`&&this.input[this.pos+1]!=="\\\\"?this.readPattern(!0):',
+			},
+			{
+				name: '`~N` is read with the sign it has',
+				from: 'readRelativeOffset(){let t=this.line,n=this.column;this.advance();let r="";for(;this.isDigit(this.peek());)r+=this.advance();let s=parseInt(r,10)||0;return{type:ce.RELATIVE_OFFSET,value:`+${s}`,offset:s,line:t,column:n}}',
+				to: 'readRelativeOffset(){let t=this.line,n=this.column,m=this.advance()==="~";let r="";for(;this.isDigit(this.peek());)r+=this.advance();let s=parseInt(r,10)||0;return{type:ce.RELATIVE_OFFSET,value:`+${s}`,offset:m?0:s,multiple:m?s:void 0,line:t,column:n}}',
+			},
+			{
+				name: 'the address regex: any delimiter, the flags I and M, and a backslash before the `]` that closes a bracket',
+				from: 'readPattern(){let t=this.line,n=this.column;this.advance();let r="",s=!1;for(;this.pos<this.input.length;){let i=this.peek();if(i==="/"&&!s)break;if(i==="\\\\")r+=this.advance(),this.pos<this.input.length&&this.peek()!==`\n`&&(r+=this.advance());else{if(i===`\n`)break;i==="["&&!s?(s=!0,r+=this.advance(),this.peek()==="^"&&(r+=this.advance()),this.peek()==="]"&&(r+=this.advance())):i==="]"&&s?(s=!1,r+=this.advance()):r+=this.advance()}}return this.peek()==="/"&&this.advance(),{type:ce.PATTERN,value:r,pattern:r,line:t,column:n}}',
+				to: 'readPattern(u){let t=this.line,n=this.column,d="/";u?(this.advance(),d=this.advance()):this.advance();let r="",s=!1;for(;this.pos<this.input.length;){let i=this.peek();if(i===d&&!s)break;if(i==="\\\\"){this.advance();if(this.pos<this.input.length&&this.peek()!==`\n`){let c=this.peek();c===d&&d!=="/"&&!s?r+=this.advance():s?r+="\\\\":r+="\\\\"+this.advance()}else this.pos<this.input.length?r+=this.advance():r+="\\\\"}else{if(i===`\n`)break;i==="["&&!s?(s=!0,r+=this.advance(),this.peek()==="^"&&(r+=this.advance()),this.peek()==="]"&&(r+=this.advance())):i==="["&&s&&":.=".includes(this.input[this.pos+1]||"-")?r+=__lcBrk(this):i==="]"&&s?(s=!1,r+=this.advance()):r+=this.advance()}}if(this.peek()!==d)return{type:ce.ERROR,value:"unterminated address regex",line:t,column:this.pos,abs:!0};this.advance();let f="";for(;this.peek()==="I"||this.peek()==="M";)f+=this.advance();return{type:ce.PATTERN,value:r,pattern:r,flags:f,end:this.pos,line:t,column:n}}',
+			},
+			{
+				name: 'the address: `addr,~N`',
+				from: 'case ce.RELATIVE_OFFSET:return this.advance(),{offset:t.offset||0};',
+				to: 'case ce.RELATIVE_OFFSET:return this.advance(),{offset:t.offset||0,multiple:t.multiple};',
+			},
+			{
+				name: 'and its end is the next multiple of N',
+				from: 'return t>=h+l.offset&&(p.active=!1,s.set(d,p)),!0}',
+				to: 'return t>=h+__lcOff(l,h)&&(p.active=!1,s.set(d,p)),!0}',
+			},
+			{
+				name: 'and a start that is a multiple runs to the next multiple (GNU: `4,~4` is line 4 to line 8)',
+				from: 'l.offset===0&&(p.active=!1,s.set(d,p))',
+				to: '__lcOff(l,t)===0&&(p.active=!1,s.set(d,p))',
+			},
+		],
+	},
+	{
+		id: 'LC-48',
+		title: 'sed: the messages of a script that cannot be read are GNU\'s: `-e expression #N, char C: unknown command: `X\'`, `unterminated `s\' command`, `missing command` (the engine said `invalid command: X`, `unterminated substitution pattern`, `command expected`, with no place)',
+		edits: [
+			{
+				name: 'the number of the expression (-e) being read',
+				from: 'parse(){let t=[];for(let n of this.scripts){let r=new Oa(n,',
+				to: 'parse(){let t=[],__i=0;for(let n of this.scripts){this.__lcK=++__i;let r=new Oa(n,',
+			},
+			{
+				name: 'a `}` that has an address, in a block',
+				from: 'case ce.RBRACE:return{command:null};',
+				to: 'case ce.RBRACE:return n&&__lcBrace(this)>0?{command:null,error:__lcWhere(this,__lcAbs(this,r),"`}\' doesn\'t want any addresses")}:{command:null};',
+			},
+			{
+				name: 'an unknown command and an unterminated s, as GNU says them, with the expression and the character',
+				from: 'case ce.ERROR:return{command:null,error:`invalid command: ${r.value}`};',
+				to: 'case ce.ERROR:{let __v=r.value;return{command:null,error:__lcWhere(this,r.abs?r.column:__lcAbs(this,r),__v==="unterminated substitution pattern"?"unterminated `s\' command":__v.length===1?"unknown command: `"+__v+"\'":__v)}}',
+			},
+			{
+				name: 'an s command that ends before its closing delimiter is unterminated',
+				from: 'this.peek()===r&&this.advance();let l="";',
+				to: 'if(this.peek()!==r)return{type:ce.ERROR,value:"unterminated substitution pattern",line:t,column:this.pos,abs:!0};this.advance();let l="";',
+			},
+			{
+				name: 'y with sets of different lengths',
+				from: 'error:"transliteration sets must have same length"',
+				to: 'error:__lcWhere(this,(this.scripts[0]||"").length,"strings for `y\' command are different lengths")',
+			},
+			{
+				name: 'the place of the `{` that opens a group is kept (where its "unmatched" is said)',
+				from: 'parseGroup(t){this.advance();let n=[];',
+				to: 'parseGroup(t){let __b=__lcAbs(this,this.peek());this.advance();let n=[];',
+			},
+			{
+				name: 'an `{` that is never closed',
+				from: 'error:"unmatched brace in grouped commands"',
+				to: 'error:__lcWhere(this,__b,"unmatched `{\'",1)',
+			},
+			{
+				name: 'a `}` with no `{`',
+				from: 'this.pos===s&&!this.isAtEnd())return{commands:[],error:`unknown command: \'${this.peek()?.value??this.peek()?.type}\'`}}}return{commands:t}}parseCommand(){',
+				to: 'this.pos===s&&!this.isAtEnd())return{commands:[],error:this.check(ce.RBRACE)?__lcWhere(this,__lcAbs(this,this.peek()),"unexpected `}\'"):__lcUnk(this)}}}return{commands:t}}parseCommand(){',
+			},
+			{
+				name: 'a token that is neither a command nor an address inside a block',
+				from: 'this.pos===r&&!this.isAtEnd())return{command:null,error:`unknown command: \'${this.peek()?.value??this.peek()?.type}\'`}}',
+				to: 'this.pos===r&&!this.isAtEnd())return{command:null,error:__lcUnk(this)}}',
+			},
+			{
+				name: 'an address with no command',
+				from: 'return n&&(n.start!==void 0||n.end!==void 0)?{command:null,error:"command expected"}:{command:null};let r=this.peek();',
+				to: 'return n?{command:null,error:__lcWhere(this,(this.scripts[0]||"").length,"missing command")}:{command:null};let r=this.peek();',
+			},
+			{
+				name: 'and one that is followed by something that is not a command',
+				from: 'default:return n&&(n.start!==void 0||n.end!==void 0)?{command:null,error:"command expected"}:{command:null}}}parseSimpleCommand(t,n){',
+				to: 'default:return n?{command:null,error:__lcUnk(this)}:{command:null}}}parseSimpleCommand(t,n){',
+			},
+		],
+	},
+	{
+		id: 'LC-49',
+		title: 'sed: `s/x/y/2g` replaces the second match and every one after it (the number was ignored: it replaced all of them)',
+		edits: [
+			{
+				name: 's///Ng: the first N-1 matches stay',
+				from: '(p,h)=>Iu(o.replacement,p,h))',
+				to: '(p,h)=>++__cn.n<(o.nthOccurrence||1)?p:Iu(o.replacement,p,h)),__no=__cn.n<(o.nthOccurrence||1)',
+			},
+		],
+	},
+	{
+		id: 'LC-50',
+		title: 'grep: the pattern is read as GNU reads it before it is translated for RE2: a backslash inside a bracket is a backslash (`grep \'[\\\\.]\'` and `\'[^\\\\]\'`: the second was "invalid regular expression"), in an extended expression a `)` with nothing open is a plain character and a `{` that starts no interval is one, and a pattern that does not compile is said in GNU\'s words with status 2 (`grep: Unmatched ( or \\\\(`)',
+		edits: [
+			{
+				name: 'the expression is read before it is translated: a backslash in a bracket is a backslash, a `)` with nothing open and a `{` that starts no interval are plain characters in an extended one',
+				from: 'function mi(e,t){let n,r;switch(t.mode){',
+				to: 'function mi(e,t){t.mode!=="fixed"&&t.mode!=="perl"&&(e=__lcPat(e,t.mode==="extended",!0));let n,r;switch(t.mode){',
+			},
+			{
+				name: 'a pattern that does not compile is said in GNU\'s words (`Unmatched ( or \\(`)',
+				from: 'catch{return{stdout:"",stderr:`grep: invalid regular expression: ${A.join(`\n`)}\n`,exitCode:2}}',
+				to: 'catch(__e){return{stdout:"",stderr:`grep: ${__lcReMsg(__e)}\n`,exitCode:2}}',
+			},
+			{
+				name: 'and one of several patterns the same',
+				from: 'catch{return{stdout:"",stderr:`grep: invalid regular expression: ${ie}\n`,exitCode:2}}',
+				to: 'catch(__e){return{stdout:"",stderr:`grep: ${__lcReMsg(__e,ie)}\n`,exitCode:2}}',
+			},
+		],
+	},
+	{
+		id: 'LC-51',
+		title: 'sed: `q5` and `Q5` quit with that exit status (the number was an address with no command: "missing command")',
+		edits: [
+			{
+				name: 'q and Q read the exit status after them (`q5`, `Q 3`)',
+				from: 'case"F":return{type:ce.COMMAND,value:r,line:t,column:n};case"v":return this.readVersion(t,n);',
+				to: 'case"F":return((__x)=>({type:ce.COMMAND,value:r,exitCode:__x,line:t,column:n}))(r==="q"||r==="Q"||r==="l"?(()=>{let k=this.pos;for(;this.input[k]===" "||this.input[k]==="\\t";)k++;if(!this.isDigit(this.input[k]||""))return;for(;this.pos<k;)this.advance();let d="";for(;this.isDigit(this.peek());)d+=this.advance();return parseInt(d,10)})():void 0);case"v":return this.readVersion(t,n);',
+			},
+			{
+				name: 'and the command carries it (the executor had it)',
+				from: 'case"q":return{command:{type:"quit",address:n}};case"Q":return{command:{type:"quitSilent",address:n}};',
+				to: 'case"q":return{command:{type:"quit",address:n,exitCode:t.exitCode}};case"Q":return{command:{type:"quitSilent",address:n,exitCode:t.exitCode}};',
+			},
+		],
+	},
+	{
+		id: 'LC-52',
+		title: 'what a command writes to `/dev/stderr` or `/dev/stdout` (`awk \'{print > "/dev/stderr"}\'`, `tee /dev/stderr`) is part of its own output: `2>/dev/null`, `2>&1` and a pipe apply to it (it was added to the output of the whole statement, after everything)',
+		edits: [
+			{
+				name: 'a command is marked in the device buffers before it runs',
+				from: 'try{let S=()=>rn(i.requireDefenseContext,"command",`${t} execution`,',
+				to: 'try{let __m=i.fs&&i.fs.__lcMark&&i.fs.__lcMark(),S=()=>rn(i.requireDefenseContext,"command",`${t} execution`,',
+			},
+			{
+				name: 'and its result takes what it wrote to /dev/stdout and /dev/stderr since',
+				from: ',E=()=>LT(S,w,x,t,i.executionScope,i.state.signal),A=u.trusted?await St.runTrustedAsync(E):await E();return{...A,internalStdinConsumed:A.internalStdinConsumed??(p?r.length:0)}',
+				to: ',E=()=>LT(S,w,x,t,i.executionScope,i.state.signal),A=u.trusted?await St.runTrustedAsync(E):await E();return{...__lcDev(A,i.fs,__m),internalStdinConsumed:A.internalStdinConsumed??(p?r.length:0)}',
+			},
+		],
+	},
+	{
+		id: 'LC-53',
+		title: 'awk: `split(s, a)` and `split(s, a, " ")` ignore the blanks at the ends and an empty string has no elements, `length(array)` counts, `int(-3.9)` is -3, `%e` and `%g` have two digits of exponent, a one-character FS (`-F\'|\'`, `-F.`) is that character, `FS=""` is a field for each character, assigning NF rebuilds `$0`, `print > $1 ".txt"` names a file by the whole expression, and `print | "sort"` is a pipe whose command runs at `close()` or the end (it was a syntax error)',
+		edits: [
+			{
+				name: 'assigning NF always rebuilds $0 (also to the number it has)',
+				from: 'else if(r>e.NF){for(;e.fields.length<r;)e.fields.push("");e.line=e.fields.join(e.OFS)}e.NF=r;return}',
+				to: 'else{for(;e.fields.length<r;)e.fields.push("");e.line=e.fields.join(e.OFS)}e.NF=r;return}',
+			},
+			{
+				name: 'int() truncates toward zero',
+				from: 'return e.length===0?0:Math.floor(Un(await n.evalExpr(e[0])))}async function mE',
+				to: 'return e.length===0?0:Math.trunc(Un(await n.evalExpr(e[0])))}async function mE',
+			},
+			{
+				name: 'split: the separator " " (also the default) is runs of blanks with the ends ignored',
+				from: 'let i=s.name,o=t.FS;if(e.length>=3){',
+				to: 'let i=s.name,o=t.FS,__w=e.length<3&&t.FS===" ";if(e.length>=3){',
+			},
+			{
+				name: '(the separator given)',
+				from: 'o=f===" "?oe("\\\\s+"):f}}else t.FS===" "&&(o=oe("\\\\s+"));',
+				to: 'f===" "&&(__w=!0),o=f===" "?oe("\\\\s+"):f}}else t.FS===" "&&(o=oe("\\\\s+"));',
+			},
+			{
+				name: 'and an empty string has no elements',
+				from: 'c=typeof o=="string"?r.split(o,a+1):o.split(r,a+1);if(c.length>a)',
+				to: 'c=r===""?[]:__w?__lcWs(r,a+1):typeof o=="string"?r.split(o,a+1):o.split(r,a+1);if(c.length>a)',
+			},
+			{
+				name: '%e: the exponent has two digits at least',
+				from: 'let S=w.toExponential(x);if(g==="E"&&(S=S.toUpperCase()),f){',
+				to: 'let S=w.toExponential(x).replace(/e([+-])(\\d)$/,(m,a,b)=>"e"+a+"0"+b);if(g==="E"&&(S=S.toUpperCase()),f){',
+			},
+			{
+				name: '%g: the same',
+				from: 'E=w.toExponential(x-1),g==="G"&&(E=E.toUpperCase())',
+				to: 'E=w.toExponential(x-1).replace(/e([+-])(\\d)$/,(m,a,b)=>"e"+a+"0"+b),g==="G"&&(E=E.toUpperCase())',
+			},
+			{
+				name: 'FS of one character is that character (`|`, `.`), whatever it means in a regular expression: -F',
+				from: 'if(/[[\\](){}.*+?^$|\\\\]/.test(e))try{return oe(e)}catch{return oe(b0(e))}return oe(b0(e))}',
+				to: 'if(e.length>1&&/[[\\](){}.*+?^$|\\\\]/.test(e))try{return oe(e)}catch{return oe(b0(e))}return oe(b0(e))}',
+			},
+			{
+				name: 'and FS=',
+				from: 'else try{e.fieldSep=oe(t)}catch{e.fieldSep=oe(t.replace(',
+				to: 'else try{e.fieldSep=oe(t.length===1?t.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\\\$&"):t)}catch{e.fieldSep=oe(t.replace(',
+			},
+			{
+				name: 'FS="" is one field for each character',
+				from: 'function Ym(e,t){return t===""?[]:e.FS===" "?',
+				to: 'function Ym(e,t){return t===""?[]:e.FS===""?Array.from(t):e.FS===" "?',
+			},
+			{
+				name: 'print > expr: the file name is a concatenation (`print > "out_" $1 ".txt"`), and `print | "cmd"` is a pipe',
+				from: 'return e.check(le.GT)?(e.advance(),n={redirect:">",file:e.parsePrimary()}):e.check(le.APPEND)&&(e.advance(),n={redirect:">>",file:e.parsePrimary()}),{type:"print",args:t,output:n}}',
+				to: 'return e.check(le.GT)?(e.advance(),n={redirect:">",file:__lcRedir(e)}):e.check(le.APPEND)?(e.advance(),n={redirect:">>",file:__lcRedir(e)}):e.check(le.PIPE)&&(e.advance(),n={redirect:"|",file:__lcRedir(e)}),{type:"print",args:t,output:n}}',
+			},
+			{
+				name: '(printf the same)',
+				from: 'return e.check(le.GT)?(e.advance(),s={redirect:">",file:e.parsePrimary()}):e.check(le.APPEND)&&(e.advance(),s={redirect:">>",file:e.parsePrimary()}),{type:"printf",format:n,args:r,output:s}}',
+				to: 'return e.check(le.GT)?(e.advance(),s={redirect:">",file:__lcRedir(e)}):e.check(le.APPEND)?(e.advance(),s={redirect:">>",file:__lcRedir(e)}):e.check(le.PIPE)&&(e.advance(),s={redirect:"|",file:__lcRedir(e)}),{type:"printf",format:n,args:r,output:s}}',
+			},
+			{
+				name: 'a write to a pipe is kept until close() or the end, then the command runs with it as its input',
+				from: 'async function i0(e,t,n,r){rr(e,"file write execution");',
+				to: 'async function i0(e,t,n,r){if(t==="|"){await __lcPipe(e,n,r);return}rr(e,"file write execution");',
+			},
+			{
+				name: 'the command gets its input',
+				from: 'exec:d?b=>n("command pipe exec",()=>d(b,{cwd:t.cwd,signal:t.signal})):void 0',
+				to: 'exec:d?(b,__i)=>n("command pipe exec",()=>d(b,{cwd:t.cwd,signal:t.signal,...__i===void 0?{}:{stdin:__i}})):void 0',
+			},
+			{
+				name: 'close(command) runs it now',
+				from: '["close",()=>0]',
+				to: '["close",async(e,t,n)=>{if(e.length===0)return 0;let c=jt(await n.evalExpr(e[0])),m=t.__lcPipes;if(m&&m.has(c)){let x=m.get(c);m.delete(c);t.__lcF=t.output.length;await __lcRun(t,c,x)}return 0}]',
+			},
+			{
+				name: 'and what is still open runs at the end',
+				from: 'this.ctx.inEndBlock=!1}}getOutput(){',
+				to: 'this.ctx.inEndBlock=!1}await __lcFlush(this.ctx)}getOutput(){',
+			},
+			{
+				name: 'what a command of a pipe wrote to its standard error is the standard error of awk (also for a program with no END)',
+				from: 'return await n("END execution after BEGIN exit",()=>h.executeEnd()),{stdout:h.getOutput(),stderr:"",exitCode:h.getExitCode()};if(!m&&!g)return{stdout:h.getOutput(),stderr:"",exitCode:h.getExitCode()};',
+				to: 'return await n("END execution after BEGIN exit",()=>h.executeEnd()),{stdout:h.getOutput(),stderr:p.__lcErr||"",exitCode:h.getExitCode()};if(!m&&!g)return await __lcFlush(p),{stdout:h.getOutput(),stderr:p.__lcErr||"",exitCode:h.getExitCode()};',
+			},
+			{
+				name: '(the end of a run)',
+				from: 'return await n("END execution",()=>h.executeEnd()),{stdout:h.getOutput(),stderr:"",exitCode:h.getExitCode()}}catch(b)',
+				to: 'return await n("END execution",()=>h.executeEnd()),{stdout:h.getOutput(),stderr:p.__lcErr||"",exitCode:h.getExitCode()}}catch(b)',
+			},
+			{
+				name: '%g: the zeros of the exponent are not trailing zeros',
+				from: 'E.includes(".")&&(E=E.replace(/\\.?0+$/,"").replace(/\\.?0+e/,"e")),E.includes("e")&&(E=E.replace(/\\.?0+e/,"e")),f){',
+				to: 'E.includes("e")?E=E.replace(/\\.?0+e/,"e"):E.includes(".")&&(E=E.replace(/\\.?0+$/,"")),f){',
+			},
+		],
+	},
+	{
+		id: 'LC-54',
+		title: 'find -printf: `%y %H %u %g %U %G %n %l %b %k` and the conversions of a time GNU has (`%T@` and `%TT` with the ten digits of fraction, `%t`, `%Tc %TD %Ty %Te %Tj %Ta %TA %Tb %TB %TR %Tp %TI`): they were printed as written (`%y`)',
+		edits: [
+			{
+				name: '-printf: the type (`%y`), the starting point (`%H`), the owner and the group (`%u %g %U %G`), the links (`%n`), a link\'s target (`%l`), the blocks (`%b` of 512, `%k` of 1024, in the 4 KiB blocks the shell\'s `du` has), and `%t` with its fraction',
+				from: 'case"t":{let u=new Date(t.mtime);c=j5(u),s++;break}case"T":',
+				to: 'case"t":{let u=new Date(t.mtime);c=j5(u).replace(/(\\d\\d:\\d\\d:\\d\\d) /,"$1."+__lcFrac(t.mtime)+" "),s++;break}case"y":c=t.isDirectory?"d":"f",s++;break;case"H":c=t.startingPoint,s++;break;case"u":case"g":c="user",s++;break;case"U":case"G":c="1000",s++;break;case"n":c=t.isDirectory?"2":"1",s++;break;case"l":c="",s++;break;case"b":c=String(Math.ceil(t.size/4096)*8),s++;break;case"k":c=String(Math.ceil(t.size/4096)*4),s++;break;case"T":',
+			},
+			{
+				name: '-printf: the fraction GNU prints with `%T@`, `%TS`, `%TT`, and the rest of the conversions of a time (`%Tc %TD %Ty %Te %Tj %Ta %TA %Tb %TB %TR %Tp %TI %Tu %Tw`)',
+				from: 'function q5(e,t){switch(t){case"@":return String(e.getTime()/1e3);',
+				to: 'function q5(e,t){switch(t){case"@":return Math.floor(e.getTime()/1e3)+"."+__lcFrac(e.getTime());case"c":return j5(e);case"D":return String(e.getMonth()+1).padStart(2,"0")+"/"+String(e.getDate()).padStart(2,"0")+"/"+String(e.getFullYear()%100).padStart(2,"0");case"y":return String(e.getFullYear()%100).padStart(2,"0");case"e":return String(e.getDate()).padStart(2," ");case"j":return String(Math.floor((Date.UTC(e.getFullYear(),e.getMonth(),e.getDate())-Date.UTC(e.getFullYear(),0,1))/864e5)+1).padStart(3,"0");case"a":return["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][e.getDay()];case"A":return["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][e.getDay()];case"b":case"h":return["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][e.getMonth()];case"B":return["January","February","March","April","May","June","July","August","September","October","November","December"][e.getMonth()];case"R":return String(e.getHours()).padStart(2,"0")+":"+String(e.getMinutes()).padStart(2,"0");case"p":return e.getHours()<12?"AM":"PM";case"I":return String(e.getHours()%12||12).padStart(2,"0");case"u":return String(e.getDay()||7);case"w":return String(e.getDay());case"n":return"\\n";case"t":return"\\t";',
+			},
+			{
+				name: '`%TT` has the fraction of the seconds too',
+				from: 'case"S":return String(e.getSeconds()).padStart(2,"0");case"T":return`${String(e.getHours()).padStart(2,"0")}:${String(e.getMinutes()).padStart(2,"0")}:${String(e.getSeconds()).padStart(2,"0")}`;',
+				to: 'case"S":return String(e.getSeconds()).padStart(2,"0")+"."+__lcFrac(e.getTime());case"T":return`${String(e.getHours()).padStart(2,"0")}:${String(e.getMinutes()).padStart(2,"0")}:${String(e.getSeconds()).padStart(2,"0")}.${__lcFrac(e.getTime())}`;',
+			},
+			{
+				name: 'the size is looked up for `%b` and `%k` too',
+				from: 'return/%[-+]?[0-9]*\\.?[0-9]*(s|m|M|t|T)/.test(O)}',
+				to: 'return/%[-+]?[0-9]*\\.?[0-9]*(s|m|M|t|T|b|k)/.test(O)}',
+			},
+		],
+	},
+	{
+		id: 'LC-55',
+		title: 'printf: an escape in the format that makes a `%` (`printf \'\\045s\'`, `\'\\x25d\'`) is a percent sign and nothing more: the escapes were read first and the result then read for directives (`\\045s` was an error and `\\045d` printed 0)',
+		edits: [
+			{
+				name: 'the format of printf: an escape that makes a `%` (`\\045`, `\\x25`) is a plain percent sign, not the start of a directive',
+				from: 'l=da(s,o),a="",c=0,u=0,f=!1,d="",',
+				to: 'l=da(__lcPct(s),o),a="",c=0,u=0,f=!1,d="",',
+			},
+		],
+	},
+	{
+		id: 'LC-56',
+		title: 'sed: the grammar of a script is read as GNU reads it: a command is followed by `;`, a newline, `}` or the end (`sed \'p x\'`, `\'dp\'`, `\'{p}p\'`: "extra characters after command", the engine ran both), an `s` flag that is not one is "unknown option to `s\'" (`s/a/b/gx` ran an `x`), blanks between the flags are skipped (`s/a/b/ p` is `s/a/b/p`), a class or collating element in a bracket (`[[:alpha:]/]`, `[[.].]/]`) does not end it, a regular expression that is not closed is "unterminated address regex", line address 0 is for `0,/re/` only, a label that is not there is "can\'t find label for jump to `x\'" with status 4, a bracket written `[:space:]` is GNU\'s "character class syntax is [[:space:]], not [:space:]" (status 4 in sed, 2 in grep), and every regular expression of the script is compiled when the script is read, so an invalid one is said before any line is read, in a command that never runs and at the end of a range',
+		edits: [
+			{
+				name: 'an s pattern: a class, collating or equivalence element in a bracket does not end it',
+				from: 'a==="]"&&i?(i=!1,s+=this.advance()):s+=this.advance()}}',
+				to: 'a==="["&&i&&":.=".includes(this.input[this.pos+1]||"-")?s+=__lcBrk(this):a==="]"&&i?(i=!1,s+=this.advance()):s+=this.advance()}}',
+			},
+			{
+				name: 'the top level: a command is followed by a separator',
+				from: 'let s=this.pos,i=this.parseCommand();if(i.error)return{commands:[],error:i.error};',
+				to: 'let s=this.pos,i=this.parseCommand(),__x;if(i.error)return{commands:[],error:i.error};if(__x=__lcXtra(this,s))return{commands:[],error:__x};',
+			},
+			{
+				name: 'and inside a block',
+				from: 'let r=this.pos,s=this.parseCommand();if(s.error)return{command:null,error:s.error};',
+				to: 'let r=this.pos,s=this.parseCommand(),__x;if(s.error)return{command:null,error:s.error};if(__x=__lcXtra(this,r))return{command:null,error:__x};',
+			},
+			{
+				name: 'y: what follows its last delimiter',
+				from: '{type:ce.ERROR,value:"extra text at the end of a transform command",line:t,column:n}',
+				to: '{type:ce.ERROR,value:"extra characters after command",line:t,column:this.pos+1,abs:!0}',
+			},
+			{
+				name: 'a label that is not there',
+				from: 'if(n)return`undefined label \'${n}\'`',
+				to: 'if(n)return"can\'t find label for jump to "+String.fromCharCode(96)+n+"\'"',
+			},
+			{
+				name: 'the script is compiled when it is read, and what GNU says is said before any line',
+				from: 'let c=X9(a.commands);',
+				to: 'let c=__lcChk(a.commands,i.map(x=>x.length))||X9(a.commands);',
+			},
+			{
+				name: 'an s whose pattern is not closed says where the script ended',
+				from: 'if(this.peek()!==r)return{type:ce.ERROR,value:"unterminated substitution pattern",line:t,column:n};this.advance();let o="";',
+				to: 'if(this.peek()!==r)return{type:ce.ERROR,value:"unterminated substitution pattern",line:t,column:this.pos,abs:!0};this.advance();let o="";',
+			},
+			{
+				name: 'y that is not closed (source) is unterminated, at the end of the script',
+				from: '{type:ce.ERROR,value:"unterminated transliteration source",line:t,column:n}',
+				to: '{type:ce.ERROR,value:"unterminated `y\' command",line:t,column:Math.min(this.pos,this.input.length),abs:!0,part:"source"}',
+			},
+			{
+				name: 'y that is not closed (dest) is unterminated, at the end of the script',
+				from: '{type:ce.ERROR,value:"unterminated transliteration dest",line:t,column:n}',
+				to: '{type:ce.ERROR,value:"unterminated `y\' command",line:t,column:Math.min(this.pos,this.input.length),abs:!0,part:"dest"}',
+			},
+			{
+				name: 'the pattern of s: a backslash before a newline is the newline',
+				from: ':s+="\\\\";else{if(a===`\n`)break;a==="["&&!i?(i=!0,',
+				to: ':this.pos<this.input.length?s+=this.advance():s+="\\\\";else{if(a===`\n`)break;a==="["&&!i?(i=!0,',
+			},
+			{
+				name: 'what follows an address: line address 0 is for `0,/re/` only (said before anything else of the command), `!` with no address negates "every line" (the command is never run), a second `!`, and a `;` or a newline right after an address or a `!` are errors, as GNU has them (the end of an expression, `-e 1 -e p`, is a missing command)',
+				from: 'for(this.check(ce.NEGATION)&&(this.advance(),n&&(n.negated=!0));this.check(ce.NEWLINE)||this.check(ce.SEMICOLON);)this.advance();',
+				to: 'let __t0=this.peek();if(n&&n.start===0&&!(n.end&&typeof n.end=="object"&&"pattern"in n.end))return{command:null,error:__lcWhere(this,__lcAt(this,__t0),"invalid usage of line address 0")};if(this.check(ce.NEGATION)){this.advance(),n?n.negated=!0:n={start:-1};if(this.check(ce.NEGATION))return{command:null,error:__lcWhere(this,__lcAbs(this,this.peek()),"multiple `!\'s")}}if(n&&(this.check(ce.NEWLINE)||this.check(ce.SEMICOLON)))return{command:null,error:__lcAfter(this,this.peek())};for(;this.check(ce.NEWLINE)||this.check(ce.SEMICOLON);)this.advance();',
+			},
+			{
+				name: 'an address range: a `,` with nothing before it is an unknown command, one with no address after it is "unexpected `,\'", a `+N` or `~N` is not a first address, and an address needs a comma before its end (`1+2p` is an address and an unknown command `+\'`)',
+				from: 'parseAddressRange(){if(this.check(ce.COMMA))return{error:"expected context address"};let t=this.parseAddress();if(t===void 0)return;let n;if(this.check(ce.RELATIVE_OFFSET))n={offset:this.advance().offset||0};else if(this.check(ce.COMMA)&&(this.advance(),n=this.parseAddress(),n===void 0))return{error:"expected context address"};',
+				to: 'parseAddressRange(){if(this.check(ce.COMMA))return;let __k=this.peek(),t=this.parseAddress();if(t===void 0)return;if(typeof t=="object"&&"offset"in t){let a=__lcAbs(this,__k);return{error:__lcWhere(this,a-1+/^[+~]\\d*/.exec((this.scripts[0]||"").slice(a-1))[0].length,"invalid usage of +N or ~N as first address")}}let n;if(this.check(ce.COMMA)&&(this.advance(),n=this.parseAddress(),n===void 0))return{error:__lcWhere(this,__lcAt(this,this.peek()),"unexpected `,\'")};',
+			},
+			{
+				name: 'the lengths of the expressions (-e) are known to the parser, which says `#N, char C` as GNU counts them',
+				from: 'a=new Tu([o],t||s,n).parse();',
+				to: 'a=((__t)=>(__t.__lcP=i.map(x=>x.length),__t.parse()))(new Tu([o],t||s,n));',
+			},
+			{
+				name: 'the status of the two messages that are not about an expression',
+				from: 'if(u)return{stdout:"",stderr:`sed: ${u}\n`,exitCode:1};let d=!!(i||f);',
+				to: 'if(u)return{stdout:"",stderr:`sed: ${u}\n`,exitCode:/^(can\'t find label|character class syntax)/.test(u)?4:1};let d=!!(i||f);',
+			},
+		],
+	},
+	{
+		id: 'LC-57',
+		title: 'sed: `s/x/y/N` and `s/x/y/Ng` when the line has fewer than N matches change nothing: no `p` print, `t` does not branch (the engine counted a line that has any match as substituted)',
+		edits: [
+			{
+				name: 'the count of matches is kept, and the substitution is not "made" when the N-th is not there',
+				from: 'if(u.lastIndex=0,f){if(t.substitutionMade=!0,o.nthOccurrence&&o.nthOccurrence>0&&!o.global){let d=0,',
+				to: 'if(u.lastIndex=0,f){let __sm=t.substitutionMade,__no=!1,__cn={n:0};if(t.substitutionMade=!0,o.nthOccurrence&&o.nthOccurrence>0&&!o.global){let d=0,',
+			},
+			{
+				name: 's///N: the N-th was not there',
+				from: 'return Iu(o.replacement,m,b)}return m})}else if(o.global){',
+				to: 'return Iu(o.replacement,m,b)}return m}),__no=d<p}else if(o.global){',
+			},
+		],
+	},
+	{
+		id: 'LC-58',
+		title: 'sed (basic expressions): `{` and `}` are plain characters (`s/a{1}/X/` made an interval of the extended expression it is translated to, so `a{2}` in the text was not found and `a` was)',
+		edits: [
+			{
+				name: 'the basic-to-extended translation escapes a brace that is not `\\{` or `\\}`',
+				from: 'if(e[n]==="+"||e[n]==="?"||e[n]==="|"||e[n]==="("||e[n]===")"){t+=`\\\\${e[n]}`,n++;continue}',
+				to: 'if(e[n]==="+"||e[n]==="?"||e[n]==="|"||e[n]==="("||e[n]===")"||e[n]==="{"||e[n]==="}"){t+=`\\\\${e[n]}`,n++;continue}',
+			},
+		],
+	},
+	{
+		id: 'LC-59',
+		title: 'sed `l`: the output is GNU\'s: bytes (a character that is not ASCII is its UTF-8 bytes in octal, `\\\\303\\\\251`, and a byte that is not text is its own `\\\\377`: the engine printed the code point, or the surrogate it keeps such a byte in, as `\\\\156377`), and a line is wrapped at 70 characters with a `\\\\` (`l N` wraps at N, `l 0` does not): the engine printed the whole line',
+		edits: [
+			{
+				name: 'the command carries its line length',
+				from: 'case"l":return{command:{type:"list",address:n}};',
+				to: 'case"l":return{command:{type:"list",address:n,width:t.exitCode}};',
+			},
+			{
+				name: 'and the listing is made by LevelCode\'s own function',
+				from: 'case"list":{let o=Tm(t.patternSpace);',
+				to: 'case"list":{let o=__lcList(t.patternSpace,e.width);',
+			},
+		],
+	},
+	{
+		id: 'LC-60',
+		title: 'date: a year before 1000 is written with four digits by `%Y`, `%F` and `%G` (`date -d 0100-01-02 +%F` printed `100-01-02`, GNU `0100-01-02`)',
+		edits: [
+			{
+				name: '`%F` writes a year before 1000 with four digits',
+				from: 'case"F":return`${t.year}-${s(t.month)}-${s(t.day)}`;',
+				to: 'case"F":return`${__lcY4(t.year)}-${s(t.month)}-${s(t.day)}`;',
+			},
+			{
+				name: '`%G` the same',
+				from: 'case"G":return String(Ph(t.year,t.month,t.day));',
+				to: 'case"G":return __lcY4(Ph(t.year,t.month,t.day));',
+			},
+			{
+				name: '`%Y` the same',
+				from: 'case"Y":return String(t.year);case"z":return Y8(e,r)',
+				to: 'case"Y":return __lcY4(t.year);case"z":return Y8(e,r)',
+			},
+			{
+				name: 'the ISO year of a date before the year 100 (`new Date(6, ...)` is 1906)',
+				from: 'function Ph(e,t,n){let r=new Date(e,t-1,n,12,0,0);',
+				to: 'function Ph(e,t,n){let r=new Date(2e3,0,1,12,0,0);r.setFullYear(e,t-1,n);',
 			},
 		],
 	},

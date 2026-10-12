@@ -20,9 +20,14 @@ export const INPUTS = [
 export const REPLACE_BASES = ['echo {}', 'echo X{}Y', 'echo {} {}', 'echo {} zzzzzzzz', 'echo zzzzzzzz {}', 'echo {}{}', 'echo', '{} x', 'echo q {} r', 'echo q {}', 'echo {} q', 'echo X{} zzzz', 'echo q'];
 // (plain -x, with no -n -L -I to give it a batch size, is a mode of its own: an item that cannot fit ends the batch
 // without a run, and `-L1 -x` / `-L2 -x` measure a line against the limit)
-export const PLAIN_MODES = ['', '-L1', '-L2', '-n1', '-n2', '-n1 -x', '-n2 -x', '-x', '-L1 -x', '-L2 -x'];
-/** `--replace=` with an empty string replaces nothing and the command line is too long, at every size */
+// (`-t` writes each command to standard error: its place among the messages is what these add)
+export const PLAIN_MODES = ['', '-L1', '-L2', '-n1', '-n2', '-n1 -x', '-n2 -x', '-x', '-L1 -x', '-L2 -x', '-t', '-n1 -t', '-x -t'];
+/**
+ * `--replace=` with an empty string: with words after the command it is found everywhere in them and the command line
+ * is too long, at every size; with the command alone there is nowhere to put an item and it is run for each line.
+ */
 export const EMPTY_REPLACE = ['--replace=', '--replace= -x'];
+export const EMPTY_REPLACE_COMMANDS = ['echo x', 'echo', 'echo x y'];
 
 /**
  * Input with a quote that is never closed (GNU runs what was complete before it, and says so), with no -s.
@@ -31,7 +36,7 @@ export const EMPTY_REPLACE = ['--replace=', '--replace= -x'];
 export const QUOTE_INPUTS = [
 	"a b \\047c\\n", "a\\nb \\047c\\nd\\n", "a\\n\"b c\\n", "a b c d\\ne \\047f\\n", "\\047a\\n", "a b\\nc d\\ne \\047f g\\n",
 ];
-export const QUOTE_OPTIONS = ['', '-n1', '-n2', '-n3', '-n1 -x', '-n2 -x', '-n3 -x', '-L1', '-L2', '-L3', '-I{}', '-I{} -x'];
+export const QUOTE_OPTIONS = ['', '-n1', '-n2', '-n3', '-n1 -x', '-n2 -x', '-n3 -x', '-L1', '-L2', '-L3', '-I{}', '-I{} -x', '-x', '-t', '-n1 -t', '-L1 -t'];
 
 /** @returns {Array<{ input: string, options: string, command: string, sized: boolean }>} */
 export function groups() {
@@ -41,7 +46,7 @@ export function groups() {
 		for (const m of PLAIN_MODES) { out.push({ input, options: m, command: 'echo', sized: true }); }
 	}
 	for (const input of INPUTS.slice(0, 5)) {
-		for (const m of EMPTY_REPLACE) { out.push({ input, options: m, command: 'echo x', sized: true }); }
+		for (const m of EMPTY_REPLACE) { for (const c of EMPTY_REPLACE_COMMANDS) { out.push({ input, options: m, command: c, sized: true }); } }
 	}
 	for (const input of QUOTE_INPUTS) {
 		for (const m of QUOTE_OPTIONS) { out.push({ input, options: m, command: m.startsWith('-I') ? 'echo X{}' : 'echo', sized: false }); }

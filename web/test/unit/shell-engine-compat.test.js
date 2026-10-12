@@ -59,6 +59,7 @@ async function main() {
 			[['--max-args', '2', 'echo'], ['-n', '2', 'echo']],
 			[['--replace', 'echo', '{}'], ['-I', '{}', 'echo', '{}']],
 			[['--replace=@', 'echo', '@'], ['-I', '@', 'echo', '@']],
+			[['--replace=', 'echo'], ['-I', '', 'echo']],                         // an empty string is the string (it was `{}`)
 			[['--max-procs=4', 'echo'], ['echo']],
 			[['--max-procs', '4', 'echo'], ['echo']],
 			[['-s', '1000', 'echo'], ['echo']],
@@ -1121,7 +1122,12 @@ async function main() {
 				const said = (r.stdout + r.stderr);
 				assert.ok(!/undefined|TypeError|Cannot read|\[object/.test(said), `${program} ${opt}: ${said}`);
 				const name = program === 'egrep' || program === 'fgrep' ? 'grep' : program;
-				const wording = opt.startsWith('--') ? `${name}: option '${opt}' requires an argument\n` : `${name}: option requires an argument -- ${t.bare ? opt[1] : `'${opt[1]}'`}\n`;
+				// gawk takes every long option to its letter and says that letter, bare (`awk --file` is "option requires an
+				// argument -- f"; recorded from GNU in tables.json, `wording`); the others say the option as typed
+				const awkLetter = { '--file': 'f', '--assign': 'v', '--field-separator': 'F', '--source': 'e', '--exec': 'E', '--include': 'i', '--load': 'l' };
+				const wording = opt.startsWith('--')
+					? (program === 'awk' ? `${name}: option requires an argument -- ${awkLetter[opt]}\n` : `${name}: option '${opt}' requires an argument\n`)
+					: `${name}: option requires an argument -- ${t.bare ? opt[1] : `'${opt[1]}'`}\n`;
 				assert.ok(r.stderr.startsWith(wording), `${program} ${opt}: ${JSON.stringify(r.stderr)}`);
 				assert.strictEqual(r.exitCode, t.status || 1, `${program} ${opt}`);
 				swept++;
@@ -1208,6 +1214,747 @@ async function main() {
 		const e = await sh("printf 'a\\n' | sort -k0; echo \"rc=$?\"; printf 'a\\n' | sort -k1.0; echo \"rc=$?\"; echo b | sort -o nodir/x; echo \"rc=$?\"; mkdir dd; echo b | sort -o dd; echo \"rc=$?\"");
 		assert.strictEqual(e.stdout, 'rc=2\nrc=2\nrc=2\nrc=2\n');
 		assert.strictEqual(e.stderr, "sort: field number is zero: invalid field specification '0'\nsort: character offset is zero: invalid field specification '1.0'\nsort: open failed: nodir/x: No such file or directory\nsort: open failed: dd: Is a directory\n");
+	});
+
+	/* ------------------------------------------------------------------------------------------ second pass: each recorded from GNU */
+
+	// The expected text of the tests of this block is what GNU bash 5.1 / coreutils 8.32 / findutils 4.8 printed for the script
+	// (docker, `--network none`, LC_ALL=C.UTF-8), recorded once; their curly quotes are read as straight ones.
+
+	test("xargs: the default -s is 128 KiB: 1310 items of 99 bytes (and the NUL each ends with, and `echo`) are one run, 1311 are two", async () => {
+		const r = await sh("n() { { i=0; while [ $i -lt 1310 ]; do printf '%099d\\n' $i; i=$((i+1)); done; } | xargs echo | wc -l; }; n; { i=0; while [ $i -lt 1311 ]; do printf '%099d\\n' $i; i=$((i+1)); done; } | xargs echo | wc -l; { i=0; while [ $i -lt 1309 ]; do printf '%099d\\n' $i; i=$((i+1)); done; } | xargs echo | wc -l");
+		assert.strictEqual(r.stdout, "1\n2\n1\n");
+	});
+
+	test("xargs -s counts a 4-byte character as 4 bytes: three of them with `echo` are 20 with their NULs, so -s 20 is one run, -s 19 two, -s 14 an item that cannot fit", async () => {
+		const r = await sh("for s in 20 19 15 14 10 9; do printf '😀 😀 😀\\n' | xargs -s $s echo 2>&1 | tr '\\n' '|'; echo \"s=$s rc=$?\"; done; for s in 9 10 11; do printf 'é é é\\n' | xargs -s $s echo 2>&1 | tr '\\n' '|'; echo; done");
+		assert.strictEqual(r.stdout, "😀 😀 😀|s=20 rc=0\n😀 😀|😀|s=19 rc=0\n😀 😀|😀|s=15 rc=0\n😀|😀|😀|s=14 rc=0\n😀|😀|😀|s=10 rc=0\nxargs: argument line too long|s=9 rc=0\né|é|é|\né|é|é|\né é|é|\n");
+	});
+
+	test("xargs -t: the trace of a command is written before the message that the next item does not fit, and plain -x runs nothing after a stop", async () => {
+		const r = await sh("printf 'ccc long_long_word ccc\\n' | xargs -s 13 -t echo 2>&1 >/dev/null; printf 'ccc long_long_word ccc\\n' | xargs -s 13 echo 2>/dev/null; printf 'a long_long_word a\\n' | xargs -s 15 -x echo 2>&1; echo \"rc=$?\"; printf \"a b it's c\\n\" | xargs -x echo 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "echo ccc\nxargs: argument line too long\nccc\nxargs: argument line too long\nrc=1\nxargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\nrc=1\n");
+	});
+
+	test("sort -k: strtol takes a plus sign and blanks, a zero end field is GNU's error, and each key is read as GNU reads it", async () => {
+		const r = await sh("export LC_ALL=C; printf 'b 3\\na 10\\nc 2\\n' > f; for k in '+1' ' 1' '+2n' '1,0' '1,+1' '1.+1' ' +2n,2' '0' '1.0' '1,' ',2' '-1' '1nM' 'x'; do printf '%s => ' \"$k\"; sort -k \"$k\" f 2>&1 | tr '\\n' '|'; echo; done");
+		assert.strictEqual(r.stdout, "+1 => a 10|b 3|c 2|\n 1 => a 10|b 3|c 2|\n+2n => c 2|b 3|a 10|\n1,0 => sort: field number is zero: invalid field specification '1,0'|\n1,+1 => a 10|b 3|c 2|\n1.+1 => a 10|b 3|c 2|\n +2n,2 => c 2|b 3|a 10|\n0 => sort: field number is zero: invalid field specification '0'|\n1.0 => sort: character offset is zero: invalid field specification '1.0'|\n1, => sort: invalid number after ',': invalid count at start of ''|\n,2 => sort: invalid number at field start: invalid count at start of ',2'|\n-1 => sort: invalid number at field start: invalid count at start of '-1'|\n1nM => sort: options '-Mn' are incompatible|\nx => sort: invalid number at field start: invalid count at start of 'x'|\n");
+	});
+
+	test("grep: -l and -L of standard input name it, whatever the pattern did; and -NUM is -C NUM", async () => {
+		const r = await sh("printf 'a\\nb\\n' | grep -l a; printf 'a\\nb\\n' | grep -L c; printf 'a\\nb\\n' | grep -c a; seq 1 9 | grep -1 5; seq 1 9 | grep -n1 5; seq 1 9 | grep -c -2 5");
+		assert.strictEqual(r.stdout, "(standard input)\n(standard input)\n1\n4\n5\n6\n4-4\n5:5\n6-6\n1\n");
+	});
+
+	test("tail -z: each header is a line of its own, ends in a newline, and a blank line comes before the second; a file that is not there has none", async () => {
+		const r = await sh("printf 'a\\0b\\0' > f; printf 'x\\0y\\0' > g; tail -z -n1 f g | tr '\\0' '@'; tail -z -n1 f nofile g 2>/dev/null | tr '\\0' '@'; printf 'p\\0q\\0' | tail -z -n1 - f | tr '\\0' '@'");
+		assert.strictEqual(r.stdout, "==> f <==\nb@\n==> g <==\ny@==> f <==\nb@\n==> g <==\ny@==> standard input <==\nq@\n==> f <==\nb@");
+	});
+
+	test("grep -Z -z: the name ends in NUL on every record, a group separator is a line of its own, -c and -l end in a newline", async () => {
+		const r = await sh("printf 'a1\\0x\\0y\\0z\\0a2\\0w\\0' > f; printf 'a b\\n' > g; grep -ZH -z a f g | tr '\\0' '@'; echo; grep -z -A1 a f | tr '\\0' '@'; grep -zc a f g; grep -Zzl a f g | tr '\\0' '@'; echo; grep -zL x f g");
+		assert.strictEqual(r.stdout, "f@a1@f@a2@g@a b\n@\na1@x@--\na2@w@f:2\ng:1\nf@g@\ng\n");
+	});
+
+	test("sed -z: a newline in a script is the newline of the data (a pattern, a replacement written with a backslash and a newline); a, i, c, l and the M flag are refused", async () => {
+		const r = await sh("printf 'a\\0b\\0' | sed -z 's/a/x\\ny/' | tr '\\0' '@'; printf 'a\\0b\\0' | sed -z 's/a/x\\\ny/' | tr '\\0' '@'; printf 'a\\nb\\0' | sed -z 's/\\n/+/' | tr '\\0' '@'; printf 'a\\nb\\0' | sed -z 's/a$/X/' | tr '\\0' '@'; printf 'a\\nb\\0' | sed -z 's/^b/X/' | tr '\\0' '@'; printf 'a\\0b\\0' | sed -z 'N;s/a.b/X/' | tr '\\0' '@'; printf 'a\\0b\\0' | sed -zn '$=' | tr '\\0' '@'");
+		assert.strictEqual(r.stdout, "x\ny@b@x\ny@b@a+b@a\nb@a\nb@X@2@");
+	});
+
+	test("xargs: a NUL in blank-separated input ends the argument it is in and is said once; with -E and -0 or -d it is said that -E does nothing", async () => {
+		const r = await sh("printf 'a\\0b c\\0d e\\n' | xargs -n1 echo 2>/dev/null; { printf 'a\\0b c\\0d e\\n' | xargs -n1 echo >/dev/null; } 2>&1; printf 'x\\0y\\n' | xargs -I{} echo '<{}>' 2>/dev/null; printf 'a\\0b\\0' | xargs -0 -E b echo 2>/dev/null; { printf 'a\\0b\\0' | xargs -0 -E b echo >/dev/null; } 2>&1; printf 'a,b' | xargs -d, -E b echo 2>/dev/null; { printf 'a,b' | xargs -d, -E b echo >/dev/null; } 2>&1; printf 'a b\\n' | xargs -E b echo 2>&1");
+		assert.strictEqual(r.stdout, "a\nc\ne\nxargs: WARNING: a NUL character occurred in the input.  It cannot be passed through in the argument list.  Did you mean to use the --null option?\n<x\na b\nxargs: warning: the -E option has no effect if -0 or -d is used.\n\na b\nxargs: warning: the -E option has no effect if -0 or -d is used.\n\na\n");
+	});
+
+	test("rm and touch through a name that goes up by `..`: a file on the way is \"Not a directory\", a missing folder \"No such file or directory\"; rm of a file named with a slash is an error and the file stays", async () => {
+		const r = await sh("export LC_ALL=C; mkdir -p d; echo F > f; for c in 'rm f/../d' 'rm -r x/../d' 'touch f/../n' 'touch x/../n' 'rm f/' 'rm -d f/' 'rm -f f/' 'rm .' 'rm -r .' 'rm d/..' 'rm -rf d/.' 'rm -d d/.' 'rm -df d/.' 'rm -d ne/.' 'rm -d ne/..'; do mkdir -p ne/sub; printf '%-14s -> ' \"$c\"; $c 2>&1 | tr '\\n' '|'; echo \"rc=$?\"; done; ls");
+		assert.strictEqual(r.stdout, "rm f/../d      -> rm: cannot remove 'f/../d': Not a directory|rc=0\nrm -r x/../d   -> rm: cannot remove 'x/../d': No such file or directory|rc=0\ntouch f/../n   -> touch: cannot touch 'f/../n': Not a directory|rc=0\ntouch x/../n   -> touch: cannot touch 'x/../n': No such file or directory|rc=0\nrm f/          -> rm: cannot remove 'f/': Not a directory|rc=0\nrm -d f/       -> rm: cannot remove 'f/': Not a directory|rc=0\nrm -f f/       -> rc=0\nrm .           -> rm: cannot remove '.': Is a directory|rc=0\nrm -r .        -> rm: refusing to remove '.' or '..' directory: skipping '.'|rc=0\nrm d/..        -> rm: cannot remove 'd/..': Is a directory|rc=0\nrm -rf d/.     -> rm: refusing to remove '.' or '..' directory: skipping 'd/.'|rc=0\nrm -d d/.      -> rm: refusing to remove '.' or '..' directory: skipping 'd/.'|rc=0\nrm -df d/.     -> rm: refusing to remove '.' or '..' directory: skipping 'd/.'|rc=0\nrm -d ne/.     -> rm: cannot remove 'ne/.': Directory not empty|rc=0\nrm -d ne/..    -> rm: cannot remove 'ne/..': Directory not empty|rc=0\nd\nf\nne\n");
+	});
+
+	test("cp and mv through a file on the way: `f/../d` is not there (\"failed to access\", \"Not a directory\")", async () => {
+		const r = await sh("export LC_ALL=C; echo F > f; mkdir d; cp f f/../g; cp -r d f/../g; cp -n f f/../g; mv f f/../g; cp f x/../g; ls");
+		assert.strictEqual(r.stdout, "d\nf\n");
+	});
+
+	test("mv -n d/. x/../d with x missing is an error, not a quiet success (the name goes through a folder that is not there)", async () => {
+		const r = await sh("mkdir d; mv -n d/. x/../d; echo \"rc=$?\"; ls");
+		assert.strictEqual(r.stdout, "rc=1\nd\n");
+	});
+
+	test("cp -vT names the copy as typed, and -n and -u of a folder against a file say what GNU says", async () => {
+		const r = await sh("export LC_ALL=C; echo a > a; cp -vT a b; mkdir d x; echo 1 > d/sub; mkdir d/sub2; echo 2 > x/sub2; cp -rn d/. x 2>&1; echo \"rc=$?\"; cp -ru d/. x 2>&1; echo \"rc=$?\"; ls -R x");
+		assert.strictEqual(r.stdout, "'a' -> 'b'\ncp: cannot overwrite non-directory 'x/./sub2' with directory 'd/./sub2'\nrc=1\ncp: cannot overwrite non-directory 'x/./sub2' with directory 'd/./sub2'\nrc=1\nx:\nsub\nsub2\n");
+	});
+
+	test("ls: -I, --ignore and --hide take names out (--hide not with -a), -v and --sort=version order a plain listing, -X by extension, -w is accepted, a bad --sort says so", async () => {
+		const r = await sh("export LC_ALL=C; touch a.txt b.log c.txt .h f10 f2 f1; ls -I '*.log'; echo --; ls --ignore=b.log -I 'a*'; echo --; ls -a --hide='*.txt'; echo --; ls --hide='*.txt' -a -I '.*'; echo --; ls -v; echo --; ls --sort=version; echo --; ls -X; echo --; ls -w 4 -1; echo --; ls --sort=bogus 2>&1 | head -2; echo --; ls -r -v; ls -t -X a.txt");
+		assert.strictEqual(r.stdout, "a.txt\nc.txt\nf1\nf10\nf2\n--\nc.txt\nf1\nf10\nf2\n--\n.\n..\n.h\na.txt\nb.log\nc.txt\nf1\nf10\nf2\n--\na.txt\nb.log\nc.txt\nf1\nf10\nf2\n--\na.txt\nb.log\nc.txt\nf1\nf2\nf10\n--\na.txt\nb.log\nc.txt\nf1\nf2\nf10\n--\nf1\nf10\nf2\nb.log\na.txt\nc.txt\n--\na.txt\nb.log\nc.txt\nf1\nf10\nf2\n--\nls: invalid argument 'bogus' for '--sort'\nValid arguments are:\n--\nf10\nf2\nf1\nc.txt\nb.log\na.txt\na.txt\n");
+	});
+
+	test("seq -f with an increment of zero is GNU's error, `tail +Nb` is blocks of 512, `cp --archive` keeps the time, `ls --sort=size`, `ls -v` with leading zeros, `basename -z NAME SUFFIX`", async () => {
+		const r = await sh("export LC_ALL=C; seq -f %g 1 0 3 2>&1; echo \"rc=$?\"; head -c 600 /dev/zero | tr '\\0' x > big; tail +1b big | wc -c; touch -d @1600000000 f; cp --archive f g; stat -c '%n %Y' f g; printf 1 > a; printf 12345 > b; ls --sort=size a b; touch v1 v01 v001 v10 v2 w0 w00 w000; ls -v v* w*; basename -z /a/b.txt .txt | od -c | head -1; basename -z -s .txt /a/b.txt | od -c | head -1");
+		assert.strictEqual(r.stdout, "seq: invalid Zero increment value: '0'\nTry 'seq --help' for more information.\nrc=1\n89\nf 1600000000\ng 1600000000\nb\na\nv001\nv01\nv1\nv2\nv10\nw0\nw00\nw000\n0000000   b  \\0\n0000000   b  \\0\n");
+	});
+
+	test("awk: an operand assignment of a number is a number (x > 10 is numeric), printenv -0 ends each variable in NUL, uniq -z takes an OUTPUT operand, sed -z -i with a * in the suffix, touch -c through a missing folder makes nothing", async () => {
+		const r = await sh("export LC_ALL=C; printf 'a\\n' > t; awk '{print (x > 10), x + 1}' x=5 t; awk -v n=5 'BEGIN{OFS=\"-\"} {print (n > 10), $1}' t; export FOO=bar; printenv -0 | tr -d '\\n' | tr '\\0' '\\n' | grep -c '^FOO=bar$'; printf 'a\\0a\\0b\\0' > f; uniq -z f out; od -c out | head -2; printf 'a\\0' > h; sed -z -i'bk_*' 's/a/b/' h; ls; od -c h | head -1; od -c bk_h | head -1; touch -c x/../n; echo \"rc=$?\"; touch -cm x/../n; echo \"rc=$?\"; ls");
+		assert.strictEqual(r.stdout, "0 6\n0-a\n1\n0000000   a  \\0   b  \\0\n0000004\nbk_h\nf\nh\nout\nt\n0000000   b  \\0\n0000000   a  \\0\nrc=0\nrc=0\nbk_h\nf\nh\nout\nt\n");
+	});
+
+	test("ls -v is GNU's filevercmp: leading zeros are no difference to a number and equal numbers go by their bytes (`w0 w00 w000`, `file01.txt` before `file1.txt`), a file suffix is left out of the comparison, `~` and `.` first, a letter before any other mark; -r reverses all of it", async () => {
+		const r = await sh("export LC_ALL=C; touch w0 w00 w000 w01 w1 file01.txt file1.txt file2.txt file10.txt a-1.tar.gz a-10.tar.gz a-2.tar.gz a-1.tar.bz2 .hidden .z1 A1 B a a1 b ./-y _x 1.0 1.0a 1.0-rc1 1.0.1 '1.0~rc1' img001.jpg img01.jpg img1.jpg img10.jpg; ls -va | tr '\\n' ' '; echo; ls -v | tr '\\n' ' '; echo; ls -vr | tr '\\n' ' '; echo; ls --sort=version -A | tr '\\n' ' '; echo; ls -lv w* | awk '{print $NF}' | tr '\\n' ' '; echo");
+		assert.strictEqual(r.stdout, ". .. .hidden .z1 1.0~rc1 1.0 1.0a 1.0-rc1 1.0.1 A1 B a a1 a-1.tar.bz2 a-1.tar.gz a-2.tar.gz a-10.tar.gz b file01.txt file1.txt file2.txt file10.txt img001.jpg img01.jpg img1.jpg img10.jpg w0 w00 w000 w01 w1 -y _x \n1.0~rc1 1.0 1.0a 1.0-rc1 1.0.1 A1 B a a1 a-1.tar.bz2 a-1.tar.gz a-2.tar.gz a-10.tar.gz b file01.txt file1.txt file2.txt file10.txt img001.jpg img01.jpg img1.jpg img10.jpg w0 w00 w000 w01 w1 -y _x \n_x -y w1 w01 w000 w00 w0 img10.jpg img1.jpg img01.jpg img001.jpg file10.txt file2.txt file1.txt file01.txt b a-10.tar.gz a-2.tar.gz a-1.tar.gz a-1.tar.bz2 a1 a B A1 1.0.1 1.0-rc1 1.0a 1.0 1.0~rc1 \n.hidden .z1 1.0~rc1 1.0 1.0a 1.0-rc1 1.0.1 A1 B a a1 a-1.tar.bz2 a-1.tar.gz a-2.tar.gz a-10.tar.gz b file01.txt file1.txt file2.txt file10.txt img001.jpg img01.jpg img1.jpg img10.jpg w0 w00 w000 w01 w1 -y _x \nw0 w00 w000 w01 w1 \n");
+	});
+
+	test("sort -V is the same function: `sort -Vu` keeps `file01.txt` and `file1.txt` (equal numbers are different names), `~` sorts before the end of a name, an empty line, `.` and `..` first, and the marks around the ASCII letters and digits", async () => {
+		const r = await sh("export LC_ALL=C; for l in '1.2 1.10 1.9 1.1' '1.0 1.0-rc1 1.0~rc1 1.0.1 1.0a' 'file1.txt file10.txt file2.txt file01.txt' 'a-1.tar.gz a-10.tar.gz a-2.tar.gz a-1.tar.bz2' 'img001.jpg img1.jpg img01.jpg img10.jpg img2.jpg' 'release-1.2.3-beta release-1.2.3 release-1.2.3-alpha release-1.2.10' '10 9 100 1 08 8' 'a B a1 A1 b _x -y .hidden .z1' '1.2.3 1.2.3.1 1.2 1.2.3a 1.2.3-1' '1 1.0 1.00 1.0.0 01 1.' 'w0 w00 w000 w1 w01' '..~100x .a1 .~a01 .txt x'; do printf '%s\\n' $l | sort -V | tr '\\n' ' '; echo; printf '%s\\n' $l | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' $l | sort -Vu | wc -l; done; printf '%s\\n' a '' .a . .. '~' | sort -V | tr '\\n' '|'; echo; printf '%s\\n' 'a@' 'a[' 'a`' 'a{' aZ aA a0 a9 'a:' a. a- a_ 'a~' a 'a/' 'a|' | sort -V | tr '\\n' '|'; echo; printf 'x v10\\ny v9\\nz v1\\nw v09\\n' | sort -k2V | tr '\\n' '|'; echo; printf 'v1.10\\nv1.9\\nv1.9\\n' | sort -Vu | tr '\\n' '|'; echo");
+		assert.strictEqual(r.stdout, "1.1 1.2 1.9 1.10 \n1.10 1.9 1.2 1.1 \n4\n1.0~rc1 1.0 1.0a 1.0-rc1 1.0.1 \n1.0.1 1.0-rc1 1.0a 1.0 1.0~rc1 \n5\nfile01.txt file1.txt file2.txt file10.txt \nfile10.txt file2.txt file1.txt file01.txt \n4\na-1.tar.bz2 a-1.tar.gz a-2.tar.gz a-10.tar.gz \na-10.tar.gz a-2.tar.gz a-1.tar.gz a-1.tar.bz2 \n4\nimg001.jpg img01.jpg img1.jpg img2.jpg img10.jpg \nimg10.jpg img2.jpg img1.jpg img01.jpg img001.jpg \n5\nrelease-1.2.3 release-1.2.3-alpha release-1.2.3-beta release-1.2.10 \nrelease-1.2.10 release-1.2.3-beta release-1.2.3-alpha release-1.2.3 \n4\n1 08 8 9 10 100 \n100 10 9 8 08 1 \n6\n.hidden .z1 A1 B a a1 b -y _x \n_x -y b a1 a B A1 .z1 .hidden \n9\n1.2 1.2.3 1.2.3a 1.2.3-1 1.2.3.1 \n1.2.3.1 1.2.3-1 1.2.3a 1.2.3 1.2 \n5\n01 1 1. 1.0 1.00 1.0.0 \n1.0.0 1.00 1.0 1. 1 01 \n6\nw0 w00 w000 w01 w1 \nw1 w01 w000 w00 w0 \n5\n.~a01 ..~100x .a1 .txt x \nx .txt .a1 ..~100x .~a01 \n5\n|.|..|.a|~|a|\na~|a|a.|a0|a9|aA|aZ|a-|a/|a:|a@|a[|a_|a`|a{|a||\nz v1|w v09|y v9|x v10|\nv1.9|v1.10|\n");
+	});
+
+	test("awk: an assignment operand between two readings of the same file is for the second one, and a new FS splits the first record of the file it is for", async () => {
+		const r = await sh("export LC_ALL=C; printf 'a,b\\nc,d\\n' > f; printf 'x:y\\n' > g; : > e; awk '{print $1}' FS=, f FS=: f; echo --; awk '{print FILENAME, FNR, x}' x=1 f x=2 f x=3; echo --; awk '{print FILENAME \":\" x}' x=1 f x=2 g x=3 f; echo --; awk 'END{print x, NR}' x=1 f x=9 f x=7; echo --; awk '{print FILENAME, x}' x=1 e x=2 f x=3 f; echo --; awk '{print $2}' FS=, f FS=: g FS=, f");
+		assert.strictEqual(r.stdout, "a\nc\na,b\nc,d\n--\nf 1 1\nf 2 1\nf 1 2\nf 2 2\n--\nf:1\nf:1\ng:2\nf:3\nf:3\n--\n7 4\n--\nf 2\nf 2\nf 3\nf 3\n--\nb\nd\ny\nb\nd\n");
+	});
+
+	test("ls -v and sort -V: versionCompare is gnulib's filevercmp of coreutils 8.32: six sets of names in the order GNU's `ls -va` gave them, from whatever order they come in", () => {
+		// recorded from GNU (docker, LC_ALL=C.UTF-8); picked from 1,000 random sets as the smallest that every branch of the function needs
+		const sets = [
+		[["éa210", " z", "Aa.tar01", "éa.a199~", "10010-_", ".AA", "é01_", " -_0", "001.5.A", "0000", "~1.5.00", "01.~", "A", "BB", "..a1"], [".", "..", "..a1", ".AA", "~1.5.00", "0000", "01.~", "001.5.A", "10010-_", "A", "Aa.tar01", "BB", " z", " -_0", "é01_", "éa.a199~", "éa210"]],
+		[["z100", "10-99A", "..~.A.a1", ".c.A", "99", "2", "éa0071.5", "100"], [".", "..", "..~.A.a1", ".c.A", "2", "10-99A", "99", "100", "z100", "éa0071.5"]],
+		[["1.", "b9", "1099b9", "b.0éaB", "01", "10~2-", "01é0.txt", "10", "vab.txt10", "1", "A01é", "ab.gz0.~", "1.5", "v_.~.0"], [".", "..", "01", "1", "1.", "1.5", "01é0.txt", "10~2-", "10", "1099b9", "A01é", "ab.gz0.~", "b9", "b.0éaB", "vab.txt10", "v_.~.0"]],
+		[[" .A_", "2", "007é.txt0", "2é.gz", "éa", "0.~b", "99", "xz.c", " 0-", "0.txt", "zB", "_ab007éa", "~", ".tarB"], [".", "..", ".tarB", "~", "0.~b", "0.txt", "2", "2é.gz", "007é.txt0", "99", "xz.c", "zB", " 0-", " .A_", "_ab007éa", "éa"]],
+		[["0.gz00", "99 99", "_z", "A", " 1.5", "00~.tar00"], [".", "..", "00~.tar00", "0.gz00", "99 99", "A", " 1.5", "_z"]],
+		[["z110", "B", "é", "100aéa_", "~ A01", "0110"], [".", "..", "~ A01", "100aéa_", "0110", "B", "z110", "é"]],
+		];
+		for (const [names, order] of sets) {
+			const all = ['.', '..', ...names];
+			assert.deepStrictEqual([...all].sort(c.versionCompare), order);
+			assert.deepStrictEqual([...all].reverse().sort(c.versionCompare), order);
+			// the same from either side: a pair that compares one way must compare the other way the other way (the empty name,
+			// which a file cannot have and `sort -V` reads from an empty line, is before everything: see the sort -V case)
+			for (const x of ['', ...all]) {
+				for (const y of ['', ...all]) {
+					assert.strictEqual(Math.sign(c.versionCompare(x, y)) + Math.sign(c.versionCompare(y, x)), 0, JSON.stringify([x, y]));
+				}
+			}
+			assert.deepStrictEqual(['', ...all].sort(c.versionCompare), ['', ...order]);
+		}
+		// a total order: equal only for the same name
+		assert.strictEqual(c.versionCompare('a', 'a'), 0);
+		assert.ok(c.versionCompare('w0', 'w00') < 0 && c.versionCompare('w00', 'w0') > 0);
+	});
+
+	test('touch and tee outside the workspace folders say GNU\'s reason, "Permission denied" (touch said "No such file or directory"; the errno row of LC-30 had no test)', async () => {
+		// recorded from GNU coreutils 8.32 as an ordinary user (docker --user 1000, `--network none`): /usr and /usr/bin are not
+		// writable, /dev/null is. The shell adds its own `bash: PATH: Permission denied` line for each path it refused.
+		const own = (r) => r.stderr.split('\n').filter((l) => l !== '' && !l.startsWith('bash: '));
+		const shell = (r) => r.stderr.split('\n').filter((l) => l.startsWith('bash: '));
+		const a = await sh("touch /usr/x; echo \"rc=$?\"; touch /usr/bin/cat; echo \"rc=$?\"; touch /dev/null; echo \"rc=$?\"; touch -c /usr/x; echo \"rc=$?\"; touch ok /usr/y; echo \"rc=$?\"; ls");
+		assert.strictEqual(a.stdout, 'rc=1\nrc=1\nrc=0\nrc=0\nrc=1\nok\n');
+		assert.deepStrictEqual(own(a), ["touch: cannot touch '/usr/x': Permission denied", "touch: cannot touch '/usr/bin/cat': Permission denied", "touch: cannot touch '/usr/y': Permission denied"]);
+		assert.deepStrictEqual(shell(a), ['bash: /usr/x: Permission denied', 'bash: /usr/bin/cat: Permission denied', 'bash: /usr/y: Permission denied']);
+		// tee of nothing opens the file first, and that is refused as GNU's open is; its other files are made
+		const b = await sh("printf '' | tee /usr/x; echo \"rc=$?\"; printf '' | tee -a /usr/x; echo \"rc=$?\"; printf '' | tee ok2 /usr/x; echo \"rc=$?\"; ls");
+		assert.strictEqual(b.stdout, 'rc=1\nrc=1\nrc=1\nok2\n');
+		assert.deepStrictEqual(own(b), ['tee: /usr/x: Permission denied', 'tee: /usr/x: Permission denied', 'tee: /usr/x: Permission denied']);
+		assert.deepStrictEqual(shell(b), []);
+		// what tee has to write is refused by the shell and not by the open (stdout is GNU's: `hi`; the status and the line are the shell's)
+		const c = await sh("echo hi | tee /usr/x; echo \"rc=$?\"");
+		assert.strictEqual(c.stdout, 'hi\nrc=0\n');
+		assert.deepStrictEqual(shell(c), ['bash: /usr/x: Permission denied']);
+		assert.strictEqual(c.exitCode, 1, 'and the command ends with a status that is not 0, its changes withheld');
+	});
+
+	test('xargs -s: what is exported takes its bytes from the upper limit (the name, the value in UTF-8, `=` and the NUL), for every size and every character width', async () => {
+		const said = async (setup) => {
+			const r = await sh(`${setup}xargs -s 99999999 echo < /dev/null`);
+			const m = /value 99999999 for -s option should be <= (\d+)/.exec(r.stderr);
+			assert.ok(m, r.stderr);
+			return Number(m[1]);
+		};
+		const base = await said('');
+		// the limit is ARG_MAX less 2048 less what the environment of the command holds: the shell's own few variables
+		// (HOME, PATH, ...) are in `base`, and what is exported takes its bytes from there
+		assert.ok(base < 2097152 - 2048 && base > 2097152 - 2048 - 1024, 'the shell\'s own environment is a few bytes: ' + base);
+		let seed = 20261011;
+		const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+		const widths = ['a', 'é', '€', '😀'];
+		for (let round = 0; round < 40; round++) {
+			const vars = [];
+			let taken = 0;
+			let setup = '';
+			const n = 1 + Math.floor(rnd() * 4);
+			for (let i = 0; i < n; i++) {
+				const name = 'V' + round + '_' + i;
+				const ch = widths[Math.floor(rnd() * widths.length)];
+				const len = Math.floor(rnd() * 3000);
+				const value = ch.repeat(len);
+				vars.push([name, value]);
+				taken += Buffer.byteLength(name) + Buffer.byteLength(value) + 2;
+				setup += `export ${name}=${value}; `;
+			}
+			assert.strictEqual(await said(setup), Math.max(4096, base - taken), JSON.stringify(vars.map(([k, v]) => [k, v.length])));
+		}
+		// the floor: an environment bigger than the whole of it leaves 4096, and the same variable twice is one
+		const twice = await said(`export BIG=${'x'.repeat(2000)}; export BIG=${'y'.repeat(3000)}; `);
+		assert.strictEqual(twice, base - (3 + 3000 + 2), 'the same variable twice is one');
+		const r = await sh('v=$(printf "%100000s" ""); for i in $(seq 1 25); do export "BIG$i=$v"; done; xargs -s 99999999 echo < /dev/null');
+		assert.ok(/should be <= 4096\n/.test(r.stderr), r.stderr);
+	});
+
+	test('tee /dev/stdout: what a program writes there is its own output, in bytes (a byte that is not UTF-8 is one byte, twice), and goes through a pipe', async () => {
+		// GNU: tee writes the bytes to standard output and to /dev/stdout, which is standard output again
+		const r = await sh("printf 'h\\351llo\\n' | tee /dev/stdout | wc -c; printf 'a\\nb\\n' | tee /dev/stdout | sort | uniq -c");
+		assert.strictEqual(r.stdout, '12\n      2 a\n      2 b\n');
+		assert.strictEqual(r.stderr, '');
+	});
+
+	test('ls -n shows the owner and the group as numbers (the shell\'s one user is 1000)', async () => {
+		const r = await sh("touch f; ls -n f | awk '{print $3, $4}'; ls -ln f | awk '{print $3, $4}'; ls --numeric-uid-gid f | awk '{print $3}'; ls -l f | awk '{print $3, $4}'");
+		assert.strictEqual(r.stdout, '1000 1000\n1000 1000\n1000\nuser user\n');
+	});
+
+	test('-z and -Z are refused, with these words, where the exchange of NUL and newline cannot be done: -r for grep (but -Z with -l -L -c is), a, i, c, l, r, w, e and the M flag for sed', async () => {
+		const r1 = await sh("printf 'a\\0' > f; grep -zr a .; echo \"rc=$?\"; grep -Zr a .; echo \"rc=$?\"; grep -rlZ a . | od -c | head -1", {});
+		assert.strictEqual(r1.stderr, 'grep: -z cannot be used with -r in this shell\ngrep: -Z cannot be used with -r in this shell, except with -l, -L or -c\n');
+		assert.strictEqual(r1.stdout, 'rc=2\nrc=2\n0000000   .   /   f  \\0\n');
+		for (const [script, what] of [['1i\\\\x', 'the i command'], ['$a\\\\x', 'the a command'], ['c\\\\x', 'the c command'], ['l', 'the l command'], ['r f', 'the r command'], ['w f', 'the w command'], ['s/a/b/M', 'the M flag of the s command'], ['/a/M p', 'the M flag of an address'], ['s/a/b/w f', 'the w flag of the s command']]) {
+			const r = await sh(`printf 'a\\0' | sed -z '${script}'`);
+			assert.deepStrictEqual([r.stdout, r.stderr, r.exitCode], ['', `sed: -z cannot be combined with ${what} in this shell\n`, 1], script);
+		}
+	});
+
+	/* ------------------------------------------------------------------------------------------ second pass: the parts */
+
+	const zero = require(path.join(ENGINE_DIR, 'zero.js'));
+	const trMod = require(path.join(ENGINE_DIR, 'tr.js'));
+	const datestr = require(path.join(ENGINE_DIR, 'datestr.js'));
+	const diffMod = require(path.join(ENGINE_DIR, 'diff.js'));
+	const zoneMod = require(path.join(ENGINE_DIR, 'zone.js'));
+	const runTr = (args, input) => {
+		const r = trMod.run(args, Uint8Array.from(Buffer.from(input, 'latin1')));
+		return 'passThrough' in r ? r : { out: Buffer.from(r.stdout).toString('latin1'), err: r.stderr, rc: r.exitCode };
+	};
+
+	test('zero.plan: the options that mean NUL are taken out of clusters, long names and valued options (a value keeps its place), and the operands are known', () => {
+		const sortT = c.OPTION_VALUES.sort;
+		const plan = (program, argv, table) => zero.plan(program, argv, table);
+		const p1 = plan('sort', ['-zrk2', '-t', ':', '-o', 'out', 'f', 'g'], sortT);
+		assert.strictEqual(p1.zero, true);
+		assert.deepStrictEqual(p1.args, ['-r', '-k', '2', '-t', ':', '-o', 'out', 'f', 'g']);
+		assert.deepStrictEqual(p1.files, [7, 8].map((n) => n));
+		assert.strictEqual(p1.outputAt, 6, 'where -o names its file');
+		const p2 = plan('sort', ['--zero-terminated', '--output=o', '--', '-z', 'f'], sortT);
+		assert.strictEqual(p2.zero, true);
+		assert.deepStrictEqual(p2.args, ['--output', 'o', '--', '-z', 'f'], 'after -- -z is a file name');
+		assert.strictEqual(plan('sort', ['-r', 'f'], sortT).zero, false);
+		const g = plan('grep', ['-zc', '-e', 'a', '-Z', 'f'], c.OPTION_VALUES.grep);
+		assert.deepStrictEqual([g.zero, g.nul, g.args, g.files], [true, true, ['-c', '-e', 'a', 'f'], [3]]);
+		const g2 = plan('grep', ['-Zl', 'pat', 'f', 'g'], c.OPTION_VALUES.grep);
+		assert.deepStrictEqual([g2.zero, g2.nul, g2.files], [false, true, [2, 3]], 'the first operand is the pattern');
+		const s = plan('sed', ['-z', '-s', '-n', '-e', 'p', 'f', 'g'], c.OPTION_VALUES.sed);
+		assert.deepStrictEqual([s.zero, s.separate, s.scripts, s.files], [true, true, [2], [3, 4]]);
+		const s2 = plan('sed', ['-iz.bak', 's/a/b/', 'f'], c.OPTION_VALUES.sed);
+		assert.deepStrictEqual([s2.zero, s2.inPlace, s2.suffix], [false, true, 'z.bak'], '-i takes the rest of the cluster: the z is part of the suffix');
+		const t = plan('tail', ['-zn', '+2', 'f'], c.OPTION_VALUES.tail);
+		assert.deepStrictEqual([t.zero, t.args], [true, ['-n', '+2', 'f']]);
+		assert.strictEqual(plan('printenv', ['-0', 'HOME'], undefined).zero, true);
+		assert.strictEqual(plan('basename', ['--zero', '/a/b'], undefined).zero, true);
+	});
+
+	test('zero.grepOutputKind and grep -z: what a line of grep says it prints (names, counts, nothing, line numbers, context)', () => {
+		const k = zero.grepOutputKind;
+		assert.deepStrictEqual(k(['-l', 'a', 'f']), { names: true, count: false, quiet: false, lineNumber: false, context: false });
+		assert.deepStrictEqual(k(['--files-without-match', 'a']), { names: true, count: false, quiet: false, lineNumber: false, context: false });
+		assert.deepStrictEqual(k(['-c', '-n', '-A', '2', 'a']), { names: false, count: true, quiet: false, lineNumber: true, context: true });
+		assert.deepStrictEqual(k(['-nC2', 'a']), { names: false, count: false, quiet: false, lineNumber: true, context: true });
+		assert.deepStrictEqual(k(['-3', 'a']), { names: false, count: false, quiet: false, lineNumber: false, context: true });
+		assert.deepStrictEqual(k(['-e', '-l', 'pat']), { names: false, count: false, quiet: false, lineNumber: false, context: false }, 'the value of -e is not an option');
+		assert.deepStrictEqual(k(['-q', 'a']), { names: false, count: false, quiet: true, lineNumber: false, context: false });
+		assert.deepStrictEqual(k(['--', '-l']), { names: false, count: false, quiet: false, lineNumber: false, context: false });
+	});
+
+	test('tail -z: headers are for several files, -v and -q (the last of them wins), and are taken out of what one file at a time is run with', () => {
+		const h = zero.tailHeaders;
+		assert.strictEqual(h(['-n', '1'], 1), false);
+		assert.strictEqual(h(['-n', '1'], 2), true);
+		assert.strictEqual(h(['-q'], 2), false);
+		assert.strictEqual(h(['-v'], 1), true);
+		assert.strictEqual(h(['-qv'], 1), true);
+		assert.strictEqual(h(['-vq'], 2), false);
+		assert.strictEqual(h(['--quiet', '--verbose'], 1), true);
+		assert.strictEqual(h(['--verbose', '--silent'], 2), false);
+		assert.strictEqual(h(['-n', '-q', 'x'], 2), true, 'the value of -n is not an option');
+		assert.deepStrictEqual(zero.withoutHeaderOptions(['-qv', '-n', '2', '--verbose', '--', '-v']), ['-n', '2', '--', '-v']);
+		assert.deepStrictEqual(zero.withoutHeaderOptions(['-qc', '3']), ['-c', '3']);
+	});
+
+	test('sed -z: `\\n` and a backslash before a real newline are the newline of the data, `\\x00` is the record end, and a, i, c, l, r, w, e and the M flag are refused (their output has a newline of its own)', () => {
+		assert.strictEqual(zero.sedScriptIn('s/a/x\\ny/', '\u0001'), 's/a/x\u0001y/');
+		assert.strictEqual(zero.sedScriptIn('s/a/x\\\ny/', '\u0001'), 's/a/x\u0001y/');
+		assert.strictEqual(zero.sedScriptIn('N;s/\\x00/+/', '\u0001'), 'N;s/\\n/+/');
+		assert.strictEqual(zero.sedScriptIn('s/\\\\n/N/', '\u0001'), 's/\\\\n/N/', 'an escaped backslash before n is not a newline');
+		const refuse = zero.sedZeroRefusal;
+		assert.strictEqual(refuse('1i\\HEAD'), 'the i command');
+		assert.strictEqual(refuse('$a\\TAIL'), 'the a command');
+		assert.strictEqual(refuse('/x/c\\NEW'), 'the c command');
+		assert.strictEqual(refuse('l'), 'the l command');
+		assert.strictEqual(refuse('r f'), 'the r command');
+		assert.strictEqual(refuse('w f'), 'the w command');
+		assert.strictEqual(refuse('s/a/b/w f'), 'the w flag of the s command');
+		assert.strictEqual(refuse('s/a/b/M'), 'the M flag of the s command');
+		assert.strictEqual(refuse('/a/M p'), 'the M flag of an address');
+		for (const fine of ['s/a/b/g', 'y/ab/AB/', 'N;P;D', '$!N;s/\\n/ /', '2q', '/a/,/b/d', 's/a/b/;s/c/d/', 'x;G', '-n']) { assert.strictEqual(refuse(fine), null, fine); }
+		assert.strictEqual(refuse('s/[a]/ /; # a comment'), null);
+		const x = zero.pickPlaceholder(['a\u0001b', 'c']);
+		assert.ok(!'a\u0001bc'.includes(x) && x !== '\n' && x !== '\0', 'a character that is not in the data');
+		assert.strictEqual(zero.swapOut(zero.swapIn('a\nb\0c', x), x), 'a\nb\0c');
+	});
+
+	test('tr (tr.js): GNU\'s own, byte for byte: NUL in either set, every escape, ranges, classes, [c*n], -c -d -s -t, and its messages', () => {
+		assert.deepStrictEqual(runTr(['\n', '\\0'], 'a\nb\n').out, 'a\0b\0');
+		assert.deepStrictEqual(runTr(['\n', '\\000'], 'a\nb\n').out, 'a\0b\0');
+		assert.deepStrictEqual(runTr(['\0', '\n'], 'a\0b\0').out, 'a\nb\n', 'a NUL typed into a set');
+		assert.deepStrictEqual(runTr(['hi', '\\0\\1'], 'hi').out, '\0\x01');
+		assert.deepStrictEqual(runTr(['-d', '\\0'], 'a\0b\0').out, 'ab');
+		assert.deepStrictEqual(runTr(['-s', '\\0'], 'a\0\0b\0').out, 'a\0b\0');
+		assert.deepStrictEqual(runTr(['h', '\\x00'], 'hi').out, 'xi', 'there is no \\xHH in GNU tr: the x and the zeros are characters, and the first one is the translation');
+		assert.deepStrictEqual(runTr(['a-c', 'A-C'], 'abcd').out, 'ABCd');
+		assert.deepStrictEqual(runTr(['[:lower:]', '[:upper:]'], 'abC1').out, 'ABC1');
+		assert.deepStrictEqual(runTr(['-cd', '[:alpha:]'], 'a1b2').out, 'ab');
+		assert.deepStrictEqual(runTr(['-cs', 'a-z', '\\n'], 'ab, cd').out, 'ab\ncd');
+		assert.deepStrictEqual(runTr(['abcd', '[x*]'], 'abcd').out, 'xxxx');
+		assert.deepStrictEqual(runTr(['abcd', '[x*2]yz'], 'abcd').out, 'xxyz');
+		assert.deepStrictEqual(runTr(['-t', 'abcd', 'xy'], 'abcd').out, 'xycd');
+		assert.deepStrictEqual(runTr(['\\101-\\103', 'a-c'], 'ABCD').out, 'abcD');
+		assert.deepStrictEqual(runTr(['é', 'e'], '\xc3\xa9').out, 'ee', 'bytes, not characters: é is two bytes, each of them is translated (GNU coreutils 8.32 says ee)');
+		const bad = runTr(['z-a', 'x'], 'q');
+		assert.deepStrictEqual([bad.rc, bad.err], [1, "tr: range-endpoints of 'z-a' are in reverse collating sequence order\n"]);
+		assert.strictEqual(runTr(['[:foo:]', 'x'], 'q').err, "tr: invalid character class 'foo'\n");
+		assert.strictEqual(runTr(['a'], 'q').err, "tr: missing operand after 'a'\nTwo strings must be given when translating.\nTry 'tr --help' for more information.\n");
+		assert.strictEqual(runTr([], '').err, "tr: missing operand\nTry 'tr --help' for more information.\n");
+		assert.strictEqual(runTr(['a', '[:digit:]'], 'q').err, "tr: when translating, the only character classes that may appear in\nstring2 are 'upper' and 'lower'\n");
+		assert.deepStrictEqual(runTr(['--help'], ''), { passThrough: true });
+	});
+
+	test('date -d (datestr.js): the relative forms, a date and a relative part, a signed number after a time is a zone, `ago`, an offset over a day, and what GNU\'s grammar does not take is an invalid date', () => {
+		const at = (s, now = Date.UTC(2024, 6, 4, 12, 0, 0)) => {
+			const r = datestr.parse(s, now, 'UTC');
+			return 'invalid' in r ? 'invalid' : new Date(r.ms).toISOString().slice(0, 19).replace('T', ' ');
+		};
+		// GNU date's own answers (coreutils 8.32, TZ=UTC), recorded once; every string has a date, so the clock is never read
+		const t = [
+			['2024-07-04 +1 week', '2024-07-11 00:00:00'],
+			['2024-07-04 12:00 +1 day', '2024-07-05 11:00:00'],
+			['2024-07-04 1 day ago', '2024-07-03 00:00:00'],
+			['2024-07-04 2 hours ago', '2024-07-03 22:00:00'],
+			['20240704', '2024-07-04 00:00:00'],
+			['20240704 1530', '2024-07-04 15:30:00'],
+			['2024-01-31 +1 month', '2024-03-02 00:00:00'],
+			['2024-02-29 +1 year', '2025-03-01 00:00:00'],
+			['2024-07-04 next friday', '2024-07-04 00:00:00'],
+			['2024-07-04 last monday', '2024-07-04 00:00:00'],
+			['2024-07-04 3pm', '2024-07-04 15:00:00'],
+			['2024-07-04T12:00:30', '2024-07-04 12:00:30'],
+			['Thu, 04 Jul 2024 12:00:00 +0200', '2024-07-04 10:00:00'],
+			['2023-02-29', 'invalid'],
+			['2024-07-04 18:00 +42 days', 'invalid'],
+			['2024-07-04 18:00 +25 days', 'invalid'],
+			['2024-07-04 18:00 +15 days', '2024-07-05 03:00:00'],
+			['2024-07-04 18:00 +100 days', '2024-07-05 17:00:00'],
+			['Jul 4 2024 +1 day ago', 'invalid'],
+			['2024-07-04 +1 day ago', '2024-07-03 00:00:00'],
+			['Jul 4, 2024 +1 day ago', '2024-07-03 00:00:00'],
+			['2024-07-04 18:00 UTC +1 day ago', 'invalid'],
+			['2024-07-04 18:00 EDT +1 day ago', '2024-07-03 22:00:00'],
+			['ago 2000-02-29', 'invalid'],
+			['2024-07-04 last hr', 'invalid'],
+			['2024-07-04 ,', 'invalid'],
+			['2024-07-04 #1', 'invalid'],
+			['2024-07-04 [1]', 'invalid'],
+			['2024-07-04 "x"', 'invalid'],
+			['garbage', 'invalid'],
+			['Thu, 04 Jul 2024', '2024-07-04 00:00:00'],
+			['2024-07-04 12:00 EST', '2024-07-04 17:00:00'],
+			['2024-07-04 noon', 'invalid'],
+			['2024-07-04 tomorrow', '2024-07-05 00:00:00'],
+			['2024-07-04 12:00:00.5', '2024-07-04 12:00:00'],
+		];
+		for (const [s, want] of t) { assert.strictEqual(at(s), want, s); }
+	});
+
+	test('diff.js: the number of context lines is the greatest -U/-C value, a bare -u or -c is three unless there is a -NUM, and -NUM is its own', () => {
+		const ctx = (args) => { const r = diffMod.parseOptions(args.concat(['a', 'b'])); return 'o' in r ? r.o.context : r; };
+		const t = [
+			[['-u'], 3], [['-U0'], 0], [['-U1'], 1], [['-U5'], 5], [['--unified'], 3], [['--unified=1'], 1], [['-c'], 3], [['-C1'], 1],
+			[['-1'], 1], [['-5'], 5], [['-u', '-1'], 1], [['-1', '-u'], 1], [['-c', '-2'], 2], [['-u', '-U1'], 3], [['-U1', '-u'], 3],
+			[['-U0', '-u'], 3], [['-u', '-U0'], 3], [['-U2', '-U0'], 2], [['-U0', '-U2'], 2], [['-U1', '-U', '2'], 2], [['-3', '-U1'], 3],
+			[['-1', '-U2'], 2], [['-U0', '-1'], 1], [['-C2', '-C0'], 2], [['-w', '-U1'], 1], [['-w', '-u'], 3], [['-ruU1'], 3], [['-rU0'], 0],
+		];
+		for (const [args, want] of t) { assert.strictEqual(ctx(args), want, args.join(' ')); }
+	});
+
+	test('diff.js shiftBoundaries (analyze.c): a change that can sit in more than one place is where GNU puts it (slid back to meet its neighbour, else forward as far as it goes)', () => {
+		const same = (a, b) => (left, i, j) => (left ? a[i] === a[j] : b[i] === b[j]);
+		const run = (a, b, changes) => diffMod.shiftBoundaries(changes, a.length, b.length, same(a, b));
+		// an added `b` among three: after the last of them (GNU: `3a4`)
+		assert.deepStrictEqual(run(['a', 'b', 'b', 'c'], ['a', 'b', 'b', 'b', 'c'], [{ a1: 3, a2: 2, b1: 3, b2: 3 }]), [{ a1: 4, a2: 3, b1: 4, b2: 4 }]);
+		// the engine's own comparison put it before an equal line; GNU puts it after (`2a3`)
+		assert.deepStrictEqual(run(['ONE', 'end', 'z'], ['ONE', 'end', 'end', 'z'], [{ a1: 2, a2: 1, b1: 2, b2: 2 }]), [{ a1: 3, a2: 2, b1: 3, b2: 3 }]);
+		// a change between different lines has nowhere to go
+		assert.deepStrictEqual(run(['x', 'y', 'z'], ['x', 'Q', 'z'], [{ a1: 2, a2: 2, b1: 2, b2: 2 }]), [{ a1: 2, a2: 2, b1: 2, b2: 2 }]);
+		assert.deepStrictEqual(run(['a'], ['a'], []), []);
+	});
+
+	test('sort -k: parseSortKey is strtoumax\'s (blanks, a plus sign), the end field of 0 is the error, the canonical text is what the engine reads', () => {
+		const k = (s) => c.parseSortKey(s);
+		assert.deepStrictEqual(k('+1'), { spec: '1', start: '', end: '' });
+		assert.deepStrictEqual(k(' 1'), { spec: '1', start: '', end: '' });
+		assert.deepStrictEqual(k('+2n'), { spec: '2n', start: 'n', end: '' });
+		assert.deepStrictEqual(k(' +2n,2'), { spec: '2n,2', start: 'n', end: '' });
+		assert.deepStrictEqual(k('1.2,3.4r'), { spec: '1.2,3.4r', start: '', end: 'r' });
+		assert.deepStrictEqual(k('1,+1'), { spec: '1,1', start: '', end: '' });
+		assert.deepStrictEqual(k('1.1b,1'), { spec: '1.1b,1', start: 'b', end: '' });
+		assert.ok(!('error' in k('99999999999999999999,1')), 'a number too big for a long is the greatest one (strtoumax saturates), not an error');
+		for (const [spec, message] of [
+			['0', "field number is zero: invalid field specification '0'"],
+			['1,0', "field number is zero: invalid field specification '1,0'"],
+			['1.0', "character offset is zero: invalid field specification '1.0'"],
+			['', "invalid number at field start: invalid count at start of ''"],
+			['x', "invalid number at field start: invalid count at start of 'x'"],
+			['-1', "invalid number at field start: invalid count at start of '-1'"],
+			['1,', "invalid number after ',': invalid count at start of ''"],
+			['1.', "invalid number after '.': invalid count at start of ''"],
+			['1a', "stray character in field spec: invalid field specification '1a'"],
+			['1x2', "stray character in field spec: invalid field specification '1x2'"],
+		]) { assert.deepStrictEqual(k(spec), { error: message }, JSON.stringify(spec)); }
+		assert.deepStrictEqual(c.sortKeys(['-k', '1nM']), { error: "options '-Mn' are incompatible" });
+		assert.deepStrictEqual(c.sortKeys(['-n', '-M']), { error: "options '-Mn' are incompatible" });
+		assert.deepStrictEqual(c.sortKeys(['-k', '+2', '-r']), { args: ['-k', '2', '-r'] });
+	});
+
+	test('seq -f: one conversion of e E f F g G, `%%`, width and precision, and GNU\'s words for the rest', () => {
+		const f = (...a) => c.seqFormatted(a);
+		assert.deepStrictEqual(f('-f', '%02g', '1', '3'), { stdout: '01\n02\n03\n', stderr: '', exitCode: 0 });
+		assert.strictEqual(f('-f', '%.2f', '1', '0.5', '2').stdout, '1.00\n1.50\n2.00\n');
+		assert.strictEqual(f('-f', 'n%g', '-s', ',', '1', '3').stdout, 'n1,n2,n3\n');
+		assert.strictEqual(f('-f', '%e', '1', '2').stdout, '1.000000e+00\n2.000000e+00\n');
+		assert.strictEqual(f('-f', '%%d %g', '1', '2').stdout, '%d 1\n%d 2\n');
+		assert.strictEqual(f('-f', '%5.1f', '3', '-1', '1').stdout, '  3.0\n  2.0\n  1.0\n');
+		assert.strictEqual(f('-f', '%x', '1', '2').stderr, "seq: format '%x' has unknown %x directive\n");
+		assert.strictEqual(f('-f', '%g%g', '1', '2').stderr, "seq: format '%g%g' has too many % directives\n");
+		assert.strictEqual(f('-f', 'a', '1', '2').stderr, "seq: format 'a' has no % directive\n");
+		assert.strictEqual(f('1', '3'), null, 'no -f: the engine\'s');
+	});
+
+	test('zero.js, branch by branch: the options of grep, sed, sort and the rest that mean NUL (clusters, long names with and without `=`, valued options), the placeholder for the newline, what a sed script cannot carry, the script as the exchange needs it, what a grep line prints, and the headers of tail', () => {
+		// [program, arguments, what `plan` makes of them: zero, nul, args, files, scripts, scriptFiles, outputAt, suffix, inPlace, separate]
+		const plans = [
+			["grep", ["-z","one","a"], [true,false,["one","a"],[1],[],[],-1,null,false,false]],
+			["egrep", ["-z","one|two","a"], [true,false,["one|two","a"],[1],[],[],-1,null,false,false]],
+			["fgrep", ["-z","one","a"], [true,false,["one","a"],[1],[],[],-1,null,false,false]],
+			["grep", ["-e","one","a","b"], [false,false,["-e","one","a","b"],[2,3],[],[],-1,null,false,false]],
+			["grep", ["-zeone","a"], [true,false,["-e","one","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["--regexp","one","a"], [false,false,["--regexp","one","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["--regexp=one","a"], [false,false,["--regexp","one","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["-f","pat","a"], [false,false,["-f","pat","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["--file","pat","a"], [false,false,["--file","pat","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["--file=pat","a"], [false,false,["--file","pat","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["-zf","pat","a"], [true,false,["-f","pat","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["-Z","-l","o","a"], [false,true,["-l","o","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["--null","-l","o","a"], [false,true,["-l","o","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["--null=1","o","a"], [false,false,["--null=1","o","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["--null-data","-c","o","a"], [true,false,["-c","o","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["-zZ","o","a"], [true,true,["o","a"],[1],[],[],-1,null,false,false]],
+			["grep", ["-ZzL","o","a"], [true,true,["-L","o","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["-z","-A","1","o","a"], [true,false,["-A","1","o","a"],[3],[],[],-1,null,false,false]],
+			["grep", ["-zA1","o","a"], [true,false,["-A","1","o","a"],[3],[],[],-1,null,false,false]],
+			["grep", ["--after-context=1","-z","o","a"], [true,false,["--after-context","1","o","a"],[3],[],[],-1,null,false,false]],
+			["grep", ["--after-context","1","-z","o","a"], [true,false,["--after-context","1","o","a"],[3],[],[],-1,null,false,false]],
+			["grep", ["-z","--","-x","a"], [true,false,["--","-x","a"],[2],[],[],-1,null,false,false]],
+			["grep", ["-z","o","-"], [true,false,["o","-"],[1],[],[],-1,null,false,false]],
+			["sed", ["-z","s/o/0/","a"], [true,false,["s/o/0/","a"],[1],[0],[],-1,null,false,false]],
+			["sed", ["--null-data","s/o/0/","a"], [true,false,["s/o/0/","a"],[1],[0],[],-1,null,false,false]],
+			["sed", ["--zero-terminated","s/o/0/","a"], [true,false,["s/o/0/","a"],[1],[0],[],-1,null,false,false]],
+			["sed", ["-z","-e","s/o/0/","-e","s/t/T/","a"], [true,false,["-e","s/o/0/","-e","s/t/T/","a"],[4],[1,3],[],-1,null,false,false]],
+			["sed", ["-ze","s/o/0/","a"], [true,false,["-e","s/o/0/","a"],[2],[1],[],-1,null,false,false]],
+			["sed", ["--expression","s/o/0/","a"], [false,false,["--expression","s/o/0/","a"],[2],[1],[],-1,null,false,false]],
+			["sed", ["--expression=s/o/0/","a"], [false,false,["--expression","s/o/0/","a"],[2],[1],[],-1,null,false,false]],
+			["sed", ["-z","-f","s.sed","a"], [true,false,["-f","s.sed","a"],[2],[],[1],-1,null,false,false]],
+			["sed", ["-zf","s.sed","a"], [true,false,["-f","s.sed","a"],[2],[],[1],-1,null,false,false]],
+			["sed", ["--file=s.sed","-z","a"], [true,false,["--file","s.sed","a"],[2],[],[1],-1,null,false,false]],
+			["sed", ["--file","s.sed","-z","a"], [true,false,["--file","s.sed","a"],[2],[],[1],-1,null,false,false]],
+			["sed", ["-s","-n","$p","a","b"], [false,false,["-n","$p","a","b"],[2,3],[1],[],-1,null,false,true]],
+			["sed", ["-ns","$p","a","b"], [false,false,["-n","$p","a","b"],[2,3],[1],[],-1,null,false,true]],
+			["sed", ["-sn","$p","a","b"], [false,false,["-n","$p","a","b"],[2,3],[1],[],-1,null,false,true]],
+			["sed", ["--separate","-n","$p","a","b"], [false,false,["-n","$p","a","b"],[2,3],[1],[],-1,null,false,true]],
+			["sed", ["-i","s/o/0/","a"], [false,false,["-i","s/o/0/","a"],[2],[1],[],-1,null,true,false]],
+			["sed", ["-i.bak","s/o/0/","a"], [false,false,["-i","s/o/0/","a"],[2],[1],[],-1,".bak",true,false]],
+			["sed", ["--in-place","s/o/0/","a"], [false,false,["--in-place","s/o/0/","a"],[2],[1],[],-1,null,true,false]],
+			["sed", ["--in-place=.bak","s/o/0/","a"], [false,false,["--in-place","s/o/0/","a"],[2],[1],[],-1,".bak",true,false]],
+			["sed", ["-zi","s/o/0/","a"], [true,false,["-i","s/o/0/","a"],[2],[1],[],-1,null,true,false]],
+			["sed", ["-zni.bak","p","a"], [true,false,["-ni","p","a"],[2],[1],[],-1,".bak",true,false]],
+			["sed", ["-n","-z","$p","a","b"], [true,false,["-n","$p","a","b"],[2,3],[1],[],-1,null,false,false]],
+			["sed", ["-E","-z","s/(o)/\\1/","a"], [true,false,["-E","s/(o)/\\1/","a"],[2],[1],[],-1,null,false,false]],
+			["sort", ["-z","a"], [true,false,["a"],[0],[],[],-1,null,false,false]],
+			["sort", ["--zero-terminated","a"], [true,false,["a"],[0],[],[],-1,null,false,false]],
+			["sort", ["-zo","out","a"], [true,false,["-o","out","a"],[2],[],[],1,null,false,false]],
+			["sort", ["-o","out","-z","a"], [true,false,["-o","out","a"],[2],[],[],1,null,false,false]],
+			["sort", ["--output=out","a"], [false,false,["--output","out","a"],[2],[],[],1,null,false,false]],
+			["sort", ["--output","out","a"], [false,false,["--output","out","a"],[2],[],[],1,null,false,false]],
+			["sort", ["-k2","-z","a"], [true,false,["-k","2","a"],[2],[],[],-1,null,false,false]],
+			["sort", ["-t",":","-z","a"], [true,false,["-t",":","a"],[2],[],[],-1,null,false,false]],
+			["sort", ["-zrn","a"], [true,false,["-rn","a"],[1],[],[],-1,null,false,false]],
+			["uniq", ["-z","a","out"], [true,false,["a","out"],[0,1],[],[],-1,null,false,false]],
+			["cut", ["-z","-d",":","-f","1","a"], [true,false,["-d",":","-f","1","a"],[4],[],[],-1,null,false,false]],
+			["cut", ["-zd:","-f1","a"], [true,false,["-d",":","-f","1","a"],[4],[],[],-1,null,false,false]],
+			["tail", ["-z","-n","2","a","b"], [true,false,["-n","2","a","b"],[2,3],[],[],-1,null,false,false]],
+			["tail", ["-zn2","a"], [true,false,["-n","2","a"],[2],[],[],-1,null,false,false]],
+			["printenv", ["-0","HOME"], [true,false,["HOME"],[0],[],[],-1,null,false,false]],
+			["printenv", ["--null","HOME"], [true,false,["HOME"],[0],[],[],-1,null,false,false]],
+			["basename", ["-z","a/b"], [true,false,["a/b"],[0],[],[],-1,null,false,false]],
+			["basename", ["--zero","a/b"], [true,false,["a/b"],[0],[],[],-1,null,false,false]],
+			["paste", ["-z","a","b"], [true,false,["a","b"],[0,1],[],[],-1,null,false,false]],
+			["comm", ["-z","a","b"], [true,false,["a","b"],[0,1],[],[],-1,null,false,false]],
+			["join", ["-z","-t",":","a","b"], [true,false,["-t",":","a","b"],[2,3],[],[],-1,null,false,false]],
+			["head", ["-z","-n","1","a"], [true,false,["-n","1","a"],[2],[],[],-1,null,false,false]],
+		];
+		const placeholders = [
+			[[""], "\u000b"],
+			[["abc"], "\u000b"],
+			[["\u0001"], "\u000b"],
+			[["\u0001\u0002"], "\u000b"],
+			[["\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t"], "\u000b"],
+			[["\u000b"], "\u0001"],
+			[["\u000b\f"], "\u0001"],
+			[["\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f"], "\u0001"],
+			[["\u0001\u000b"], "\u0002"],
+			[["\u0005\u000b"], "\u0006"],
+			[["\u001f"], "\u000b"],
+			[["a\u0000b\nc"], "\u000b"],
+			[["\t\u001f"], "\u000b"],
+			[["\b"], "\u000b"],
+			[["\n\u0000"], "\u000b"],
+			[["x","\u0001","\u000b"], "\u0002"],
+			[["\ue000"], "\u000b"],
+			[["\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f"], "\ue000"],
+		];
+		const refusals = [
+			["s/a/b/", null],
+			["a\\text", "the a command"],
+			["a text", "the a command"],
+			["$a x", "the a command"],
+			["2i x", "the i command"],
+			["c\\x", "the c command"],
+			["r file", "the r command"],
+			["R file", "the R command"],
+			["w file", "the w command"],
+			["W file", "the W command"],
+			["F", "the F command"],
+			["e", "the e command"],
+			["l", "the l command"],
+			["l 5", "the l command"],
+			["1!l", "the l command"],
+			["y/abc/xyz/", null],
+			["s/a/b/M", "the M flag of the s command"],
+			["s/a/b/m", "the M flag of the s command"],
+			["s/a/b/w out", "the w flag of the s command"],
+			["s/a/b/e", "the e flag of the s command"],
+			["s/a/b/gp", null],
+			["s/a/b/I", null],
+			["/x/M p", "the M flag of an address"],
+			["/x/I p", null],
+			["/x/IM p", "the M flag of an address"],
+			["\\,x,M p", "the M flag of an address"],
+			["\\,x,Ip", null],
+			["1,3d", null],
+			["2,~4p", null],
+			["$!d", null],
+			["/a/,/b/d", null],
+			["/a/ , /b/ d", null],
+			["1~2p", null],
+			["0~3p", null],
+			["+2p", null],
+			["s|a|b|", null],
+			["s/[/]/x/", null],
+			["s/a\\/b/x/", null],
+			["b end", null],
+			[":a;N;$!ba;s/\\n/ /g", null],
+			["t end", null],
+			["T x", null],
+			["b;p", null],
+			[":a", null],
+			[": a", null],
+			["/a/b x;l", "the l command"],
+			["q", null],
+			["q5", null],
+			["Q 3", null],
+			["q 5;l", "the l command"],
+			["L", null],
+			["{p;p}", null],
+			["# comment l", null],
+			["p # w x", null],
+			["p;\n#c\nl", "the l command"],
+			["/[a/b]/l", "the l command"],
+			["s/a/b/;s/c/d/w", "the w flag of the s command"],
+			["y/a/b/;l", "the l command"],
+			["1{p;a x}", "the a command"],
+			["/a/!{p;i x}", "the i command"],
+			["1!G;h;$!d", null],
+			["$!N;P;D", null],
+			["n;d", null],
+			["s/\\(a\\)\\|b/\\1/", null],
+			["s/a/\\n/", null],
+			["s,a\\,b,c,", null],
+			["sxaxbx", null],
+			["/a/s//b/", null],
+			["s/a/b/;;p", null],
+			["p;l;p", "the l command"],
+		];
+		const scripts = [
+			["s/a/\\n/", "s/a/\u0001/"],
+			["s/a\\nb/X/", "s/a\u0001b/X/"],
+			["s/a/b\\\nc/", "s/a/b\u0001c/"],
+			["s/\\x00/X/", "s/\\n/X/"],
+			["s/\\o0/X/", "s/\\n/X/"],
+			["s/\\d0/X/", "s/\\n/X/"],
+			["s/\\x0a/X/", "s/\\x0a/X/"],
+			["s/\\x41/X/", "s/\\x41/X/"],
+			["s/\\x4/X/", "s/\\x4/X/"],
+			["s/\\x000/X/", "s/\\n0/X/"],
+			["s/\\o000/X/", "s/\\n/X/"],
+			["s/\\d000/X/", "s/\\n/X/"],
+			["s/\\d256/X/", "s/\\d256/X/"],
+			["y/\\n/ /", "y/\u0001/ /"],
+			["s/a\\\\nb/X/", "s/a\\\\nb/X/"],
+			["s/a/\\\\n/", "s/a/\\\\n/"],
+			["p\np", "p\np"],
+			["s/a/\\", "s/a/\\"],
+			["\\", "\\"],
+			["s/\\q/X/", "s/\\q/X/"],
+			["s/\\o/X/", "s/\\o/X/"],
+			["s/\\d/X/", "s/\\d/X/"],
+			["s/\\x/X/", "s/\\x/X/"],
+			["s/\\n\\n/X/", "s/\u0001\u0001/X/"],
+		];
+		// [arguments, names, count, quiet, lineNumber, context]
+		const kinds = [
+			[["-c","o"], [false,true,false,false,false]],
+			[["--count","o"], [false,true,false,false,false]],
+			[["-l","o"], [true,false,false,false,false]],
+			[["--files-with-matches","o"], [true,false,false,false,false]],
+			[["-L","o"], [true,false,false,false,false]],
+			[["--files-without-match","o"], [true,false,false,false,false]],
+			[["-q","o"], [false,false,true,false,false]],
+			[["--quiet","o"], [false,false,true,false,false]],
+			[["--silent","o"], [false,false,true,false,false]],
+			[["-n","o"], [false,false,false,true,false]],
+			[["--line-number","o"], [false,false,false,true,false]],
+			[["-A","2","o"], [false,false,false,false,true]],
+			[["-B","2","o"], [false,false,false,false,true]],
+			[["-C","2","o"], [false,false,false,false,true]],
+			[["-A2","o"], [false,false,false,false,true]],
+			[["--after-context=2","o"], [false,false,false,false,true]],
+			[["--before-context","2","o"], [false,false,false,false,true]],
+			[["--context=2","o"], [false,false,false,false,true]],
+			[["-2","o"], [false,false,false,false,true]],
+			[["-12","o"], [false,false,false,false,true]],
+			[["-c2","o"], [false,true,false,false,true]],
+			[["-e","c","o"], [false,false,false,false,false]],
+			[["-ec","o"], [false,false,false,false,false]],
+			[["-f","n","o"], [false,false,false,false,false]],
+			[["-m","1","-c","o"], [false,true,false,false,false]],
+			[["--max-count=1","o"], [false,false,false,false,false]],
+			[["--max-count","1","o"], [false,false,false,false,false]],
+			[["-d","skip","o"], [false,false,false,false,false]],
+			[["--include","*.c","o"], [false,false,false,false,false]],
+			[["--include=*.c","-l","o"], [true,false,false,false,false]],
+			[["--","-c","o"], [false,false,false,false,false]],
+			[["-","o"], [false,false,false,false,false]],
+			[["o","-c"], [false,true,false,false,false]],
+			[["-hc","o"], [false,true,false,false,false]],
+			[["-cn","o"], [false,true,false,true,false]],
+			[["-lq","o"], [true,false,true,false,false]],
+			[["--exclude-dir","x","-n","o"], [false,false,false,true,false]],
+			[["--label","x","-c"], [false,true,false,false,false]],
+			[["--color","-c"], [false,true,false,false,false]],
+			[["-x1","o"], [false,false,false,false,true]],
+			[["-i","o"], [false,false,false,false,false]],
+			[["-9","o"], [false,false,false,false,true]],
+		];
+		// [arguments, files, whether tail prints headers, the arguments with -q -v --quiet --silent --verbose taken out]
+		const tails = [
+			[["-n","2","a","b"], 2, true, ["-n","2","a","b"]],
+			[["-q","a","b"], 2, false, ["a","b"]],
+			[["--quiet","a","b"], 2, false, ["a","b"]],
+			[["--silent","a","b"], 2, false, ["a","b"]],
+			[["-v","a"], 1, true, ["a"]],
+			[["--verbose","a"], 1, true, ["a"]],
+			[["-qv","a","b"], 2, true, ["a","b"]],
+			[["-vq","a","b"], 2, false, ["a","b"]],
+			[["-n","q","a","b"], 2, true, ["-n","q","a","b"]],
+			[["-c","5","a","b"], 2, true, ["-c","5","a","b"]],
+			[["-s","1","a","b"], 2, true, ["-s","1","a","b"]],
+			[["--lines","v","a"], 1, false, ["--lines","v","a"]],
+			[["--","-q","a"], 2, true, ["--","-q","a"]],
+			[["a"], 1, false, ["a"]],
+			[["a","b"], 2, true, ["a","b"]],
+			[["-","a"], 2, true, ["-","a"]],
+			[["--lines=2","a"], 1, false, ["--lines=2","a"]],
+			[["-z","a"], 1, false, ["-z","a"]],
+		];
+		for (const [program, argv, want] of plans) {
+			const r = zero.plan(program, argv, c.OPTION_VALUES[program]);
+			assert.deepStrictEqual([r.zero, r.nul, r.args, r.files, r.scripts, r.scriptFiles, r.outputAt, r.suffix, r.inPlace, r.separate], want, program + ' ' + JSON.stringify(argv));
+		}
+		for (const [texts, want] of placeholders) { assert.strictEqual(zero.pickPlaceholder(texts), want, JSON.stringify(texts)); }
+		// no room among the controls, and none among the private-use characters either
+		const controls = Array.from({ length: 31 }, (_, i) => i + 1).filter((n) => n !== 10).map((n) => String.fromCharCode(n)).join('');
+		assert.strictEqual(zero.pickPlaceholder([controls]).codePointAt(0), 0xe000);
+		const privateUse = Array.from({ length: 0xf8ff - 0xe000 }, (_, i) => String.fromCharCode(0xe000 + i)).join('');
+		assert.strictEqual(zero.pickPlaceholder([controls + privateUse]).codePointAt(0), 0xfdd0);
+		for (const [script, want] of refusals) { assert.strictEqual(zero.sedZeroRefusal(script), want, JSON.stringify(script)); }
+		for (const [script, want] of scripts) { assert.strictEqual(zero.sedScriptIn(script, '\x01'), want, JSON.stringify(script)); }
+		for (const [argv, [names, count, quiet, lineNumber, context]] of kinds) {
+			assert.deepStrictEqual(zero.grepOutputKind(argv), { names, count, quiet, lineNumber, context }, JSON.stringify(argv));
+		}
+		for (const [argv, files, headers, rest] of tails) {
+			assert.strictEqual(zero.tailHeaders(argv, files), headers, JSON.stringify(argv));
+			assert.deepStrictEqual(zero.withoutHeaderOptions(argv), rest, JSON.stringify(argv));
+		}
+	});
+
+	test('zero.js, the cases that were missing: a placeholder that must see every character, labels that look like commands, a pattern that looks like an option, and a file called q', () => {
+		// the order of the characters decides what the scan has seen when it stops
+		assert.strictEqual(zero.pickPlaceholder(['\x0b\n\x01']), '\x02');
+		assert.strictEqual(zero.pickPlaceholder(['\x0b\0\x01']), '\x02');
+		for (const [script, want] of [['T e', null], ['t l', null], ['b w', null], [': r', null], ['1,3l', 'the l command'], ['$l', 'the l command'], ['/a/,/b/l', 'the l command'], ['2~3l', 'the l command'], ['0,/x/l', 'the l command'], ['\\,a,l', 'the l command'], ['/a/!l', 'the l command'], ['1!{l}', 'the l command']]) {
+			assert.strictEqual(zero.sedZeroRefusal(script), want, JSON.stringify(script));
+		}
+		for (const [argv, want] of [[['c', 'f'], false], [['l', 'f'], false], [['n', 'f'], false], [['q', 'f'], false], [['A', 'f'], false]]) {
+			const k = zero.grepOutputKind(argv);
+			assert.deepStrictEqual([k.count, k.names, k.lineNumber, k.quiet, k.context], [want, want, want, want, want], JSON.stringify(argv));
+		}
+		assert.strictEqual(zero.grepOutputKind(['-0', 'o']).context, true);
+		// a file named q or v is a file, and an option that comes after --lines=2 still counts
+		assert.strictEqual(zero.tailHeaders(['q', 'v'], 2), true);
+		assert.deepStrictEqual(zero.withoutHeaderOptions(['q', 'v']), ['q', 'v']);
+		assert.strictEqual(zero.tailHeaders(['--lines=2', '-q', 'a', 'b'], 2), false);
+		assert.deepStrictEqual(zero.withoutHeaderOptions(['--lines=2', '-q', 'a', 'b']), ['--lines=2', 'a', 'b']);
+	});
+
+	test('datestr: a weekday with no date is the next one (today is itself), `next` skips today, `last` goes back, a count goes forward by weeks; the time of day is midnight', () => {
+		const now = Date.UTC(2024, 6, 4, 12, 34, 56); // a Thursday
+		const day = (text) => { const r = datestr.parse(text, now, 'UTC'); return r && !('invalid' in r) ? new Date(r.ms).toISOString() : JSON.stringify(r); };
+		const expected = {
+			monday: '2024-07-08', tuesday: '2024-07-09', wednesday: '2024-07-10', thursday: '2024-07-04', friday: '2024-07-05', saturday: '2024-07-06', sunday: '2024-07-07',
+			'next monday': '2024-07-08', 'next thursday': '2024-07-11', 'next friday': '2024-07-05', 'next sunday': '2024-07-07',
+			'last monday': '2024-07-01', 'last thursday': '2024-06-27', 'last friday': '2024-06-28',
+			'this thursday': '2024-07-04', 'this monday': '2024-07-08', '0 monday': '2024-07-08', '2 monday': '2024-07-15', '2 thursday': '2024-07-18', '3 friday': '2024-07-19',
+		};
+		for (const [text, date] of Object.entries(expected)) { assert.strictEqual(day(text), date + 'T00:00:00.000Z', text); }
+		assert.strictEqual(day('tomorrow'), '2024-07-05T12:34:56.000Z');
+		assert.strictEqual(day('yesterday'), '2024-07-03T12:34:56.000Z');
 	});
 
 	for (const t of tests) {

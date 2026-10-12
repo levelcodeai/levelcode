@@ -8,7 +8,8 @@
 //
 // The engine's own `date -d` takes `@N`, `now`, `yesterday`, `tomorrow` and a wall clock; this module reads what it
 // reads and the rest, and hands back an instant, which the `date` wrapper gives it as `@SECONDS`. A string with a word
-// or a shape this module does not know is `null`: the engine decides.
+// or a shape this module does not know is "invalid date", as it is in GNU's grammar (the engine's own reader was
+// lenient with junk: `last hr`, `ago first yr 1999-01-01`).
 'use strict';
 // @ts-check
 
@@ -134,11 +135,11 @@ function daysIn(year, month) {
  * @param {string} input the string given to `-d`
  * @param {number} nowMs the clock
  * @param {string} tz the zone key of the command (zone.getZone())
- * @returns {{ ms: number, nanos: number } | { invalid: true } | null} the instant (whole seconds; `nanos` is the fraction of the time given)
+ * @returns {{ ms: number, nanos: number } | { invalid: true }} the instant (whole seconds; `nanos` is the fraction of the time given)
  */
 function parse(input, nowMs, tz) {
 	const tokens = lex(input);
-	if (tokens === null) { return null; }
+	if (tokens === null) { return { invalid: true }; }
 	const base = zone.partsAt(nowMs, tz);
 	const pc = {
 		year: base.year, yearDigits: 0, month: base.month + 1, day: base.day,
@@ -175,13 +176,26 @@ function parse(input, nowMs, tz) {
 			seconds = t.value * 3600;
 			if (isChar(peek(1), ':') && isNum(peek(2), false)) { seconds += peek(2).value * 60; p += 2; }
 		} else { seconds = Math.floor(t.value / 100) * 3600 + (t.value % 100) * 60; }
+		// more than a day east or west is not a zone: GNU counts one more zone for it, which is "invalid date" at the end
+		// (`12:00 +42 days` is, `12:00 +1 day` is not)
+		if (seconds > 24 * 3600) { pc.zones++; }
 		return sign * seconds;
 	};
+	/**
+	 * the item before this one was a bare number (a year after `Jul 4`, `20240704`, `1200`) or the name of a zone without
+	 * daylight saving time in it (`UTC`, `EST`; not `EDT`): a signed
+	 * count of a unit after it is read as a zone's offset first, and `ago` after it is a syntax error in GNU's parser
+	 * (`Jul 4 2024 +1 day ago`, `18:00 UTC +1 day ago`; `+1 day` alone, and `Jul 4, 2024 +1 day ago`, are fine)
+	 */
+	let bare = false;
 	while (p < tokens.length) {
+		const was = bare;
+		bare = false;
 		const t = tokens[p];
 		if (t.t === 'char') {
-			if (t.v === ',') { p++; continue; }
-			return null;
+			// (a comma belongs to a day name, a `Jul 4, 2024` and a fraction of a second, each read where it is: anywhere else
+			// it is a syntax error)
+			return invalid;
 		}
 		if (t.t === 'num') {
 			const next = peek(1);
@@ -272,12 +286,17 @@ function parse(input, nowMs, tz) {
 				if (c && c.k === 'unit') {
 					addRel(c.unit, (t.sign === '-' ? -1 : 1) * t.value * c.mult);
 					p += 2;
-					if (peek() && peek().t === 'word' && peek().v === 'ago') { /** @type {any} */ (lastRel)(); p++; }
+					if (peek() && peek().t === 'word' && peek().v === 'ago') {
+						if (was) { return invalid; }
+						/** @type {any} */ (lastRel)();
+						p++;
+					}
 					continue;
 				}
 			}
 			// a number of its own
 			if (!t.signed) {
+				bare = true;
 				if (pc.dates && !pc.yearDigits && !pc.rels && (pc.times || t.digits > 2)) {
 					pc.year = t.value;
 					pc.yearDigits = t.digits;
@@ -299,7 +318,6 @@ function parse(input, nowMs, tz) {
 		// the `T` of 2024-07-04T12:00 (a date, then a `T`, then a time) is only the separator
 		if (t.v === 't' && pc.dates && !pc.times && isNum(peek(1), false) && isChar(peek(2), ':')) { p++; continue; }
 		const c = classify(t.v);
-		if (!c) { return null; }
 		if (c.k === 'unknown') { return invalid; }
 		p++;
 		if (c.k === 'dayshift') { pc.rels++; pc.rel.day += c.n; continue; }
@@ -308,14 +326,14 @@ function parse(input, nowMs, tz) {
 			const d = w && w.t === 'word' ? classify(w.v) : null;
 			if (d && d.k === 'unit') { addRel(d.unit, c.n * d.mult); p++; if (peek() && peek().t === 'word' && peek().v === 'ago') { /** @type {any} */ (lastRel)(); p++; } continue; }
 			if (d && d.k === 'day') { pc.days++; pc.dayOrdinal = c.n; pc.dayNumber = d.n; p++; continue; }
-			return null;
+			return invalid;
 		}
 		if (c.k === 'unit') { addRel(c.unit, c.mult); if (peek() && peek().t === 'word' && peek().v === 'ago') { /** @type {any} */ (lastRel)(); p++; } continue; }
 		if (c.k === 'day') { pc.days++; pc.dayOrdinal = 0; pc.dayNumber = c.n; if (isChar(peek(), ',')) { p++; } continue; }
 		if (c.k === 'month') {
 			// Mon D [, YYYY]   (Mon YYYY is not a date)
 			const d = peek();
-			if (!isNum(d, false)) { return null; }
+			if (!isNum(d, false)) { return invalid; }
 			pc.dates++;
 			pc.month = c.n;
 			pc.day = /** @type {any} */ (d).value;
@@ -328,10 +346,12 @@ function parse(input, nowMs, tz) {
 			pc.zoneSeconds = c.hours * 3600;
 			pc.zoneDay = c.day;
 			pc.zoneNamed = true;
+			// (a name with no daylight saving in it is followed by `relunit_snumber` in the grammar; `EDT` is not)
+			bare = !c.day;
 			// a zone's name may be followed by a number that adds to it (`UTC +0100`), when no unit follows the number
 			const z = peek();
 			const after = peek(1);
-			if (isNum(z, true) && !(after && after.t === 'word' && classify(after.v).k === 'unit')) { pc.zoneSeconds += zoneOffset(z); p++; }
+			if (isNum(z, true) && !(after && after.t === 'word' && classify(after.v).k === 'unit')) { pc.zoneSeconds += zoneOffset(z); p++; bare = false; }
 			continue;
 		}
 		// `DST` after a zone name that has no daylight saving in it: an hour more east
@@ -341,7 +361,7 @@ function parse(input, nowMs, tz) {
 			pc.zoneNamed = false;
 			continue;
 		}
-		return null;
+		return invalid;
 	}
 	// the grammar's own refusals
 	if (pc.times > 1 || pc.dates > 1 || pc.days > 1 || pc.zones > 1) { return invalid; }
@@ -361,7 +381,6 @@ function parse(input, nowMs, tz) {
 	// the fixed offset of a zone given: no daylight rule is in it
 	const zoneKey = pc.zones ? null : tz;
 	const toInstant = (wallMs) => (zoneKey === null ? wallMs - pc.zoneSeconds * 1000 : zone.instantOf(wallMs, zoneKey));
-	const wallOf = (ms) => (zoneKey === null ? zone.partsAt(ms + pc.zoneSeconds * 1000, 'UTC') : zone.partsAt(ms, zoneKey));
 	// a day name when there is no date comes first: that day, today or after (an ordinal moves it by weeks); then the
 	// relative years, months and days move the wall clock, and the instant is read once
 	let day = pc.day;

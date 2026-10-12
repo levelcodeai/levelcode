@@ -772,7 +772,7 @@ function createOverlay(o) {
 	 */
 	async function put(t, p, bytes, append, mode) {
 		if (t.t === 'sink') {
-			if (p === '/dev/stdout' || p === '/dev/stderr') { device[p === '/dev/stdout' ? 'stdout' : 'stderr'] += dec.decode(bytes); }
+			if (p === '/dev/stdout' || p === '/dev/stderr') { device[p === '/dev/stdout' ? 'stdout' : 'stderr'] += decodeText(bytes); }
 			return null;
 		}
 		if (t.t === 'mem') {
@@ -1066,7 +1066,19 @@ function createOverlay(o) {
 		},
 		async utimes(p, _atime, mtime) {
 			p = norm(p);
-			await statPath(p, 'utimes', false);
+			try {
+				await statPath(p, 'utimes', false);
+			} catch (e) {
+				// not there because the write that was to make it was refused (`touch /usr/x`: the engine's touch writes
+				// an empty file and then sets its time): the refusal is the reason, and it is GNU's ("Permission denied")
+				if (e && e.code === 'ENOENT') {
+					const t = await writeTarget(p);
+					if ('error' in t && t.error.policy) { throw fsError('EACCES', 'utimes', p, SHELL_TEXT.EACCES); }
+				}
+				throw e;
+			}
+			// the shell's own files (`touch /usr/bin/cat`, `/proc`, `/dev` but for the sinks) are not the program's to change
+			if (route(p).t === 'mem' && memory.get(p) && !isScratch(p) && !SINKS.has(p)) { throw refuse(p, 'utimes', OUTSIDE(p)); }
 			if (mtime) { mtimes.set(p, +mtime); }
 		},
 		async symlink(_target, linkPath) { throw fsError('EPERM', 'symlink', norm(linkPath), 'symbolic links are not available in this shell'); },
@@ -1233,6 +1245,20 @@ function createOverlay(o) {
 		stats.stagedEntries = entries.size;
 		return { changes: [...mk, ...writes, ...dels, ...rmdirs], refused };
 	}
+
+	/**
+	 * Where the device buffers are now, and what was written to them after that point (the buffers cut back to it): the
+	 * patched shell (LC-52) marks before a command runs and adds what it took to that command's own result, so that a
+	 * redirection of the command (`2>&1`, `2>/dev/null`, a pipe) applies to it, as it does in GNU. What an earlier
+	 * redirection wrote (`echo x > /dev/stderr`) is not the next command's.
+	 */
+	fs.__lcMark = () => ({ o: device.stdout.length, e: device.stderr.length });
+	fs.__lcTake = (mark) => {
+		const taken = { stdout: device.stdout.slice(mark.o), stderr: device.stderr.slice(mark.e) };
+		device.stdout = device.stdout.slice(0, mark.o);
+		device.stderr = device.stderr.slice(0, mark.e);
+		return taken;
+	};
 
 	return {
 		fs,

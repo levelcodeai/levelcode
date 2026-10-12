@@ -30,6 +30,24 @@ function printable(b) {
 	return b >= 32 && b < 127 ? String.fromCharCode(b) : '\\' + b.toString(8).padStart(3, '0');
 }
 
+/**
+ * What tr.c's `make_printable_str` writes for the bytes of an operand in a message: `\a \b \f \n \r \t \v` by name, a
+ * printable ASCII byte as itself (a backslash too), anything else `\ooo`. A byte of a multi-byte character is anything
+ * else, so `é` is `\303\251`.
+ *
+ * @param {ArrayLike<number>} bytes
+ * @returns {string}
+ */
+function makePrintable(bytes) {
+	const named = { 7: '\\a', 8: '\\b', 9: '\\t', 10: '\\n', 11: '\\v', 12: '\\f', 13: '\\r' };
+	let out = '';
+	for (let i = 0; i < bytes.length; i++) {
+		const b = bytes[i];
+		out += named[b] || (b >= 32 && b < 127 ? String.fromCharCode(b) : '\\' + b.toString(8).padStart(3, '0'));
+	}
+	return out;
+}
+
 /** @typedef {{ s: number[], escaped: boolean[] }} EString the bytes of an operand and, for each, whether a backslash made it */
 
 /**
@@ -138,10 +156,11 @@ function buildSpecList(es) {
 					if (operand.length === 0) { die(delim === 0x3a ? "missing character class name '[::]'" : "missing equivalence class character '[==]'"); }
 					if (delim === 0x3a) {
 						const name = String.fromCharCode(...operand);
-						if (!Object.prototype.hasOwnProperty.call(CLASSES, name)) { die(`invalid character class ${quote(name)}`); }
+						// The name goes through make_printable_str and then through quote(): a tab is `\\t` there, two backslashes
+						if (!Object.prototype.hasOwnProperty.call(CLASSES, name)) { die(`invalid character class ${quote(makePrintable(operand))}`); }
 						out.push({ type: 'class', name });
 					} else {
-						if (operand.length !== 1) { die(`${String.fromCharCode(...operand)}: equivalence class operand must be a single character`); }
+						if (operand.length !== 1) { die(`${makePrintable(operand)}: equivalence class operand must be a single character`); }
 						out.push({ type: 'equiv', c: operand[0] });
 					}
 					i = close + 1;
@@ -159,10 +178,13 @@ function buildSpecList(es) {
 						if (digits.length) {
 							const text = String.fromCharCode(...digits);
 							const octal = digits[0] === 0x30;
-							if (!(octal ? /^[0-7]+$/ : /^[0-9]+$/).test(text) || !Number.isSafeInteger(parseInt(text, octal ? 8 : 10)) || parseInt(text, octal ? 8 : 10) > 0x7fffffff) {
-								die(`invalid repeat count ${quote(text)} in [c*n] construct`);
+							// GNU takes every count below 2^64 - 1 (xstrtoumax says that one is an overflow); one that is larger than
+							// the set it is for needs is cut where the set is expanded
+							const whole = (octal ? /^[0-7]+$/ : /^[0-9]+$/).test(text) ? BigInt((octal ? '0o' : '') + text) : -1n;
+							if (whole < 0n || whole >= 0xffffffffffffffffn) {
+								die(`invalid repeat count ${quote(makePrintable(digits))} in [c*n] construct`);
 							}
-							count = parseInt(text, octal ? 8 : 10);
+							count = Number(whole);
 						}
 						out.push({ type: 'repeat', c: p[i + 1], count });
 						i = k;
@@ -229,7 +251,7 @@ function expand(list, total) {
 		else if (it.type === 'range') { for (let c = it.from; c <= it.to; c++) { out.push(c); } }
 		else if (it.type === 'class') { out.push(...classBytes(it.name)); }
 		else {
-			const n = it.count === 0 ? Math.max(0, total - fixed) : it.count;
+			const n = it.count === 0 ? Math.max(0, total - fixed) : Math.min(it.count, total > 0 ? total : 1 << 20);
 			for (let k = 0; k < n; k++) { out.push(it.c); }
 		}
 	}
@@ -331,7 +353,7 @@ function run(args, input) {
 			const name = eq < 0 ? a.slice(2) : a.slice(2, eq);
 			const exact = longs.find((l) => l === name);
 			const hits = exact ? [exact] : longs.filter((l) => l.startsWith(name));
-			if (name === '' || hits.length === 0) { return { stdout: new Uint8Array(0), stderr: `tr: unrecognized option '${a}'\n${usageHint}`, exitCode: 1 }; }
+			if (hits.length === 0) { return { stdout: new Uint8Array(0), stderr: `tr: unrecognized option '${a}'\n${usageHint}`, exitCode: 1 }; }
 			if (hits.length > 1) { return { stdout: new Uint8Array(0), stderr: `tr: option '${a}' is ambiguous; possibilities: ${hits.map((h) => "'--" + h + "'").join(' ')}\n${usageHint}`, exitCode: 1 }; }
 			if (eq >= 0) { return { stdout: new Uint8Array(0), stderr: `tr: option '--${hits[0]}' doesn't allow an argument\n${usageHint}`, exitCode: 1 }; }
 			if (hits[0] === 'help' || hits[0] === 'version') { return { passThrough: true }; }

@@ -91,9 +91,9 @@ async function main() {
 
 	/* ------------------------------------------------------------------------------------------ the patches */
 
-	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9', 'LC-10', 'LC-11', 'LC-12', 'LC-13', 'LC-14', 'LC-15', 'LC-16', 'LC-17', 'LC-18', 'LC-19', 'LC-20', 'LC-21', 'LC-22', 'LC-23', 'LC-24', 'LC-25', 'LC-26', 'LC-27', 'LC-28', 'LC-29', 'LC-30', 'LC-31'];
+	const IDS = ['LC-1', 'LC-2', 'LC-3', 'LC-4', 'LC-5', 'LC-6', 'LC-7', 'LC-8', 'LC-9', 'LC-10', 'LC-11', 'LC-12', 'LC-13', 'LC-14', 'LC-15', 'LC-16', 'LC-17', 'LC-18', 'LC-19', 'LC-20', 'LC-21', 'LC-22', 'LC-23', 'LC-24', 'LC-25', 'LC-26', 'LC-27', 'LC-28', 'LC-29', 'LC-30', 'LC-31', 'LC-32', 'LC-33', 'LC-34', 'LC-35', 'LC-36', 'LC-37', 'LC-38', 'LC-39', 'LC-40', 'LC-41', 'LC-42', 'LC-43', 'LC-44', 'LC-45', 'LC-46', 'LC-47', 'LC-48', 'LC-49', 'LC-50', 'LC-51', 'LC-52', 'LC-53', 'LC-54', 'LC-55', 'LC-56', 'LC-57', 'LC-58', 'LC-59', 'LC-60'];
 
-	test('there are thirty-one patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
+	test('there are sixty patches, and every anchor occurs exactly once in the original (counted here, not by the script)', () => {
 		assert.deepStrictEqual(patchMod.PATCHES.map((p) => p.id), IDS);
 		let edits = 0;
 		for (const p of patchMod.PATCHES) {
@@ -117,7 +117,7 @@ async function main() {
 		assert.ok(r.text.includes('MODIFIED by LevelCode'));
 		assert.ok(r.text.includes('Apache-2.0'));
 		assert.ok(r.text.includes('section 4(b)'));
-		assert.ok(r.text.includes('LC-1 .. LC-31'), 'the notice says how many patches there are');
+		assert.ok(r.text.includes('LC-1 .. LC-60'), 'the notice says how many patches there are');
 		assert.deepStrictEqual(r.patches.map((p) => p.id), IDS);
 	});
 
@@ -411,8 +411,10 @@ async function main() {
 		assert.strictEqual(count(r.text, 'ignoreBOM:!0'), 3);
 		// the uses of the module: the byte-string decoder (`__lcUtf8` of `read` and `mapfile`), the lossless decoder and the
 		// encoder of the patched `fe` and `Pn`, and in the header what LC-29 added: `__lcBytes` (a run of escaped bytes) and
-		// `__lcHeal` (the escapes of one string that are UTF-8 together)
-		assert.strictEqual(count(r.text, '__lcText.'), 5);
+		// `__lcHeal` (the escapes of one string that are UTF-8 together), LC-41's `__lcVer` (the version comparison) and
+		// LC-52's `__lcDev` (what a command wrote to /dev/stdout, as the bytes a binary result holds) and LC-59's `__lcList`
+		// (the bytes of the pattern space, which `l` shows in octal)
+		assert.strictEqual(count(r.text, '__lcText.'), 8);
 	});
 
 	test('LC-9: the patched file has no localeCompare left at all (a new one in a bumped file fails here)', () => {
@@ -882,6 +884,294 @@ async function main() {
 		assert.strictEqual(r.stderr, "tee: g: Is a directory\ntee: nodir/x: No such file or directory\ntouch: cannot touch 'nodir/y': No such file or directory\ntouch: cannot touch 'f/y': Not a directory\n");
 		assert.strictEqual(r.stdout, 'b\nrc=1\nb\nrc=1\nrc=1\nrc=1\n');
 	});
+
+	test("LC-32: the target of an output redirection is looked at as it was typed: a slash at the end is a directory (`> f/` wrote a file f), a path up through a folder that is not there or through a file is not there (`> x/../n` wrote n)", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("touch f; mkdir d; echo x >> f/; echo \"rc=$?\"; echo x > nodir/; echo \"rc=$?\"; echo x > d/; echo \"rc=$?\"; echo x > f//; echo \"rc=$?\"; echo x > f/.; echo \"rc=$?\"; echo x > d/.; echo \"rc=$?\"; echo x > ''; echo \"rc=$?\"; echo x > x/../n; echo \"rc=$?\"; echo x > f/../n; echo \"rc=$?\"; echo x > d/../ok; echo \"rc=$?\"; ls; cat ok");
+		assert.strictEqual(r.stdout, "rc=1\nrc=1\nrc=1\nrc=1\nrc=1\nrc=1\nrc=1\nrc=1\nrc=1\nrc=0\nd\nf\nok\nx\n");
+		assert.strictEqual(r.stderr, "bash: f/: Is a directory\nbash: nodir/: Is a directory\nbash: d/: Is a directory\nbash: f//: Is a directory\nbash: f/.: Not a directory\nbash: d/.: Is a directory\nbash: : No such file or directory\nbash: x/../n: No such file or directory\nbash: f/../n: Not a directory\n");
+	});
+
+	test("LC-33: awk counts characters, not UTF-16 units: length, substr, index and RSTART/RLENGTH of an emoji and of accented letters (a code point is one)", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("echo '😀 é ab' | awk '{print length($1), length($2), length($0), substr($0,1,2), index($0,\"a\"), toupper($2)}'; echo 'x😀y' | awk '{match($0,/y/); print RSTART, RLENGTH}'; echo 'ñandú' | awk '{print length, substr($0,2,3)}'; echo '😀😀' | awk '{print length($0), substr($0,2,1)}'");
+		assert.strictEqual(r.stdout, "1 1 6 😀  5 É\n3 1\n5 and\n2 😀\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-34: sed H appends to an empty hold space with the newline in front (the hold space is \"\\na\\nb\"), so `H;x;s/\\n/,/g` has its leading comma", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("x=$(printf 'a\\nb\\n' | sed -n 'H;${x;p}'); echo \"[$x]\"; printf 'a\\nb\\n' | sed -n 'H;${x;s/\\n/,/g;p}'; printf 'a\\nb\\n' | sed 'H;$!d;x'; printf 'a\\nb\\nc\\n' | sed -n '1h;1!H;${g;p}'; x=$(printf 'a\\nb\\n' | sed -n 'H;x;p'); echo \"[$x]\"");
+		assert.strictEqual(r.stdout, "[\na\nb]\n,a,b\n\na\nb\na\nb\nc\n[\na\na\nb]\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-35: sed: `.` matches the newline of a pattern space made by N (and `s/./X/g` over it), in s and in addresses, basic and extended", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a\\nb\\n' | sed 'N;s/a.b/X/'; printf 'a\\nb\\n' | sed -n 'N;/a.b/p'; printf 'a\\nb\\n' | sed -E 'N;s/a.+b/X/'; printf '1\\n2\\n3\\n' | sed ':a;N;$!ba;s/1.*3/X/'; printf 'a\\nb\\n' | sed 'N;s/./X/g'; printf 'ab\\n' | sed 's/./X/2'; printf 'a.b\\n' | sed 's/\\./-/'");
+		assert.strictEqual(r.stdout, "X\na\nb\nX\nX\nXXX\naX\na-b\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-36: the array literal of a declaration is made of the words its elements expand to: `local a=(\"$@\")`, `($x)`, `(\"${arr[@]}\")`, `\"$*\"` with IFS, and a wrapper that runs `\"${cmd[@]}\"`", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("f() { local a=(\"$@\"); echo \"${#a[@]}\"; printf '[%s]' \"${a[@]}\"; echo; }; f x y z; f; f \"a b\" c; w() { local cmd=(\"$@\"); \"${cmd[@]}\"; }; w printf '[%s]\\n' a 'b c'; w echo 'p\\q' \"r s\"; g() { local c=($@); echo \"${#c[@]}\"; local d=(\"$*\"); echo \"${#d[@]}\"; local IFS=,; local e=(\"$*\"); echo \"${e[0]}\"; }; g x y z; declare -a h=(\"$@\"); echo \"${#h[@]}\"; k=(p q); l() { local m=(\"${k[@]}\" r); echo \"${#m[@]}\"; }; l");
+		assert.strictEqual(r.stdout, "3\n[x][y][z]\n0\n[]\n2\n[a b][c]\n[a]\n[b c]\np\\q r s\n3\n1\nx,y,z\n0\n3\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-37: sed: a `*` with nothing before it is a plain asterisk in a basic expression (at the start, after the group and alternation marks, after `^`), and GNU's error in an extended one", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a*b\\nab\\n*b\\n' > f; sed 's/*b/X/' f; echo --; sed 's/\\(*b\\)/X/' f; echo --; sed 's/^*b/X/' f; echo --; sed 's/a\\|*b/X/' f; echo --; sed -E 's/*b/X/' f; echo \"rc=$?\"; sed 's/*//g' f");
+		assert.strictEqual(r.stdout, "aX\nab\nX\n--\naX\nab\nX\n--\na*b\nab\nX\n--\nX*b\nXb\nX\n--\nrc=1\nab\nab\nb\n");
+		assert.strictEqual(r.stderr, "sed: -e expression #1, char 7: Invalid preceding regular expression\n");
+	});
+
+	test("LC-38: awk reads RS: one character, a NUL, the empty string (paragraphs), a regular expression", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a,b\\n' | awk -v RS=, '{print NR\":\"$0}'; printf 'a b\\n\\nc d\\ne\\n\\n\\nf\\n' | awk -v RS= '{print NR\": \"$0\" NF=\"NF}'; printf 'a;b;c' | awk 'BEGIN{RS=\";\"}{print}'; printf 'a1b22c' | awk -v RS='[0-9]+' '{print NR\":\"$0}'; printf 'x\\0y\\0z\\0' | awk -v RS='\\0' '{print NR\":\"$0}'; printf 'a|b|c\\n' | awk 'BEGIN{RS=\"|\"} NR==2'");
+		assert.strictEqual(r.stdout, "1:a\n2:b\n\n1: a b NF=2\n2: c d\ne NF=3\n3: f NF=1\na\nb\nc\n1:a\n2:b\n3:c\n1:x\n2:y\n3:z\nb\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-39: the elements of a declared array keep their command substitutions, arithmetic and parameter operations (the parser wrote the NAME of the part: `CommandSubstitution`)", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("declare -a g=($(echo 1 2 3)); echo \"${#g[@]}\"; f() { local e=(\"$(echo 1 2)\" `echo x` \"${@:2}\" \"${y:-dd}\" $((1+2)) \"${#e[@]}\"); printf '<%s>' \"${e[@]}\"; echo; }; f A B C; declare -a z=(\"pre$(echo 1 2)post\" $(echo a b)c); printf '<%s>' \"${z[@]}\"; echo; readonly -a ro=($(echo 1 2)); echo ${#ro[@]}; declare -a c=(\"$(printf 'x\\ny')\"); echo \"${#c[@]}\"");
+		assert.strictEqual(r.stdout, "3\n<1 2><x><B><C><dd><3><0>\n<pre1 2post><a><bc>\n2\n1\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-40: a command that is a directory is \"Is a directory\" (126), not \"Permission denied\"; a file that is not executable still is", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("d=/tmp; \"$d\"/; echo \"rc=$?\"; /usr/bin/; echo \"rc=$?\"; mkdir sub; ./sub; echo \"rc=$?\"; \"$d\"/nosuch; echo \"rc=$?\"; echo hi > f; ./f; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "rc=126\nrc=126\nrc=126\nrc=127\nrc=126\n");
+		assert.strictEqual(r.stderr, "bash: /tmp/: Is a directory\nbash: /usr/bin/: Is a directory\nbash: ./sub: Is a directory\nbash: /tmp/nosuch: No such file or directory\nbash: ./f: Permission denied\n");
+	});
+
+	test("LC-31 (the quoted list): `\"$@\"` and `\"${cmd[@]}\"` in the command position are several words (none: no command), a prefix or suffix joins the first or last, `\"$*\"` and `\"$c\"` are one word", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("set -- echo a b; x\"$@\"; echo \"rc=$?\"; \"$@\"x; echo \"rc=$?\"; \"$@\"; \"$@\" c; set --; \"$@\"; echo \"rc=$?\"; \"$@\" echo none; set -- echo; \"$@\" a; run() { echo \"+ $*\"; \"$@\"; }; run echo hi there; retry() { for i in 1 2; do \"$@\" && return 0; done; return 1; }; retry echo ok; retry false; echo \"rc=$?\"; cmd=(printf '[%s]\\n' \"x y\" z); \"${cmd[@]}\"; cmd=(); \"${cmd[@]}\"; echo \"rc=$?\"; f() { \"x$@\"; }; f ec ho; set -- \"echo a\" b; \"$@\"; echo \"rc=$?\"; set -- echo a; \"$*\" b; echo \"rc=$?\"; d=/tmp; p=ec; ${p}ho hi; ec\"ho\" hi");
+		assert.strictEqual(r.stdout, "rc=127\na bx\nrc=0\na b\na b c\nrc=0\nnone\na\n+ echo hi there\nhi there\nok\nrc=1\n[x y]\n[z]\nrc=0\nrc=127\nrc=127\nhi\nhi\n");
+		assert.strictEqual(r.stderr, "bash: xecho: command not found\nbash: xec: command not found\nbash: echo a: command not found\nbash: echo a: command not found\n");
+	});
+
+	test("LC-22 (intervals and leading quantifiers): `\\{,2\\}` and `{,2}` are `{0,2}`, a leading `*` in an extended grep is nothing, in a basic one a plain character, after `\\(` `\\|` and `^` too", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a\\naa\\naaa\\n' | grep -E '^a{,2}$'; printf 'a\\naa\\naaa\\n' | grep '^a\\{,2\\}$'; printf 'aab\\n' | sed 's/a\\{,1\\}/X/'; printf 'ab\\n' | sed -E 's/a{,2}/X/'; printf 'a\\n*a\\n' | grep -E '*a'; printf 'ab\\n' | grep -E 'x|*a'; printf 'a*b\\n' | grep '\\(*b\\)'; printf '*b\\n' | grep '^*b'; printf 'a{1\\n' | grep -E 'a{1'");
+		assert.strictEqual(r.stdout, "a\naa\na\naa\nXab\nXb\na\n*a\nab\na*b\n*b\na{1\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-41 (sort -V): GNU's filevercmp: leading zeros are no difference to a number and equal numbers fall back to the bytes (`w0 w00 w000`; `sort -Vu` keeps `file01.txt` and `file1.txt`), `~` before the end, a letter before any mark, the file suffix out of the comparison, leading dots first", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / coreutils 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf '%s\\n' '1.2' '1.10' '1.9' '1.1' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' '1.2' '1.10' '1.9' '1.1' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' '1.2' '1.10' '1.9' '1.1' | sort -Vu | wc -l\nprintf '%s\\n' '1.0' '1.0-rc1' '1.0~rc1' '1.0.1' '1.0a' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' '1.0' '1.0-rc1' '1.0~rc1' '1.0.1' '1.0a' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' '1.0' '1.0-rc1' '1.0~rc1' '1.0.1' '1.0a' | sort -Vu | wc -l\nprintf '%s\\n' 'file1.txt' 'file10.txt' 'file2.txt' 'file01.txt' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' 'file1.txt' 'file10.txt' 'file2.txt' 'file01.txt' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' 'file1.txt' 'file10.txt' 'file2.txt' 'file01.txt' | sort -Vu | wc -l\nprintf '%s\\n' 'a-1.tar.gz' 'a-10.tar.gz' 'a-2.tar.gz' 'a-1.tar.bz2' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' 'a-1.tar.gz' 'a-10.tar.gz' 'a-2.tar.gz' 'a-1.tar.bz2' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' 'a-1.tar.gz' 'a-10.tar.gz' 'a-2.tar.gz' 'a-1.tar.bz2' | sort -Vu | wc -l\nprintf '%s\\n' 'img001.jpg' 'img1.jpg' 'img01.jpg' 'img10.jpg' 'img2.jpg' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' 'img001.jpg' 'img1.jpg' 'img01.jpg' 'img10.jpg' 'img2.jpg' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' 'img001.jpg' 'img1.jpg' 'img01.jpg' 'img10.jpg' 'img2.jpg' | sort -Vu | wc -l\nprintf '%s\\n' 'release-1.2.3-beta' 'release-1.2.3' 'release-1.2.3-alpha' 'release-1.2.10' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' 'release-1.2.3-beta' 'release-1.2.3' 'release-1.2.3-alpha' 'release-1.2.10' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' 'release-1.2.3-beta' 'release-1.2.3' 'release-1.2.3-alpha' 'release-1.2.10' | sort -Vu | wc -l\nprintf '%s\\n' '10' '9' '100' '1' '08' '8' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' '10' '9' '100' '1' '08' '8' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' '10' '9' '100' '1' '08' '8' | sort -Vu | wc -l\nprintf '%s\\n' 'a' 'B' 'a1' 'A1' 'b' '_x' '-y' '.hidden' '.z1' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' 'a' 'B' 'a1' 'A1' 'b' '_x' '-y' '.hidden' '.z1' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' 'a' 'B' 'a1' 'A1' 'b' '_x' '-y' '.hidden' '.z1' | sort -Vu | wc -l\nprintf '%s\\n' '1.2.3' '1.2.3.1' '1.2' '1.2.3a' '1.2.3-1' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' '1.2.3' '1.2.3.1' '1.2' '1.2.3a' '1.2.3-1' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' '1.2.3' '1.2.3.1' '1.2' '1.2.3a' '1.2.3-1' | sort -Vu | wc -l\nprintf '%s\\n' '1' '1.0' '1.00' '1.0.0' '01' '1.' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' '1' '1.0' '1.00' '1.0.0' '01' '1.' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' '1' '1.0' '1.00' '1.0.0' '01' '1.' | sort -Vu | wc -l\nprintf '%s\\n' 'w0' 'w00' 'w000' 'w1' 'w01' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' 'w0' 'w00' 'w000' 'w1' 'w01' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' 'w0' 'w00' 'w000' 'w1' 'w01' | sort -Vu | wc -l\nprintf '%s\\n' '..~100x' '.a1' '.~a01' '.txt' 'x' | sort -V | tr '\\n' ' '; echo; printf '%s\\n' '..~100x' '.a1' '.~a01' '.txt' 'x' | sort -rV | tr '\\n' ' '; echo; printf '%s\\n' '..~100x' '.a1' '.~a01' '.txt' 'x' | sort -Vu | wc -l");
+		assert.strictEqual(r.stdout, "1.1 1.2 1.9 1.10 \n1.10 1.9 1.2 1.1 \n4\n1.0~rc1 1.0 1.0a 1.0-rc1 1.0.1 \n1.0.1 1.0-rc1 1.0a 1.0 1.0~rc1 \n5\nfile01.txt file1.txt file2.txt file10.txt \nfile10.txt file2.txt file1.txt file01.txt \n4\na-1.tar.bz2 a-1.tar.gz a-2.tar.gz a-10.tar.gz \na-10.tar.gz a-2.tar.gz a-1.tar.gz a-1.tar.bz2 \n4\nimg001.jpg img01.jpg img1.jpg img2.jpg img10.jpg \nimg10.jpg img2.jpg img1.jpg img01.jpg img001.jpg \n5\nrelease-1.2.3 release-1.2.3-alpha release-1.2.3-beta release-1.2.10 \nrelease-1.2.10 release-1.2.3-beta release-1.2.3-alpha release-1.2.3 \n4\n1 08 8 9 10 100 \n100 10 9 8 08 1 \n6\n.hidden .z1 A1 B a a1 b -y _x \n_x -y b a1 a B A1 .z1 .hidden \n9\n1.2 1.2.3 1.2.3a 1.2.3-1 1.2.3.1 \n1.2.3.1 1.2.3-1 1.2.3a 1.2.3 1.2 \n5\n01 1 1. 1.0 1.00 1.0.0 \n1.0.0 1.00 1.0 1. 1 01 \n6\nw0 w00 w000 w01 w1 \nw1 w01 w000 w00 w0 \n5\n.~a01 ..~100x .a1 .txt x \nx .txt .a1 ..~100x .~a01 \n5\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-42 (find -size): sizes count in whole units, rounded up, as GNU's do: `-size -1M` is the empty files, `-size 2k` is 1025 to 2048 bytes, `-size 1` is one block of 512, `-size 1w` is two bytes", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1 / findutils 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("for n in 0 1 511 512 513 1023 1024 1025 2048 4097; do head -c $n /dev/zero > s$n; done; printf '%s: ' \"0\"; find . -type f -size 0 | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"1\"; find . -type f -size 1 | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"-1\"; find . -type f -size -1 | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"+0\"; find . -type f -size +0 | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"+1\"; find . -type f -size +1 | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"1k\"; find . -type f -size 1k | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"-1k\"; find . -type f -size -1k | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"2k\"; find . -type f -size 2k | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"+1k\"; find . -type f -size +1k | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"1b\"; find . -type f -size 1b | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"-1b\"; find . -type f -size -1b | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"1024c\"; find . -type f -size 1024c | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"+1024c\"; find . -type f -size +1024c | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"-1024c\"; find . -type f -size -1024c | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"1M\"; find . -type f -size 1M | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"-1M\"; find . -type f -size -1M | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"+1M\"; find . -type f -size +1M | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"1w\"; find . -type f -size 1w | sort | tr '\\n' ' '; echo\nprintf '%s: ' \"5k\"; find . -type f -size 5k | sort | tr '\\n' ' '; echo");
+		assert.strictEqual(r.stdout, "0: ./s0 \n1: ./s1 ./s511 ./s512 \n-1: ./s0 \n+0: ./s1 ./s1023 ./s1024 ./s1025 ./s2048 ./s4097 ./s511 ./s512 ./s513 \n+1: ./s1023 ./s1024 ./s1025 ./s2048 ./s4097 ./s513 \n1k: ./s1 ./s1023 ./s1024 ./s511 ./s512 ./s513 \n-1k: ./s0 \n2k: ./s1025 ./s2048 \n+1k: ./s1025 ./s2048 ./s4097 \n1b: ./s1 ./s511 ./s512 \n-1b: ./s0 \n1024c: ./s1024 \n+1024c: ./s1025 ./s2048 ./s4097 \n-1024c: ./s0 ./s1 ./s1023 ./s511 ./s512 ./s513 \n1M: ./s1 ./s1023 ./s1024 ./s1025 ./s2048 ./s4097 ./s511 ./s512 ./s513 \n-1M: ./s0 \n+1M: \n1w: ./s1 \n5k: ./s4097 \n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-43: a regular expression that does not compile ends the script with GNU's message and status 1 (it was swallowed: the line unchanged, status 0), for s and for an address, basic and extended", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("echo abc | sed 's/a\\(/X/' 2>&1; echo \"rc=$?\"\necho abc | sed 's/a\\)/X/' 2>&1; echo \"rc=$?\"\necho abc | sed -E 's/(a/X/' 2>&1; echo \"rc=$?\"\necho abc | sed -E 's/a)/X/' 2>&1; echo \"rc=$?\"\necho abc | sed -E 's/a{2,1}/X/' 2>&1; echo \"rc=$?\"\necho abc | sed 's/a\\{2,1\\}/X/' 2>&1; echo \"rc=$?\"\necho abc | sed -n '/a\\(/p' 2>&1; echo \"rc=$?\"\necho abc | sed -E -n '/(a/p' 2>&1; echo \"rc=$?\"\necho abc | sed 's/[[:foo:]]/X/' 2>&1; echo \"rc=$?\"\necho abc | sed 's/[z-a]/X/' 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "sed: -e expression #1, char 8: Unmatched ( or \\(\nrc=1\nsed: -e expression #1, char 8: Unmatched ) or \\)\nrc=1\nsed: -e expression #1, char 7: Unmatched ( or \\(\nrc=1\nsed: -e expression #1, char 7: Unmatched ) or \\)\nrc=1\nsed: -e expression #1, char 11: Invalid content of \\{\\}\nrc=1\nsed: -e expression #1, char 13: Invalid content of \\{\\}\nrc=1\nsed: -e expression #1, char 5: Unmatched ( or \\(\nrc=1\nsed: -e expression #1, char 4: Unmatched ( or \\(\nrc=1\nsed: -e expression #1, char 14: Invalid character class name\nrc=1\nsed: -e expression #1, char 10: Invalid range end\nrc=1\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-44: with -E and -r an address /re/ is an extended regular expression (`/(a|b)/`, `/a|c/`, `/o+/`, `/[0-9]{2}/`); without them it is a basic one and `|` is a plain character", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a\\nb\\nc\\nfoo1\\nbar22\\n' > f\nsed -E -n '/(a|b)/p' f | tr '\\n' ' '; echo\nsed -E '/^(foo|bar)[0-9]+$/d' f | tr '\\n' ' '; echo\nsed -nE '/a|c/p' f | tr '\\n' ' '; echo\nsed -E -n '/o+/p' f | tr '\\n' ' '; echo\nsed -E '/(b)/,/(foo)/d' f | tr '\\n' ' '; echo\nsed -r -n '/[0-9]{2}/p' f | tr '\\n' ' '; echo\nsed -n '/\\(a\\|b\\)/p' f | tr '\\n' ' '; echo\nsed -n '/a|b/p' f | tr '\\n' ' '; echo\nsed -E -n '/a\\|b/p' f | tr '\\n' ' '; echo");
+		assert.strictEqual(r.stdout, "a b bar22 \na b c \na c bar22 \nfoo1 \na \nbar22 \na b bar22 \n\n\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-45: the replacement as GNU reads it: `\\\\&` is a backslash and the match (the escape idiom `s/[\\/&]/\\\\&/g`), \\U \\L \\u \\l \\E change the case, \\xHH \\oNNN \\dNNN \\cX \\a \\f \\v are the characters, and a group the pattern does not have is GNU's error", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("echo 'a/b&c.d\\e' | sed 's/[\\/&]/\\\\&/g'\necho 'a/b' | sed 's/\\//\\\\&/'\necho abc | sed 's/b/\\\\n/'\necho abc | sed 's/b/\\\\\\\\&/'\necho abc | sed 's/b/x\\ny/'\necho abc | sed 's/b/\\&/'\necho foo bar | sed 's/\\w\\+/\\u&/g'\necho 'hello WORLD' | sed 's/.*/\\L\\u&/'\necho 'foo bar' | sed -E 's/(\\w+) (\\w+)/\\U\\1\\E \\2/'\necho abc | sed 's/\\(a\\)\\(b\\)/\\u\\1\\U\\2x\\Ey/'\necho abc | sed 's/b/\\x41\\o102\\d67/'\nx=$(echo abc | sed 's/b/\\cA/'); [ \"$x\" = \"$(printf 'a\\001c')\" ] && echo cA-ok\nx=$(echo abc | sed 's/b/\\a\\f\\v\\t/'); [ \"$x\" = \"$(printf 'a\\a\\f\\v\\tc')\" ] && echo avft-ok\necho abc | sed 's/b/\\1/' 2>&1; echo \"rc=$?\"\necho abc | sed -E 's/(b)/\\2/' 2>&1; echo \"rc=$?\"\necho abc | sed -E 's/(b)(c)/\\2\\1\\0/'");
+		assert.strictEqual(r.stdout, "a\\/b\\&c.d\\\\e\na\\/b\na\\nc\na\\\\bc\nax\nyc\na&c\nFoo Bar\nHello world\nFOO bar\nABXyc\naABCc\ncA-ok\navft-ok\nsed: -e expression #1, char 7: invalid reference \\1 on `s' command's RHS\nrc=1\nsed: -e expression #1, char 9: invalid reference \\2 on `s' command's RHS\nrc=1\nacbbc\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-46: a backslash in a bracket expression is a backslash (`[\\.]` has it, `[^\\]` is everything else, `[a\\]b]` ends at the first `]`), `\\o` and `\\d` of a pattern are characters, and `\\<` `\\>` next to a `.` or a `[^x]` only match a word character", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a.b\\\\c/d\\n' > f\nsed 's/[\\.]/X/g' f; sed 's/[\\\\]/X/g' f; sed 's/[\\/]/X/g' f; sed 's/[^\\]/X/g' f; sed 's|[\\|]|X|g' f; sed -E 's/[\\.]/X/g' f; sed 's/[a\\]b]/X/g' f\nsed 's/\\o142/X/;s/\\d99/Y/' f\necho 'a\tb' | sed 's/[\\t]/X/'\necho foo bar | sed 's/\\<./\\U&/g'\necho 'foo bar' | sed 's/\\<\\(.\\)/\\u\\1/g'\necho 'foo bar' | sed -E 's/.\\>/X/g'\necho 'foo bar' | sed 's/\\<[^ ]/X/g'");
+		assert.strictEqual(r.stdout, "aXbXc/d\na.bXc/d\na.bXcXd\nXXX\\XXX\na.bXc/d\naXbXc/d\na.b\\c/d\na.X\\Y/d\naXb\nFoo Bar\nFoo Bar\nfoX baX\nXoo Xar\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-47: addresses: `\\cREGEXc` with any delimiter, the flags I and M, `addr,~N`, and an end that is a regular expression is looked for from the next line (`1,/e/d`) except for `0,/re/`", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'one\\nTwo\\nthree\\nFour\\nfive\\n/usr/x\\nsix\\n' > in\nsed -n '/two/Ip' in | tr '\\n' ' '; echo\nsed '/TWO/I,/FOUR/Id' in | tr '\\n' ' '; echo\nsed '\\,/usr,d' in | tr '\\n' ' '; echo\nsed -n '\\#usr#p' in | tr '\\n' ' '; echo\nsed -n '\\|usr|p' in | tr '\\n' ' '; echo\nsed -n '\\,u\\,,p' in | tr '\\n' ' '; echo\nsed -n '2,~4p' in | tr '\\n' ' '; echo\nsed -n '4,~4p' in | tr '\\n' ' '; echo\nsed '1,/e/d' in | tr '\\n' ' '; echo\nsed '0,/e/d' in | tr '\\n' ' '; echo\nsed -n '/t/,/f/p' in | tr '\\n' ' '; echo\nsed '/one/I{n;d}' in | tr '\\n' ' '; echo\nsed -n '/x/I,$p' in | tr '\\n' ' '; echo");
+		assert.strictEqual(r.stdout, "Two \none five /usr/x six \none Two three Four five six \n/usr/x \n/usr/x \n\nTwo three Four \nFour five /usr/x six \nFour five /usr/x six \nTwo three Four five /usr/x six \nthree Four five \none three Four five /usr/x six \n/usr/x six \n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-50 (grep): a backslash in a bracket is a backslash (`[\\.]`, `[^\\]`), in an extended expression a `)` with nothing open and a `{` that starts no interval are plain characters, and a pattern that does not compile is said in GNU's words with status 2", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU grep 3.7's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a.b\\\\c\\n*x\\nfoo)\\nab\\n{x\\n' > f\ngrep '[\\.]' f | tr '\\n' ' '; echo\ngrep -c '[^\\]' f\ngrep -E ')' f | tr '\\n' ' '; echo\ngrep -E 'o)' f | tr '\\n' ' '; echo\ngrep -E '{x' f | tr '\\n' ' '; echo\ngrep -E -c 'a{1,2}b' f\ngrep -E -o '[\\.]+' f | tr '\\n' ' '; echo\ngrep '\\(a' f 2>&1; echo \"rc=$?\"\ngrep -E '(a' f 2>&1; echo \"rc=$?\"\ngrep 'a\\)' f 2>&1; echo \"rc=$?\"\ngrep -E 'a{2,1}' f 2>&1; echo \"rc=$?\"\ngrep '[[:foo:]]' f 2>&1; echo \"rc=$?\"\ngrep '[z-a]' f 2>&1; echo \"rc=$?\"\ngrep -e 'a' -e '\\(' f 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "a.b\\c \n5\nfoo) \nfoo) \n{x \n1\n. \\ \ngrep: Unmatched ( or \\(\nrc=2\ngrep: Unmatched ( or \\(\nrc=2\ngrep: Unmatched ) or \\)\nrc=2\ngrep: Invalid content of \\{\\}\nrc=2\ngrep: Invalid character class name\nrc=2\ngrep: Invalid range end\nrc=2\ngrep: Unmatched ( or \\(\nrc=2\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-51 (sed q and Q): the number after them is the exit status (`q5`, `2q7`, `q 3`), and the pattern space is printed for q and not for Q", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a\\nb\\nc\\n' > f\nsed q5 f; echo \"rc=$?\"\nsed Q5 f; echo \"rc=$?\"\nsed '2q7' f; echo \"rc=$?\"\nsed -n '2{p;q 3}' f; echo \"rc=$?\"\nsed 2q f; echo \"rc=$?\"\nsed -n '/b/Q9' f; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "a\nrc=5\nrc=5\na\nb\nrc=7\nb\nrc=3\na\nb\nrc=0\nrc=9\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-53 (awk): split on blanks and of an empty string, length of an array, int, %e and %g, a one-character FS, FS=\"\", NF rebuilds $0, print > name concatenated, print | \"cmd\" (at close() or the end, before awk's own output)", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU awk 5.1's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'alice 30 NY\\nbob 25 LA\\ncarol 35 NY\\n' > d; printf 'a|b|c\\n  x  y  \\n' > p\nawk '{n=split($0,q,\" \");print n, q[1]}' p\nawk 'BEGIN{n=split(\"\",q);print n; n=split(\"  a  b \",q,\" \");print n, q[1], q[2]; n=split(\"a:b\",q,\":\");print n}'\nawk 'BEGIN{x[1]=1;x[2]=2;x[3]=3;delete x[2];print length(x), length(\"abc\"), length()}'\nawk 'BEGIN{print int(3.9), int(-3.9), int(\"4abc\"), int(-0.5)}'\nawk 'BEGIN{printf \"%e|%E|%g|%g|%.2e\\n\", 5.5, 12345.678, 0.00001234, 1e10, 100}'\nawk -F'|' '{print $2}' p; awk -F. '{print NF}' d; awk 'BEGIN{FS=\"|\"}{print $3}' p; awk -F'|' 'BEGIN{OFS=\"-\"}{$1=$1;print}' p\nprintf 'ab\\n' | awk 'BEGIN{FS=\"\"}{print NF, $1, $2}'\nprintf '  a  b  \\n' | awk '{NF=2; print}'; printf 'a b c\\n' | awk '{NF=2; print; NF=4; print; print NF}'\nawk '{print $1 > \"out_\" $3 \".txt\"}' d; cat out_NY.txt out_LA.txt\nawk '{print $2, $1 | \"sort -n\"}' d\nawk '{print $1 | \"sort -r\"} END{print \"end\"}' d\nawk '{print $1 | \"sort -r\"} END{close(\"sort -r\"); print \"end\"}' d\nawk 'BEGIN{print \"b\\na\" | \"sort\"}'\nawk '{c[$3]++}END{for(k in c)print k, c[k] | \"sort\"}' d\nawk 'BEGIN{printf \"%s\\n\", \"z\" | \"cat\"; print \"y\" | \"cat\"}'");
+		assert.strictEqual(r.stdout, "1 a|b|c\n2 x\n0\n2 a b\n2\n2 3 0\n3 -3 4 0\n5.500000e+00|1.234568E+04|1.234e-05|1e+10|1.00e+02\nb\n\n1\n1\n1\nc\n\na-b-c\n  x  y  \n2 a b\na b\na b\na b  \n4\nalice\ncarol\nbob\n25 bob\n30 alice\n35 carol\ncarol\nbob\nalice\nend\ncarol\nbob\nalice\nend\na\nb\nLA 1\nNY 2\nz\ny\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-52: what a command writes to /dev/stderr is its own output: `2>&1` and `2>/dev/null` and a pipe apply to it", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU awk 5.1's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("awk 'BEGIN{print \"x\" > \"/dev/stderr\"}' 2>&1; awk 'BEGIN{print \"y\" > \"/dev/stderr\"}' 2>/dev/null; echo done\necho hi | tee /dev/stderr 2>&1 | cat");
+		assert.strictEqual(r.stdout, "x\ndone\nhi\nhi\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-48 (sed): the messages of a script that cannot be read are GNU's: unknown command, unterminated `s', missing command, `y` with sets of different lengths, an unmatched `{`, an unexpected `}`", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("echo abc | sed 'k' 2>&1; echo \"rc=$?\"\necho abc | sed ';us;p' 2>&1; echo \"rc=$?\"\necho abc | sed '2' 2>&1; echo \"rc=$?\"\necho abc | sed '2,3' 2>&1; echo \"rc=$?\"\necho abc | sed 's/a/b' 2>&1; echo \"rc=$?\"\necho abc | sed 's/[a/X/' 2>&1; echo \"rc=$?\"\necho abc | sed 'p;k' 2>&1; echo \"rc=$?\"\necho abc | sed 'y/abc/xy/' 2>&1; echo \"rc=$?\"\necho abc | sed '1,2!' 2>&1; echo \"rc=$?\"\necho abc | sed '{p' 2>&1; echo \"rc=$?\"\necho abc | sed 'p}' 2>&1; echo \"rc=$?\"\necho abc | sed 's/a/b/\n' 2>&1; echo \"rc=$?\"\necho abc | sed '/a/' 2>&1; echo \"rc=$?\"\necho abc | sed '1~' 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "sed: -e expression #1, char 1: unknown command: `k'\nrc=1\nsed: -e expression #1, char 2: unknown command: `u'\nrc=1\nsed: -e expression #1, char 1: missing command\nrc=1\nsed: -e expression #1, char 3: missing command\nrc=1\nsed: -e expression #1, char 5: unterminated `s' command\nrc=1\nsed: -e expression #1, char 7: unterminated `s' command\nrc=1\nsed: -e expression #1, char 3: unknown command: `k'\nrc=1\nsed: -e expression #1, char 9: strings for `y' command are different lengths\nrc=1\nsed: -e expression #1, char 4: missing command\nrc=1\nsed: -e expression #1, char 0: unmatched `{'\nrc=1\nsed: -e expression #1, char 2: unexpected `}'\nrc=1\nbbc\nrc=0\nsed: -e expression #1, char 3: missing command\nrc=1\nsed: -e expression #1, char 2: missing command\nrc=1\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-49 (sed): `s/x/y/2g` replaces the second match and every one after it", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("echo 'foo foo foo foo' | sed 's/o/0/2g'\necho 'foo foo foo foo' | sed 's/foo/X/3g'\necho 'foo foo foo foo' | sed 's/foo/X/3'\necho 'aaaa' | sed 's/a/b/2g'\necho 'aaaa' | sed 's/a/b/5g'\necho 'abab' | sed -E 's/(a)(b)/\\2\\1/2g'");
+		assert.strictEqual(r.stdout, "fo0 f00 f00 f00\nfoo foo X X\nfoo foo X foo\nabbb\naaaa\nabba\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-54 (find -printf): the type, the starting point, the links and blocks, a link's target, and the conversions of a time with the ten digits of fraction GNU prints (`%T@`, `%TT`, `%t`) and the rest of them", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU find 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("mkdir -p d/s; printf 'hello\\n' > d/f; printf 'x' > d/s/g; : > d/e; export TZ=UTC; touch -d '2020-09-13 12:26:40' d/f d/s/g d/s d d/e; touch -d '2023-11-14 22:13:27' d/f\nfind d -mindepth 1 -printf '%p\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%P\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%f\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%h\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%H\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%s\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%y\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%m\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%M\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%d\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%n\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%l\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%b\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%k\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%T@\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%t\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%Tc\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%TY-%Tm-%Td\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%TT\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%TS\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%TH:%TM\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%TD\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%Ty\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%Te\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%Tj\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%Ta\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%TA\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%Tb\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%TB\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%TR\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%Tp\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%TI\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%Tu\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%Tw\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%%\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%-5s|\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%5s|\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%.3s|\\n' | sort | tr '\\n' ' '; echo\nfind d -mindepth 1 -printf '%p %s %y\\n' | sort | tr '\\n' ' '; echo");
+		assert.strictEqual(r.stdout, "d/e d/f d/s d/s/g \ne f s s/g \ne f g s \nd d d d/s \nd d d d \n0 1 4096 6 \nd f f f \n644 644 644 755 \n-rw-r--r-- -rw-r--r-- -rw-r--r-- drwxr-xr-x \n1 1 1 2 \n1 1 1 2 \n    \n0 8 8 8 \n0 4 4 4 \n1600000000.0000000000 1600000000.0000000000 1600000000.0000000000 1700000007.0000000000 \nSun Sep 13 12:26:40.0000000000 2020 Sun Sep 13 12:26:40.0000000000 2020 Sun Sep 13 12:26:40.0000000000 2020 Tue Nov 14 22:13:27.0000000000 2023 \nSun Sep 13 12:26:40 2020 Sun Sep 13 12:26:40 2020 Sun Sep 13 12:26:40 2020 Tue Nov 14 22:13:27 2023 \n2020-09-13 2020-09-13 2020-09-13 2023-11-14 \n12:26:40.0000000000 12:26:40.0000000000 12:26:40.0000000000 22:13:27.0000000000 \n27.0000000000 40.0000000000 40.0000000000 40.0000000000 \n12:26 12:26 12:26 22:13 \n09/13/20 09/13/20 09/13/20 11/14/23 \n20 20 20 23 \n13 13 13 14 \n257 257 257 318 \nSun Sun Sun Tue \nSunday Sunday Sunday Tuesday \nNov Sep Sep Sep \nNovember September September September \n12:26 12:26 12:26 22:13 \nPM PM PM PM \n10 12 12 12 \n2 7 7 7 \n0 0 0 2 \n% % % % \n0    | 1    | 4096 | 6    | \n    0|     1|     6|  4096| \n0| 1| 409| 6| \nd/e 0 f d/f 6 f d/s 4096 d d/s/g 1 f \n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-55 (printf): an escape in the format that makes a `%` (`\\045`, `\\x25`) is a character of the output and not the start of a conversion", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU bash 5.1's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf '\\045\\n'; printf '\\045s\\n'; printf '\\x25d\\n'; printf 'a\\045b\\046c\\n'; printf '\\045\\045\\n'; printf '%s\\n' '\\045'; printf '%b\\n' '\\045s'; printf '\\0452\\n'; x=$(printf '\\045d'); echo \"$x\"; printf '%%\\n'; printf '\\134n\\n'; printf '\\1341\\n'; printf '\\u0025d|\\U00000025d|\\u0041\\n'; printf '\\x\\045d\\n'; printf '\\q\\045d\\n'");
+		assert.strictEqual(r.stdout, "%\n%s\n%d\na%b&c\n%%\n\\045\n%s\n%2\n%d\n%\n\\n\n\\1\n%d|%d|A\n\\x%d\n\\q%d\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-56 (sed script grammar): a command is followed by `;`, a newline, `}` or the end (\"extra characters after command\"), an s flag that is not one is \"unknown option to `s'\", the repeats of a flag and a zero count are said, blanks between the flags are skipped, line address 0 is for `0,/re/` only, a label that is not there is \"can't find label\" with status 4", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU's own (sed 4.8, grep 3.7: docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a\\nb\\nab\\n' > f\nsed -n 'p x' f 2>&1; echo \"rc=$?\"\nsed -n 'dp' f 2>&1; echo \"rc=$?\"\nsed '{p}p' f 2>&1; echo \"rc=$?\"\nsed 's/a/b/gx' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/b/ p' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/b/g p' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/b/;p' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/b/gg' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/b/pp' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/b/0' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/b/2 3' f 2>&1; echo \"rc=$?\"\nsed -n 'y/a/b/x' f 2>&1; echo \"rc=$?\"\nsed -n '0p' f 2>&1; echo \"rc=$?\"\nsed -n '0,2p' f 2>&1; echo \"rc=$?\"\nsed '0,/b/d' f 2>&1; echo \"rc=$?\"\nsed 'b nolabel' f 2>&1; echo \"rc=$?\"\nsed -n '$!{p;p}' f 2>&1; echo \"rc=$?\"\nsed -n '/a/{p;p};$p' f 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "sed: -e expression #1, char 3: extra characters after command\nrc=1\nsed: -e expression #1, char 2: extra characters after command\nrc=1\nsed: -e expression #1, char 4: extra characters after command\nrc=1\nsed: -e expression #1, char 8: unknown option to `s'\nrc=1\nb\nbb\nrc=0\nb\nbb\nrc=0\nb\nb\nbb\nrc=0\nsed: -e expression #1, char 8: multiple `g' options to `s' command\nrc=1\nsed: -e expression #1, char 8: multiple `p' options to `s' command\nrc=1\nsed: -e expression #1, char 7: number option to `s' command may not be zero\nrc=1\nsed: -e expression #1, char 9: multiple number options to `s' command\nrc=1\nsed: -e expression #1, char 7: extra characters after command\nrc=1\nsed: -e expression #1, char 2: invalid usage of line address 0\nrc=1\nsed: -e expression #1, char 4: invalid usage of line address 0\nrc=1\nab\nrc=0\nsed: can't find label for jump to `nolabel'\nrc=4\na\na\nb\nb\nrc=0\na\na\nab\nab\nab\nrc=0\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-56 (regular expressions are read when the script is read, and the way GNU reads them): a class or collating element in a bracket does not end it (`[[:alpha:]/]`), a bracket that is not closed is \"unterminated\", `[:space:]` is the mistake GNU names (sed 4, grep 2), an invalid expression is said before any line is read (in a command that never runs, at the end of a range), an interval that is not closed or not valid, a collating element of more than one character, a back-reference to a group that is not there", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU's own (sed 4.8, grep 3.7: docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a/b&c:d\\nx]y\\n:a:\\n' > f\nsed 's/[[:alpha:]/]/X/g' f 2>&1; echo \"rc=$?\"\nsed -n '/[[:alpha:]/]/p' f 2>&1; echo \"rc=$?\"\nsed 's/[[.].]/]/X/' f 2>&1; echo \"rc=$?\"\nsed 's/[[:alpha:]/X/' f 2>&1; echo \"rc=$?\"\nsed -n '/a[/p' f 2>&1; echo \"rc=$?\"\nsed 's/[[:]/X/]/Y/' f 2>&1; echo \"rc=$?\"\nsed 's/[:alpha:]/X/' f 2>&1; echo \"rc=$?\"\nsed -n '/x/s/[:a:]/y/p' f 2>&1; echo \"rc=$?\"\nsed -n '/nothing/s/\\(/y/p' f 2>&1; echo \"rc=$?\"\nsed -n '2,/\\(/p' f 2>&1; echo \"rc=$?\"\nsed -E -n '/a{1/p' f 2>&1; echo \"rc=$?\"\nsed -n '/a\\{1/p' f 2>&1; echo \"rc=$?\"\nsed -n '/a\\{x\\}/p' f 2>&1; echo \"rc=$?\"\nsed -E -n '/{1}/p' f 2>&1; echo \"rc=$?\"\nsed 's/[[.space.]]/X/' f 2>&1; echo \"rc=$?\"\nsed 's/[[=ab=]]/X/' f 2>&1; echo \"rc=$?\"\nsed -E 's/(a)\\2/X/' f 2>&1; echo \"rc=$?\"\ngrep -c '[:alpha:]' f 2>&1; echo \"rc=$?\"\ngrep -c '[[:alpha:]' f 2>&1; echo \"rc=$?\"\ngrep -c 'a\\{1' f 2>&1; echo \"rc=$?\"\ngrep -E -c 'a{1' f 2>&1; echo \"rc=$?\"\ngrep -c '[\\n]' f 2>&1; echo \"rc=$?\"\ngrep -c '\\x2e' f 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "XXX&X:X\nX]X\n:X:\nrc=0\na/b&c:d\nx]y\n:a:\nrc=0\naXb&c:d\nxXy\n:a:\nrc=0\nsed: -e expression #1, char 15: unterminated `s' command\nrc=1\nsed: -e expression #1, char 5: unterminated address regex\nrc=1\nsed: -e expression #1, char 13: unterminated `s' command\nrc=1\nsed: character class syntax is [[:space:]], not [:space:]\nrc=4\nsed: character class syntax is [[:space:]], not [:space:]\nrc=4\nsed: -e expression #1, char 17: Unmatched ( or \\(\nrc=1\nsed: -e expression #1, char 6: Unmatched ( or \\(\nrc=1\nsed: -e expression #1, char 5: Unmatched \\{\nrc=1\nsed: -e expression #1, char 6: Unmatched \\{\nrc=1\nsed: -e expression #1, char 8: Invalid content of \\{\\}\nrc=1\nsed: -e expression #1, char 5: Invalid preceding regular expression\nrc=1\nsed: -e expression #1, char 16: Invalid collation character\nrc=1\nsed: -e expression #1, char 13: Invalid collation character\nrc=1\nsed: -e expression #1, char 10: Invalid back reference\nrc=1\ngrep: character class syntax is [[:space:]], not [:space:]\nrc=2\ngrep: Unmatched [, [^, [:, [., or [=\nrc=2\ngrep: Unmatched \\{\nrc=2\n0\nrc=1\n0\nrc=1\n0\nrc=1\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-57 (s///N): when the line has fewer than N matches nothing is substituted: no `p`, `t` does not branch, `w` writes nothing", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU's own (sed 4.8, grep 3.7: docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'aXa\\nb\\naaa\\nXa\\n' > f\nsed -n 's/a/Y/2p' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/Y/3p' f 2>&1; echo \"rc=$?\"\nsed 's/a/Y/2;t done;s/$/!/;:done' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/Y/2gp' f 2>&1; echo \"rc=$?\"\nsed 's/a/Y/3g;t;s/$/?/' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/Y/2w out' f; cat out");
+		assert.strictEqual(r.stdout, "aXY\naYa\nrc=0\naaY\nrc=0\naXY\nb!\naYa\nXa!\nrc=0\naXY\naYY\nrc=0\naXa?\nb?\naaY\nXa?\nrc=0\naXY\naYa\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-58 (sed, basic expressions): `{` and `}` are plain characters (`s/a{1}/X/`)", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU's own (sed 4.8, grep 3.7: docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a{1}\\naa\\n{x}\\n' > f\nsed -n 's/a{1}/X/p' f 2>&1; echo \"rc=$?\"\nsed -n '/a{1}/p' f 2>&1; echo \"rc=$?\"\nsed 's/{x}/Y/' f 2>&1; echo \"rc=$?\"\nsed -E 's/a{1}/X/' f 2>&1; echo \"rc=$?\"\nsed -n 's/{/(/gp' f 2>&1; echo \"rc=$?\"\nsed 's/a\\{2\\}/X/' f 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "X\nrc=0\na{1}\nrc=0\na{1}\naa\nY\nrc=0\nX{1}\nXa\n{x}\nrc=0\na(1}\n(x}\nrc=0\na{1}\nX\n{x}\nrc=0\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("the numeric escapes of a pattern are characters only with their digits (`\\\\d` is the letter d, `[\\\\d]` the same, `\\\\x61` and `\\\\o141` are `a`), `\\\\L \\\\U \\\\E` clear a one-shot `\\\\u` or `\\\\l`, the last of `\\\\u \\\\l` wins, `\\\\<` and `\\\\>` beside a character that is not a word character match nothing, and grep reads none of the sed escapes", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU's own (sed 4.8, grep 3.7: docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a.b d1 x2 ab\\n' > f\nsed 's/\\d/X/g' f 2>&1\nsed 's/[\\d]/X/g' f 2>&1\nsed 's/\\x/X/g' f 2>&1\nsed 's/\\d049/X/g' f 2>&1\nsed 's/\\x61/X/g' f 2>&1\nsed 's/\\o141/X/g' f 2>&1\nsed 's/[\\x61\\o142]/X/g' f 2>&1\nsed 's/\\(a\\)\\(b\\)/\\u\\L\\1\\2/' f 2>&1\nsed 's/a/\\l\\Uab/' f 2>&1\nsed 's/ab/\\u\\L&X/' f 2>&1\nsed 's/a/\\u\\lA/' f 2>&1\nsed 's/b/\\l\\ub/' f 2>&1\nsed 's/\\<./X/g' f 2>&1\nsed 's/.\\>/X/g' f 2>&1\nsed 's/\\.\\>/X/g' f 2>&1\nsed 's/\\<\\./X/g' f 2>&1\nsed 's/\\<[ab]/X/g' f 2>&1\ngrep -o '\\d' f 2>&1\ngrep -c '\\.\\>' f 2>&1");
+		assert.strictEqual(r.stdout, "a.b X1 x2 ab\na.b X1 x2 ab\na.b d1 X2 ab\na.b dX x2 ab\nX.b d1 x2 Xb\nX.b d1 x2 Xb\nX.X d1 x2 XX\na.b d1 x2 ab\nAB.b d1 x2 ab\na.b d1 x2 abx\na.b d1 x2 ab\na.B d1 x2 ab\nX.X X1 X2 Xb\nX.X dX xX aX\na.b d1 x2 ab\na.b d1 x2 ab\nX.X d1 x2 Xb\nd\n0\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("what the engine says where GNU does something it cannot (its own words, pinned so that they do not change by accident): a repeat count over 1000 or a back-reference in a pattern is said, status 1 (grep 2), `s///e` and `-l` and `L` are refused, and the `\\c` that ends a pattern or a replacement is the letter", async () => {
+		const { sh } = overlayBash({});
+		const r = await sh.exec("printf 'a\\nb\\n' > f\nsed -E 's/a{1001}/X/' f 2>&1; echo \"rc=$?\"\nsed -E 's/a{1001,}/X/' f 2>&1; echo \"rc=$?\"\nsed -E 's/a{1001,1001}/X/' f 2>&1; echo \"rc=$?\"\nsed -E 's/a{32767}/X/' f 2>&1; echo \"rc=$?\"\nsed -E 's/a{32768}/X/' f 2>&1; echo \"rc=$?\"\nsed -E 's/a{1,32768}/X/' f 2>&1; echo \"rc=$?\"\nsed -E 's/a{2,1}/X/' f 2>&1; echo \"rc=$?\"\nsed 's/\\(a\\)\\1/X/' f 2>&1; echo \"rc=$?\"\nsed -E 's/(a)\\1/X/' f 2>&1; echo \"rc=$?\"\nsed 's/a\\c/X/' f 2>&1; echo \"rc=$?\"\nsed 's/a/b/e' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/\\c/p' f 2>&1; echo \"rc=$?\"\nsed -n 's/a/[\\cA]/p' f 2>&1 | od -An -c; echo \"rc=$?\"\ngrep -E -c 'a{1001}' f 2>&1; echo \"rc=$?\"\ngrep -c '\\(a\\)\\1' f 2>&1; echo \"rc=$?\"\nsed -n -l 5 l f 2>&1; echo \"rc=$?\"\nsed --line-length=5 -n l f 2>&1; echo \"rc=$?\"\nsed -n 'L' f 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "sed: -e expression #1, char 12: a repeat count over 1000 is not supported by this shell\nrc=1\nsed: -e expression #1, char 13: a repeat count over 1000 is not supported by this shell\nrc=1\nsed: -e expression #1, char 17: a repeat count over 1000 is not supported by this shell\nrc=1\nsed: -e expression #1, char 13: a repeat count over 1000 is not supported by this shell\nrc=1\nsed: -e expression #1, char 13: Regular expression too big\nrc=1\nsed: -e expression #1, char 15: Regular expression too big\nrc=1\nsed: -e expression #1, char 11: Invalid content of \\{\\}\nrc=1\nsed: -e expression #1, char 12: back-references in a pattern are not supported by this shell\nrc=1\nsed: -e expression #1, char 10: back-references in a pattern are not supported by this shell\nrc=1\na\nb\nrc=0\nsed: e command (shell execution) is not supported in sandboxed environment\nrc=1\nc\nrc=0\n   [ 001   ]  \\n\nrc=0\ngrep: a repeat count over 1000 is not supported by this shell\nrc=2\ngrep: back-references in a pattern are not supported by this shell\nrc=2\nsed: invalid option -- 'l'\nrc=1\nsed: unrecognized option '--line-length=5'\nrc=1\nsed: -e expression #1, char 1: unknown command: `L'\nrc=1\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-60 (date): a year before 1000 has four digits in %F, %Y and %G (`0100-01-02`), and the ISO year of a date before the year 100 is its own (`new Date(6, ...)` was 1906)", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU date 8.32's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("export TZ=UTC; for d in @-59011372800 @-30610310400 @-30610224000 @-62135510400 @-46374422400 @-61965475200 @-59011545600 @-62135596800; do date -d \"$d\" '+%F|%Y|%C|%y|%G|%m'; done; date -d @-59011459200 '+%a %b %e %Y'");
+		assert.strictEqual(r.stdout, "0100-01-02|0100|01|00|0099|01\n0999-12-31|0999|09|99|1000|12\n1000-01-01|1000|10|00|1000|01\n0001-01-02|0001|00|01|0001|01\n0500-06-15|0500|05|00|0500|06\n0006-05-24|0006|00|06|0006|05\n0099-12-31|0099|00|99|0099|12\n0001-01-01|0001|00|01|0001|01\nFri Jan  1 0100\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-35 (sed, the M flag): with it `.` and a list that starts `[^` do not match the newline of a joined pattern space and `^` and `$` match at it; without it `.` matches it; the flag is read whatever flags come with it (`gM`, `Mg`, `gm`, `mg`, `MI`)", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/e.t/<&>/' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/e.t/<&>/M' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/e.t/<&>/gM' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/o[^x]t/<&>/' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/o[^x]t/<&>/M' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/e.*t/<&>/M' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/e\\nt/<&>/M' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/[^[:alpha:]]*/<&>/gM' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/^o/<&>/M' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/e$/<&>/gM' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/^t/X/gm' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/^t/X/Mg' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/^t/X/mg' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/$/X/gm' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/^t.*/X/Mg' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/e$/X/pM' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed  'N;N;s/e$/X/gpM' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;s/^t/X/gmp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;s/^t/X/MIp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;s/^t/X/IMp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;s/^t/X/mp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;/e.t/Mp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;/e.t/p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;\\,e.t,Mp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;/e.*t/Mp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;/o[^x]t/Mp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;/o[^x]t/p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;/e$/Mp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;/e$/p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;/^o/Mp' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n 'N;N;/e\\nt/Mp' 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "on<e\nt>wo\nthree\nfour\nfive\nrc=0\none\ntwo\nthree\nfour\nfive\nrc=0\none\ntwo\nthree\nfour\nfive\nrc=0\none\ntw<o\nt>hree\nfour\nfive\nrc=0\none\ntwo\nthree\nfour\nfive\nrc=0\none\ntwo\nthree\nfour\nfive\nrc=0\non<e\nt>wo\nthree\nfour\nfive\nrc=0\n<>o<>n<>e<>\n<>t<>w<>o<>\n<>t<>h<>r<>e<>e<>\nfour\nfive\nrc=0\n<o>ne\ntwo\nthree\nfour\nfive\nrc=0\non<e>\ntwo\nthre<e>\nfour\nfive\nrc=0\none\nXwo\nXhree\nfour\nfive\nrc=0\none\nXwo\nXhree\nfour\nfive\nrc=0\none\nXwo\nXhree\nfour\nfive\nrc=0\noneX\ntwoX\nthreeX\nfour\nfive\nrc=0\none\nX\nX\nfour\nfive\nrc=0\nonX\ntwo\nthree\nonX\ntwo\nthree\nfour\nfive\nrc=0\nonX\ntwo\nthreX\nonX\ntwo\nthreX\nfour\nfive\nrc=0\none\nXwo\nXhree\nrc=0\none\nXwo\nthree\nrc=0\none\nXwo\nthree\nrc=0\none\nXwo\nthree\nrc=0\nrc=0\none\ntwo\nthree\nrc=0\nrc=0\nrc=0\nrc=0\none\ntwo\nthree\nrc=0\none\ntwo\nthree\nrc=0\none\ntwo\nthree\nrc=0\none\ntwo\nthree\nrc=0\none\ntwo\nthree\nrc=0\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-56 (sed, what follows an address): GNU takes only blanks between an address or a `!` and its command, so a `;` or a newline there is an unknown command, an address and a number is an unknown command, a second `!` and line address 0 are said at once, a range with no end is \"unexpected `,'\", a leading comma is an unknown command, `+N` is not a first address, and an address that nothing follows is a missing command", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1;p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1,2;p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '/a/;p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1!;p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1;' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1\n' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1,2\n' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1 2p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1,2 3p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1!!p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '0' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n ',3p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1,p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '/a/,p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1,' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '+1p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '~2p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1~2~3p' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '1,2' 2>&1; echo \"rc=$?\"\nprintf 'one\ntwo\nthree\nfour\nfive\n' | sed -n '$' 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "sed: -e expression #1, char 2: unknown command: `;'\nrc=1\nsed: -e expression #1, char 4: unknown command: `;'\nrc=1\nsed: -e expression #1, char 4: unknown command: `;'\nrc=1\nsed: -e expression #1, char 3: unknown command: `;'\nrc=1\nsed: -e expression #1, char 2: unknown command: `;'\nrc=1\nsed: -e expression #1, char 2: unknown command: `\n'\nrc=1\nsed: -e expression #1, char 4: unknown command: `\n'\nrc=1\nsed: -e expression #1, char 3: unknown command: `2'\nrc=1\nsed: -e expression #1, char 5: unknown command: `3'\nrc=1\nsed: -e expression #1, char 3: multiple `!'s\nrc=1\nsed: -e expression #1, char 1: invalid usage of line address 0\nrc=1\nsed: -e expression #1, char 1: unknown command: `,'\nrc=1\nsed: -e expression #1, char 3: unexpected `,'\nrc=1\nsed: -e expression #1, char 5: unexpected `,'\nrc=1\nsed: -e expression #1, char 2: unexpected `,'\nrc=1\nsed: -e expression #1, char 2: invalid usage of +N or ~N as first address\nrc=1\nsed: -e expression #1, char 2: invalid usage of +N or ~N as first address\nrc=1\nsed: -e expression #1, char 4: unknown command: `~'\nrc=1\nsed: -e expression #1, char 1: missing command\nrc=1\nsed: -e expression #1, char 3: missing command\nrc=1\nsed: -e expression #1, char 1: missing command\nrc=1\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
+	test("LC-56 (sed, a backslash in a bracket): it is a backslash, so a `[` after it starts an element that the scan for the closing delimiter must find the end of (`[\\[:,]` is not closed, GNU says \"unterminated\"), and a script that ends in a backslash is unterminated where its last character is", async () => {
+		const { sh } = overlayBash({});
+		// the expected output is GNU sed 4.8's own (docker, LC_ALL=C.UTF-8), recorded once
+		const r = await sh.exec("printf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\n' | sed -n '\\,[\\[:,]x,p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\n' | sed -n '\\,[\\[.,]x,p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\n' | sed -n '\\,[\\[=,]x,p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\n' | sed -n '\\,[\\[:a,]x,p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\n' | sed -n '/a\\' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\n' | sed -n '\\,a\\' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\n' | sed -n '\\,[\\],]x,p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\n' | sed -n '/[\\]]/p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\n' | sed -n '\\,[a\\,b],p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\na,b\na/b\n' | sed -n 's,[\\[:,]x,y,p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\na,b\na/b\n' | sed -n 's,[\\[.,]x,y,p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\na,b\na/b\n' | sed -n 's,[\\[=,]x,y,p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\na,b\na/b\n' | sed -n 's,[a\\,b],y,p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\na,b\na/b\n' | sed -n 's/[\\/]/y/p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\na,b\na/b\n' | sed -n 's/[\\]]/y/p' 2>&1; echo \"rc=$?\"\nprintf 'a\nb\n[\n\\\n]\n,\nx\n:\n.\n=\n/\nab\na,b\na/b\n' | sed -n 's/[\\n]/y/p' 2>&1; echo \"rc=$?\"");
+		assert.strictEqual(r.stdout, "sed: -e expression #1, char 11: unterminated address regex\nrc=1\nsed: -e expression #1, char 11: unterminated address regex\nrc=1\nsed: -e expression #1, char 11: unterminated address regex\nrc=1\nsed: -e expression #1, char 12: unterminated address regex\nrc=1\nsed: -e expression #1, char 3: unterminated address regex\nrc=1\nsed: -e expression #1, char 4: unterminated address regex\nrc=1\nsed: -e expression #1, char 7: unknown command: `]'\nrc=1\nrc=0\na\nb\n\\\n,\nab\nrc=0\nsed: -e expression #1, char 13: unterminated `s' command\nrc=1\nsed: -e expression #1, char 13: unterminated `s' command\nrc=1\nsed: -e expression #1, char 13: unterminated `s' command\nrc=1\ny\ny\ny\ny\nyb\ny,b\ny/b\nrc=0\ny\ny\nayb\nrc=0\nrc=0\nrc=0\n");
+		assert.strictEqual(r.stderr, "");
+	});
+
 
 	for (const t of tests) {
 		await t.fn();

@@ -397,6 +397,24 @@ test('a content write the SHELL refuses (outside the folders, a protected path) 
 	assert.deepStrictEqual(await changes(ov), []);
 });
 
+test('the time of what the shell refused to make, or of the shell\'s own file, is EACCES (GNU: "Permission denied", touch said "No such file or directory"): recorded once, and everything else is as it was', async () => {
+	const { ov, fs } = setup({ '/w/a': 'x' });
+	fs.writeFileSync('/bin/ls', 'stub');
+	// touch writes an empty file where there is none (refused and recorded: nothing is made) and then sets its time
+	await fs.writeFile('/etc/x', '');
+	assert.strictEqual(await code(fs.utimes('/etc/x', new Date(), new Date(0))), 'EACCES');
+	assert.strictEqual(await code(fs.utimes('/bin/ls', new Date(), new Date(0))), 'EACCES');
+	assert.deepStrictEqual(ov.denied.map((d) => [d.path, d.op, d.reason, d.code]), [['/etc/x', 'write', 'outside', 'EACCES'], ['/bin/ls', 'utimes', 'readonly', 'EACCES']]);
+	// a file that is not there for another reason is not a refusal, and what may be written may have its time set
+	assert.strictEqual(await code(fs.utimes('/w/nodir/f', new Date(), new Date(0))), 'ENOENT');
+	assert.strictEqual(await code(fs.utimes('/tmp/nope', new Date(), new Date(0))), 'ENOENT');
+	await fs.writeFile('/tmp/t', '');
+	await fs.utimes('/tmp/t', new Date(), new Date(86400000));
+	await fs.utimes('/w/a', new Date(), new Date(86400000));
+	assert.strictEqual(+(await fs.stat('/tmp/t')).mtime, 86400000);
+	assert.strictEqual(ov.denied.length, 2, 'nothing more was refused');
+});
+
 test('a write a real file system would refuse (no parent, the parent is a file, a directory) is an error the command reports: it is not `denied`', async () => {
 	const { ov, fs } = setup({ '/w/d': null, '/w/f': 'x' });
 	// touch, tee, sort -o and split call writeFile with the content: GNU says "No such file or directory" and goes on

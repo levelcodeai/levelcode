@@ -62,11 +62,7 @@ const KNOWN_DIFFERENCES = [
 	},
 	{
 		why: 'regular expressions are RE2 (linear time, no back-references, no lookaround)',
-		cases: { 'grep-backref': 'stdout+stderr', 'x-grep-E-backref': 'stdout+exit+stderr', 'grep-P': 'stdout+stderr', 'sed-backref-pattern': 'stdout', 'x-sed-E-backref': 'stdout' },
-	},
-	{
-		why: 'engine: sed has no \\U \\L \\E case conversion in the replacement',
-		cases: { 'sed-case-flag': 'stdout', 'sed-regex-extensions': 'stdout' },
+		cases: { 'grep-backref': 'stdout+stderr', 'x-grep-E-backref': 'stdout+exit+stderr', 'grep-P': 'stdout+stderr', 'sed-backref-pattern': 'stdout+exit+stderr', 'x-sed-E-backref': 'stdout+exit+stderr' },
 	},
 	{
 		why: 'engine: find -regex matches a part of the path, GNU the whole path',
@@ -150,16 +146,8 @@ const KNOWN_DIFFERENCES = [
 	},
 	// Found by the third round's differencing, not before it (round3.mjs, `r3-gap-*`): new entries, each with its reason
 	{
-		why: 'engine: sed q and Q take no exit status (`2q5` is a syntax error)',
-		cases: { 'r3-gap-sed-q-exit-and-z': 'stdout+stderr' },
-	},
-	{
 		why: 'engine: grep has no -b (byte offset)',
 		cases: { 'r3-gap-grep-b': 'stdout+exit+stderr' },
-	},
-	{
-		why: 'engine: find -printf prints %y (the type) as typed; it knows the names, sizes, modes and times',
-		cases: { 'r3-gap-find-printf-type': 'stdout' },
 	},
 	{
 		why: 'by design: hard links cannot be made (the engine says so in its own words), as symbolic ones cannot',

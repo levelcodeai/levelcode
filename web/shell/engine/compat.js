@@ -27,7 +27,7 @@ const tr = require('./tr.js');
 const zero = require('./zero.js');
 const datestr = require('./datestr.js');
 const diffs = require('./diff.js');
-const { decodeBytes, decodeByteString, encodeText } = require('./text.js');
+const { decodeBytes, decodeByteString, encodeText, versionCompare } = require('./text.js');
 
 /** just-bash commands that are not offered: they need node:zlib / a DOM, neither of which a worker has. */
 const EXCLUDED = ['gzip', 'gunzip', 'zcat', 'html-to-markdown'];
@@ -89,6 +89,7 @@ const OPTION_VALUES = {
 	basename: { short: 's', long: ['--suffix'] },
 	comm: { short: '', long: ['--output-delimiter'] },
 	join: { short: '12ajeotv', long: [] },
+	cut: { short: 'bcdf', long: ['--bytes', '--characters', '--delimiter', '--fields', '--output-delimiter'] },
 };
 OPTION_VALUES.egrep = OPTION_VALUES.grep;
 OPTION_VALUES.fgrep = OPTION_VALUES.grep;
@@ -391,6 +392,11 @@ function parseXargs(args, upperLimit = XARGS_UPPER_LIMIT) {
 			}
 		}
 	}
+	// -E and -e are read only with blanks and newlines as separators: GNU says so, in a message that ends in a newline of
+	// its own (hence the empty line after it)
+	if (opts.eof !== null && (opts.nul || opts.delim !== null)) {
+		warnings.push('xargs: warning: the -E option has no effect if -0 or -d is used.\n\n');
+	}
 	return { opts, command: args.slice(i), warnings };
 }
 
@@ -403,7 +409,8 @@ function parseXargs(args, upperLimit = XARGS_UPPER_LIMIT) {
  *
  * @param {string} input
  * @param {{ nul: boolean, delim: string | null, replace: string | null, eof: string | null, maxLines?: number | null }} o
- * @returns {{ lines: Array<string[] & { continued?: boolean }>, error: string | null }}
+ * @returns {{ lines: Array<string[] & { continued?: boolean }>, error: string | null, nul: boolean }} `nul`: an item has a
+ *   NUL in it, which GNU says (once) when blanks and newlines are the separators
  */
 function xargsInput(input, o) {
 	/** @type {Array<string[] & { continued?: boolean }>} */
@@ -413,7 +420,7 @@ function xargsInput(input, o) {
 		const items = input.split(d);
 		if (items.length && items[items.length - 1] === '') { items.pop(); }
 		for (const it of items) { lines.push([it]); }
-		return { lines, error: null };
+		return { lines, error: null, nul: false };
 	}
 	const replaceMode = o.replace !== null;
 	const wholeLines = replaceMode || (o.maxLines !== null && o.maxLines !== undefined);
@@ -459,13 +466,16 @@ function xargsInput(input, o) {
 		lastWasBlank = false;
 	}
 	endLine();
+	// a NUL in what blanks and newlines separated is said (once); the argument that holds it ends there, which is what
+	// the command is given (run: a C string)
+	const nul = lines.some((l) => l.some((it) => it.includes('\0')));
 	if (o.eof !== null) {
 		for (let k = 0; k < lines.length; k++) {
 			const at = lines[k].indexOf(o.eof);
 			if (at >= 0) { lines[k] = Object.assign(lines[k].slice(0, at), { continued: false }); lines.length = lines[k].length ? k + 1 : k; break; }
 		}
 	}
-	return { lines, error: null };
+	return { lines, error: null, nul };
 }
 
 /**
@@ -498,6 +508,9 @@ function xargsPlan(lines, o, base, size = null, inputError = null) {
 	let stopped = inputError;
 	if (o.replace !== null) {
 		if (o.replace === '' && lines.length) {
+			// the command word is never changed: with nothing after it there is nowhere to put an item, and the command
+			// is run once for each line with no argument (its size is checked as it is for any replace string)
+			if (base.length === 1) { return xargsPlan(lines, Object.assign({}, o, { replace: '\u0000' }), base, size, inputError); }
 			// an empty string is found at every place of every word, so the command line of the first item grows until it
 			// is too long. The checks of -s that come before a command is built come first, in the words they have with -I
 			// (the item that cannot fit, the command that cannot); what gets past them is the growing line
@@ -573,12 +586,14 @@ function xargsPlan(lines, o, base, size = null, inputError = null) {
 		count++;
 	}
 	if (stopped) {
+		// with -x (which -L implies) the batch that was still being filled is not run, whatever stopped the reading; a
+		// full one is
+		if ((exact || o.exitIfExceeded) && !full()) { cur = []; }
+		// what is open is sent off (and traced by -t) before the reading is said to have stopped: an item that does not
+		// fit is found when the batch before it is being run, and GNU says the quote that is not closed after the
+		// batch that came before it
+		flush();
 		events.push({ error: stopped, fatal: false });
-		// with -x (which -L implies) the batch that was still being filled is not run; a full one is. An item that
-		// cannot fit at all ends the run the same way for a plain -x (no -n, -L or -I): GNU says "argument line too
-		// long" and runs nothing more
-		const tooLong = stopped === 'xargs: argument line too long\n';
-		if ((exact || (o.exitIfExceeded && tooLong)) && !full()) { cur = []; }
 	}
 	flush();
 	// nothing to read: GNU runs the command once, without arguments, unless -r
@@ -840,9 +855,10 @@ function normaliseGrep(args) {
 			out.push(a);
 			continue;
 		}
-		// a cluster: drop the letters that mean nothing here, keep the order of the rest
+		// a cluster: drop the letters that mean nothing here, keep the order of the rest; digits are -NUM, which is -C NUM
 		let kept = '-';
 		let takesValue = false;
+		let digits = '';
 		for (let c = 1; c < a.length; c++) {
 			const ch = a[c];
 			if (GREP_SHORT_VALUE.has(ch)) {
@@ -850,9 +866,11 @@ function normaliseGrep(args) {
 				takesValue = c === a.length - 1;
 				break;
 			}
+			if (ch >= '0' && ch <= '9') { digits += ch; continue; }
 			if (!GREP_DROP_SHORT.has(ch)) { kept += ch; }
 		}
 		if (kept !== '-') { out.push(kept); }
+		if (digits !== '') { out.push('-C', digits); }
 		if (takesValue && i + 1 < args.length) { out.push(args[++i]); }
 	}
 	return out;
@@ -2420,22 +2438,6 @@ function lsGlob(glob) {
 	return new RegExp(re + '$');
 }
 
-/** `strverscmp`-like: runs of digits compare as numbers, the rest byte by byte. */
-function versionCompare(a, b) {
-	const ta = a.match(/\d+|\D+/g) || [];
-	const tb = b.match(/\d+|\D+/g) || [];
-	for (let i = 0; i < Math.min(ta.length, tb.length); i++) {
-		const x = ta[i];
-		const y = tb[i];
-		if (/^\d/.test(x) && /^\d/.test(y)) {
-			const d = Number(x) - Number(y);
-			if (d) { return d < 0 ? -1 : 1; }
-			if (x.length !== y.length) { return x.length < y.length ? 1 : -1; }
-		} else if (x !== y) { return x < y ? -1 : 1; }
-	}
-	return ta.length === tb.length ? 0 : ta.length < tb.length ? -1 : 1;
-}
-
 /**
  * The listing the engine made, with what -I, --ignore and --hide hide taken out, and a plain listing of one folder
  * ordered by extension or version when that was asked for; -n shows 1000 for the owner and the group.
@@ -2801,6 +2803,8 @@ function commands(defineCommand, LimitError) {
 		// not. cp -f does not look first: it says "cannot stat" when it gets to the copy
 		if (!force) {
 			let blocked = !!(destStat && !destStat.isDirectory && destTyped.endsWith('/') && destTyped.length > 1);
+			// a file the typed name goes through, up again by `..` (`f/../d`): the name as typed is not there at all
+			if (!destStat && !blocked && destPlain.includes('..')) { blocked = (await whyMissing(ctx, destPlain)) === 'Not a directory'; }
 			for (let q = dirName(abs(ctx, destPlain)); !destStat && !blocked; q = dirName(q)) {
 				const st = await statOrNull(ctx, q);
 				if (st) { blocked = !st.isDirectory; break; }
@@ -3241,9 +3245,32 @@ function commands(defineCommand, LimitError) {
 				args.splice(p.files[1], 1);
 			}
 			const stdinFor = swap ? zero.swapIn(stdinText, x) : stdinText;
-			const run = (list) => ctx.exec(shellQuote(program), { cwd: ctx.cwd, signal: ctx.signal, args: list, stdin: stdinFor });
+			const run = (list, stdin = stdinFor) => ctx.exec(shellQuote(program), { cwd: ctx.cwd, signal: ctx.signal, args: list, stdin });
+			// context lines come with `--` between the groups, which is also a record that may be there: every record of
+			// the output gets its line number (taken off again) so that the separator is known by what it is
+			const stripNumbers = isGrep && swap && !!kind && kind.context && !kind.lineNumber && !kind.names && !kind.count && !kind.quiet;
+			if (stripNumbers) { args.unshift('-n'); }
 			let r;
-			if (program === 'sed' && p.separate && !p.inPlace && p.files.length > 1) {
+			if (program === 'tail' && p.files.length > 0 && zero.tailHeaders(args, p.files.length)) {
+				// each file is a run of its own, with the header GNU prints: its line ends in a newline, whatever ends a
+				// record (the placeholder is turned into one with the rest), and a blank line comes before the second
+				r = { stdout: '', stderr: '', exitCode: 0 };
+				const skip = new Set(p.files);
+				const base = zero.withoutHeaderOptions(args.filter((_a, i) => !skip.has(i)));
+				let printed = false;
+				let stdinLeft = stdinFor;
+				for (const i of p.files) {
+					// (standard input is what the engine reads when it is given no file: it knows no `-`)
+					const one = await run(args[i] === '-' ? base : [...base, args[i]], args[i] === '-' ? stdinLeft : '');
+					if (args[i] === '-') { stdinLeft = ''; }
+					r.stderr += one.stderr;
+					if (one.exitCode) { r.exitCode = one.exitCode; }
+					// a file that cannot be read has no header
+					if (one.exitCode && one.stdout === '') { continue; }
+					r.stdout += `${printed ? x : ''}==> ${args[i] === '-' ? 'standard input' : copies.find((c) => c.at === i)?.name ?? args[i]} <==${x}${one.stdout}`;
+					printed = true;
+				}
+			} else if (program === 'sed' && p.separate && !p.inPlace && p.files.length > 1) {
 				// each file is a run of its own: `$` and the line numbers are the file's
 				r = { stdout: '', stderr: '', exitCode: 0 };
 				const skip = new Set(p.files);
@@ -3266,14 +3293,20 @@ function commands(defineCommand, LimitError) {
 				stderr = stderr.split(c.tmp).join(c.name);
 			}
 			const unswapped = (t) => (swap ? zero.swapOut(t, x) : t);
+			const typedNames = p.files.map((i) => p.args[i]);
 			if (swap) {
-				// names and counts (grep -l, -L, -c) are lines of their own, whatever ends a record
-				stdout = kind && (kind.names || kind.count) ? stdout.split(x).join('\n') : zero.swapOut(stdout, x);
+				if (isGrep && kind && !kind.names && !kind.count) {
+					// the lines of the engine are the records, each with its prefixes, and the separator between groups
+					stdout = grepRecords(stdout, x, { names: grepShownNames(typedNames, usesStdin, g), numbers: kind.lineNumber || stripNumbers, keepNumbers: kind.lineNumber, context: kind.context, nul: p.nul });
+				} else {
+					// names and counts (grep -l, -L, -c) are lines of their own, whatever ends a record
+					stdout = isGrep && kind && (kind.names || kind.count) ? stdout.split(x).join('\n') : zero.swapOut(stdout, x);
+				}
 				stderr = stderr.split(x).join('\n');
 				// `sort -c` ends its message about the record that is out of order as it ends a record
 				if (program === 'sort') { stderr = stderr.replace(/(: disorder: [^\n]*)\n$/, '$1\0'); }
 			}
-			if (isGrep && p.nul && g) { stdout = grepNullNames(stdout, p.files.map((i) => p.args[i]), usesStdin, g, kind); }
+			if (isGrep && p.nul && g && !(swap && kind && !kind.names && !kind.count)) { stdout = grepNullNames(stdout, typedNames, usesStdin, g, kind); }
 			// the files the engine changed are written back with the records as they were
 			if (p.inPlace && r.exitCode <= 1) {
 				for (const c of copies) {
@@ -3313,8 +3346,57 @@ function commands(defineCommand, LimitError) {
 	}
 
 	/**
-	 * `grep -Z`: the name that starts a line is ended by NUL where it was ended by `:` (a match) or `-` (context), a name
-	 * listed by -l or -L by NUL where it was ended by a newline, and `name:count` of -c is `name\0count`.
+	 * The names a grep line may put in front of a record, longest first: the files as typed, and `(standard input)`; none
+	 * when the output has no names (one input, no -H, not recursive, or -h).
+	 *
+	 * @param {string[]} names the operands as they were typed
+	 * @param {boolean} fromStdin
+	 * @param {ReturnType<typeof grepOperands> | null} g
+	 * @returns {string[]}
+	 */
+	function grepShownNames(names, fromStdin, g) {
+		if (!g) { return []; }
+		const shown = (names.filter((n) => n !== '-').length + (fromStdin ? 1 : 0) > 1 || g.withName || g.recursive) && !g.noName;
+		if (!shown) { return []; }
+		return names.filter((n) => n !== '-').concat(fromStdin ? ['(standard input)'] : []).sort((a, b) => b.length - a.length);
+	}
+
+	/**
+	 * What a grep that read records ended by NUL printed, made GNU's: each line of the engine is one record (its newlines
+	 * are `x`) with the prefixes the engine put on it (`NAME:`, `NAME-`, `N:`, `N-`), a record ends in NUL, the line `--`
+	 * between groups of context is a newline-ended line (as GNU's `--\n`), and with -Z the name is ended by NUL where the
+	 * engine had `:` or `-`.
+	 *
+	 * @param {string} out what the engine printed
+	 * @param {string} x the character the real newlines were given as
+	 * @param {{ names: string[], numbers: boolean, keepNumbers: boolean, context: boolean, nul: boolean }} o
+	 */
+	function grepRecords(out, x, o) {
+		if (!out) { return out; }
+		const lines = out.split('\n');
+		if (lines[lines.length - 1] === '') { lines.pop(); }
+		let text = '';
+		for (const l of lines) {
+			if (o.context && l === '--') { text += '--\n'; continue; }
+			let rest = l;
+			let name = '';
+			let sep = '';
+			for (const n of o.names) {
+				if (rest.startsWith(n) && (rest[n.length] === ':' || rest[n.length] === '-')) { name = n; sep = rest[n.length]; rest = rest.slice(n.length + 1); break; }
+			}
+			let number = '';
+			if (o.numbers) {
+				const m = /^\d+[:-]/.exec(rest);
+				if (m) { if (o.keepNumbers) { number = m[0]; } rest = rest.slice(m[0].length); }
+			}
+			text += (name === '' ? '' : name + (o.nul ? '\0' : sep)) + number + rest.split(x).join('\n') + '\0';
+		}
+		return text;
+	}
+
+	/**
+	 * `grep -Z` of what is not a record: a name listed by -l or -L ends in NUL where it ended in a newline, `name:count` of
+	 * -c is `name\0count`, and the name that starts a line is ended by NUL where it was ended by `:` or `-`.
 	 *
 	 * @param {string} out what the engine printed (lines)
 	 * @param {string[]} names the operands as they were typed
@@ -3325,9 +3407,8 @@ function commands(defineCommand, LimitError) {
 	function grepNullNames(out, names, fromStdin, g, kind) {
 		if (!out) { return out; }
 		if (kind && kind.names) { return out.split('\n').map((l, i, all) => (i === all.length - 1 && l === '' ? '' : l + '\0')).join(''); }
-		const shown = (names.filter((n) => n !== '-').length + (fromStdin ? 1 : 0) > 1 || g.withName || g.recursive) && !g.noName;
-		if (!shown) { return out; }
-		const known = names.filter((n) => n !== '-').concat(fromStdin ? ['(standard input)'] : []).sort((a, b) => b.length - a.length);
+		const known = grepShownNames(names, fromStdin, g);
+		if (!known.length) { return out; }
 		return out.split('\n').map((l) => {
 			if (l === '' || l === '--') { return l; }
 			if (kind && kind.count) { return l.replace(/^(.*):(\d+)$/, '$1\0$2'); }
@@ -3366,7 +3447,7 @@ function commands(defineCommand, LimitError) {
 				const runs = plan.reduce((n, e) => n + ('argv' in e ? 1 : 0), 0);
 				if (typeof maxIterations === 'number' && runs > maxIterations) { throw limitError(`xargs: iteration limit exceeded (${maxIterations})`); }
 				let stdout = '';
-				let stderr = warnings.join('');
+				let stderr = warnings.join('') + (read.nul ? 'xargs: WARNING: a NUL character occurred in the input.  It cannot be passed through in the argument list.  Did you mean to use the --null option?\n' : '');
 				let failed = false;
 				let stoppedReading = false;
 				let status = 0;
@@ -3377,7 +3458,7 @@ function commands(defineCommand, LimitError) {
 						stoppedReading = true;
 						continue;
 					}
-					const argv = ev.argv;
+					const argv = ev.argv.map((w) => (w.includes('\0') ? w.slice(0, w.indexOf('\0')) : w));
 					// nobody can answer: GNU, with no terminal to ask, fails closed and runs nothing
 					if (opts.prompt) { return { stdout, stderr: stderr + argv.map(xargsQuote).join(' ') + 'xargs: failed to open /dev/tty for reading: No such device or address\n', exitCode: 1 }; }
 					if (opts.openTty) { return { stdout, stderr: stderr + "xargs: '/dev/tty': No such device or address\n", exitCode: 125 }; }
@@ -3390,6 +3471,7 @@ function commands(defineCommand, LimitError) {
 					}
 					// the arguments are handed over as they are (the engine's `args`), never through the parser: no quoting, and
 					// no cap of its own on the length of the line
+					// an argument is a C string: it ends at a NUL, whatever was put into it
 					const r = await ctx.exec(shellQuote(argv[0]), { cwd: ctx.cwd, signal: ctx.signal, args: argv.slice(1) });
 					stdout += r.stdout || '';
 					const err = r.stderr || '';
@@ -3419,27 +3501,33 @@ function commands(defineCommand, LimitError) {
 			return ctx.origCommand(normaliseXargs(args));
 		}),
 		...['grep', 'egrep', 'fgrep'].map((name) => define(name, async (args, ctx) => {
-		if (!ctx.origCommand) { return missingOriginal(name); }
-		// -d and -D (what to do with a folder, a device): taken out here, the engine has neither
-		const dd = grepDirectories(args);
-		if (dd.result) { return dd.result; }
-		if (dd.args.length !== args.length || dd.args.some((x, k) => x !== args[k])) {
-			args = dd.args;
-			if (dd.action === 'skip' && !args.some((x) => x === '-r' || x === '-R' || x === '--recursive')) {
-				// the folders given as files are not read, and not said: names are still shown when there were several
-				const g = grepOperands(args);
-				const drop = new Set();
-				for (const i of g.fileAt) { const st = args[i] === '-' ? null : await statOrNull(ctx, abs(ctx, args[i])); if (st && st.isDirectory) { drop.add(i); } }
-				if (drop.size) {
-					if (drop.size === g.fileAt.length) { return { stdout: '', stderr: '', exitCode: 1 }; }
-					const more = g.fileAt.length > 1 && !g.noName && !g.withName ? ['-H'] : [];
-					args = [...more, ...args.filter((x, k) => !drop.has(k))];
+			if (!ctx.origCommand) { return missingOriginal(name); }
+			// -d and -D (what to do with a folder, a device): taken out here, the engine has neither
+			const dd = grepDirectories(args);
+			if (dd.result) { return dd.result; }
+			if (dd.args.length !== args.length || dd.args.some((x, k) => x !== args[k])) {
+				args = dd.args;
+				if (dd.action === 'skip' && !args.some((x) => x === '-r' || x === '-R' || x === '--recursive')) {
+					// the folders given as files are not read, and not said: names are still shown when there were several
+					const g = grepOperands(args);
+					const drop = new Set();
+					for (const i of g.fileAt) { const st = args[i] === '-' ? null : await statOrNull(ctx, abs(ctx, args[i])); if (st && st.isDirectory) { drop.add(i); } }
+					if (drop.size) {
+						if (drop.size === g.fileAt.length) { return { stdout: '', stderr: '', exitCode: 1 }; }
+						const more = g.fileAt.length > 1 && !g.noName && !g.withName ? ['-H'] : [];
+						args = [...more, ...args.filter((x, k) => !drop.has(k))];
+					}
 				}
 			}
-		}
-		// -z and -Z (records and names that end in NUL): zeroRun
-		const zp = zero.plan(name, args, OPTION_VALUES[name]);
-		if (zp.zero || zp.nul) { return zeroRun(ctx, name, zp); }
+			// -l and -L of standard input name it `(standard input)`; the engine, given no operand, prints the lines it matched
+			// (and nothing at all for -L). An operand `-` is the same input and it says the name
+			{
+				const g = grepOperands(args);
+				if (!g.recursive && g.files.length === 0 && zero.grepOutputKind(args).names) { args = [...args, '-']; }
+			}
+			// -z and -Z (records and names that end in NUL): zeroRun
+			const zp = zero.plan(name, args, OPTION_VALUES[name]);
+			if (zp.zero || zp.nul) { return zeroRun(ctx, name, zp); }
 			// a directory named with a trailing slash prints src/file, not src//file (GNU strips it for the name)
 			const g0 = grepOperands(args);
 			const typed = args.slice();
@@ -3537,18 +3625,32 @@ function commands(defineCommand, LimitError) {
 					const at = plain.lastIndexOf('/');
 					const parent = at < 0 ? await statOrNull(ctx, ctx.cwd) : await typedStat(ctx, plain.slice(0, at) || '/');
 					if (parent && parent.isDirectory) {
-						stderr += `rm: refusing to remove '.' or '..' directory: skipping '${o}'\n`;
+						// -r refuses them by name; without it they are folders, whatever -f says, and with -d the folder is looked
+						// at: one that is empty is refused by name as well, one that is not is "Directory not empty"
+						let refuse = recursive;
+						if (!recursive && dirs) {
+							try { refuse = (await ctx.fs.readdir(abs(ctx, o))).length === 0; } catch { refuse = false; }
+						}
+						stderr += refuse ? `rm: refusing to remove '.' or '..' directory: skipping '${o}'\n` : `rm: cannot remove '${o}': ${dirs ? 'Directory not empty' : 'Is a directory'}\n`;
 						exitCode = 1;
 					} else if (!force) {
-						stderr += `rm: cannot remove '${o}': ${parent ? 'Not a directory' : 'No such file or directory'}\n`;
+						stderr += `rm: cannot remove '${o}': ${(await whyMissing(ctx, plain)) || (parent ? 'Not a directory' : 'No such file or directory')}\n`;
 						exitCode = 1;
 					}
 					continue;
 				}
+				// a file written with a slash is no file (`rm f/` is "Not a directory" and f stays; the engine removed it)
+				if (o.length > 1 && o.endsWith('/')) {
+					const st = await typedStat(ctx, o.replace(/\/+$/, ''));
+					if (st && !st.isDirectory) {
+						if (!force) { stderr += `rm: cannot remove '${o}': Not a directory\n`; exitCode = 1; }
+						continue;
+					}
+				}
 				// a name through `..` of a folder that is not there is not there (the engine took `x/../d` for `d`)
 				if (await reachable(ctx, o)) { todo.push(o); continue; }
 				if (!force) {
-					stderr += `rm: cannot remove '${o}': No such file or directory\n`;
+					stderr += `rm: cannot remove '${o}': ${(await whyMissing(ctx, o.replace(/\/+$/, ''))) || 'No such file or directory'}\n`;
 					exitCode = 1;
 				}
 			}
@@ -3823,7 +3925,7 @@ function commands(defineCommand, LimitError) {
 			if (t.files.some((f) => f.includes('..'))) {
 				const keep = [];
 				for (const f of t.files) {
-					if (await reachable(ctx, f)) { keep.push(f); } else if (!t.args.some((a) => a === '-c' || a === '--no-create' || (/^-[A-Za-z]*c/.test(a) && !a.startsWith('--')))) { gone += `touch: cannot touch '${f}': No such file or directory\n`; } else { keep.push(f); }
+					if (await reachable(ctx, f)) { keep.push(f); } else if (!t.args.some((a) => a === '-c' || a === '--no-create' || (/^-[A-Za-z]*c/.test(a) && !a.startsWith('--')))) { gone += `touch: cannot touch '${f}': ${(await whyMissing(ctx, f.replace(/\/+$/, ''))) || 'No such file or directory'}\n`; } else { keep.push(f); }
 				}
 				if (keep.length !== t.files.length) {
 					toTouch = keep;
@@ -3921,7 +4023,12 @@ function commands(defineCommand, LimitError) {
 				stamp: (ms) => statTimeFormat('%y', ms === null ? Date.now() : ms, zone.getZone()),
 				quote: xargsQuote,
 			}).finally(async () => { for (const t of temps) { try { await ctx.fs.rm(t, { force: true }); } catch { /* under /tmp */ } } });
-			return r || ctx.origCommand(args);
+			const res = r || await ctx.origCommand(args);
+			// what the engine says of an option that is not one is GNU's getopt's, without the hint and with status 1: GNU's is 2
+			if (res.exitCode === 1 && /^diff: (unrecognized option '|invalid option -- |option '[^']*' (requires|doesn't allow)|option requires)/.test(res.stderr) && !res.stderr.includes("Try 'diff --help'")) {
+				return Object.assign({}, res, { stderr: res.stderr + "diff: Try 'diff --help' for more information.\n", exitCode: 2 });
+			}
+			return res;
 		}),
 		define('cut', async (args, ctx) => {
 			if (!ctx.origCommand) { return missingOriginal('cut'); }
@@ -4152,18 +4259,27 @@ function commands(defineCommand, LimitError) {
 			const rules = [];
 			const after = [];
 			let pending = [];
+			// a file named twice is two files: the assignments before the second one are for the second reading of it, so the
+			// rules count how often each name was opened (the name alone would fire them at the first). The rule runs with the
+			// first record read: a new FS splits that one again (`$0=$0`), as GNU's assignment came before it was read
+			const named = operands.slice(first).filter((o) => !name.test(o));
+			const opened = new Map();
 			for (const o of operands.slice(first)) {
 				if (name.test(o)) {
 					if (!files.length) { after.push(setter(o)); } else { pending.push(setter(o)); }
 					continue;
 				}
+				const nth = (opened.get(o) || 0) + 1;
+				opened.set(o, nth);
 				if (pending.length) {
-					rules.push(`FNR==1&&FILENAME==${literal('"' + o.replace(/"/g, '\\"') + '"').slice(1, -1) ? '"' + o.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' : '""'}{${pending.join(';')}}`);
+					const again = named.filter((x) => x === o).length > 1;
+					rules.push(`FNR==1&&FILENAME=="${o.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"${again ? `&&__lcn[FILENAME]==${nth}` : ''}{${pending.join(';')}${pending.some((x) => /^FS=/.test(x)) ? ';$0=$0' : ''}}`);
 					pending = [];
 				}
 				files.push(o);
 			}
 			if (pending.length) { rules.push(`END{${pending.join(';')}}`); }
+			if (rules.some((r) => r.includes('__lcn[FILENAME]'))) { rules.unshift('FNR==1{__lcn[FILENAME]++}'); }
 			// a lone `-` is standard input, which is what no file is
 			const operandsOut = files.length === 1 && files[0] === '-' ? [] : files;
 			let text;
@@ -4213,6 +4329,12 @@ function commands(defineCommand, LimitError) {
 				if (a === '-d' || a === '--date') { at = i + 1; text = out[at]; } else if (a.startsWith('--date=')) { at = i; text = a.slice(7); }
 				if (at < 0 || text === undefined) { continue; }
 				const give = (seconds) => { if (at === i + 1) { out[at] = '@' + seconds; } else { out[i] = '--date=@' + seconds; } };
+				// GNU takes blanks and a plus after the `@` (`@ 5`, `@+5`); the engine's date wants `@5`
+				const blanks = /^\s*@\s*([+-]?)\s*(\d+(?:[.,]\d+)?)\s*$/.exec(text);
+				if (blanks && blanks[0].trim() !== '@' + (blanks[1] === '-' ? '-' : '') + blanks[2]) {
+					text = '@' + (blanks[1] === '-' ? '-' : '') + blanks[2];
+					if (at === i + 1) { out[at] = text; } else { out[i] = '--date=' + text; }
+				}
 				const frac = /^\s*@(-?)(\d+)[.,](\d+)\s*$/.exec(text);
 				if (frac) {
 					// `@1.5`: seconds and a fraction; before the epoch the fraction counts back
@@ -4278,6 +4400,12 @@ module.exports = {
 	normaliseSed,
 	normalisePaste,
 	normaliseSort,
+	parseSortKey,
+	sortKeys,
+	seqFormatted,
+	versionCompare,
+	lsOptions,
+	grepDirectories,
 	normaliseLs,
 	fixSedOneLiner,
 	parseTouch,

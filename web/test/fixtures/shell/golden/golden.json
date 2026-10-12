@@ -8,7 +8,7 @@
 			"whoami-uname"
 		],
 		"inlineMax": 4096,
-		"cases": 821
+		"cases": 842
 	},
 	"fixture": {
 		"script": "rm -rf proj; mkdir -p proj/src/lib proj/docs proj/node_modules/pkg proj/empty\nprintf 'hello\\nworld\\nfoo bar\\n' > proj/a.txt\nprintf 'alpha\\nbeta\\ngamma\\nbeta\\nalpha\\nbeta\\n' > proj/words.txt\nprintf 'line1\\nTODO: fix this\\nline3\\nTODO: another\\n' > proj/src/main.js\nprintf 'export const x = 1;\\n// TODO later\\n' > proj/src/lib/util.js\nprintf '# Title\\n\\nSome docs with TODO.\\n' > proj/docs/README.md\nprintf '{\"name\":\"pkg\",\"version\":\"1.0.0\"}\\n' > proj/node_modules/pkg/package.json\nprintf 'name,age,city\\nalice,30,paris\\nbob,25,london\\ncarol,35,paris\\n' > proj/data.csv\nprintf 'a b c\\n1 2 3\\n4 5 6\\n' > proj/nums.txt\nprintf 'no newline at end' > proj/nonl.txt\nprintf '#!/bin/sh\\necho script ran: $1\\n' > proj/run.sh\nprintf 'tab\\tseparated\\tvalues\\nsecond\\trow\\there\\n' > proj/tabs.txt\n",
@@ -13491,6 +13491,337 @@
 				"dirs": [
 					"d"
 				],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-grep-l-L-stdin-names-it",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a\\nb\\n' | grep -l a; printf 'a\\nb\\n' | grep -L a; printf 'a\\nb\\n' | grep -L c; printf 'a\\0z\\0' | grep -zl a; printf 'a\\0z\\0' | grep -zL c; printf 'a\\nb\\n' | grep -c a; printf 'a\\n' | grep -lH a; printf 'a\\n' | grep -l a -; printf 'a\\n' | grep -lq a; echo \"rc=$?\"",
+			"stdout": "(standard input)\n(standard input)\n(standard input)\n(standard input)\n1\n(standard input)\n(standard input)\nrc=0\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-grep-z-group-separator-is-a-newline-line",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a1\\0x\\0y\\0z\\0a2\\0w\\0' | grep -z -A1 a | od -c; printf 'a1\\0x\\0y\\0z\\0a2\\0w\\0' | grep -z -n -C1 a | od -c; printf 'a1\\0x\\0y\\0z\\0a2\\0w\\0' | grep -z -B1 -v x | od -c; printf -- '--\\0a\\0--\\0' | grep -z -A1 a | od -c",
+			"stdout": "0000000   a   1  \\0   x  \\0   -   -  \\n   a   2  \\0   w  \\0\n0000015\n0000000   1   :   a   1  \\0   2   -   x  \\0   -   -  \\n   4   -   z  \\0\n0000020   5   :   a   2  \\0   6   -   w  \\0\n0000031\n0000000   a   1  \\0   x  \\0   y  \\0   z  \\0   a   2  \\0   w  \\0\n0000016\n0000000   a  \\0   -   -  \\0\n0000005\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-grep-Z-z-names-on-every-record",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a\\0b\\0a\\0' > f; printf 'a b\\n' > g; grep -ZH -z a f g | od -c; grep -Z -z -n a f g | od -c; printf 'a\\0a\\0' | grep -Z -z -H a | od -c; grep -Zz -c a f g | od -c; grep -Zzl a f g | od -c",
+			"stdout": "0000000   f  \\0   a  \\0   f  \\0   a  \\0   g  \\0   a       b  \\n  \\0\n0000017\n0000000   f  \\0   1   :   a  \\0   f  \\0   3   :   a  \\0   g  \\0   1   :\n0000020   a       b  \\n  \\0\n0000025\n0000000   (   s   t   a   n   d   a   r   d       i   n   p   u   t   )\n0000020  \\0   a  \\0   (   s   t   a   n   d   a   r   d       i   n   p\n0000040   u   t   )  \\0   a  \\0\n0000046\n0000000   f  \\0   2  \\n   g  \\0   1  \\n\n0000010\n0000000   f  \\0   g  \\0\n0000004\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f": {
+						"b64": "YQBiAGEA"
+					},
+					"g": "a b\n"
+				},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-tail-z-headers-end-in-a-newline",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a\\0b\\0c\\0' > f; printf 'x\\0y\\0z\\0' > g; tail -z -n1 f g | od -c; tail -z -n1 -q f g | od -c; tail -z -n1 -v f | od -c; tail -z -n1 f nofile g 2>/dev/null | od -c; tail -z -n1 f nofile g 2>&1 >/dev/null; printf 'p\\0q\\0' | tail -z -n1 - f | od -c; head -z -n1 f g | od -c",
+			"stdout": "0000000   =   =   >       f       <   =   =  \\n   c  \\0  \\n   =   =   >\n0000020       g       <   =   =  \\n   z  \\0\n0000031\n0000000   c  \\0   z  \\0\n0000004\n0000000   =   =   >       f       <   =   =  \\n   c  \\0\n0000014\n0000000   =   =   >       f       <   =   =  \\n   c  \\0  \\n   =   =   >\n0000020       g       <   =   =  \\n   z  \\0\n0000031\ntail: cannot open 'nofile' for reading: No such file or directory\n0000000   =   =   >       s   t   a   n   d   a   r   d       i   n   p\n0000020   u   t       <   =   =  \\n   q  \\0  \\n   =   =   >       f    \n0000040   <   =   =  \\n   c  \\0\n0000046\n0000000   =   =   >       f       <   =   =  \\n   a  \\0  \\n   =   =   >\n0000020       g       <   =   =  \\n   x  \\0\n0000031\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f": {
+						"b64": "YQBiAGMA"
+					},
+					"g": {
+						"b64": "eAB5AHoA"
+					}
+				},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-sed-z-newline-in-the-replacement",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a\\0b\\0' | sed -z 's/a/x\\ny/' | od -c; printf 'a\\0b\\0' | sed -z 's/a/x\\\ny/' | od -c; printf 'a\\nb\\0' | sed -z 's/\\n/+/' | od -c; printf 'a\\nb\\0' | sed -z 's/a$/X/' | od -c; printf 'a\\nb\\0' | sed -z 's/^b/X/' | od -c",
+			"stdout": "0000000   x  \\n   y  \\0   b  \\0\n0000006\n0000000   x  \\n   y  \\0   b  \\0\n0000006\n0000000   a   +   b  \\0\n0000004\n0000000   a  \\n   b  \\0\n0000004\n0000000   a  \\n   b  \\0\n0000004\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-xargs-E-has-no-effect-with-0-or-d",
+			"source": "round5",
+			"fixture": false,
+			"script": "for o in '-0 -E x' '-0 -E \"\"' '-0 -e' '-0 -eEND' '-0 --eof=END' '-d, -E x' '-E x -0' '-0 -E x -E \"\"' '-0 -E \"\" -E y' '-0 -L1 -E x' '-0 -I{} -E x'; do echo \"## $o\"; printf 'a\\0b\\0x\\0c\\0' | eval \"xargs $o echo\" 2>/dev/null; echo \"rc=$?\"; { printf 'a\\0b\\0x\\0c\\0' | eval \"xargs $o echo\" >/dev/null; } 2>&1 | od -c | head -3; done",
+			"stdout": "## -0 -E x\na b x c\nrc=0\n0000000   x   a   r   g   s   :       w   a   r   n   i   n   g   :    \n0000020   t   h   e       -   E       o   p   t   i   o   n       h   a\n0000040   s       n   o       e   f   f   e   c   t       i   f       -\n## -0 -E \"\"\na b x c\nrc=0\n0000000\n## -0 -e\na b x c\nrc=0\n0000000\n## -0 -eEND\na b x c\nrc=0\n0000000   x   a   r   g   s   :       w   a   r   n   i   n   g   :    \n0000020   t   h   e       -   E       o   p   t   i   o   n       h   a\n0000040   s       n   o       e   f   f   e   c   t       i   f       -\n## -0 --eof=END\na b x c\nrc=0\n0000000   x   a   r   g   s   :       w   a   r   n   i   n   g   :    \n0000020   t   h   e       -   E       o   p   t   i   o   n       h   a\n0000040   s       n   o       e   f   f   e   c   t       i   f       -\n## -d, -E x\na\nrc=0\n0000000   x   a   r   g   s   :       w   a   r   n   i   n   g   :    \n0000020   t   h   e       -   E       o   p   t   i   o   n       h   a\n0000040   s       n   o       e   f   f   e   c   t       i   f       -\n## -E x -0\na b x c\nrc=0\n0000000   x   a   r   g   s   :       w   a   r   n   i   n   g   :    \n0000020   t   h   e       -   E       o   p   t   i   o   n       h   a\n0000040   s       n   o       e   f   f   e   c   t       i   f       -\n## -0 -E x -E \"\"\na b x c\nrc=0\n0000000\n## -0 -E \"\" -E y\na b x c\nrc=0\n0000000   x   a   r   g   s   :       w   a   r   n   i   n   g   :    \n0000020   t   h   e       -   E       o   p   t   i   o   n       h   a\n0000040   s       n   o       e   f   f   e   c   t       i   f       -\n## -0 -L1 -E x\na\nb\nx\nc\nrc=0\n0000000   x   a   r   g   s   :       w   a   r   n   i   n   g   :    \n0000020   t   h   e       -   E       o   p   t   i   o   n       h   a\n0000040   s       n   o       e   f   f   e   c   t       i   f       -\n## -0 -I{} -E x\n\n\n\n\nrc=0\n0000000   x   a   r   g   s   :       w   a   r   n   i   n   g   :    \n0000020   t   h   e       -   E       o   p   t   i   o   n       h   a\n0000040   s       n   o       e   f   f   e   c   t       i   f       -\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-xargs-nul-in-the-input",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a\\0b c\\0d e\\n' | xargs -n1 echo 2>/dev/null; echo \"rc=$?\"; { printf 'a\\0b c\\0d e\\n' | xargs -n1 echo >/dev/null; } 2>&1; printf 'a\\0b\\nc\\0d\\n' | xargs -L1 echo 2>/dev/null; { printf 'a\\0b\\nc\\0d\\n' | xargs -L1 echo >/dev/null; } 2>&1; printf 'x\\0y\\0' | xargs -d, echo 2>/dev/null | od -c; { printf 'x\\0y\\0' | xargs -d, echo >/dev/null; } 2>&1; printf 'x\\0y\\n' | xargs -I{} echo '<{}>' 2>/dev/null; printf '\\0b\\n' | xargs -n1 echo 2>/dev/null | od -c",
+			"stdout": "a\nc\ne\nrc=0\nxargs: WARNING: a NUL character occurred in the input.  It cannot be passed through in the argument list.  Did you mean to use the --null option?\na\nc\nxargs: WARNING: a NUL character occurred in the input.  It cannot be passed through in the argument list.  Did you mean to use the --null option?\n0000000   x  \\n\n0000002\n<x\n0000000  \\n\n0000001\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-xargs-trace-comes-before-the-message",
+			"source": "round5",
+			"fixture": false,
+			"script": "for o in '' '-t' '-n1 -t' '-L1 -t' '-I{} -t' '-x -t' '-n2 -x -t'; do echo \"## $o\"; printf \"a b it's c\\n\" | xargs $o echo 2>/dev/null; echo \"rc=$?\"; { printf \"a b it's c\\n\" | xargs $o echo >/dev/null; } 2>&1; printf 'ccc long_long_word ccc\\n' | xargs -s 13 $o echo 2>/dev/null; echo \"rc=$?\"; { printf 'ccc long_long_word ccc\\n' | xargs -s 13 $o echo >/dev/null; } 2>&1; done",
+			"stdout": "## \na b\nrc=1\nxargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\nccc\nrc=1\nxargs: argument line too long\n## -t\na b\nrc=1\necho a b\nxargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\nccc\nrc=1\necho ccc\nxargs: argument line too long\n## -n1 -t\na\nb\nrc=1\necho a\necho b\nxargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\nccc\nrc=1\necho ccc\nxargs: argument line too long\n## -L1 -t\nrc=1\nxargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\nrc=1\nxargs: argument line too long\n## -I{} -t\nrc=1\nxargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\nrc=1\nxargs: argument line too long\n## -x -t\nrc=1\nxargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\nrc=1\nxargs: argument line too long\n## -n2 -x -t\na b\nrc=1\necho a b\nxargs: unmatched single quote; by default quotes are special to xargs unless you use the -0 option\nrc=1\nxargs: argument line too long\n",
+			"stderr": "",
+			"exit": 1,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-xargs-replace-empty-with-only-the-command",
+			"source": "round5",
+			"fixture": false,
+			"script": "for s in 5 10 16 30 100 5000; do echo \"## $s\"; printf 'a\\n' | xargs -s $s --replace= echo 2>&1; echo \"rc=$?\"; printf 'abcdefghij\\n' | xargs -s $s --replace= echo 2>&1; echo \"rc=$?\"; printf 'a\\n' | xargs -s $s --replace= echo x 2>&1; echo \"rc=$?\"; done; printf 'a\\nb\\n' | xargs --replace= echo; printf 'a\\n' | xargs -I '' printf '[%s]'; echo \"rc=$?\"",
+			"stdout": "## 5\n\nrc=0\nxargs: argument line too long\nrc=1\nxargs: command too long\nrc=1\n## 10\n\nrc=0\nxargs: argument line too long\nrc=1\nxargs: command too long\nrc=1\n## 16\n\nrc=0\n\nrc=0\nxargs: command too long\nrc=1\n## 30\n\nrc=0\n\nrc=0\nxargs: command too long\nrc=1\n## 100\n\nrc=0\n\nrc=0\nxargs: command too long\nrc=1\n## 5000\n\nrc=0\n\nrc=0\nxargs: command too long\nrc=1\n\n\nrc=1\n",
+			"stderr": "xargs: command too long\n",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-sed-H-with-an-empty-hold-space",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a\\nb\\n' | sed -n 'H;${x;p}' | od -c; printf 'a\\nb\\n' | sed -n 'H;${x;s/\\n/,/g;p}'; printf 'a\\nb\\n' | sed 'H;$!d;x'; printf 'a\\nb\\n' | sed -n 'G;p' | od -c; printf 'a\\nb\\n' | sed -n 'x;G;p' | od -c; printf 'a\\nb\\nc\\n' | sed -n '1h;1!H;${g;p}'; printf 'a\\nb\\n' | sed 'x;$G' | od -c; printf 'a\\nb\\n' | sed -n 'H;x;p' | od -c",
+			"stdout": "0000000  \\n   a  \\n   b  \\n\n0000005\n,a,b\n\na\nb\n0000000   a  \\n  \\n   b  \\n  \\n\n0000006\n0000000  \\n   a  \\n   a  \\n   b  \\n\n0000007\na\nb\nc\n0000000  \\n   a  \\n   b  \\n\n0000005\n0000000  \\n   a  \\n   a  \\n   b  \\n\n0000007\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-sed-dot-matches-the-newline-of-the-pattern-space",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a\\nb\\n' | sed 'N;s/a.b/X/'; printf 'a\\nb\\n' | sed 'N;s/a[^x]b/X/'; printf 'a\\nb\\n' | sed 'N;s/a\\nb/X/'; printf 'a\\nb\\n' | sed -n 'N;/a.b/p'; printf 'a\\nb\\n' | sed -E 'N;s/a.+b/X/'; printf '1\\n2\\n3\\n' | sed ':a;N;$!ba;s/1.*3/X/'; printf 'a\\nb\\nc\\n' | sed -n 'N;N;s/.$/!/p'; printf 'a\\nb\\n' | sed 'N;s/./X/2'; printf 'a\\nb\\n' | sed 'N;s/./X/g'",
+			"stdout": "X\nX\nX\na\nb\nX\nX\na\nb\n!\naXb\nXXX\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-declare-array-elements-are-words",
+			"source": "round5",
+			"fixture": false,
+			"script": "f() { local a=(\"$@\"); echo \"${#a[@]}\"; printf '[%s]' \"${a[@]}\"; echo; }; f x y z; f; f \"a b\" c; f() { local a=(1 2 3); echo \"${#a[@]}\"; local b=(\"$1\" \"$2\"); echo \"${#b[@]}\"; local -a c=(\"$@\"); echo \"${#c[@]}\"; declare -a d=(\"$@\"); echo \"${#d[@]}\"; }; f x y z; f() { local a=(\"$@\" tail); echo \"${#a[@]}\"; local b=(head \"$@\"); echo \"${#b[@]}\"; local c=($@); echo \"${#c[@]}\"; local d=(\"$*\"); echo \"${#d[@]}\"; }; f x y z; f() { local IFS=,; local a=(\"$*\"); echo \"${a[0]}\"; local b=(\"$@\"); echo \"${#b[@]}\"; }; f x y z; w() { local cmd=(\"$@\"); \"${cmd[@]}\"; }; w printf '[%s]\\n' a 'b c'; w echo 'p\\q' \"r s\"; w; echo \"rc=$?\"; arr=(p q); g() { local copy=(\"${arr[@]}\" r); echo \"${#copy[@]} ${copy[2]}\"; local e=($(echo 1 2 3)); echo \"${#e[@]}\"; local h=(*.nothing); echo \"${#h[@]} ${h[0]}\"; }; g; v='1 2'; k=($v \"$v\"); echo \"${#k[@]}\"; declare -a m=(\"\" x ''); echo \"${#m[@]}\"",
+			"stdout": "3\n[x][y][z]\n0\n[]\n2\n[a b][c]\n3\n2\n3\n3\n4\n4\n3\n1\nx,y,z\n3\n[a]\n[b c]\np\\q r s\nrc=0\n3 r\n3\n1 *.nothing\n3\n3\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-sed-bre-star-with-nothing-before-it",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a*b\\nab\\n*b\\n' > f; sed 's/*b/X/' f; echo --; sed 's/\\(*b\\)/X/' f; echo --; sed 's/^*b/X/' f; echo --; sed 's/a\\|*b/X/' f; echo --; sed -E 's/*b/X/' f; echo \"rc=$?\"; echo --; sed -n '/*/p' f; sed 's/*//g' f; sed 's/a*/X/' f",
+			"stdout": "aX\nab\nX\n--\naX\nab\nX\n--\na*b\nab\nX\n--\nX*b\nXb\nX\n--\nrc=1\n--\na*b\n*b\nab\nab\nb\nX*b\nXb\nX*b\n",
+			"stderr": "sed: -e expression #1, char 7: Invalid preceding regular expression\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f": "a*b\nab\n*b\n"
+				},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-awk-RS-character-paragraph-and-regex",
+			"source": "round5",
+			"fixture": false,
+			"script": "printf 'a,b\\n' | awk -v RS=, '{print NR\":\"$0}'; printf 'a b\\n\\nc d\\ne\\n\\n\\nf\\n' | awk -v RS= '{print NR\": \"$0\" NF=\"NF}'; printf 'a;b;c' | awk 'BEGIN{RS=\";\"}{print}'; printf 'a1b22c' | awk -v RS='[0-9]+' '{print NR\":\"$0}'; printf 'x\\0y\\0z\\0' | awk -v RS='\\0' '{print NR\":\"$0}'; printf '\\n\\na\\nb\\n\\n' | awk -v RS= '{print NR\":\"$0}'; printf 'a b\\nc d\\n' | awk 'BEGIN{RS=\"\\n\"}{print $2}'; printf 'a,b,c' | awk -v RS=, 'END{print NR}'; printf 'a|b|c\\n' | awk 'BEGIN{RS=\"|\"} NR==2'; printf 'one\\ntwo\\n\\nthree\\n' | awk -v RS= -F'\\n' '{print $1\"/\"$2}'; printf 'k1 v1\\nk2 v2\\n\\nk3 v3\\n' | awk 'BEGIN{RS=\"\"; FS=\"\\n\"} {print NF\": \"$1}'",
+			"stdout": "1:a\n2:b\n\n1: a b NF=2\n2: c d\ne NF=3\n3: f NF=1\na\nb\nc\n1:a\n2:b\n3:c\n1:x\n2:y\n3:z\n1:a\nb\nb\nd\n3\nb\none/two\nthree/\n2: k1 v1\n1: k3 v3\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-quoted-list-with-a-prefix-or-suffix-outside-the-quotes",
+			"source": "round5",
+			"fixture": false,
+			"script": "set -- echo a b; x\"$@\"; echo \"rc=$?\"; \"$@\"x; echo \"rc=$?\"; set -- echo; \"$@\"x; \"$@\" \"$@\"; echo \"rc=$?\"; set -- printf '[%s]' 'a b' c; \"$@\"; echo; d=/tmp; \"$d\"/nosuch; echo \"rc=$?\"; \"$d\"/; echo \"rc=$?\"; p=ec; ${p}ho hi; \"${p}ho\" hi; e=ho; ec$e hi; \"ec\"$e hi",
+			"stdout": "rc=127\na bx\nrc=0\necho\nrc=0\n[a b][c]\nrc=127\nrc=126\nhi\nhi\nhi\nhi\n",
+			"stderr": "/c/r5-quoted-list-with-a-prefix-or-suffix-outside-the-quotes.sh: line 1: xecho: command not found\n/c/r5-quoted-list-with-a-prefix-or-suffix-outside-the-quotes.sh: line 1: echox: command not found\n/c/r5-quoted-list-with-a-prefix-or-suffix-outside-the-quotes.sh: line 1: /tmp/nosuch: No such file or directory\n/c/r5-quoted-list-with-a-prefix-or-suffix-outside-the-quotes.sh: line 1: /tmp/: Is a directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-date-a-zone-over-a-day-and-ago-after-a-bare-number",
+			"source": "round5",
+			"fixture": false,
+			"script": "export LC_ALL=C; for s in '2024-07-04 18:00 +14 days' '2024-07-04 18:00 +15 days' '2024-07-04 18:00 +24 days' '2024-07-04 18:00 +25 days' '2024-07-04 18:00 +30 days' '2024-07-04 18:00 +99 days' '2024-07-04 18:00 +100 days' '2024-07-04 18:00 +2400 days' '2024-07-04 18:00 +2500 days' '2024-07-04 18:00 -42 days' '2024-07-04 +42 days' '2024-07-04 18:00 +1 day ago' '2024-07-04 18:00 UTC +1 day ago' '2024-07-04 18:00 EDT +1 day ago' '2024-07-04 18:00 UTC +1 day' '2024-07-04 EST +1 hour ago' 'Jul 4 2024 +1 day ago' 'Jul 4, 2024 +1 day ago' '4 Jul 2024 +1 day ago' '07/04/2024 +1 day ago' '2024-07-04 +1 day ago' '20240704 +1 day ago' '2024-07-04 1200 +1 day ago' '2024-07-04 12:00 +0100 1 day ago' '2024-07-04 GMT+2 +1 min ago' 'ago 2000-02-29' '2024-07-04 last hr' 'next fortnight last yr 1999-01-01' '2024-07-04 12:00 foo' '2024-07-04 ,' '2024-07-04 (a comment) +1 day'; do printf '%s => ' \"$s\"; TZ=UTC date -d \"$s\" '+%F %T' 2>&1; done",
+			"stdout": "2024-07-04 18:00 +14 days => 2024-07-05 04:00:00\n2024-07-04 18:00 +15 days => 2024-07-05 03:00:00\n2024-07-04 18:00 +24 days => 2024-07-04 18:00:00\n2024-07-04 18:00 +25 days => date: invalid date '2024-07-04 18:00 +25 days'\n2024-07-04 18:00 +30 days => date: invalid date '2024-07-04 18:00 +30 days'\n2024-07-04 18:00 +99 days => date: invalid date '2024-07-04 18:00 +99 days'\n2024-07-04 18:00 +100 days => 2024-07-05 17:00:00\n2024-07-04 18:00 +2400 days => 2024-07-04 18:00:00\n2024-07-04 18:00 +2500 days => date: invalid date '2024-07-04 18:00 +2500 days'\n2024-07-04 18:00 -42 days => date: invalid date '2024-07-04 18:00 -42 days'\n2024-07-04 +42 days => 2024-08-15 00:00:00\n2024-07-04 18:00 +1 day ago => 2024-07-03 17:00:00\n2024-07-04 18:00 UTC +1 day ago => date: invalid date '2024-07-04 18:00 UTC +1 day ago'\n2024-07-04 18:00 EDT +1 day ago => 2024-07-03 22:00:00\n2024-07-04 18:00 UTC +1 day => 2024-07-05 18:00:00\n2024-07-04 EST +1 hour ago => date: invalid date '2024-07-04 EST +1 hour ago'\nJul 4 2024 +1 day ago => date: invalid date 'Jul 4 2024 +1 day ago'\nJul 4, 2024 +1 day ago => 2024-07-03 00:00:00\n4 Jul 2024 +1 day ago => 2024-07-03 00:00:00\n07/04/2024 +1 day ago => 2024-07-03 00:00:00\n2024-07-04 +1 day ago => 2024-07-03 00:00:00\n20240704 +1 day ago => date: invalid date '20240704 +1 day ago'\n2024-07-04 1200 +1 day ago => date: invalid date '2024-07-04 1200 +1 day ago'\n2024-07-04 12:00 +0100 1 day ago => 2024-07-03 11:00:00\n2024-07-04 GMT+2 +1 min ago => 2024-07-03 21:59:00\nago 2000-02-29 => date: invalid date 'ago 2000-02-29'\n2024-07-04 last hr => date: invalid date '2024-07-04 last hr'\nnext fortnight last yr 1999-01-01 => date: invalid date 'next fortnight last yr 1999-01-01'\n2024-07-04 12:00 foo => date: invalid date '2024-07-04 12:00 foo'\n2024-07-04 , => date: invalid date '2024-07-04 ,'\n2024-07-04 (a comment) +1 day => 2024-07-05 00:00:00\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-diff-context-length-options-and-the-greatest-wins",
+			"source": "round5",
+			"fixture": false,
+			"script": "seq 1 15 > f1; seq 1 15 | sed 's/^6$/X/' > f2; touch -d @1600000000 f1 f2; for o in -u -U0 -U1 -U5 --unified --unified=1 -c -C1 --context --context=1 -1 -5 '-u -1' '-1 -u' '-c -2' '-2 -c' '-u -U1' '-U1 -u' '-u --unified=1' '--unified=1 -u' '-U2 --unified' '-c -C1' '-C1 -c' '-u -3' '-u -U0 -U2' '-U2 -U0' '-U1 -U 2' '-U0 -u' '-U0 -1' '-1 -U0' '-3 -U1' '-1 -U2' '-w -U1' '-C2 -C0' '-U 1' '-U1 -U1' '-U3 -U1'; do echo \"## $o\"; diff $o f1 f2 | grep -c '^[ ]'; done; mkdir a b; cp f1 a/f; cp f2 b/f; touch -d @1600000000 a/f b/f; diff -ru -U0 a b | grep -c '^ '; diff -r -U0 a b | grep -c '^ '; diff -ru -U1 a b | grep -c '^ '",
+			"stdout": "## -u\n6\n## -U0\n0\n## -U1\n2\n## -U5\n10\n## --unified\n6\n## --unified=1\n2\n## -c\n12\n## -C1\n4\n## --context\n12\n## --context=1\n4\n## -1\n0\n## -5\n0\n## -u -1\n2\n## -1 -u\n2\n## -c -2\n8\n## -2 -c\n8\n## -u -U1\n6\n## -U1 -u\n6\n## -u --unified=1\n6\n## --unified=1 -u\n6\n## -U2 --unified\n6\n## -c -C1\n12\n## -C1 -c\n12\n## -u -3\n6\n## -u -U0 -U2\n6\n## -U2 -U0\n4\n## -U1 -U 2\n4\n## -U0 -u\n6\n## -U0 -1\n2\n## -1 -U0\n2\n## -3 -U1\n6\n## -1 -U2\n4\n## -w -U1\n2\n## -C2 -C0\n8\n## -U 1\n2\n## -U1 -U1\n2\n## -U3 -U1\n6\n6\n0\n6\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"a/f": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n",
+					"b/f": "1\n2\n3\n4\n5\nX\n7\n8\n9\n10\n11\n12\n13\n14\n15\n",
+					"f1": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n",
+					"f2": "1\n2\n3\n4\n5\nX\n7\n8\n9\n10\n11\n12\n13\n14\n15\n"
+				},
+				"dirs": [
+					"a",
+					"b"
+				],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-diff-puts-a-change-where-gnu-slides-it",
+			"source": "round5",
+			"fixture": false,
+			"script": "t() { printf \"$1\" > p; printf \"$2\" > q; diff p q; echo \"rc=$?\"; }; t 'a\\nb\\nb\\nc\\n' 'a\\nb\\nb\\nb\\nc\\n'; t 'a\\nb\\nc\\n' 'a\\nb\\nb\\nc\\n'; t 'b\\nc\\n' 'b\\nb\\nc\\n'; t 'a\\nb\\n' 'a\\nb\\nb\\n'; t 'x\\ny\\nx\\ny\\n' 'x\\ny\\nx\\ny\\nx\\ny\\n'; t 'a\\n\\nb\\n' 'a\\n\\n\\nb\\n'; t '}\\n}\\n' '}\\n}\\n}\\n'; t 'f{\\n}\\n' 'f{\\n}\\ng{\\n}\\n'; t 'f{\\n}\\n' 'g{\\n}\\nf{\\n}\\n'; t 'a\\nend\\nb\\n' 'a\\nend\\nend\\nb\\n'; t '1\\n2\\nend\\n' '1\\n2\\nend\\nend\\n'; t 'ONE\\nend\\nz\\n' 'ONE\\nend\\nend\\nz\\n'; t 'A\\nB\\nC\\n' 'A\\nB\\nB\\nC\\nC\\n'",
+			"stdout": "3a4\n> b\nrc=1\n2a3\n> b\nrc=1\n1a2\n> b\nrc=1\n2a3\n> b\nrc=1\n4a5,6\n> x\n> y\nrc=1\n2a3\n> \nrc=1\n2a3\n> }\nrc=1\n2a3,4\n> g{\n> }\nrc=1\n0a1,2\n> g{\n> }\nrc=1\n2a3\n> end\nrc=1\n3a4\n> end\nrc=1\n2a3\n> end\nrc=1\n2a3,4\n> B\n> C\nrc=1\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"p": "A\nB\nC\n",
+					"q": "A\nB\nB\nC\nC\n"
+				},
+				"dirs": [],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-rm-dot-names-with-and-without-r-and-f",
+			"source": "round5",
+			"fixture": false,
+			"script": "export LC_ALL=C; mkdir -p d/sub; echo F > f; for c in 'rm .' 'rm ..' 'rm d/.' 'rm d/..' 'rm -f .' 'rm -f d/sub/..' 'rm -r .' 'rm -rf d/..' 'rm -d d/.' 'rm -df d/..' 'rm -v .' 'rm f/.' 'rm -f f/.' 'rm -r f/.' 'rm nothere/.' 'rm -f nothere/.' 'rm -r nothere/..' 'rm d/' 'rm d' 'rm -f d' 'rm -d d/sub' 'rm f/' 'rm -f f/' 'rm -d f/' 'rm -rf f/' 'rm f/../d' 'rm -f f/../d' 'rm -r x/../d' 'rm -rf x/../d'; do mkdir -p d/sub; [ -f f ] || echo F > f; printf '%-16s -> ' \"$c\"; $c 2>&1 | tr '\\n' '|'; echo \"rc=$?\"; done; ls",
+			"stdout": "rm .             -> rm: cannot remove '.': Is a directory|rc=0\nrm ..            -> rm: cannot remove '..': Is a directory|rc=0\nrm d/.           -> rm: cannot remove 'd/.': Is a directory|rc=0\nrm d/..          -> rm: cannot remove 'd/..': Is a directory|rc=0\nrm -f .          -> rm: cannot remove '.': Is a directory|rc=0\nrm -f d/sub/..   -> rm: cannot remove 'd/sub/..': Is a directory|rc=0\nrm -r .          -> rm: refusing to remove '.' or '..' directory: skipping '.'|rc=0\nrm -rf d/..      -> rm: refusing to remove '.' or '..' directory: skipping 'd/..'|rc=0\nrm -d d/.        -> rm: cannot remove 'd/.': Directory not empty|rc=0\nrm -df d/..      -> rm: cannot remove 'd/..': Directory not empty|rc=0\nrm -v .          -> rm: cannot remove '.': Is a directory|rc=0\nrm f/.           -> rm: cannot remove 'f/.': Not a directory|rc=0\nrm -f f/.        -> rc=0\nrm -r f/.        -> rm: cannot remove 'f/.': Not a directory|rc=0\nrm nothere/.     -> rm: cannot remove 'nothere/.': No such file or directory|rc=0\nrm -f nothere/.  -> rc=0\nrm -r nothere/.. -> rm: cannot remove 'nothere/..': No such file or directory|rc=0\nrm d/            -> rm: cannot remove 'd/': Is a directory|rc=0\nrm d             -> rm: cannot remove 'd': Is a directory|rc=0\nrm -f d          -> rm: cannot remove 'd': Is a directory|rc=0\nrm -d d/sub      -> rc=0\nrm f/            -> rm: cannot remove 'f/': Not a directory|rc=0\nrm -f f/         -> rc=0\nrm -d f/         -> rm: cannot remove 'f/': Not a directory|rc=0\nrm -rf f/        -> rc=0\nrm f/../d        -> rm: cannot remove 'f/../d': Not a directory|rc=0\nrm -f f/../d     -> rc=0\nrm -r x/../d     -> rm: cannot remove 'x/../d': No such file or directory|rc=0\nrm -rf x/../d    -> rc=0\nd\nf\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f": "F\n"
+				},
+				"dirs": [
+					"d",
+					"d/sub"
+				],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-path-through-a-file-is-not-a-directory",
+			"source": "round5",
+			"fixture": false,
+			"script": "export LC_ALL=C; echo F > f; mkdir -p d; for c in 'touch f/../n' 'touch x/../n' 'touch f/g' 'mkdir f/../m' 'mkdir -p f/../m' 'mkdir x/../m' 'cp f f/../g' 'cp -r d f/../g' 'cp -n f f/../g' 'mv f f/../g' 'mv f x/../g' 'cp -t f/../d f' 'mv -t f/../d f' 'cp f d/../f2'; do [ -f f ] || echo F > f; printf '%-18s -> ' \"$c\"; $c 2>&1 | tr '\\n' '|'; echo; done; echo hi > f/../o; echo \"rc=$?\"; echo hi >> f/../o; echo \"rc=$?\"; ls",
+			"stdout": "touch f/../n       -> touch: cannot touch 'f/../n': Not a directory|\ntouch x/../n       -> touch: cannot touch 'x/../n': No such file or directory|\ntouch f/g          -> touch: cannot touch 'f/g': Not a directory|\nmkdir f/../m       -> mkdir: cannot create directory 'f/../m': Not a directory|\nmkdir -p f/../m    -> mkdir: cannot create directory 'f': Not a directory|\nmkdir x/../m       -> mkdir: cannot create directory 'x/../m': No such file or directory|\ncp f f/../g        -> cp: failed to access 'f/../g': Not a directory|\ncp -r d f/../g     -> cp: failed to access 'f/../g': Not a directory|\ncp -n f f/../g     -> cp: failed to access 'f/../g': Not a directory|\nmv f f/../g        -> mv: failed to access 'f/../g': Not a directory|\nmv f x/../g        -> mv: cannot move 'f' to 'x/../g': No such file or directory|\ncp -t f/../d f     -> cp: failed to access 'f/../d': Not a directory|\nmv -t f/../d f     -> mv: failed to access 'f/../d': Not a directory|\ncp f d/../f2       -> \nrc=1\nrc=1\nd\nf\nf2\n",
+			"stderr": "/c/r5-path-through-a-file-is-not-a-directory.sh: line 1: f/../o: Not a directory\n/c/r5-path-through-a-file-is-not-a-directory.sh: line 1: f/../o: Not a directory\n",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f": "F\n",
+					"f2": "F\n"
+				},
+				"dirs": [
+					"d"
+				],
+				"gone": []
+			}
+		},
+		{
+			"name": "r5-grep-num-is-context",
+			"source": "round5",
+			"fixture": false,
+			"script": "seq 1 20 > f; grep -2 10 f; echo --; grep -n1 10 f; echo --; grep -1n 10 f; echo --; grep -12 10 f | wc -l; grep -c -2 10 f; grep -2 -v '[0-9][0-9]' f | head -3; echo --; grep -r -1 10 .; grep -C1 -2 10 f",
+			"stdout": "8\n9\n10\n11\n12\n--\n9-9\n10:10\n11-11\n--\n9-9\n10:10\n11-11\n--\n20\n1\n1\n2\n3\n--\n./f-9\n./f:10\n./f-11\n8\n9\n10\n11\n12\n",
+			"stderr": "",
+			"exit": 0,
+			"tree": {
+				"files": {
+					"f": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n"
+				},
+				"dirs": [],
 				"gone": []
 			}
 		}

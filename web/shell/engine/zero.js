@@ -250,6 +250,8 @@ function sedScriptIn(script, x) {
 		const c = script[i];
 		if (c === '\\' && i + 1 < script.length) {
 			const e = script[i + 1];
+			// a backslash before a real newline is a newline (the replacement of `s/a/x\<newline>y/`)
+			if (e === '\n') { out += x; i++; continue; }
 			// `\x00`, `\o0`, `\d0` are the NUL, which here is the newline the engine splits on
 			const num = e === 'x' ? /^[0-9a-fA-F]{1,2}/ : e === 'o' ? /^[0-7]{1,3}/ : e === 'd' ? /^[0-9]{1,3}/ : null;
 			const m = num && num.exec(script.slice(i + 2));
@@ -268,17 +270,20 @@ function sedScriptIn(script, x) {
 }
 
 /**
- * How a grep line asks for its output (`-l`, `-L`, `-c`, `-q`: names, counts or nothing, not lines), from the arguments
- * `plan` returns.
+ * How a grep line asks for its output (`-l`, `-L`, `-c`, `-q`: names, counts or nothing, not lines; `-n`; context lines
+ * with `-A -B -C -NUM`), from the arguments `plan` returns.
  *
  * @param {string[]} args
- * @returns {{ names: boolean, count: boolean, quiet: boolean }}
+ * @returns {{ names: boolean, count: boolean, quiet: boolean, lineNumber: boolean, context: boolean }}
  */
 function grepOutputKind(args) {
 	let names = false;
 	let count = false;
 	let quiet = false;
+	let lineNumber = false;
+	let context = false;
 	const valuedShort = 'efmABCdD';
+	const valuedLong = ['--regexp', '--file', '--max-count', '--after-context', '--before-context', '--context', '--include', '--exclude', '--exclude-dir', '--exclude-from', '--directories', '--devices', '--label', '--binary-files', '--group-separator'];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
 		if (a === '--') { break; }
@@ -288,18 +293,74 @@ function grepOutputKind(args) {
 			if (name === '--files-with-matches' || name === '--files-without-match') { names = true; }
 			if (name === '--count') { count = true; }
 			if (name === '--quiet' || name === '--silent') { quiet = true; }
-			if (['--regexp', '--file', '--max-count', '--after-context', '--before-context', '--context', '--include', '--exclude', '--exclude-dir', '--exclude-from', '--directories', '--devices', '--label', '--binary-files'].includes(name) && !a.includes('=')) { i++; }
+			if (name === '--line-number') { lineNumber = true; }
+			if (name === '--after-context' || name === '--before-context' || name === '--context') { context = true; }
+			if (valuedLong.includes(name) && !a.includes('=')) { i++; }
 			continue;
 		}
 		for (let c = 1; c < a.length; c++) {
 			const ch = a[c];
-			if (valuedShort.includes(ch)) { if (c === a.length - 1) { i++; } break; }
+			if (valuedShort.includes(ch)) {
+				if ('ABC'.includes(ch)) { context = true; }
+				if (c === a.length - 1) { i++; }
+				break;
+			}
 			if (ch === 'l' || ch === 'L') { names = true; }
 			if (ch === 'c') { count = true; }
 			if (ch === 'q') { quiet = true; }
+			if (ch === 'n') { lineNumber = true; }
+			// -NUM is -C NUM
+			if (ch >= '0' && ch <= '9') { context = true; }
 		}
 	}
-	return { names, count, quiet };
+	return { names, count, quiet, lineNumber, context };
 }
 
-module.exports = { ZERO_OPTIONS, plan, pickPlaceholder, swapIn, swapOut, sedZeroRefusal, sedScriptIn, grepOutputKind };
+/** The options of tail that take a value (`plan` gives each as the option and its value, two arguments). */
+const TAIL_VALUED = new Set(['-n', '-c', '-s', '--lines', '--bytes', '--sleep-interval', '--pid', '--max-unchanged-stats']);
+
+/**
+ * Whether `tail` prints a `==> NAME <==` header for each file: `-q` never, `-v` always (the last of them decides),
+ * otherwise when there are several files.
+ *
+ * @param {string[]} args the ones `plan` returns
+ * @param {number} files how many files there are
+ * @returns {boolean}
+ */
+function tailHeaders(args, files) {
+	let mode = 'multiple';
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (a === '--') { break; }
+		if (a === '--quiet' || a === '--silent') { mode = 'never'; continue; }
+		if (a === '--verbose') { mode = 'always'; continue; }
+		if (TAIL_VALUED.has(a)) { i++; continue; }
+		if (a.startsWith('--') || !a.startsWith('-') || a === '-') { continue; }
+		for (const ch of a.slice(1)) {
+			if (ch === 'q') { mode = 'never'; } else if (ch === 'v') { mode = 'always'; }
+		}
+	}
+	return mode === 'always' || (mode === 'multiple' && files > 1);
+}
+
+/**
+ * The arguments with the options that ask for headers taken out (what is left is for one file at a time).
+ *
+ * @param {string[]} args the ones `plan` returns
+ * @returns {string[]}
+ */
+function withoutHeaderOptions(args) {
+	const out = [];
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (a === '--') { out.push(...args.slice(i)); break; }
+		if (a === '--quiet' || a === '--silent' || a === '--verbose') { continue; }
+		if (TAIL_VALUED.has(a)) { out.push(a, args[++i]); continue; }
+		if (a.startsWith('--') || !a.startsWith('-') || a === '-') { out.push(a); continue; }
+		const kept = a.slice(1).replace(/[qv]/g, '');
+		if (kept !== '') { out.push('-' + kept); }
+	}
+	return out;
+}
+
+module.exports = { ZERO_OPTIONS, plan, pickPlaceholder, swapIn, swapOut, sedZeroRefusal, sedScriptIn, grepOutputKind, tailHeaders, withoutHeaderOptions };

@@ -711,9 +711,9 @@ async function main() {
 	test('a script that leaves through exit still has /dev/stdout, /dev/stderr and its refused writes shown', async () => {
 		const h = await host({}, { start: false });
 		await h.core.handle({ t: 'init', gen: 1, folders: [{ id: 'f', path: '/w', name: 'w' }] });
-		// tee writes the path /dev/stdout through the file system (a redirection to it is the engine's own): a device the
-		// overlay collects, and the group that exits is a statement the hook never sees finish
-		const r = await h.run("{ echo to-stdout | tee /dev/stdout > /dev/null; echo to-stderr | tee /dev/stderr > /dev/null; seq 1 5000 > big.txt; exit 3; }", { caps: { writeFile: 1000 } });
+		// a redirection to /dev/stdout is a write to a device the overlay collects (what a PROGRAM writes there is its own
+		// output, patch LC-52), and the group that exits is a statement the hook never sees finish
+		const r = await h.run("{ echo to-stdout > /dev/stdout; echo to-stderr > /dev/stderr; seq 1 5000 > big.txt; exit 3; }", { caps: { writeFile: 1000 } });
 		assert.deepStrictEqual([r.how, r.exitCode], ['exit', 3]);
 		assert.strictEqual(r.stdout, 'to-stdout\n');
 		assert.ok(r.stderr.includes('to-stderr\n'), r.stderr);
@@ -721,9 +721,29 @@ async function main() {
 		assert.strictEqual(r.done.stats.withheld, 'denied');
 		assert.deepStrictEqual(r.done.changes, []);
 		// at the end of a script that does not exit, the same
-		const s = await h.run("echo a | tee /dev/stdout > /dev/null; seq 1 5000 > big2.txt", { caps: { writeFile: 1000 } });
+		const s = await h.run("echo a > /dev/stdout; seq 1 5000 > big2.txt", { caps: { writeFile: 1000 } });
 		assert.strictEqual(s.stdout, 'a\n');
 		assert.ok(/not written/.test(s.stderr));
+	});
+
+	test('what a program writes to /dev/stderr is its own output (2>/dev/null, 2>&1 and a pipe apply to it); what a redirection wrote is the shell\'s, and is not the next command\'s', async () => {
+		const h = await host({}, { start: false });
+		await h.core.handle({ t: 'init', gen: 1, folders: [{ id: 'f', path: '/w', name: 'w' }] });
+		// the program's own: hidden by its 2>/dev/null, merged by 2>&1 and carried through the pipe
+		const a = await h.run("awk 'BEGIN{print \"x\" > \"/dev/stderr\"}' 2>/dev/null; awk 'BEGIN{print \"y\" > \"/dev/stderr\"}' 2>&1 | tr y Y; echo hi | tee /dev/stderr 2>&1 >/dev/null");
+		assert.strictEqual(a.stdout, 'Y\nhi\n');
+		assert.strictEqual(a.stderr, '');
+		// a redirection's write is the shell's own stderr: the command after it in the same statement does not take it
+		const b = await h.run("echo a > /dev/stderr && echo b 2>/dev/null");
+		assert.strictEqual(b.stdout, 'b\n');
+		assert.strictEqual(b.stderr, 'a\n');
+		// and a command that runs after it keeps its own and leaves the shell's where it was
+		const c = await h.run("echo a > /dev/stderr && awk 'BEGIN{print \"x\" > \"/dev/stderr\"}'");
+		assert.deepStrictEqual(c.stderr.split('\n').sort(), ['', 'a', 'x']);
+		// a descriptor opened on the device writes outside any command: the next command's 2>/dev/null is not its
+		const d = await h.run("exec 3> /dev/stderr; echo x >&3; echo y 2>/dev/null");
+		assert.strictEqual(d.stdout, 'y\n');
+		assert.strictEqual(d.stderr, 'x\n');
 	});
 
 	test('the limits table has exactly these numbers (the ones README §7 does not name included)', () => {
@@ -1028,6 +1048,11 @@ async function main() {
 		assert.ok(d.done.notes.includes('The directory /w/d� has a name that is not valid UTF-8, which the editor cannot address; the session stays in /w.'), JSON.stringify(d.done.notes));
 		const deep = await (await host(files)).run('mkdir -p ok/"$(cat x)"/sub; cd ok/"$(cat x)"/sub; pwd');
 		assert.strictEqual(deep.done.cwd, '/w/ok', 'the nearest folder above that has a name');
+		// OLDPWD is settled the same way as PWD: the folder the session came from is not one the host can address either
+		const old = await (await host(files)).run('mkdir -p ok/"$(cat x)"; cd ok/"$(cat x)"; cd /w; echo "$OLDPWD" | od -c | head -1');
+		assert.strictEqual(old.done.cwd, '/w');
+		assert.strictEqual(old.done.env.OLDPWD, '/w/ok', 'the nearest folder above the one with the name that is not UTF-8 (a lone surrogate was handed to the host)');
+		assert.ok(!/[\udc80-\udcff]/.test(JSON.stringify(old.done.env.OLDPWD)), 'no escape in what the host is told');
 		// bytes that ARE UTF-8 (printf '\303\251' is the two bytes of é) make that name: the folder, the change and the
 		// working directory the host is told are `dé`, and the session is in it (it is not one of the names above)
 		const utf8 = await (await host({})).run('mkdir "d$(printf \'\\303\\251\')"; cd "d$(printf \'\\303\\251\')"; pwd; echo hi > f');
