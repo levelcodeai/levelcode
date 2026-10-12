@@ -353,7 +353,7 @@ own values the rest.
 then writes the patched file at build time (`node apply-patches.mjs --check` verifies the anchors without writing).
 The patched file is modified by LevelCode (Apache-2.0 §4(b): the build output carries a notice).
 
-Patches (31, 91 anchor edits; `engine/NOTES.md` §2 has one row for each, with where it anchors and what pins it, and
+Patches (60, 199 anchor edits; `engine/NOTES.md` §2 has one row for each, with where it anchors and what pins it, and
 `node apply-patches.mjs --check` says the count):
 
 | | |
@@ -367,6 +367,7 @@ Patches (31, 91 anchor edits; `engine/NOTES.md` §2 has one row for each, with w
 | LC-17, LC-18 | builtins resolved without `PATH`; builtins the engine does not implement are not listed |
 | LC-21 – LC-25 | exported variables reach what `xargs`/`timeout`/`find -exec` start; grep/sed BRE `\+ \? \< \>`; `sort -k` and `-u`; `sed s///w`; `LimitError` exported |
 | LC-26 – LC-31 | a redirection's content write is told from `tee`'s (the content write of an opened path never rejects `exec()`); `cd` through `..`; `sort -k` flags; `printf '\xHH'` makes a byte; `tee`/`touch` errors; `$cmd` is split into words |
+| LC-32 – LC-60 | what a model's one-liners hit once the common commands were compared with GNU one by one: `sed` (the whole script grammar and its messages, `H`, `.` over a newline, `*` at the start, `-E` addresses, replacement escapes, `\cREc` addresses and `I`/`M`, `s///Ng`, `q5`, `l`); `awk` in code points, `RS`, `split`, `%e`/`%g`; `grep` bracket backslashes; `find -size` and `-printf`; `sort -V`; a redirect target ending in `/`; `/dev/stderr` as part of a command's own output; declarations with array literals; a directory as a command is 126; `printf '\045'`; `%Y` of years before 1000 |
 
 `legalComments` are kept in the bundle (re2js MIT, ieee754 BSD-3-Clause); `diff` 8.0.4 and `sprintf-js` 1.1.3 are
 vendored beside it. Never vendor `node-liblzma` (LGPL), the zstd native module, `typescript`, `sql.js`. `turndown`,

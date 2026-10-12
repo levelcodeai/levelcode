@@ -104,7 +104,7 @@ memory. `VENDOR.json` pins its sha256 (5bfe9875…c76e as of this round) and siz
 | LC-59 | sed `l` (2 edits, `__lcList`; LC-51's lexer edit reads the number) | The listing is GNU's: a character that is not ASCII is its UTF-8 bytes in octal (`caf\303\251`; the engine printed the code point, and a byte that is not text came out as `\156377`, the octal of the surrogate it is kept in), and a line is wrapped at 70 with a `\` (`l 5` at 5, `l 0` and `l 1` as GNU takes them). `-l N` and `--line-length` are still refused (§4). | LC-59, tables `sedlist` |
 | LC-60 | date's formatter (4 edits, `__lcY4`) | A year before 1000 is written with four digits by `%F`, `%Y` and `%G` (`0100-01-02`), and the ISO year of a date before the year 100 is its own (`new Date(6, ...)` is 1906). | LC-60, tables `date` |
 
-README §9 lists LC-1..LC-4; LC-5..LC-60 are additions (see the report's requests).
+The README's §9 groups them; this table has one row each.
 `node web/shell/engine/vendor/just-bash/3.6.0/apply-patches.mjs --check` verifies the hash of the file and that every
 anchor is there exactly once, and writes nothing (60 patches, 198 edits).
 
