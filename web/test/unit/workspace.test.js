@@ -10,6 +10,8 @@
  *    applyLayout       arranges the window for the chat on its own or for the editor with the chat docked. It is
  *                      only workbench commands, so what is pinned here is WHICH ones and in WHAT ORDER: a group
  *                      that is emptied by moving the chat out of it is closed, so the file has to be opened first.
+ *    activate          registers the way out to a folder from the computer even when browser storage is refused
+ *    rename / copy     over an existing file or folder replace it whole — in IndexedDB (a stand-in: fake-idb.js)
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -23,7 +25,7 @@ class Uri {
 	static from(c) { return new Uri(c.scheme, c.path || '/'); }
 	toString() { return this.scheme + '://' + this.path; }
 }
-const calls = { dialogs: /** @type {any[]} */ ([]), commands: /** @type {any[][]} */ ([]) };
+const calls = { dialogs: /** @type {any[]} */ ([]), commands: /** @type {any[][]} */ ([]), registered: /** @type {string[]} */ ([]), warnings: /** @type {string[]} */ ([]), providers: /** @type {any[]} */ ([]) };
 let nextPick = /** @type {any} */ (undefined);
 const CHAT = 'mainThreadWebview-levelcode.ai.chat';
 /** What the window has open: groups of tabs, each tab `{ input: { viewType } | { uri } }`. */
@@ -37,6 +39,7 @@ let tabListeners = /** @type {Function[]} */ ([]);
 /** The group that has the focus, when a test cares (undefined: the mock has no such property, like an older host). */
 let activeGroup = /** @type {any} */ (undefined);
 const fireTabs = () => tabListeners.slice().forEach((f) => f());
+const fsError = (code) => (uri) => Object.assign(new Error(code + ': ' + (uri && uri.path)), { code });
 const vscodeMock = {
 	Uri,
 	ViewColumn: { One: 1, Two: 2 },
@@ -51,13 +54,26 @@ const vscodeMock = {
 			};
 		},
 		async showTextDocument(...a) { shown.push(a); calls.commands.push(['(show)', a[0] && a[0].path]); },
+		showWarningMessage(m) { calls.warnings.push(m); },
+		createStatusBarItem() { return { show() {}, hide() {}, dispose() {} }; },
 	},
 	ConfigurationTarget: { Global: 1 },
 	workspace: {
 		getConfiguration(section) { return { get: (k, d) => (config[section + '.' + k] !== undefined ? config[section + '.' + k] : d), update: async (k, v, t) => { updates.push([section + '.' + k, v, t]); } }; },
 		async findFiles() { return found; },
+		workspaceFolders: [],
+		registerFileSystemProvider(_scheme, p) { calls.providers.push(p); return { dispose() {} }; },
+		onDidChangeWorkspaceFolders() { return { dispose() {} }; },
+		onDidChangeConfiguration() { return { dispose() {} }; },
 	},
-	commands: { async executeCommand(...a) { calls.commands.push(a); } },
+	commands: { async executeCommand(...a) { calls.commands.push(a); }, registerCommand(id) { calls.registered.push(id); return { dispose() {} }; } },
+	EventEmitter: class { constructor() { this.event = () => ({ dispose() {} }); } fire() {} },
+	Disposable: class { constructor(f) { this.dispose = f; } },
+	FileType: { File: 1, Directory: 2 },
+	FileChangeType: { Changed: 1, Created: 2, Deleted: 3 },
+	FileSystemError: { FileNotFound: fsError('FileNotFound'), FileExists: fsError('FileExists'), FileIsADirectory: fsError('FileIsADirectory'),
+		FileNotADirectory: fsError('FileNotADirectory'), NoPermissions: fsError('NoPermissions') },
+	StatusBarAlignment: { Left: 1 },
 };
 const chatTab = { input: { viewType: CHAT } };
 const fileTab = { input: { uri: new Uri('levelcode-scratch', '/README.md') } };
@@ -306,6 +322,89 @@ const ids = () => calls.commands.map((c) => c[0]);
 		calls.commands.length = 0;
 		await ext.applyLayout(vscodeMock, 'chatFirst');
 		assert.ok(!ids().includes('workbench.view.explorer'));
+	});
+
+	/* ---- activation, and the file system itself ---------------------------------------------------- */
+	const { createIndexedDB } = require('./fake-idb');
+	// The layout was arranged in this workspace before, so activation does not wait for a chat tab to arrange around.
+	const ctx = () => ({ subscriptions: [], workspaceState: { get: () => true, update: async () => {} } });
+	// The file system tells the other tabs of a change over a BroadcastChannel. Node has one too, and an open channel
+	// would keep this process alive after the last test; there are no other tabs here.
+	// @ts-ignore
+	globalThis.BroadcastChannel = undefined;
+
+	await test('with browser storage refused, the way out the warning names is still there', async () => {
+		calls.registered.length = 0; calls.warnings.length = 0;
+		Object.assign(globalThis, { indexedDB: { open() { const r = {}; setTimeout(() => { r.error = new Error('denied'); r.onerror && r.onerror(); }, 0); return r; } } });
+		await ext.activate(ctx());
+		assert.strictEqual(calls.warnings.length, 1, 'the user is told');
+		assert.ok(calls.registered.includes('levelcode.web.openLocalFolder'), 'and "Open a folder from your computer" can be run');
+	});
+
+	/** A fresh scratch file system on a fresh stand-in IndexedDB. */
+	const fresh = async () => {
+		Object.assign(globalThis, createIndexedDB());
+		calls.providers.length = 0; calls.registered.length = 0;
+		await ext.activate(ctx());
+		assert.ok(calls.registered.includes('levelcode.web.openLocalFolder'));
+		const fsp = calls.providers[0];
+		const u = (p) => Uri.from({ scheme: 'levelcode-scratch', path: p });
+		const write = (p, text) => fsp.writeFile(u(p), new TextEncoder().encode(text), { create: true, overwrite: true });
+		const read = async (p) => new TextDecoder().decode(await fsp.readFile(u(p)));
+		const exists = async (p) => { try { await fsp.stat(u(p)); return true; } catch { return false; } };
+		const list = async (p) => (await fsp.readDirectory(u(p))).map(([name]) => name).sort();
+		return { fsp, u, write, read, exists, list };
+	};
+
+	await test('a folder renamed over another replaces it whole: none of the old one\'s files survive under the new name', async () => {
+		const t = await fresh();
+		await t.write('/scratch/a/x.txt', 'from a');
+		await t.write('/scratch/b/old.txt', 'old');
+		await t.write('/scratch/b/deep/older.txt', 'older');
+		await t.fsp.rename(t.u('/scratch/a'), t.u('/scratch/b'), { overwrite: true });
+		assert.deepStrictEqual(await t.list('/scratch/b'), ['x.txt']);
+		assert.strictEqual(await t.read('/scratch/b/x.txt'), 'from a');
+		assert.strictEqual(await t.exists('/scratch/b/old.txt'), false);
+		assert.strictEqual(await t.exists('/scratch/b/deep/older.txt'), false, 'nor deeper ones — which search would still have found');
+		assert.strictEqual(await t.exists('/scratch/a'), false, 'a move leaves nothing behind');
+	});
+	await test('a file written over a folder leaves no children behind it', async () => {
+		const t = await fresh();
+		await t.write('/scratch/f.txt', 'a file');
+		await t.write('/scratch/d/child.txt', 'child');
+		await t.fsp.rename(t.u('/scratch/f.txt'), t.u('/scratch/d'), { overwrite: true });
+		assert.strictEqual(await t.read('/scratch/d'), 'a file');
+		assert.strictEqual(await t.exists('/scratch/d/child.txt'), false);
+		assert.deepStrictEqual(await t.list('/scratch'), ['README.md', 'd']);
+	});
+	await test('a copy over a folder replaces it whole too, and keeps the source', async () => {
+		const t = await fresh();
+		await t.write('/scratch/a/x.txt', 'x');
+		await t.write('/scratch/b/old.txt', 'old');
+		await t.fsp.copy(t.u('/scratch/a'), t.u('/scratch/b'), { overwrite: true });
+		assert.deepStrictEqual(await t.list('/scratch/b'), ['x.txt']);
+		assert.strictEqual(await t.read('/scratch/a/x.txt'), 'x');
+	});
+	await test('without overwrite nothing changes; over a folder that contains the source, or into itself, it is refused', async () => {
+		const t = await fresh();
+		await t.write('/scratch/a/x.txt', 'x');
+		await t.write('/scratch/b/old.txt', 'old');
+		await assert.rejects(t.fsp.rename(t.u('/scratch/a'), t.u('/scratch/b'), { overwrite: false }), (e) => e.code === 'FileExists');
+		assert.strictEqual(await t.read('/scratch/b/old.txt'), 'old');
+		await assert.rejects(t.fsp.rename(t.u('/scratch/b/old.txt'), t.u('/scratch/b'), { overwrite: true }), (e) => e.code === 'NoPermissions', 'replacing the folder would delete the source first');
+		assert.strictEqual(await t.read('/scratch/b/old.txt'), 'old');
+		await assert.rejects(t.fsp.rename(t.u('/scratch/a'), t.u('/scratch/a/inner'), { overwrite: true }), (e) => e.code === 'NoPermissions');
+		assert.strictEqual(await t.read('/scratch/a/x.txt'), 'x');
+	});
+	await test('an ordinary rename still works, and a file renamed over a file replaces it', async () => {
+		const t = await fresh();
+		await t.write('/scratch/one.txt', '1');
+		await t.write('/scratch/two.txt', '2');
+		await t.fsp.rename(t.u('/scratch/one.txt'), t.u('/scratch/sub/new.txt'), { overwrite: false });
+		assert.strictEqual(await t.read('/scratch/sub/new.txt'), '1');
+		await t.fsp.rename(t.u('/scratch/sub/new.txt'), t.u('/scratch/two.txt'), { overwrite: true });
+		assert.strictEqual(await t.read('/scratch/two.txt'), '1');
+		assert.deepStrictEqual(await t.list('/scratch/sub'), []);
 	});
 
 	console.log(`\n${n} tests passed`);

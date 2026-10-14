@@ -78,10 +78,6 @@ const TOOLS = [
 	{ name: 'use_skill', description: 'Load an expert playbook (SKILL.md) for a task type, chosen from the "Available skills" list in your system prompt. Returns the skill\'s step-by-step instructions as the tool result — then follow them. Read-only and instant (no approval). Call it once, early, when the goal matches a skill\'s description.', input_schema: { type: 'object', properties: { name: { type: 'string', description: 'the exact skill name from the Available skills list' } }, required: ['name'] } }
 ];
 
-// Rough token estimates (chars/4) for the static prompt segments, so the context popover can break
-// down "what's filling the window" — system + tools are sent on every request, the rest is messages.
-const SYSTEM_TOKENS_EST = Math.round(SYSTEM_BASE_HOST.length / 4);
-
 /** Append an "Available skills" name+description menu to the base prompt. Bodies NEVER go here —
  *  progressive disclosure means only name+description are ever in the prompt (~100 words for a dozen). */
 function buildSystem(menu) {
@@ -167,7 +163,8 @@ async function scanSearch(term, root) {
 	const out = [];
 	let size = 0;
 	let uris = [];
-	try { uris = await host.findFiles('**/*', FILE_EXCLUDES, 2000); } catch { return ''; }
+	// Scoped to `root` BEFORE the cap: across the whole workspace, another folder's files could use up all 2,000.
+	try { uris = await host.findFiles(new vscode.RelativePattern(host.uriFor(root), '**/*'), FILE_EXCLUDES, 2000); } catch { return ''; }
 	const rootPrefix = root.endsWith('/') ? root : root + '/';
 	for (const uri of uris) {
 		if (size >= 6000) { break; }

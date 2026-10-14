@@ -54,15 +54,15 @@ let n = 0;
 async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); }
 
 /* ---- leaveForSignIn ------------------------------------------------------------------------------- */
-function makeLeave() {
+function makeLeave(href = 'https://editor.example/') {
 	const assigned = [];
 	const session = new Map();
 	const warned = [];
-	const location = { assign: (u) => assigned.push(u) };
+	const location = { href, assign: (u) => assigned.push(u) };
 	const sessionStorage = { setItem: (k, v) => session.set(k, v), getItem: (k) => (session.has(k) ? session.get(k) : null), removeItem: (k) => session.delete(k) };
 	const console_ = { warn: (...a) => warned.push(a.join(' ')) };
 	const leave = new Function('location', 'sessionStorage', 'console', 'RETURN_KEY', 'URL',
-		extract('leaveForSignIn') + '\nreturn leaveForSignIn;')(location, sessionStorage, console_, RETURN_KEY, URL);
+		extract('leaveForSignIn') + extract('returnAddress') + '\nreturn leaveForSignIn;')(location, sessionStorage, console_, RETURN_KEY, URL);
 	return { leave, assigned, session, warned };
 }
 const ACCOUNT = 'https://levelcode.example';
@@ -73,7 +73,25 @@ const ACCOUNT = 'https://levelcode.example';
 		const url = ACCOUNT + '/ai/login?redirect_uri=https://editor.example/callback.html%3Fvscode-reqid%3D1&code_challenge=abc&code_challenge_method=S256';
 		t.leave(url, { account: ACCOUNT });
 		assert.deepStrictEqual(t.assigned, [url]);
-		assert.strictEqual(t.session.get(RETURN_KEY), '1');
+		assert.strictEqual(t.session.get(RETURN_KEY), '/', 'the tab is to come back, to the editor');
+	});
+	await test('leaveForSignIn: the tab is to come back to the same folder or workspace — only a pending ?signin=1 is dropped', () => {
+		const folder = 'https://editor.example/?folder=file%3A%2F%2F%2Fmy-project&payload=%5B%5D#x';
+		const t = makeLeave(folder);
+		t.leave(ACCOUNT + '/ai/login', { account: ACCOUNT });
+		assert.strictEqual(t.session.get(RETURN_KEY), '/?folder=file%3A%2F%2F%2Fmy-project&payload=%5B%5D#x');
+		const w = makeLeave('https://editor.example/?signin=1&workspace=file%3A%2F%2F%2Fa.code-workspace');
+		w.leave(ACCOUNT + '/ai/login', { account: ACCOUNT });
+		assert.strictEqual(w.session.get(RETURN_KEY), '/?workspace=file%3A%2F%2F%2Fa.code-workspace');
+	});
+	await test('leaveForSignIn: a store that keeps its secrets in memory is told the tab is leaving — and only for a sign-in it goes to', () => {
+		const told = [];
+		const t = makeLeave();
+		t.leave(ACCOUNT + '/ai/login', { account: ACCOUNT }, { beforeLeaving: () => told.push('leaving') });
+		assert.deepStrictEqual(told, ['leaving']);
+		makeLeave().leave('https://evil.example/ai/login', { account: ACCOUNT }, { beforeLeaving: () => told.push('wrong') });
+		assert.deepStrictEqual(told, ['leaving'], 'a refused address leaves nothing anywhere');
+		makeLeave().leave(ACCOUNT + '/ai/login', { account: ACCOUNT }, { type: 'persisted' });   // a store without it is fine
 	});
 	await test('leaveForSignIn: provider sign-in pages of the account site are fine too', () => {
 		const t = makeLeave();
@@ -126,8 +144,8 @@ const ACCOUNT = 'https://levelcode.example';
 	await test('leaveForSignIn: sessionStorage being unavailable does not stop the sign-in', () => {
 		const assigned = [];
 		const leave = new Function('location', 'sessionStorage', 'console', 'RETURN_KEY', 'URL',
-			extract('leaveForSignIn') + '\nreturn leaveForSignIn;')(
-			{ assign: (u) => assigned.push(u) },
+			extract('leaveForSignIn') + extract('returnAddress') + '\nreturn leaveForSignIn;')(
+			{ href: 'https://editor.example/', assign: (u) => assigned.push(u) },
 			{ setItem() { throw new Error('denied'); } }, console, RETURN_KEY, URL);
 		leave(ACCOUNT + '/ai/login', { account: ACCOUNT });
 		assert.strictEqual(assigned.length, 1);
@@ -238,13 +256,13 @@ const ACCOUNT = 'https://levelcode.example';
 		};
 	};
 	/** One tab of the editor: its own storage object over the shared localStorage, the shared origin key. */
-	const tab = async ({ storage, key, locks, failKey = false, noKey = false }) => {
+	const tab = async ({ storage, key, locks, failKey = false, noKey = false, session = memoryStorage() }) => {
 		const logs = { error: [], warn: [] };
-		const factory = new Function('localStorage', 'navigator', 'console', 'loadOrCreateKey', 'crypto', 'TextEncoder', 'TextDecoder', 'btoa', 'atob', 'Uint8Array',
+		const factory = new Function('localStorage', 'sessionStorage', 'navigator', 'console', 'loadOrCreateKey', 'crypto', 'TextEncoder', 'TextDecoder', 'btoa', 'atob', 'Uint8Array',
 			SECRET_SOURCE + '\nreturn createSecretStorage;');
-		const create = factory(storage, locks ? { locks } : {}, { warn: (...a) => logs.warn.push(a), error: (...a) => logs.error.push(a) },
+		const create = factory(storage, session, locks ? { locks } : {}, { warn: (...a) => logs.warn.push(a), error: (...a) => logs.error.push(a) },
 			async () => { if (noKey) { throw new Error('no indexedDB'); } return key; }, nodeCrypto.webcrypto, TextEncoder, TextDecoder, btoa, atob, Uint8Array);
-		return { store: await create(), logs };
+		return { store: await create(), logs, session };
 	};
 	const newKey = () => nodeCrypto.webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 
@@ -350,6 +368,35 @@ const ACCOUNT = 'https://levelcode.example';
 		assert.strictEqual(await a.store.get('access'), undefined);
 		assert.strictEqual(storage.m.size, 0, 'nothing was written to localStorage');
 	});
+	await test('secrets: kept in memory, they ride through a same-tab sign-in — the PKCE verifier is there when the tab comes back', async () => {
+		const storage = memoryStorage();
+		const session = memoryStorage();
+		const before = await tab({ storage, key: null, noKey: true, session });
+		await before.store.set('verifier', 'V-123');
+		before.store.beforeLeaving();                                      // the tab leaves for the account site
+		const back = await tab({ storage, key: null, noKey: true, session }); // ...and the editor starts again
+		assert.strictEqual(await back.store.get('verifier'), 'V-123');
+		assert.strictEqual(session.m.size, 0, 'taken back once, and not left in the tab\'s storage');
+		const reloaded = await tab({ storage, key: null, noKey: true, session });
+		assert.strictEqual(await reloaded.store.get('verifier'), undefined, 'a later reload is a new session, as before');
+		assert.strictEqual(storage.m.size, 0, 'nothing in localStorage at any point');
+	});
+	await test('secrets: the same for a persisted store that fell back to memory when a write was refused', async () => {
+		const storage = memoryStorage();
+		const session = memoryStorage();
+		const key = await newKey();
+		const a = await tab({ storage, key, session });
+		storage.setItem = () => { throw new Error('QuotaExceededError'); };
+		await a.store.set('verifier', 'V-9');
+		a.store.beforeLeaving();
+		const back = await tab({ storage, key, session });
+		assert.strictEqual(await back.store.get('verifier'), 'V-9');
+		// and a store that persists normally carries nothing: it is all in storage already
+		const fine = await tab({ storage: memoryStorage(), key, session: memoryStorage() });
+		await fine.store.set('verifier', 'V');
+		fine.store.beforeLeaving();
+		assert.strictEqual(fine.session.m.size, 0);
+	});
 	await test('secrets: when the browser refuses the write the session is kept for this tab, not lost', async () => {
 		const storage = memoryStorage();
 		const key = await newKey();
@@ -364,6 +411,28 @@ const ACCOUNT = 'https://levelcode.example';
 		await a.store.set('refresh', 'R2');
 		assert.strictEqual(await a.store.get('refresh'), 'R2');
 		assert.ok(a.logs.error.length >= 1, 'said so');
+	});
+
+	/* ---- the key the secrets are sealed with ------------------------------------------------------- */
+	const { createIndexedDB } = require('./fake-idb');
+	const keyMaker = (indexedDB) => new Function('globalThis', 'crypto', 'indexedDB',
+		extract('idb') + extract('loadOrCreateKey') + '\nreturn loadOrCreateKey;')({ crypto: nodeCrypto.webcrypto }, nodeCrypto.webcrypto, indexedDB);
+
+	await test('key: made once and kept — every start after the first gets the same one', async () => {
+		const { indexedDB } = createIndexedDB();
+		const load = keyMaker(indexedDB);
+		const first = await load();
+		assert.strictEqual(first.type, 'secret');
+		assert.strictEqual(first.extractable, false, 'it cannot be read out of the browser');
+		assert.strictEqual(await load(), first);
+	});
+	await test('key: two tabs opened at once on a fresh profile end up with the SAME key — each can read what the other sealed', async () => {
+		for (let round = 0; round < 5; round++) {
+			const { indexedDB } = createIndexedDB();
+			const [a, b] = await Promise.all([keyMaker(indexedDB)(), keyMaker(indexedDB)()]);
+			assert.strictEqual(a, b, 'round ' + round + ': two keys — one tab\'s sealed session would be unreadable to the other, and cleared');
+			assert.strictEqual(await keyMaker(indexedDB)(), a, 'and it is the one stored');
+		}
 	});
 
 	/* ---- startReturnFromSignIn --------------------------------------------------------------------- */

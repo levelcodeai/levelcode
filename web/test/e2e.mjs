@@ -50,18 +50,6 @@ try {
 	const page = await chrome.newPage(editorOrigin + '/');
 
 	const workbenchReady = () => page.waitFor(() => page.eval(`!!document.querySelector('.monaco-workbench .part.editor')`), { ms: 90000, label: 'workbench' });
-	const rectOfText = (re) => page.eval(`(() => {
-		const re = new RegExp(${JSON.stringify(re.source)}, ${JSON.stringify(re.flags)});
-		const els = [...document.querySelectorAll('a, button, span, .monaco-button, .tab, .label-name')].filter((e) => e.children.length === 0 && re.test(e.textContent || ''));
-		const e = els.find((x) => x.getBoundingClientRect().width > 0);
-		if (!e) { return null; }
-		const r = e.getBoundingClientRect();
-		return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-	})()`);
-	const clickText = async (re, label) => {
-		const r = await page.waitFor(() => rectOfText(re), { ms: 30000, label: label || String(re) });
-		await page.click(r.x, r.y);
-	};
 	const activateTab = async (re) => {
 		const r = await page.waitFor(() => page.eval(`(() => {
 			const re = new RegExp(${JSON.stringify(re.source)}, ${JSON.stringify(re.flags)});
@@ -72,10 +60,6 @@ try {
 		})()`), { ms: 30000, label: 'tab ' + re });
 		await page.click(r.x, r.y);
 		await sleep(600);
-	};
-	const chatSession = () => {
-		for (const [id, s] of page.sessions) { if (s.type === 'iframe' && /vscode-cdn\.net|vscode-webview/.test(s.url || '')) { return id; } }
-		return null;
 	};
 	/** Evaluate in the chat webview's document. `d` is that document. */
 	const inChat = async (expr) => {

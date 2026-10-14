@@ -136,7 +136,8 @@ function boot(over) {
 	const env = {
 		vscode,
 		// The host module (host.js) as the desktop sees it: workspace paths are files on disk.
-		host: { isBrowser: false, caps: { shell: true, mcpStdio: true, ripgrep: true }, uriFor: (abs) => vscode.Uri.file(abs) },
+		host: { isBrowser: false, caps: { shell: true, mcpStdio: true, ripgrep: true, unaskedSignIn: true }, uriFor: (abs) => vscode.Uri.file(abs),
+			withStats: async (run) => run(fs), knownFilesView: () => null },
 		fs, path, os, catalog, sessionMemory, diagrams, diagramLinks, diagramExport, diagramText, diagramTool, diagramBundle: bundle,
 		diagramAscii: (over && over.ascii) || ascii,
 		aiConfig: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }),

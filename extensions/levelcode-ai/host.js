@@ -35,6 +35,12 @@ const caps = Object.freeze({
 	mcpStdio: !isBrowser,
 	/** Search file contents with the ripgrep binary the editor ships. */
 	ripgrep: !isBrowser,
+	/**
+	 * Take a sign-in result that no sign-in of this editor asked for: the old token-in-the-link form, or a code
+	 * with no sign-in pending. The desktop does what it always did. In a browser the callback is a page of the
+	 * editor's own site that anyone can link to, so only a code answering a sign-in this browser started counts.
+	 */
+	unaskedSignIn: !isBrowser,
 });
 
 const TEXT_SNIFF_BYTES = 8000;
@@ -61,6 +67,21 @@ function uriFor(abs) {
 		}
 	}
 	return best ? best.uri.with({ path: abs }) : vscode.Uri.file(abs);
+}
+
+/**
+ * Is this document one of the user's own files — the kind inline completion is offered in? On the desktop a
+ * `file` or an `untitled` document, as ever. In the browser also a document inside a workspace folder, whatever
+ * its scheme: the scratch workspace's files are `levelcode-scratch:` ones.
+ * @param {vscode.Uri} uri
+ */
+function isUserDocument(uri) {
+	if (uri.scheme === 'file' || uri.scheme === 'untitled') { return true; }
+	if (!isBrowser) { return false; }
+	return folders().some((f) => {
+		const root = f.uri.path.endsWith('/') ? f.uri.path : f.uri.path + '/';
+		return f.uri.scheme === uri.scheme && (f.uri.authority || '') === (uri.authority || '') && (uri.path === f.uri.path || uri.path.startsWith(root));
+	});
 }
 
 /* ----- reading and probing ------------------------------------------------------------------- */
@@ -141,6 +162,66 @@ async function withReads(run) {
 	return result;
 }
 
+/* ----- checking paths synchronously --------------------------------------------------------- */
+
+/**
+ * The part of Node's `fs` a synchronous path check uses — `statSync` and `realpathSync` — answered from `lookup`.
+ * In the browser nothing is a symbolic link, so a path's real path is the path.
+ * @param {(abs: string) => ({isFile: boolean, isDirectory: boolean}|null)} lookup
+ */
+function statView(lookup) {
+	const missing = (p) => Object.assign(new Error('ENOENT: no such file or directory, ' + p), { code: 'ENOENT' });
+	return {
+		statSync(p) {
+			const s = lookup(String(p));
+			if (!s) { throw missing(p); }
+			return { isFile: () => s.isFile, isDirectory: () => s.isDirectory };
+		},
+		realpathSync(p) { if (!lookup(String(p))) { throw missing(p); } return String(p); },
+	};
+}
+
+/**
+ * Run a check written against `fs.statSync` / `fs.realpathSync` (a diagram's code links: diagram/links.js) where
+ * files can only be looked at asynchronously. Like withReads: the check runs once to learn which paths it asks
+ * about, those are stat'd, and it runs again with the answers (at most four passes).
+ * On the desktop it simply runs once against `fs`, as before.
+ * @template T
+ * @param {(fs: { statSync: Function, realpathSync: Function }) => T} run
+ * @returns {Promise<T>}
+ */
+async function withStats(run) {
+	if (!isBrowser) { return run(nodeFs); }
+	/** @type {Map<string, {isFile: boolean, isDirectory: boolean}|null>} */
+	const known = new Map();
+	let result;
+	for (let pass = 0; pass < 4; pass++) {
+		const asked = new Set();
+		result = run(statView((abs) => {
+			if (known.has(abs)) { return known.get(abs); }
+			asked.add(abs);
+			return null;
+		}));
+		if (asked.size === 0) { break; }
+		await Promise.all([...asked].map(async (p) => { known.set(p, await stat(p)); }));
+	}
+	return result;
+}
+
+/**
+ * The same view over files already known to exist, for a check that cannot wait for the file system (a diagram's
+ * links are checked as it is drawn). Folders are the files' parents. Null on the desktop: the check reads the disk.
+ * @param {Iterable<string>} files absolute paths
+ */
+function knownFilesView(files) {
+	if (!isBrowser) { return null; }
+	const set = new Set(files);
+	const dirs = new Set();
+	for (const f of set) { for (let d = f.slice(0, f.lastIndexOf('/')); d; d = d.slice(0, d.lastIndexOf('/'))) { dirs.add(d); } }
+	dirs.add('/');
+	return statView((abs) => (set.has(abs) ? { isFile: true, isDirectory: false } : dirs.has(abs) ? { isFile: false, isDirectory: true } : null));
+}
+
 /* ----- sending the user to sign in ------------------------------------------------------------- */
 
 /** Registered by the page (web/main.js); it takes the tab to the account site and the sign-in comes back to it. */
@@ -175,7 +256,7 @@ async function openAuth(uri) {
 /**
  * `vscode.workspace.findFiles`, which is what the editor's own search service answers. The browser
  * build uses it too: LevelCode's scratch workspace registers a file search provider.
- * @param {string} glob
+ * @param {vscode.GlobPattern} glob  a string, or a vscode.RelativePattern to search under one folder
  * @param {string} exclude
  * @param {number} max
  */
@@ -185,7 +266,7 @@ function findFiles(glob, exclude, max) {
 
 module.exports = {
 	isBrowser, caps,
-	uriFor, readBytes, readText, readTextOrNull, stat, exists, isBinary, withReads, findFiles, openAuth,
+	uriFor, isUserDocument, readBytes, readText, readTextOrNull, stat, exists, isBinary, withReads, withStats, knownFilesView, findFiles, openAuth,
 	// For tests.
 	_path: path,
 };

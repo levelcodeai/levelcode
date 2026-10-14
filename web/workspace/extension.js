@@ -188,7 +188,8 @@ class ScratchFileSystem {
 		const a = norm(from.path);
 		const b = norm(to.path);
 		if (a === b) { return; }
-		if (b.startsWith(under(a))) { throw vscode.FileSystemError.NoPermissions(to); }
+		// Into itself, or over a folder that contains it: replacing the destination would delete the source first.
+		if (a === '/' || b === '/' || b.startsWith(under(a)) || a.startsWith(under(b))) { throw vscode.FileSystemError.NoPermissions(to); }
 		const tx = this.db.transaction(STORE, 'readwrite');
 		const store = tx.objectStore(STORE);
 		const src = await request(store.get(a));
@@ -196,11 +197,23 @@ class ScratchFileSystem {
 		const dst = await request(store.get(b));
 		if (dst && !(options && options.overwrite)) { tx.abort(); throw vscode.FileSystemError.FileExists(to); }
 		const changes = [];
-		await this._mkdirs(store, b, changes);
-		if (dst) { store.delete(b); }
-		const t = Date.now();
+		try { await this._mkdirs(store, b, changes); } catch (e) { tx.abort(); throw e; }
+		// The source, whole, before anything is removed.
 		const nodes = [src];
 		if (src.type === DIR) { nodes.push(...await request(store.getAll(IDBKeyRange.bound(under(a), under(a) + '￿')))); }
+		// What it replaces goes in the same transaction, with everything under it: a folder written over another
+		// keeps none of the old one's files, and a file written over a folder leaves no children behind it.
+		if (dst) {
+			if (dst.type === DIR) {
+				for (const k of await request(store.getAllKeys(IDBKeyRange.bound(under(b), under(b) + '￿')))) {
+					store.delete(k);
+					changes.push({ type: vscode.FileChangeType.Deleted, path: k });
+				}
+			}
+			store.delete(b);
+			changes.push({ type: vscode.FileChangeType.Deleted, path: b });
+		}
+		const t = Date.now();
 		for (const n of nodes) {
 			const np = b + n.path.slice(a.length);
 			store.put(Object.assign({}, n, { path: np, mtime: move ? n.mtime : t, ctime: move ? n.ctime : t }));

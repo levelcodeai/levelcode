@@ -69,8 +69,17 @@ const enc = (s) => new TextEncoder().encode(s);
 	fs.mkdirSync(path.join(tmp, 'dir'));
 
 	await test('desktop: every capability is on', () => {
-		assert.deepStrictEqual({ ...host.caps }, { shell: true, mcpStdio: true, ripgrep: true });
+		assert.deepStrictEqual({ ...host.caps }, { shell: true, mcpStdio: true, ripgrep: true, unaskedSignIn: true });
 		assert.strictEqual(host.isBrowser, false);
+	});
+	await test('desktop: inline completion is offered in file and untitled documents, as before, and nowhere else', () => {
+		assert.strictEqual(host.isUserDocument(new Uri('file', '/x.js')), true);
+		assert.strictEqual(host.isUserDocument(new Uri('untitled', 'Untitled-1')), true);
+		for (const s of ['levelcode-scratch', 'git', 'output', 'vscode-remote']) { assert.strictEqual(host.isUserDocument(new Uri(s, '/x.js')), false, s); }
+	});
+	await test('desktop: a synchronous path check is handed the real fs', async () => {
+		assert.strictEqual(await host.withStats((f) => f), fs);
+		assert.strictEqual(host.knownFilesView(['/anything']), null, 'no view: the disk is read');
 	});
 	await test('desktop: reads are the fs reads, errors included', async () => {
 		assert.strictEqual(await host.readText(path.join(tmp, 'a.txt')), '﻿hello', 'the BOM is the caller\'s to strip, as before');
@@ -118,8 +127,8 @@ const enc = (s) => new TextEncoder().encode(s);
 	vsFiles.set('/my-project/src/a.js', enc('const a = 1;'));
 	vsFiles.set('/blob.bin', new Uint8Array([7, 0, 7]));
 
-	await test('browser: no shell, no local MCP, no ripgrep', () => {
-		assert.deepStrictEqual({ ...host.caps }, { shell: false, mcpStdio: false, ripgrep: false });
+	await test('browser: no shell, no local MCP, no ripgrep — and no sign-in result nobody asked for', () => {
+		assert.deepStrictEqual({ ...host.caps }, { shell: false, mcpStdio: false, ripgrep: false, unaskedSignIn: false });
 		assert.strictEqual(host.isBrowser, true);
 	});
 	await test('browser: a path maps back to the folder that contains it, longest match wins', () => {
@@ -169,6 +178,35 @@ const enc = (s) => new TextEncoder().encode(s);
 	});
 	await test('browser: findFiles is the editor\'s own search', () => {
 		assert.deepStrictEqual(host.findFiles('**/*', 'x', 5), ['findFiles', '**/*', 'x', 5]);
+	});
+	await test('browser: inline completion is offered in the workspace\'s own documents too, whatever their scheme', () => {
+		assert.strictEqual(host.isUserDocument(new Uri('levelcode-scratch', '/notes.md')), true, 'the scratch workspace');
+		assert.strictEqual(host.isUserDocument(new Uri('file', '/my-project/src/a.js')), true);
+		assert.strictEqual(host.isUserDocument(new Uri('untitled', 'Untitled-1')), true);
+		assert.strictEqual(host.isUserDocument(new Uri('git', '/notes.md')), false, 'a diff view of a file is not the file');
+		assert.strictEqual(host.isUserDocument(new Uri('output', '/x')), false);
+		vscodeMock.workspace.workspaceFolders = [{ uri: new Uri('levelcode-scratch', '/scratch'), name: 'scratch' }];
+		assert.strictEqual(host.isUserDocument(new Uri('levelcode-scratch', '/scratch/a.js')), true);
+		assert.strictEqual(host.isUserDocument(new Uri('levelcode-scratch', '/scratched/a.js')), false, 'a name that merely starts with the folder\'s is not in it');
+		vscodeMock.workspace.workspaceFolders = [
+			{ uri: new Uri('levelcode-scratch', '/'), name: 'scratch' }, { uri: new Uri('file', '/my-project'), name: 'my-project' }];
+	});
+	await test('browser: a synchronous path check (a diagram\'s code link) is answered from the editor\'s file system', async () => {
+		const links = require('../../../extensions/levelcode-ai/diagram/links.js');
+		const folders = [{ name: 'my-project', root: '/my-project' }];
+		const ok = await host.withStats((f) => links.resolveLink({ path: 'src/a.js' }, folders, { fs: f }));
+		assert.deepStrictEqual(ok, { ok: true, path: 'src/a.js', abs: '/my-project/src/a.js' }, 'a file that exists in the browser\'s workspace is a link');
+		const missing = await host.withStats((f) => links.resolveLink({ path: 'src/none.js' }, folders, { fs: f }));
+		assert.strictEqual(missing.ok, false);
+		const dir = await host.withStats((f) => links.resolveLink({ path: 'src' }, folders, { fs: f }));
+		assert.strictEqual(dir.ok, false, 'a folder is not a link');
+		const out = await host.withStats((f) => links.resolveLink({ path: '../notes.md' }, folders, { fs: f }));
+		assert.deepStrictEqual(out, { ok: false, reason: 'outside this workspace' });
+		// as a diagram is drawn: the files the extension has indexed
+		const view = host.knownFilesView(['/my-project/src/a.js']);
+		assert.deepStrictEqual(links.resolveLink({ path: 'src/a.js' }, folders, { fs: view }), { ok: true, path: 'src/a.js', abs: '/my-project/src/a.js' });
+		assert.strictEqual(links.resolveLink({ path: 'src/b.js' }, folders, { fs: view }).ok, false);
+		assert.strictEqual(links.resolveLink({ path: 'src' }, folders, { fs: view }).ok, false);
 	});
 	await test('browser: openAuth takes the tab there, with the address the editor\'s own opener would have used', async () => {
 		signIn.commands = ['workbench.action.files.save', 'levelcode.web.openAuthUrl']; signIn.getCommandsThrows = false;
