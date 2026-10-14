@@ -298,20 +298,32 @@ function workspaceFolderList() {
 	return (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath }));
 }
 /**
- * What a simulated shell needs besides the command line (host.spawn): the workspace folders to mount, and — for
- * an AGENT run — where to send the files the command changed. Nothing for the desktop's shell, which writes to
- * disk itself and has never been asked for either.
+ * What a simulated shell needs besides the command line (host.spawn): the workspace folders to mount, the folder to
+ * run in, and — for an AGENT run — where to send the files the command changed. Nothing for the desktop's shell,
+ * which writes to disk itself and has never been asked for any of it.
+ *
+ * All of it in the shell's own terms: a folder is its URI path (`/proj`), which is where the shell mounts it, what the
+ * paths of the changes it hands back are made of, and what host.uriFor maps back to a folder. Not the fsPath the rest
+ * of this file uses: in a browser on Windows (VS Code takes the platform from the user agent) fsPath is `\proj` for
+ * every scheme, and the shell answered every command with "the working directory \proj is not inside a workspace
+ * folder". On a Mac or Linux the two are the same string.
+ * @param {string|null} cwd  the folder the command runs in, as runCommand is given it: one folder's fsPath
  */
-function shellSpawnOpts(ctx, info) {
+function shellSpawnOpts(ctx, info, cwd) {
 	if (!info) { return {}; }
-	const folders = (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath, uri: f.uri.toString() }));
+	const live = () => vscode.workspace.workspaceFolders || [];
+	const shellFolders = () => live().map((f) => ({ name: f.name, root: f.uri.path, uri: f.uri.toString() }));
+	// (A folder removed while the command waited for approval is not found: the shell is then handed the fsPath, and
+	// says that it is not inside a workspace folder, which is true.)
+	const at = live().find((f) => f.uri.fsPath === cwd);
 	return {
-		folders,
+		cwd: at ? at.uri.path : cwd,
+		folders: shellFolders(),
 		// `control.cancelled()` is the shell's own word that the run was stopped while its changes were being
 		// checked: nothing is applied then (see commitShellChanges).
 		commit: async (changes, control) => {
 			const r = await commitShellChanges(changes, ctx, {
-				folders: () => workspaceFolderList(),
+				folders: shellFolders,   // the paths of the changes are made of the roots the shell was given
 				readNow: async (abs) => { try { return await host.readBytes(abs); } catch { return null; } },
 				cancelled: () => !!(control && typeof control.cancelled === 'function' && control.cancelled())
 			});
@@ -449,8 +461,9 @@ const START_KEPT = 8000;
 // Returns the (capped) full output for the model.
 //
 // opts.onData(text, stream) sees EVERY chunk, unlike onChunk, which stops at the live view's cap — a
-// registry that feeds on the view stops updating when the view fills up. opts.folders / opts.commit are for
-// a host whose shell is simulated (host.spawn); the desktop's spawn ignores them.
+// registry that feeds on the view stops updating when the view fills up. opts.cwd / opts.folders / opts.commit
+// are for a host whose shell is simulated (host.spawn): `root` named in that shell's terms (shellSpawnOpts). The
+// desktop never has them, and its spawn is given `root` as ever.
 function runCommand(root, command, onChunk, onExit, onStart, timeoutMs, opts) {
 	return new Promise((resolve) => {
 		let out = '', streamed = 0, settled = false, timedOut = false, stopped = false;
@@ -476,7 +489,7 @@ function runCommand(root, command, onChunk, onExit, onStart, timeoutMs, opts) {
 		let child;
 		// detached:true → the shell becomes its own process-group leader, so process.kill(-pid) kills the
 		// whole tree (the shell AND the server/children it spawned), not just the shell (which orphans the server).
-		try { child = host.spawn(command, { cwd: root, folders: opts && opts.folders, commit: opts && opts.commit, explanation: opts && opts.explanation }); }
+		try { child = host.spawn(command, { cwd: (opts && opts.cwd) || root, folders: opts && opts.folders, commit: opts && opts.commit, explanation: opts && opts.explanation }); }
 		catch (e) { if (onExit) { onExit(-1, 0, 'error'); } resolve('ERROR: ' + ((e && e.message) || e)); return; }
 		const killGroup = (sig) => { try { if (child.pid) { process.kill(-child.pid, sig); } else { child.kill(sig); } } catch (e) { try { child.kill(sig); } catch (e2) { /* already gone */ } } };
 		const stop = () => { if (settled || stopped) { return; } stopped = true; killGroup('SIGTERM'); setTimeout(() => { if (!settled) { killGroup('SIGKILL'); } }, 1500); };
@@ -668,7 +681,7 @@ async function runTool(tu, ctx) {
 				ctx.post({ type: 'termExit', id: runId, code: code, ms: ms, how: how });
 			};
 			const onStart = (child, stop) => { if (stops) { stops.set(runId, stop); } };
-			const spawnOpts = Object.assign({ onData, explanation: String(input.explanation || '').slice(0, 300) }, shellSpawnOpts(ctx, sh));
+			const spawnOpts = Object.assign({ onData, explanation: String(input.explanation || '').slice(0, 300) }, shellSpawnOpts(ctx, sh, cwdRoot));
 			if (bg) {
 				// Fire-and-forget: keep streaming + tracking, but return NOW so the agent loop isn't blocked.
 				// No timeout — a background server is meant to run long (Stop / New Chat reap it).
@@ -1139,7 +1152,7 @@ async function runAgent(ctx) {
 				(chunk, stream) => ctx.post({ type: 'verifyOutput', id, chunk, stream }),
 				(code) => { if (ctx.commandStops) { ctx.commandStops.delete(id); } exitCode = (code == null ? -1 : code); },
 				(child, stop) => { if (ctx.commandStops) { ctx.commandStops.set(id, stop); } },
-				ctx.commandTimeout, shellSpawnOpts(ctx, sh));
+				ctx.commandTimeout, shellSpawnOpts(ctx, sh, root));
 		}
 		// A command that couldn't even start (missing npm script / command-not-found) is a CONFIG problem,
 		// not the agent's code — flag it as unrunnable so we warn the user instead of looping the agent on it.

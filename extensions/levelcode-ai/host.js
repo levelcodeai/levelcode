@@ -193,6 +193,8 @@ const SHELL_API_VERSION = 1;
  * @typedef {object} SpawnOptions
  * @property {string} cwd                       absolute path of a workspace folder, or inside one
  * @property {WorkspaceFolderRef[]} [folders]   the workspace folders, live and in order (a shell mounts each at its root)
+ *     For a registered shell `cwd` and each `root` are URI paths (`/proj`), never fsPath, which is `\proj` in a
+ *     browser on Windows (agent.js shellSpawnOpts); the desktop's spawn is given the fsPath it always was.
  * @property {Record<string,string>} [env]      extra environment
  * @property {string} [explanation]             the model's own label for the command (at most 300 characters), for a tab that mirrors it
  * @property {(changes: Change[], control?: { cancelled(): boolean }) => Promise<{ rest: Change[], notes: string[], failed?: number, refused?: boolean }>} [commit]
