@@ -123,7 +123,6 @@ function createInputParser(options) {
 				}
 				takePaste(joined.slice(0, joined.length - keep));
 				pasteTail = joined.slice(joined.length - keep);
-				i = s.length;
 				break;
 			}
 

@@ -35,8 +35,6 @@ const MAX_LINE = 4000;
 const MAX_CANDIDATES = 100;
 /** A run of characters longer than this is not a path (a minified line, a base64 blob). */
 const MAX_PATH = 1024;
-/** vscode.FileType.File */
-const FILE = 1;
 
 // leftmost-longest runs of path characters; the lookbehind keeps a match from starting inside another token
 const TOKEN = /(?<![\w./~@:+\\-])[^\s"'`<>()[\]{}|;,:*?\\=]+(?::([0-9]{1,7})(?::([0-9]{1,7}))?)?/gu;
