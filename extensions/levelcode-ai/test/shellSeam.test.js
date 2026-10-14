@@ -224,6 +224,44 @@ function ctxFor(over) {
 			await p;
 		});
 
+		await test('BROWSER, shell registered: a file with unsaved changes in the editor is not replaced by a command — the set is refused whole, nothing reaches the review', async () => {
+			const { agent, host } = load(true);
+			const calls = registerFake(host);
+			const edits = [], deletes = [];
+			const enc = (s) => new TextEncoder().encode(s);
+			// The review replaces the whole buffer and saves it; its Undo restores the file as it was on disk, not what was typed.
+			const doc = (p, isDirty) => ({ uri: { fsPath: p, path: p, toString: () => 'file://' + p }, isDirty });
+			fs.writeFileSync(path.join(root, 'notes.txt'), 'saved\n');
+			script = [tool('t1', 'run_command', { command: 'sed -i s/saved/x/ notes.txt', explanation: 'x' }), say('Done: x')];
+			const ctx = ctxFor({ applyEdit: async (r) => { edits.push(r); return true; }, applyDelete: async (r) => { deletes.push(r); return true; } });
+			const p = agent.runAgent(ctx);
+			await settle(); await settle();
+			const commit = calls[0].opts.commit;
+			const modify = () => ({ kind: 'write', path: root + '/notes.txt', existed: true, before: enc('saved\n'), after: enc('x\n') });
+			try {
+				vscodeMock.workspace.textDocuments = [doc(root + '/notes.txt', true)];
+				let out = await commit([modify(), { kind: 'write', path: root + '/other.txt', existed: false, before: null, after: enc('o\n') }]);
+				assert.strictEqual(out.refused, true);
+				assert.deepStrictEqual(edits, [], 'not even the other file: one refusal refuses the set');
+				assert.match(out.notes.join('\n'), /refused: notes\.txt — it has unsaved changes in the editor/);
+				out = await commit([{ kind: 'delete', path: root + '/notes.txt', before: enc('saved\n') }]);
+				assert.strictEqual(out.refused, true);
+				assert.deepStrictEqual(deletes, []);
+				// On a disk that ignores case the editor has ONE document for both spellings, and the review would replace it.
+				vscodeMock.workspace.textDocuments = [doc(root + '/NOTES.txt', true)];
+				assert.strictEqual((await commit([modify()])).refused, true, 'the dirty buffer of another spelling of the name');
+				// Open and saved is no reason to refuse.
+				vscodeMock.workspace.textDocuments = [doc(root + '/notes.txt', false)];
+				out = await commit([modify()]);
+				assert.strictEqual(out.refused, false);
+				assert.deepStrictEqual(edits.map((e) => e.path), ['notes.txt']);
+			} finally {
+				delete vscodeMock.workspace.textDocuments;
+			}
+			calls[0].child.emit('close', 0);
+			await p;
+		});
+
 		await test('BROWSER, the shell says the run was stopped while its changes were being checked: the commit hook applies nothing', async () => {
 			const { agent, host } = load(true);
 			const calls = registerFake(host);

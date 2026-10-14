@@ -325,11 +325,26 @@ function shellSpawnOpts(ctx, info, cwd) {
 			const r = await commitShellChanges(changes, ctx, {
 				folders: shellFolders,   // the paths of the changes are made of the roots the shell was given
 				readNow: async (abs) => { try { return await host.readBytes(abs); } catch { return null; } },
+				isDirty: hasUnsavedChanges,
 				cancelled: () => !!(control && typeof control.cancelled === 'function' && control.cancelled())
 			});
 			return { rest: r.rest, notes: r.notes, failed: r.failed.length, refused: r.refused };
 		}
 	};
+}
+/**
+ * Has the editor got unsaved changes for this workspace file? A command's change goes through the review, which
+ * replaces the whole document and saves it, and whose Undo restores the file as it was on disk: what was typed would
+ * be gone. The document is found by URI, as the review finds the file (host.uriFor), with the path's letter case and
+ * Unicode form folded: on a disk that ignores case (the usual folder from the computer) the editor keeps ONE document
+ * for `README.md` and `readme.md`, and the review would replace it whichever spelling the command used. (On a disk
+ * that tells them apart, a dirty document of another spelling refuses the command too; running it again is the cost.)
+ * @param {string} abs
+ */
+function hasUnsavedChanges(abs) {
+	const key = (/** @type {vscode.Uri} */ u) => u.scheme + ':' + u.authority + ':' + String(u.path).normalize('NFC').toLowerCase();
+	const want = key(host.uriFor(abs));
+	return (vscode.workspace.textDocuments || []).some((d) => d.isDirty && key(d.uri) === want);
 }
 function workspaceRoot() {
 	const f = vscode.workspace.workspaceFolders;
