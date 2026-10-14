@@ -351,6 +351,47 @@ async function agent(rig, command, opts) {
 		r.rt.dispose();
 	});
 
+	await test('a review that fails one delete keeps the folder it was under: the shell counts what was applied (1 of 4), not the set less what failed', async () => {
+		// levelcode-ai's own review, its answer handed on as agent.js hands it on
+		const { commitShellChanges } = require(path.join(__dirname, '..', '..', '..', 'extensions', 'levelcode-ai', 'shellCommit.js'));
+		for (const how of ['the folder it leaves cannot be made', 'Stop while the folder it leaves is being made']) {
+			const r = createRig();
+			r.ws.put('/scratch/d/a.txt', 'a\n');
+			r.ws.put('/scratch/d/b.txt', 'b\n');
+			ending(r, { exitCode: 0, changes: [mkdir('/scratch/m'), del('/scratch/d/a.txt', 'a\n'), del('/scratch/d/b.txt', 'b\n'), rmdir('/scratch/d')] });
+			const ctx = {
+				applyEdit: async () => false,
+				applyDelete: async (/** @type {{ path: string }} */ o) => {
+					if (o.path === 'd/b.txt') { return false; }
+					await r.ws.fs.delete(r.ws.vscode.Uri.parse('levelcode-scratch:///scratch/' + o.path), { recursive: false });
+					return true;
+				},
+			};
+			const commit = async (/** @type {any[]} */ changes, /** @type {any} */ control) => {
+				const x = await commitShellChanges(changes, ctx, { folders: () => [{ name: 'scratch', root: '/scratch' }], readNow: async (abs) => r.ws.bytes(abs), cancelled: () => control.cancelled() });
+				return { rest: x.rest, notes: x.notes, failed: x.failed.length, refused: x.refused };
+			};
+			// the review applied d/a.txt, could not delete d/b.txt, and so did not hand back the removal of d: one change was made
+			if (how === 'the folder it leaves cannot be made') {
+				r.ws.fail('createDirectory', (k) => k.endsWith('/scratch/m'), new Error('quota'));
+				const res = await agent(r, 'x', { commit });
+				assert.strictEqual(res.code, 1);
+				assert.ok(/PARTLY applied — 1 of 2 file changes/.test(res.stderr), res.stderr);
+				assert.ok(/applied 1 of 4 file changes; stopped at \/scratch\/m: quota\./.test(res.stderr), how + ': ' + res.stderr);
+			} else {
+				r.ws.hang('createDirectory', (k) => k.endsWith('/scratch/m'));
+				const child = r.rt.spawnAgent('x', { cwd: '/scratch', commit });
+				const o = observe(child, 3000);
+				await until(() => r.ws.calls.includes('createDirectory levelcode-scratch:/scratch/m'));
+				child.kill('SIGTERM');
+				await o.closed;
+				assert.ok(/stopped while its file changes were being applied: 1 of 4 were applied\./.test(o.stderr), how + ': ' + o.stderr);
+			}
+			assert.deepStrictEqual([r.ws.list('/scratch'), r.ws.list('/scratch/d')], [['d'], ['b.txt']], how);
+			r.rt.dispose();
+		}
+	});
+
 	await test('a review that THROWS: the status is 1, one honest note, and the shell applies nothing of its own', async () => {
 		const r = createRig();
 		ending(r, { exitCode: 0, changes: [wr('/scratch/a', 'a', null), mkdir('/scratch/d')] });

@@ -1044,9 +1044,9 @@ function createRuntime(deps) {
 	 * workspace directly otherwise. Validated as a whole first in both cases.
 	 *
 	 * What the review hands back is trusted for what the contract says it is - `rest`, a list of the folders the
-	 * command made and removed, which this shell then makes and removes; `notes`; `failed`, a count - and no
-	 * more: an entry that is not one of those folders is not applied, an answer that is not that shape is "no
-	 * answer", and a count that is not a count is not believed.
+	 * command made and removed, which this shell then makes and removes; `notes`; `failed`, the count of file changes
+	 * it could not apply - and no more: an entry that is not one of those folders is not applied, an answer that is not
+	 * that shape is "no answer", and a count that is not a count is not believed.
 	 *
 	 * Time is bounded the same way in both routes (the gate): a call to the file system is waited for `fsMs` at most
 	 * and the part that writes has a budget in all - for the agent `commitMs` for the review and then the folders it
@@ -1103,11 +1103,16 @@ function createRuntime(deps) {
 			else { failed = total; notes.push(note('the review gave a count of changes it could not apply that is not a number, so none of them are counted as applied')); }
 		}
 		const handedBack = refused ? [] : r.rest;
-		let applied = refused ? 0 : Math.max(0, total - handedBack.length - failed);
 		// What the review leaves to the shell is the folders the command made and removed, and only those.
 		const folders = new Set(handed.filter((c) => c.kind === 'mkdir' || c.kind === 'rmdir').map((c) => c.kind + ' ' + c.path));
 		const rest = handedBack.filter((/** @type {any} */ c) => c && (c.kind === 'mkdir' || c.kind === 'rmdir') && folders.has(c.kind + ' ' + c.path));
 		const ignored = handedBack.length - rest.length;
+		// What the review applied is the files it was given, less the ones it could not apply and whatever else it handed
+		// back (what is handed back is still to be done). Folders are never its to apply: it hands back the ones this shell
+		// is to make and remove, and one it keeps back is applied by nobody (shellCommit keeps back the removal of a folder
+		// when a file in it could not be deleted), so it is not counted as applied.
+		const files = handed.filter((c) => c.kind === 'write' || c.kind === 'delete').length;
+		let applied = refused ? 0 : Math.max(0, files - failed - ignored);
 		if (ignored > 0) {
 			failed += ignored;
 			notes.push(note(ignored + ' entr' + (ignored === 1 ? 'y' : 'ies') + ' the review handed back to the shell ' + (ignored === 1 ? 'is' : 'are') + ' not ' + (ignored === 1 ? 'a folder' : 'folders') + ' the command made or removed, and ' + (ignored === 1 ? 'was' : 'were') + ' NOT applied'));

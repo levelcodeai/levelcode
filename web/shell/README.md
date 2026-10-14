@@ -225,7 +225,10 @@ script that ran to its end, whatever its status; otherwise nothing is applied):
    the same Keep/Undo and per-turn checkpoint as `edit_file`. It answers `{ rest, notes, failed?, refused? }`; `rest`
    may only contain `mkdir`/`rmdir` entries **of this change set** (anything else is counted failed and named), which
    the shell applies with `workspace.fs`; an answer that is not an object with a `rest` list is "gave no answer";
-   `failed` must be a finite non-negative number. `notes` are appended to stderr.
+   `failed` must be a finite non-negative number: the file changes (writes and deletes) it could not apply. What the
+   result counts as applied is the set's files less `failed` and less anything else handed back, then the folders of
+   `rest` the shell made or removed; a folder the review keeps out of `rest` (shellCommit keeps the removal of one that a
+   file could not be deleted from) is applied by nobody and is not counted. `notes` are appended to stderr.
 2. **The visitor's terminal** (no `commit`): `src/commit.js` validates (inside the folders, size caps, entry cap),
    checks that nothing changed on disk since the command read it (read-only, bounded), and writes bytes with
    `workspace.fs` — creates, then deletes, deepest paths first, **never recursive and never to the trash** — and reports
