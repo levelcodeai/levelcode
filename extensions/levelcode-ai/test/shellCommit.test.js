@@ -161,6 +161,28 @@ const ids = (out) => out.failed.map((f) => f.c.path).sort();
 		for (const p of ['gitlab.md', 'src/vscode.js', 'docs/AGENTS.txt', '.github/ISSUE_TEMPLATE/bug.md', 'README.md']) { assert.ok(!isProtected(p), p + ' is not protected'); }
 	});
 
+	await test('protected paths are refused in any letter case: on a disk that ignores case (the usual folder from the computer) .GIT/config IS .git/config', async () => {
+		// The reported command: printf '[core]\n\tfsmonitor = sh evil.sh\n' > .GIT/config — it was applied.
+		const r = rig({ '/ws/.GIT/config': '[core]\n' });
+		const out = await commitShellChanges([W('/ws/.GIT/config', '[core]\n\tfsmonitor = sh evil.sh\n', '[core]\n')], r.ctx, r.io);
+		assert.strictEqual(out.refused, true);
+		assert.deepStrictEqual(r.edits, []);
+		assert.match(out.notes[0], /refused: \.GIT\/config — repository metadata/);
+		const folded = ['.Git/hooks/pre-commit', 'sub/.GIT/config', '.VSCODE/tasks.json', '.VsCode/settings.json', '.LevelCode/mcp.json', '.CURSOR/rules/x.mdc',
+			'.Husky/pre-commit', '.GITHUB/WORKFLOWS/ci.yml', '.github/Workflows/ci.yml', '.CursorRules', '.WINDSURFRULES',
+			'.v\u017Fcode/settings.json',         // U+017F, the long s: S in upper case
+			'.github/wor\u212Aflows/ci.yml',      // U+212A, the Kelvin sign: K once normalised
+			'.g\u0131t/config'];                   // U+0131, the dotless i: I in upper case
+		for (const p of folded) {
+			assert.ok(isProtected(p), JSON.stringify(p) + ' should be protected');
+			const w = rig();
+			assert.strictEqual((await commitShellChanges([W('/ws/' + p, 'x')], w.ctx, w.io)).refused, true, p);
+			const d = rig({ ['/ws/' + p]: 'x' });
+			assert.strictEqual((await commitShellChanges([D('/ws/' + p, 'x')], d.ctx, d.io)).refused, true, p + ' (delete)');
+		}
+		for (const p of ['GIT/config', 'src/Git.js', '.GITIGNORE', '.Gitattributes', 'VSCODE/x', '.github/WORKFLOW.md', 'my.GIT/x', 'Agents.txt']) { assert.ok(!isProtected(p), p + ' is not protected'); }
+	});
+
 	await test('outside the workspace folders: refused', async () => {
 		const r = rig();
 		const out = await commitShellChanges([W('/etc/passwd', 'x')], r.ctx, r.io);

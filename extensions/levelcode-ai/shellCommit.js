@@ -19,7 +19,7 @@
  *  What is refused, and why:
  *    - outside the workspace folders                          (a mount is the boundary)
  *    - repository / tool metadata and instruction files       (a script can hide `rm -rf .git`, or write
- *                                                              .vscode/settings.json or AGENTS.md, which later
+ *      (in any letter case: .GIT is .git on most disks)        .vscode/settings.json or AGENTS.md, which later
  *                                                              steer the agent with the user's authority)
  *    - binary, non-UTF-8, BOM or over 1 MiB                   (the review snapshots text; Undo would write
  *                                                              mangled bytes back)
@@ -37,7 +37,8 @@
 'use strict';
 
 /**
- * Never changed by a command, in either direction. Matched against the path RELATIVE to its workspace folder.
+ * Never changed by a command, in either direction. Matched against the path RELATIVE to its workspace folder, folded
+ * (foldCase): written in lower case, they match every spelling a disk that ignores case takes for the same name.
  * The user's own terminal is not held to this (it is the user typing); an agent's command is.
  */
 const PROTECTED = [
@@ -114,8 +115,20 @@ function reviewPathFor(abs, folders) {
 	return { rel, review: folders.length > 1 ? best.name + '/' + rel : rel };
 }
 
+/**
+ * A name as a disk that ignores case sees it. The usual folder from the computer is on one (APFS on a Mac, NTFS on
+ * Windows), and there `.GIT/config` IS `.git/config`: matched as typed, a command wrote the repository's config by
+ * spelling it in capitals. NFC first, as the shell folds names in its own commit (web/shell/src/commit.js); then
+ * upper case before lower case, so that the letters lower-casing alone leaves as they are — U+017F (long s) and U+0131
+ * (dotless i), which upper-case to S and I — land on the plain letter too (U+212A, the Kelvin sign, is K once
+ * normalised). Wider than any one disk, which only ever refuses a name nobody would choose. Letter case and Unicode
+ * form only: a name a disk treats as another for some other reason is not folded here.
+ * @param {string} s
+ */
+function foldCase(s) { return s.normalize('NFC').toUpperCase().toLowerCase(); }
+
 /** @param {string} rel */
-function isProtected(rel) { return PROTECTED.some((re) => re.test(rel)); }
+function isProtected(rel) { const folded = foldCase(rel); return PROTECTED.some((re) => re.test(folded)); }
 
 /**
  * @typedef {import('./host').Change} Change
