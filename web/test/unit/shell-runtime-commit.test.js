@@ -444,7 +444,7 @@ async function agent(rig, command, opts) {
 		await obs.closed;                       // before the review has answered
 		const close = /** @type {any} */ (obs.events.find((e) => e.type === 'close'));
 		assert.strictEqual(close.code, 130);
-		assert.ok(/stopped while the review of its file changes was going on\. A review cannot be interrupted: it may still apply some of them, and how many it applied is not known\./.test(obs.stderr), obs.stderr);
+		assert.ok(/stopped while the review of its file changes was going on\. A review cannot be interrupted: it may still apply some of them, and how many it applied is not known\. Any it applied are in the Keep\/Undo review\./.test(obs.stderr), obs.stderr);
 		assert.ok(!/were NOT applied/.test(obs.stderr), 'it does not say nothing was applied: it does not know');
 		release();
 		await flush();
@@ -1318,7 +1318,7 @@ async function agent(rig, command, opts) {
 		await o.closed;
 		assert.strictEqual(/** @type {any} */ (o.events[o.events.length - 1]).code, 130);
 		assert.deepStrictEqual(o.stderr.split('\n').slice(0, -1), HEAD.concat([
-			'[LevelCode Shell: stopped while the review of its file changes was going on. A review cannot be interrupted: it may still apply some of them, and how many it applied is not known.]',
+			'[LevelCode Shell: stopped while the review of its file changes was going on. A review cannot be interrupted: it may still apply some of them, and how many it applied is not known. Any it applied are in the Keep/Undo review.]',
 			'[LevelCode Shell: the shell engine stopped unexpectedly: segfault, after the command had finished]',
 		]));
 		r.rt.dispose();

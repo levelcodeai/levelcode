@@ -860,7 +860,8 @@ function createRuntime(deps) {
 		if (p.phase === 'check') {
 			notes.push(note('stopped before anything was applied: the command\'s file changes were being checked, and were NOT applied.'));
 		} else if (p.phase === 'review') {
-			notes.push(note('stopped while the review of its file changes was going on. A review cannot be interrupted: it may still apply some of them, and how many it applied is not known.'));
+			// (the review is levelcode-ai's Keep/Undo: what it applied before the Stop stays there, and the model and the visitor are told where)
+			notes.push(note('stopped while the review of its file changes was going on. A review cannot be interrupted: it may still apply some of them, and how many it applied is not known. Any it applied are in the Keep/Undo review.'));
 		} else {
 			applied = p.applied;
 			notes.push(note('stopped while its file changes were being applied: ' + applied + ' of ' + p.total + ' were applied.'
