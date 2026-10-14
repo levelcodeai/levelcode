@@ -13,7 +13,7 @@
 'use strict';
 
 const { createInputParser } = require('./input-parser');
-const { createWriter, createRunOutput, OUTPUT_LIMIT } = require('./output-sink');
+const { createWriter, createRunOutput, notesShown, OUTPUT_LIMIT } = require('./output-sink');
 const { cwdLabel } = require('./prompt');
 const { createLineLog } = require('./line-log');
 
@@ -30,7 +30,7 @@ const MAX_TEXT_SHOWN = 300;
  * The cut is made before anything is scanned, so a megabyte of blanks costs a slice.
  */
 const MAX_TEXT_SCAN = 16 * MAX_TEXT_SHOWN;
-/** At most this many notes of a run are shown. */
+/** At most this many notes of a run are shown (one that says its changes were NOT applied always among them: notesShown). */
 const MAX_NOTES = 8;
 
 const ESC = '\x1b';
@@ -250,8 +250,8 @@ function createAgentTab(deps) {
 		const run = current;
 		if (!run) { return; }
 		let s = run.output.end();
-		const notes = Array.isArray(e.notes) ? e.notes.slice(0, MAX_NOTES) : [];
-		for (const n of notes) { if (typeof n === 'string') { s += DIM + clip(n) + RESET + '\r\n'; } }
+		const notes = Array.isArray(e.notes) ? notesShown(e.notes.filter((/** @type {unknown} */ n) => typeof n === 'string'), MAX_NOTES) : [];
+		for (const n of notes) { s += DIM + clip(n) + RESET + '\r\n'; }
 		const took = duration(now() - run.startedAt);
 		const code = Number.isFinite(e.exitCode) ? Math.trunc(e.exitCode) : 1;
 		switch (e.how) {

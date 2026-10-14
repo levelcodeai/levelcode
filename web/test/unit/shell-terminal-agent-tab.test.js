@@ -322,6 +322,33 @@ test('at most 8 notes of a run are shown', () => {
 	assert.ok(!s.includes('note 9'));
 });
 
+test('a refused review\'s "NONE of this command\'s file changes were applied" is shown behind the notes the run already had; still at most 8', async () => {
+	// What levelcode-ai's review says when it refuses an agent's set (six reasons, the count of the rest, then the NONE
+	// line), behind what the runtime says on every run of a folder it had to move. The NONE line was the ninth note.
+	const { commitShellChanges } = require(path.join(__dirname, '..', '..', '..', 'extensions', 'levelcode-ai', 'shellCommit.js'));
+	const outside = Array.from({ length: 9 }, (_, i) => ({ kind: 'write', path: '/elsewhere/f' + i, existed: false, before: null, after: new Uint8Array([120]) }));
+	const refused = await commitShellChanges(outside, {}, { folders: () => [{ name: 'scratch', root: '/scratch' }], readNow: async () => null });
+	assert.strictEqual(refused.refused, true);
+	assert.strictEqual(refused.notes.length, 8, 'six reasons, "…and 3 more refused", and the NONE line');
+	const none = refused.notes[7];
+	assert.match(none, /NONE of this command's file changes were applied/);
+	const lead = '[LevelCode Shell: The folder "home" is mounted at /mnt/home, not at /home: /home is the shell\'s own.]';
+	for (const leads of [[lead], [lead, '[LevelCode Shell: an engine note]', '[LevelCode Shell: another]']]) {
+		const t = setup({ mode: 'never' });
+		t.emit(run(1, 'mv src/* lib/'));
+		const a = t.attach();
+		const notes = leads.concat(refused.notes);
+		t.emit({ type: 'end', id: 1, exitCode: 1, how: 'exit', notes });
+		t.timers.drain();
+		const s = a.screen().join('\n');
+		assert.ok(s.includes('NONE of this command\'s file changes were applied'), leads.length + ' note(s) in front: the NONE line is shown:\n' + s);
+		const shown = notes.filter((n) => s.includes(n.slice(0, 60)));
+		assert.strictEqual(shown.length, 8, 'still at most 8: ' + JSON.stringify(shown));
+		assert.strictEqual(shown[shown.length - 1], none, 'the NONE line takes the last place, after the reasons');
+		assert.deepStrictEqual(shown.slice(0, 7), notes.slice(0, 7), 'the others in their order');
+	}
+});
+
 test('an explanation and every note are cut at 300 characters, whatever they are made of; the explanation counts in the run\'s budget', () => {
 	const t = setup({ mode: 'never', outputLimit: 2000 });
 	const huge = 'e'.repeat(5000000);

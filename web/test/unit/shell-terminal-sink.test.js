@@ -15,7 +15,7 @@ const path = require('path');
 
 const dir = path.join(__dirname, '..', '..', 'shell', 'src', 'terminal');
 const si = require(path.join(dir, 'shell-integration.js'));
-const { createWriter, createRunOutput, CHUNK, OUTPUT_LIMIT, RESET_TAIL } = require(path.join(dir, 'output-sink.js'));
+const { createWriter, createRunOutput, notesShown, CHUNK, OUTPUT_LIMIT, RESET_TAIL } = require(path.join(dir, 'output-sink.js'));
 
 const queue = [];
 const test = (name, fn) => queue.push([name, fn]);
@@ -172,6 +172,29 @@ test('charge(): text shown outside the filters counts against the run\'s cap', (
 	assert.strictEqual(r.charge('x'.repeat(60)), 'x'.repeat(60));
 	r.write('stdout', 'y'.repeat(60));
 	assert.ok(/\[output limit reached: 20 more characters were not shown\]/.test(r.end()), 'the output had 40 characters left, not 100');
+});
+
+test('notesShown(): at most max notes in their order, and the one that says the changes were NOT applied is never the one cut', () => {
+	const lead = Array.from({ length: 9 }, (_, i) => '[LevelCode Shell: The folder "f' + i + '" is mounted at /mnt/f' + i + ', not at /home/f' + i + ']');
+	const few = lead.slice(0, 3);
+	const copy = notesShown(few, 8);
+	assert.deepStrictEqual(copy, few);
+	assert.notStrictEqual(copy, few, 'a copy');
+	// the runtime's own endings, behind more notes than the cap: a Stop, and a limit that discarded the changes
+	for (const end of [
+		'[LevelCode Shell: stopped. Any file changes the command had made were NOT applied.]',
+		'[LevelCode Shell: a limit of this shell stopped the command. Its 3 file changes were NOT applied.]',
+		'[LevelCode Shell: a limit of this shell stopped the command. Its 1 file change was NOT applied.]',
+		'[LevelCode Shell: NONE of the remaining 2 changes were applied (3 of 5 had already been).]',
+	]) {
+		assert.deepStrictEqual(notesShown(lead.concat(end), 8), lead.slice(0, 7).concat(end), end);
+	}
+	// without such a note it is the plain cut it was; "none" in a file name is not that note
+	const plain = lead.concat('[LevelCode Shell: refused: /w/none of these.txt is outside the workspace folders]');
+	assert.deepStrictEqual(notesShown(plain, 8), plain.slice(0, 8));
+	// more of them than the cap: the last ones (the run's own ending is last)
+	const many = Array.from({ length: 10 }, (_, i) => 'NONE of ' + i);
+	assert.deepStrictEqual(notesShown(many, 8), many.slice(2));
 });
 
 let finished = false;

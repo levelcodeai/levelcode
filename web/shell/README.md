@@ -322,6 +322,7 @@ The agent's commands are mirrored into one read-only tab "LevelCode Agent" witho
 | completion | – | 200 names, 2 s |
 | what a terminal remembers for links | – | 400 lines of 4,000 characters |
 | an `explanation` or a note shown in the agent's tab | the first 4,800 characters scanned, 300 shown, at most 8 notes | – |
+| notes shown after a run (either tab) | at most 8; one that says the changes were NOT applied is always among them (`notesShown`) | same |
 
 The engine's own table (`engine/limits.js`) has 45 keys; `LIMITS.engine` above is the ones the shell sets, the engine's
 own values the rest.

@@ -138,4 +138,27 @@ function createRunOutput(o) {
 	};
 }
 
-module.exports = { createWriter, createRunOutput, CHUNK, OUTPUT_LIMIT, RESET_TAIL };
+/**
+ * A note that says a command's file changes were NOT applied - "NONE of this command's file changes were applied",
+ * "Any file changes it had made were NOT applied", "Its 3 file changes were NOT applied". The shell and levelcode-ai's
+ * review write it in capitals, and a cap on the notes must never be what drops it.
+ */
+const NOT_APPLIED = /\bNONE of\b|\b(?:was|were) NOT applied\b/;
+
+/**
+ * The notes of a run that a terminal shows after it: at most `max` of them, in their order. When there are more, a
+ * note that says the changes were NOT applied is still among them, in the place of the last of the others: a refusal
+ * ends with it (six reasons, the count of the rest, then that line), and the notes the run already had - a moved
+ * folder, an emptied /tmp, the engine's own - come in front of it, so it was the one a plain cut dropped.
+ * @param {string[]} notes @param {number} max @returns {string[]}
+ */
+function notesShown(notes, max) {
+	if (notes.length <= max) { return notes.slice(); }
+	/** @type {number[]} */ const said = [];
+	for (let i = 0; i < notes.length; i++) { if (NOT_APPLIED.test(notes[i])) { said.push(i); } }
+	const keep = new Set(said.slice(-max));
+	for (let i = 0; i < notes.length && keep.size < max; i++) { keep.add(i); }
+	return notes.filter((_, i) => keep.has(i));
+}
+
+module.exports = { createWriter, createRunOutput, notesShown, CHUNK, OUTPUT_LIMIT, RESET_TAIL };

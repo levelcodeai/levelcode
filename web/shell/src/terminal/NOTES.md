@@ -182,8 +182,10 @@ One reusable read-only tab, appended to with a header (explanation dim, `$ comma
 a result line (`✓ exit 0 · 1.4s`, `✗ exit N`, `■ stopped`, `■ timed out`, `■ stopped: a limit of the shell was reached`).
 The command text, explanation, cwd and notes go through `forTerminal`, the output through the filter. Caps: 1 MiB for
 the output; the first line of a command 300 characters; the explanation and each note 300 characters (cut on what is
-shown, with `…`), at most 8 notes. The explanation is written first and **counts in the run's 1 MiB**; the notes come
-after the output, so counting them would change nothing, and they are bounded by 8 x 300 instead. Only the first 4,800
+shown, with `…`), at most 8 notes - a note that says the changes were NOT applied is always one of them, in the place
+of the last of the others (`notesShown` in `output-sink.js`; the visitor's terminal shows its notes the same way). The
+explanation is written first and **counts in the run's 1 MiB**; the notes come after the output, so counting them would
+change nothing, and they are bounded by 8 x 300 instead. Only the first 4,800
 characters of an explanation or a note are looked at (blank lines past that are not read through), and the join of its
 lines is linear.
 

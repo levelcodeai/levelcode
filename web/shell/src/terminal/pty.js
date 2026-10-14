@@ -16,7 +16,7 @@ const { LineEditor } = require('./line-editor');
 const { createInputParser, DEFAULT_MAX_PASTE } = require('./input-parser');
 const { isComplete } = require('./completeness');
 const { createCompleter } = require('./completion');
-const { createWriter, createRunOutput, OUTPUT_LIMIT } = require('./output-sink');
+const { createWriter, createRunOutput, notesShown, OUTPUT_LIMIT } = require('./output-sink');
 const { strWidth, stripEscapes } = require('./width');
 const { createLineLog } = require('./line-log');
 const { promptFor } = require('./prompt');
@@ -392,7 +392,7 @@ class ShellPty {
 	 */
 	_epilogue(code, tail, notes, how) {
 		let s = tail;
-		const lines = notes.slice(0, 8).map((n) => this.sanitize.forTerminal(n, { crlf: false }).replace(/\n/g, ' '));
+		const lines = notesShown(notes, 8).map((n) => this.sanitize.forTerminal(n, { crlf: false }).replace(/\n/g, ' '));
 		const own = how && how !== 'exit' && how !== 'aborted' && lines.length === 0 ? outcomeLine(how, code) : '';
 		for (const l of lines) { s += DIM + l + RESET + '\r\n'; }
 		if (own) { s += YELLOW + '[' + own + ']' + RESET + '\r\n'; }

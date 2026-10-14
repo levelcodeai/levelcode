@@ -670,6 +670,31 @@ test('at most 8 of the runtime\'s notes are shown after a command', async () => 
 	assert.ok(!s.includes('[note 9]'));
 });
 
+test('a refused commit\'s "NONE of this command\'s file changes were applied" is shown behind a note the run already had; still at most 8', async () => {
+	// What the terminal's own commit says when it refuses a set (six reasons, the count of the rest, then the line that
+	// says nothing was applied: eight notes), behind a note the runtime puts in front of every ending (a /tmp that was
+	// emptied, a moved folder, the engine's own). The ninth note used to be cut, and with it the only line that says
+	// the files were left as they were.
+	const { commitChanges } = require(path.join(TERMINAL, '..', 'commit.js'));
+	const outside = Array.from({ length: 9 }, (_, i) => ({ kind: /** @type {const} */ ('write'), path: '/elsewhere/f' + i, existed: false, before: null, after: new Uint8Array([120]) }));
+	const refused = await commitChanges(outside, /** @type {any} */ ({ resolve: () => null }), { writeFile: 1000, writeRun: 5000, entries: 100 });
+	assert.strictEqual(refused.notes.length, 8, 'six reasons, "and 3 more refused", and the NONE line');
+	const none = refused.notes[7];
+	assert.match(none, /NONE of this command's file changes were applied/);
+	const lead = '[LevelCode Shell: /tmp was emptied when the shell restarted (it held 2 files)]';
+	const h = makePty({ cols: 200 });
+	h.type('x', '\r');
+	h.session.finish({ exitCode: 1, notes: [lead].concat(refused.notes) });
+	await settle(); h.timers.drain();
+	const s = h.screen().join('\n');
+	assert.ok(s.includes(none), 'the NONE line is shown:\n' + s);
+	assert.ok(s.includes(lead), 'the note in front is shown');
+	const shown = [lead].concat(refused.notes).filter((n) => s.includes(n));
+	assert.strictEqual(shown.length, 8, 'still at most 8: ' + JSON.stringify(shown));
+	assert.deepStrictEqual(shown, [lead].concat(refused.notes.slice(0, 6), [none]), 'in their order; the NONE line takes the last place');
+	assert.ok(s.indexOf(none) > s.indexOf(refused.notes[5]), 'and stays where it was, after the reasons');
+});
+
 test('dimensions below 2 are never taken (a hidden panel reports 0): the previous ones stay and are what a command is told', async () => {
 	const h = makePty({ cols: 60, rows: 12 });
 	for (const bad of [{ columns: 1, rows: 1 }, { columns: 0, rows: 0 }, { columns: NaN, rows: undefined }, { columns: -5, rows: 9 }]) {
