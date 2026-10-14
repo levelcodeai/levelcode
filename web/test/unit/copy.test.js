@@ -34,6 +34,20 @@ test('applying them changes the file and leaves no desktop-only claim about keys
 test('a replacement whose desktop text has gone is an error, not a silent skip', () => {
 	assert.throws(() => applyCopy('extension.js', 'nothing relevant here'), /no longer in extension\.js/);
 });
+test('the first-run walkthrough is switched off in the browser and nowhere else', () => {
+	const src = fs.readFileSync(path.join(SRC, 'extension.js'), 'utf8');
+	const out = applyCopy('extension.js', src);
+	const welcome = "if (!context.globalState.get('levelcode.ai.didShowWelcome')) {";
+	assert.strictEqual(src.split(welcome).length - 1, 1, 'the desktop text is in the source exactly once');
+	assert.ok(!out.includes(welcome));
+	assert.ok(out.includes('if (false) {'));
+	// Only the guard is rewritten: the block it guards, the flag it sets and the walkthrough's command stay as they are,
+	// dead in the browser build but still the desktop's text.
+	assert.ok(out.includes("context.globalState.update('levelcode.ai.didShowWelcome', true)"));
+	assert.ok(out.includes("'workbench.action.openWalkthrough', 'levelcode.levelcode-ai#welcome'"));
+	const lines = src.split('\n').length;
+	assert.strictEqual(out.split('\n').length, lines, 'one line replaced by one line, so a stack trace line number still means the same');
+});
 test('the browser text claims only what the browser build does', () => {
 	for (const [, , to] of REPLACEMENTS) {
 		assert.ok(!/keychain|your machine|OS\b/i.test(to), 'the browser text still talks like the desktop: ' + to);

@@ -23,7 +23,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { webConfig, renderIndex } from '../web/lib/config.mjs';
-import { stageDeclarativeExtensions, copyExtension } from '../web/lib/extensions.mjs';
+import { stageDeclarativeExtensions, copyExtension, withoutConfigurationDefaults } from '../web/lib/extensions.mjs';
 import { policy, toHeadersFile, toNginx } from '../web/lib/headers.mjs';
 import { hashTree } from '../web/lib/fingerprint.mjs';
 
@@ -99,11 +99,18 @@ if (!declarative.includes('levelcode-themes')) {
 	const themes = path.join(REPO, 'extensions', 'levelcode-themes');
 	if (fs.existsSync(themes)) { copyExtension(themes, path.join(extOut, 'levelcode-themes')); declarative.push('levelcode-themes'); }
 }
-const extensions = ['levelcode-ai', 'levelcode-web', ...declarative.sort()];
-log(`${extensions.length} extensions: levelcode-ai, levelcode-web and ${declarative.length} declarative (${declarative.slice(0, 6).join(', ')}, ...)`);
+// The browser edition's own colour themes. The desktop's default theme is pinned by levelcode-themes' manifest
+// (an extension's defaults outrank the page's), so that one is dropped here; its themes stay selectable.
+const themeOut = path.join(extOut, 'levelcode-web-theme');
+copyExtension(path.join(WEB, 'theme', 'levelcode-web-theme'), themeOut);
+fs.writeFileSync(path.join(themeOut, 'package.nls.json'), '{}\n');
+const desktopThemes = path.join(extOut, 'levelcode-themes', 'package.json');
+if (fs.existsSync(desktopThemes)) { withoutConfigurationDefaults(desktopThemes); }
+const extensions = ['levelcode-ai', 'levelcode-web', 'levelcode-web-theme', ...declarative.sort()];
+log(`${extensions.length} extensions: levelcode-ai, levelcode-web, levelcode-web-theme and ${declarative.length} declarative (${declarative.slice(0, 6).join(', ')}, ...)`);
 
 // main.js and boot.css are addressed by the build id like everything else; the page names them.
-for (const f of ['main.js', 'boot.css']) { fs.copyFileSync(path.join(WEB, f), path.join(root, f)); }
+for (const f of ['main.js', 'boot.css', 'chrome.css']) { fs.copyFileSync(path.join(WEB, f), path.join(root, f)); }
 
 /* ----- 3. identity of this build: what was staged ------------------------------------------------- */
 const id = String(args.id || hashTree(createHash('sha256'), staging, { skip: ['.DS_Store'] }).digest('hex').slice(0, 12));
@@ -165,7 +172,8 @@ if (!m) { die('index.html has no configuration'); }
 JSON.parse(m[1]);
 if (/\{\{[A-Z]+\}\}/.test(html)) { die('index.html still has an unfilled placeholder'); }
 for (const must of [`${prefix}/main.js`, `${prefix}/boot.css`, `${prefix}/static/out/nls.messages.js`, `${prefix}/extensions/levelcode-ai/extension.web.js`,
-	`${prefix}/extensions/levelcode-ai/package.json`, `${prefix}/extensions/levelcode-web/extension.js`]) {
+	`${prefix}/extensions/levelcode-ai/package.json`, `${prefix}/extensions/levelcode-web/extension.js`,
+	`${prefix}/chrome.css`, `${prefix}/extensions/levelcode-web-theme/package.json`]) {
 	if (!fs.existsSync(path.join(outDir, must))) { die('missing ' + must); }
 }
 log(`done: ${outDir}  ${mb(sizeOf(outDir))}  (client ${mb(sizeOf(path.join(root, 'static')))}, extensions ${mb(sizeOf(path.join(root, 'extensions')))})`);

@@ -1,7 +1,6 @@
 /* The splash that covers the page until the workbench has painted. Colours are literals on
    purpose: the workbench theme is not loaded yet, and a flash of the wrong ground is worse than
    a hard-coded one. */
-:root { color-scheme: dark light; }
 html, body { height: 100%; margin: 0; }
 body { background: #0b0d14; }
 @media (prefers-color-scheme: light) { body { background: #f4f1ea; } }

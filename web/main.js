@@ -59,6 +59,7 @@ try {
 		})),
 		productConfiguration: config.productConfiguration || {},
 		configurationDefaults: config.configurationDefaults || {},
+		initialColorTheme: pickInitialTheme(config),
 		enableWorkspaceTrust: false,
 		// The sign-in page is opened from the editor; it is ours, so it opens without a link-safety prompt.
 		additionalTrustedDomains: config.trustedDomains || [],
@@ -68,6 +69,8 @@ try {
 	// create() resolves once the workbench has been constructed. The splash goes when its DOM exists.
 	void workbench;
 	boot.whenWorkbenchReady();
+	addChromeStyles(config);
+	hideBuiltInChat(api);
 	startReturnFromSignIn(callbacks, URI);
 } catch (err) {
 	console.error('[levelcode-web] failed to start', err);
@@ -83,6 +86,49 @@ function readConfig() {
 }
 
 function trimSlash(s) { return s.replace(/\/+$/, ''); }
+
+/* ----- the look ----------------------------------------------------------------------------- */
+
+/** The colours the workbench paints before its theme has loaded: the dark set unless the system is light. */
+function pickInitialTheme(cfg) {
+	const set = cfg.initialColorTheme;
+	if (!set) { return undefined; }
+	let light = false;
+	try { light = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches); } catch { /* dark */ }
+	return light ? set.light : set.dark;
+}
+
+/**
+ * chrome.css after the workbench's own stylesheet, so that rules of equal weight are ours. (index.html links
+ * boot.css before it, which is right for the splash and wrong for overrides.)
+ */
+function addChromeStyles(cfg) {
+	const link = document.createElement('link');
+	link.rel = 'stylesheet';
+	link.href = trimSlash(cfg.base || '') + '/chrome.css';
+	document.head.appendChild(link);
+}
+
+/**
+ * Code-OSS's own Chat view (the Copilot one) is registered on the web even with chat.disableAIFeatures, and nothing
+ * behind it works (no default agent): opened, it fills the window with "Build with Agent" and a dead composer.
+ * Its `when` is `!chatAccountPolicyGateActive && (!chatSetupHidden && !chatSetupDisabledInWorkspace || ...)`, so the
+ * gate key — which has no other reader — hides it. Internal context keys, set through the underscore command; the
+ * gate's own contribution writes its key again five seconds after start (and when a policy changes, which there is
+ * none of in a tab), so it is set again after that. If a Code-OSS bump moves any of this, web/test/e2e-look.mjs
+ * opens the side bar and fails on the built-in "Chat" tab.
+ */
+function hideBuiltInChat(api) {
+	// `create()` returns a disposable, not the workbench: the embedder's command API is the module's own `commands`.
+	const set = () => {
+		for (const key of ['chatAccountPolicyGateActive', 'chatSetupDisabledInWorkspace']) {
+			try { void Promise.resolve(api.commands.executeCommand('_setContext', key, true)).catch(() => undefined); }
+			catch { /* a Code-OSS without it has nothing to hide */ }
+		}
+	};
+	set();
+	setTimeout(set, 6500);
+}
 
 /* ----- signing in ------------------------------------------------------------------------- */
 

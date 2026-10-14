@@ -37,6 +37,7 @@ const nodePaths = [path.join(vscodeDir, 'node_modules'), path.join(vscodeDir, 'b
 if (!nodePaths.some((p) => fs.existsSync(path.join(p, 'buffer')))) { console.error('the "buffer" package is missing from ' + vscodeDir + '/node_modules'); process.exit(2); }
 
 const { applyCopy } = createRequire(import.meta.url)('./copy.js');
+const { skinChat } = createRequire(import.meta.url)('./skin.js');
 
 const outDir = path.join(outRoot, 'levelcode-ai');
 fs.rmSync(outDir, { recursive: true, force: true });
@@ -52,7 +53,10 @@ function collect(rel, filter) {
 			if (e.isDirectory()) { walk(r); continue; }
 			if (filter && !filter(r)) { continue; }
 			const buf = fs.readFileSync(path.join(SRC, r));
-			out[r] = TEXT.has(path.extname(r)) ? applyCopy(r, buf.toString('utf8')) : { base64: buf.toString('base64') };
+			let text = TEXT.has(path.extname(r)) ? applyCopy(r, buf.toString('utf8')) : null;
+			// The browser's look for the chat goes into this embedded copy and nowhere else (skin.js).
+			if (text !== null && r === 'media/chat.html') { text = skinChat(text); }
+			out[r] = text !== null ? text : { base64: buf.toString('base64') };
 		}
 	};
 	if (fs.existsSync(path.join(SRC, rel))) { walk(rel); }
