@@ -71,7 +71,7 @@ test('every rule of the stylesheet is under body.lc-web', () => {
 			depth++; head = '';
 		} else if (ch === '}') { depth--; head = ''; }
 		else if (ch === ';' && depth > 0) { head = ''; }
-		else if (depth === 0 || (depth === 1 && head !== undefined)) { head += ch; }
+		else if (depth === 0 || depth === 1) { head += ch; }
 	}
 	assert.strictEqual(depth, 0, 'balanced braces');
 	assert.deepStrictEqual(bad.filter((s) => s && !/^\d/.test(s)), []);
