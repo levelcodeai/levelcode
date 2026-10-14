@@ -109,11 +109,23 @@ names: the working folder comes from the engine, and a command can make a direct
 
 ### Completion
 
-Tab asks `session.complete('command' | 'path', prefix)`. One candidate is inserted (a folder gets no trailing space),
-several insert their common prefix, and a second Tab with nothing to add lists them in columns below and redraws the
-prompt. Names are written back escaped or quoted for the quote the word is in. A name that cannot be typed (a control
-character, a bidi override, any invisible character) is not offered or is typed without it. An answer that arrives after
-the line changed is ignored.
+Tab asks `session.complete('command' | 'path', prefix)` about what is before the cursor. It asks for commands for the
+first word of a command: at the start of the line, after `;` `|` `&` `(` and a line end that is not quoted or escaped,
+after `if` `then` `do` `!` and the like, and after what can come before a command without being it: assignments
+(`LC_ALL=C gre`; the name unquoted, as bash reads one) and redirections with their targets (`2>err`, `>out`, `2>&1`,
+`&>out`, `>|out`). A word written against a redirection is a word (`cat>out sr` completes a file: `cat` is the command),
+unless it is digits (the `2` of `2>err`). Checked against bash with `bash -xc`. Everything else asks for paths.
+
+One candidate is inserted (a folder gets no trailing space; a file gets one unless a blank follows it already), several
+insert their common prefix, and a second Tab with nothing to add lists them in columns below and redraws the prompt.
+Names are written back escaped or quoted for the quote the word is in. **Tab inside a word** (anything after the cursor,
+a closing quote too) offers only the names that end with what the word has after the cursor, and such a name replaces
+the whole word: `cat "my fi|"` becomes `cat "my file.txt" `, not `cat "my file.txt" "` (bash's own readline leaves
+`cat "my file.txt""`), and nothing that was after the cursor is dropped or split off. A folder at the end of a word
+keeps its quote open, with the cursor before the closing quote that is there. A name that cannot be typed (a control
+character, a bidi override, any invisible character the editor would not type) is not offered: typed without it, it is
+another file's name (`rm a` must not become `rm ab.txt` for `a<ZWSP>b.txt`). A name whose invisible characters the editor
+keeps (an emoji's, a joiner inside a word) is offered. An answer that arrives after the line changed is ignored.
 
 A Tab pressed before the answer to the previous one has arrived is **queued** (one at most; a third is dropped): it asks
 when that answer has been applied, about the line as it is then, so `Tab Tab` lists even when the first answer is slow.
@@ -419,7 +431,7 @@ Measured in the release build by the research, and re-checked here against the r
 | `width` | the 25 measured widths; the table equals the addon (when an xterm checkout is found) |
 | `line-editor` | the keys, the cursor on a newline, the full row, wide/combining characters, what may enter the buffer and what is kept (and the note), tabs (also at the top of a window), resize (scenarios on the model terminal, and the same on xterm.js), a tall buffer, Tab and the queued second Tab; a seeded differential against an oracle at three widths and with resizes; and, if xterm is found, against the real xterm.js: the editor's output, the model terminal's re-wrapping, seeded sessions with resizes in both directions, and a strict harness (after every step the screen is the text written once, nothing of the region is above it, and nothing that was on the terminal before it is lost: shrink and grow, a command, a note, Ctrl+C, Ctrl+L, windows, pinned sequences; and width and height in one event, with earlier output taller than the panel: pinned corner scenarios, each of which guards one of the estimates, and 200 seeded sessions on each terminal, aimed at the cursor above the end of a region on a terminal that has scrolled, in which a copy of the prompt may be left but nothing before it may be lost; then the same scenarios again through the verifier's generator's checker, which asks after every step that what the editor believes of the blank rows and of the pushed rows is a floor and that no copy of a pasted line is left (the corner ones), and 683 of its sessions in about two seconds; and the account of the pushed rows itself, `_ghostsAt` and `_headRows`, as units) |
 | `completeness` | the table of traps and open constructs |
-| `completion` | the word under the cursor and the write-back |
+| `completion` | the word under the cursor (command or path: line ends, assignments, redirections against a word; the rest of the word after the cursor), the write-back, the names that are not offered |
 | `output-filter` | the 25 queries, the modes, the OSC list, links, the cap, a seeded chunking fuzz |
 | `history` | the rules and the secret patterns (assembled from fragments) |
 | `sink` | the OSC 633 escaping, the nonce, the queue and a run's output |

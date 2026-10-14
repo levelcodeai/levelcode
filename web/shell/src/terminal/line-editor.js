@@ -118,7 +118,9 @@ function droppedNote(n) {
 }
 
 /**
- * @typedef {{ text: string, display?: string, dir?: boolean }} Candidate
+ * A candidate replaces the line from the answer's `start` up to the cursor, or up to its own `end` past it (the rest of
+ * the word: a closing quote, the end of a name), so that what was after the cursor is not left over.
+ * @typedef {{ text: string, display?: string, dir?: boolean, end?: number }} Candidate
  * @typedef {{
  *   write(s: string): void,
  *   prompt(): string,
@@ -1069,9 +1071,14 @@ class LineEditor {
 		if (!this.active || version !== this.version || !r || !r.candidates || r.candidates.length === 0) { return; }
 		if (!(r.start >= 0 && r.start <= this.cur)) { return; }
 		const cs = r.candidates;
+		const upTo = (/** @type {Candidate} */ c) => (c.end === undefined ? this.cur : c.end);
+		if (!cs.every((c) => upTo(c) >= this.cur && upTo(c) <= this.buf.length)) { return; }
 		const typed = this.buf.slice(r.start, this.cur).join('');
 		if (cs.length === 1) {
-			this._replace(r.start, cs[0].text + (cs[0].dir ? '' : ' '));
+			const end = upTo(cs[0]);
+			// a file is followed by a blank, unless the one that separates it from the next word is there already
+			const blank = cs[0].dir || /^[ \t\n]$/.test(this.buf[end] || '') ? '' : ' ';
+			this._replace(r.start, cs[0].text + blank, end);
 			return;
 		}
 		const common = cs.map((c) => c.text).reduce((a, b) => {
@@ -1081,7 +1088,9 @@ class LineEditor {
 		});
 		// still ambiguous after this Tab: the next one, if nothing was typed, lists the candidates
 		if (common.length > typed.length) {
-			this._replace(r.start, common);
+			// a common part that is a whole candidate (`'it'`, of it and it's) is that one: it replaces what it would
+			const whole = cs.find((c) => c.text === common);
+			this._replace(r.start, common, whole ? upTo(whole) : this.cur);
 			this.lastTab = true;
 			return;
 		}
@@ -1089,10 +1098,10 @@ class LineEditor {
 		this._list(cs.map((c) => (c.display !== undefined ? c.display : c.text)));
 	}
 
-	/** @param {number} start @param {string} text */
-	_replace(start, text) {
-		const { cps, dropped } = cleanText(text, this.buf[start - 1], this.buf[this.cur]);
-		this._put(start, this.cur - start, cps);
+	/** @param {number} start @param {string} text @param {number} [end] where the text it replaces ends: the cursor, or past it */
+	_replace(start, text, end = this.cur) {
+		const { cps, dropped } = cleanText(text, this.buf[start - 1], this.buf[end]);
+		this._put(start, end - start, cps);
 		this.cur = start + cps.length;
 		this._changed(dropped);
 	}

@@ -865,6 +865,66 @@ test('a completer that answers with a start outside the line completes nothing',
 	}
 });
 
+test('a completer that answers with an end before the cursor or past the line completes nothing', async () => {
+	for (const end of [99, 1, -1, NaN]) {
+		const s = session({ complete: async () => ({ start: 0, candidates: [{ text: 'x', display: 'x', end }] }) });
+		s.send('abc', key.left, '\t');
+		await wait();
+		assert.strictEqual(s.ed.text(), 'abc', 'end ' + end);
+	}
+});
+
+test('Tab just before a closing quote replaces the word and its quote, so the line keeps one closing quote; inside a name it replaces what is after the cursor', async () => {
+	// the real completer, so that what is asserted is the line a person gets
+	const { createCompleter } = require(path.join(dir, 'completion.js'));
+	const { isComplete } = require(path.join(dir, 'completeness.js'));
+	const sanitize = require(path.join(dir, '..', 'sanitize.js'));
+	const files = ['my file.txt', 'my fig.png', 'my dir/', 'it', "it's"];
+	const complete = createCompleter({ complete: async (kind, prefix) => files.filter((n) => n.startsWith(prefix)) }, sanitize);
+
+	const a = session({ complete, isComplete });
+	a.send('cat "my fil"', key.left, '\t');
+	await wait();
+	assert.strictEqual(a.ed.text(), 'cat "my file.txt" ', 'not `cat "my file.txt" "`');
+	assert.strictEqual(a.ed.cur, a.ed.text().length);
+	assert.deepStrictEqual(a.vt.text(), ['$ cat "my file.txt"']);
+	a.send('\r');
+	assert.deepStrictEqual(a.submitted, ['cat "my file.txt" '], 'a whole command: Enter runs it, nothing waits for a quote');
+
+	// in the middle of the line the blank that is there separates the words: none is added
+	const b = session({ complete });
+	b.send('cat "my fil" x', key.left, key.left, key.left, '\t');
+	await wait();
+	assert.strictEqual(b.ed.text(), 'cat "my file.txt" x');
+	assert.strictEqual(b.ed.cur, 'cat "my file.txt"'.length);
+
+	// inside a name: only a name that ends with what is after the cursor, which it replaces
+	const c = session({ complete });
+	c.send('cat "my fi.txt"', key.left, key.left, key.left, key.left, key.left, '\t');
+	await wait();
+	assert.strictEqual(c.ed.text(), 'cat "my file.txt" ');
+
+	// a folder keeps its quote open for the next name, and the quote that is there closes it: the cursor stays inside
+	const d = session({ complete });
+	d.send('cat "my d"', key.left, '\t');
+	await wait();
+	assert.strictEqual(d.ed.text(), 'cat "my dir/"');
+	assert.strictEqual(d.ed.cur, 'cat "my dir/'.length);
+
+	// a common part that is a whole name closes the quote ('it' of it and it's): it takes the quote that was there
+	const e = session({ complete, isComplete });
+	e.send("cat 'i'", key.left, '\t');
+	await wait();
+	assert.strictEqual(e.ed.text(), "cat 'it'", "not cat 'it''");
+	assert.strictEqual(e.ed.cur, e.ed.text().length);
+
+	// at the start of a word the cursor is not in it: the name is a word of its own, before it, as it always was
+	const f = session({ complete: createCompleter({ complete: async () => ['x.txt'] }, sanitize) });
+	f.send('cat foo', key.left, key.left, key.left, '\t');
+	await wait();
+	assert.strictEqual(f.ed.text(), 'cat x.txt foo');
+});
+
 test('characters a candidate cannot be typed with are dropped from what Tab inserts', async () => {
 	const complete = async () => ({ start: 0, candidates: [{ text: 'a\x1b[31mb', display: 'x' }] });
 	const s = session({ complete });
