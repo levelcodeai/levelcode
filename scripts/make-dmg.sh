@@ -8,7 +8,8 @@
 #
 # It operates on VSCode-darwin-<arch>/LevelCode.app (run ./scripts/build-macos.sh first).
 # Steps below are numbered to match the `# N.` markers in the script body:
-#   0. De-Microsoft the bundle + hide not-yet-ready features, before signing covers the result.
+#   0. De-Microsoft the bundle + hide not-yet-ready features + make sure it can verify extension
+#      signatures, before signing covers the result.
 #   1. Sign the app. Ad-hoc by default (arm64 macOS refuses to launch *unsigned* binaries at all);
 #      with CODESIGN_IDENTITY set, real Developer ID signing + notarize + staple.
 #   2. Stage a clean folder: the app + an /Applications symlink.
@@ -53,6 +54,11 @@ DMG_OUT="$ROOT_DIR/LevelCode-$ARCH.dmg"
 # no-ops if build-macos.sh already did it). Runs BEFORE signing so the signature covers the result.
 node "$SCRIPT_DIR/strip-proprietary.mjs" "$APP/Contents/Resources/app"
 node "$SCRIPT_DIR/strip-unreleased.mjs" "$APP/Contents/Resources/app"
+# The extension signature verifier (see build-macos.sh). An app that has none gets this checkout's;
+# one built with its own keeps it — the keys an app trusts are its build's, not the signer's. Either
+# way the app is not signed unless `check` says it can verify: docs/EXTENSION-SIGNATURES.md.
+node "$SCRIPT_DIR/extension-signature.mjs" install "$APP/Contents/Resources/app"
+node "$SCRIPT_DIR/extension-signature.mjs" check "$APP/Contents/Resources/app"
 
 # 1. Sign the bundle. Two modes:
 #    - Distributable: set CODESIGN_IDENTITY to your "Developer ID Application: …" identity (and

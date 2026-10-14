@@ -34,6 +34,7 @@ LevelCode is a **clean overlay on top of Code-OSS**, not a vendored copy of the 
 
 - `extensions/` — the first-party extensions (native AI, Notepad++ pack, themes, hackability, sync, updater), plain JS with no build step.
 - `branding/` — the LevelCode identity (`product.overlay.json`) + icons, deep-merged onto upstream `product.json`; the extension gallery wired to **Open VSX**.
+- `modules/` — what ships in the app outside an extension: the Open VSX signature verifier and the signing keys it trusts.
 - `patches/` — the small set of core source patches (each tagged `// [LevelCode]`).
 - `scripts/` — bootstrap / run-dev / build / dmg / icon.
 - `tools/` — dependency-free reference servers (Settings-Sync feed, update feed).
@@ -59,7 +60,7 @@ Actively built, macOS-first. Working today: the Notepad++ power-editing pack; th
 
 ## Why a fork
 
-Code-OSS is MIT-licensed and free to fork, modify, and ship. LevelCode honors the constraints every forker must: the **Microsoft Extension Marketplace is Microsoft-products-only**, so LevelCode points its gallery at **Open VSX** (the Eclipse-run open marketplace); and LevelCode ships its own name, icon, and identity. It is **not** produced by, endorsed by, or affiliated with Microsoft, and the upstream Code-OSS source is fetched at build time — never redistributed in this repository.
+Code-OSS is MIT-licensed and free to fork, modify, and ship. LevelCode honors the constraints every forker must: the **Microsoft Extension Marketplace is Microsoft-products-only**, so LevelCode points its gallery at **Open VSX** (the Eclipse-run open marketplace) — and checks every extension it installs or updates against Open VSX's signature, with the signing key pinned in the app rather than fetched ([how, and what that does and does not prove](./docs/EXTENSION-SIGNATURES.md)); and LevelCode ships its own name, icon, and identity. It is **not** produced by, endorsed by, or affiliated with Microsoft, and the upstream Code-OSS source is fetched at build time — never redistributed in this repository.
 
 ## License
 

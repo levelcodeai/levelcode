@@ -1,0 +1,47 @@
+name: Open VSX signing key
+
+# LevelCode verifies every extension it installs or updates against Open VSX's signing key, and it
+# does not ask the registry for that key: the keys it trusts ship inside the app
+# (modules/extension-signature/keys.json). That is the point of pinning — and its price. The day
+# Open VSX signs with another key, every LevelCode already installed refuses what the new key
+# signs, until a release carries it.
+#
+# This asks the registry once a day, so that day is known the day it comes and not from a user's
+# bug report. It runs scripts/extension-signature.mjs registry: which key do the newest extensions
+# name, and do some of them really verify with the pinned keys?
+#
+# A failed run is the alarm. What to do then: docs/EXTENSION-SIGNATURES.md, "When Open VSX changes
+# its key". GitHub mails a failed scheduled run to whoever last edited this file's schedule, and
+# stops scheduling in a repository with no activity for 60 days.
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily, off the hour: scheduled runs queue up at :00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  registry:
+    name: Open VSX signs with a pinned key
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24" # as test.yml
+      - name: Ask the registry
+        # Exit 1 is evidence — a key that is not pinned, or signatures that no longer verify — and
+        # fails at once. Exit 2 is "could not ask": an outage is not news, so it is asked again, and
+        # fails only if the registry cannot be asked three times in ten minutes. That matters too: if
+        # this check has gone blind, a changed key would pass unseen.
+        run: |
+          for attempt in 1 2 3; do
+            code=0
+            node scripts/extension-signature.mjs registry --strict || code=$?
+            if [ "$code" -ne 2 ]; then exit "$code"; fi
+            echo "Could not ask the registry (attempt $attempt of 3)."
+            if [ "$attempt" -lt 3 ]; then sleep 300; fi
+          done
+          exit 2
