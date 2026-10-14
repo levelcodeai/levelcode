@@ -85,6 +85,31 @@ const line = (i) => 'line ' + String(i).padStart(4, '0') + ' ' + 'x'.repeat(20) 
 			assert.strictEqual(r.length - '\n[exit 1]'.length - (r.match(/\n… \[\d+ characters of output omitted\] …\n/)[0].length) + omitted, total, 'nothing is lost silently: kept + omitted = everything');
 		});
 
+		await test('OUTPUT OVER 256 KiB: the start is the command\'s real start, and the omitted count is everything that is not shown', async () => {
+			// runCommand keeps only the last 256 KiB of the output in memory; a 2 MB `cat` used to come back with a "start"
+			// from the middle of the file and "[~254000 characters of output omitted]" for about two million.
+			let total = 0;
+			const r = await result((c) => {
+				const first = 'BEGIN of the output\n';
+				c.stdout.emit('data', Buffer.from(first)); total += first.length;
+				for (let k = 0; k < 70; k++) {
+					let chunk = '';
+					for (let i = 0; i < 1000; i++) { chunk += line(k * 1000 + i); }
+					c.stdout.emit('data', Buffer.from(chunk)); total += chunk.length;
+				}
+				const last = 'FAIL at the very end\n';
+				c.stderr.emit('data', Buffer.from(last)); total += last.length;
+				c.emit('close', 1);
+			});
+			assert.ok(total > 2000000, 'about 2 MB: ' + total);
+			assert.ok(r.length <= 8000, 'still bounded: ' + r.length);
+			assert.ok(r.startsWith('BEGIN of the output\nline 0000 '), 'the start is the real start: ' + JSON.stringify(r.slice(0, 60)));
+			assert.ok(r.endsWith('FAIL at the very end\n\n[exit 1]'), 'the end and the status: ' + JSON.stringify(r.slice(-40)));
+			const gap = /\n… \[(\d+) characters of output omitted\] …\n/.exec(r);
+			assert.ok(gap, 'the gap is said out loud');
+			assert.strictEqual(r.length - '\n[exit 1]'.length - gap[0].length + Number(gap[1]), total, 'kept + omitted = everything the command wrote');
+		});
+
 		await test('a timeout and a stop are still said, however much came before', async () => {
 			const noisy = (c) => { for (let i = 0; i < 1000; i++) { c.stdout.emit('data', Buffer.from(line(i))); } };
 			const t = await result((c) => { noisy(c); }, { commandTimeout: 30 });

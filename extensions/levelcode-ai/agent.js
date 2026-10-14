@@ -421,19 +421,27 @@ function isBinaryFile(abs) { return host.isBinary(abs); }
  * Output that fits is returned exactly as it always was. Output that does not keeps its START and its END with
  * the gap said out loud, and the status line (`[exit 1]`, `[timed out]`, `[stopped by user]`) is never what is cut:
  * it used to be, because it sits at the end and the whole thing was sliced from the front.
- * @param {string} out
+ * @param {string} out    the output — or, when runCommand kept only its end (OUT_KEPT), that end
  * @param {string} note
  * @param {number} [max]
+ * @param {{ start: string, total: number }} [whole]  when `out` is only the end: the output's real start (at least a
+ *   quarter of `max` of it) and how many characters there were in all, so the start shown is the start and the count
+ *   of what was left out is the true one
  */
-function commandResult(out, note, max) {
+function commandResult(out, note, max, whole) {
 	max = max || 8000;
-	if (out.length + note.length <= max) { return out + note; }
+	const total = whole ? whole.total : out.length;
+	if (total + note.length <= max) { return out + note; }
 	const gapText = (n) => '\n… [' + n + ' characters of output omitted] …\n';
-	const room = max - note.length - gapText(out.length).length;
+	const room = max - note.length - gapText(total).length;
 	const head = Math.max(0, Math.floor(room / 4));      // a quarter for the start, the rest for the end — where the failure is
 	const tail = Math.max(0, room - head);
-	return out.slice(0, head) + gapText(out.length - head - tail) + out.slice(out.length - tail) + note;
+	return (whole ? whole.start : out).slice(0, head) + gapText(total - head - tail) + out.slice(out.length - tail) + note;
 }
+/** What runCommand keeps of a command's output in memory: its last OUT_KEPT characters and, apart from them, its first
+ *  START_KEPT (more than commandResult ever shows of a start). */
+const OUT_KEPT = 262144;
+const START_KEPT = 8000;
 
 // Run a shell command, STREAMING its output: onChunk(text, 'stdout'|'stderr') fires as it runs (live
 // terminal in the chat), onExit(code, ms, how) at the end. onStart(child, stop) exposes a stop() that
@@ -446,12 +454,15 @@ function commandResult(out, note, max) {
 function runCommand(root, command, onChunk, onExit, onStart, timeoutMs, opts) {
 	return new Promise((resolve) => {
 		let out = '', streamed = 0, settled = false, timedOut = false, stopped = false;
+		let head = '', total = 0;             // the output's first START_KEPT characters, and its length: `out` keeps only the end
 		const STREAM_CAP = 100000;            // max we push to the live terminal view
 		const start = Date.now();
 		const onData = opts && opts.onData;
 		const cap = (s, stream) => {
 			out += s;
-			if (out.length > 262144) { out = out.slice(-262144); }   // bound the model buffer's memory
+			total += s.length;
+			if (head.length < START_KEPT) { head += s.slice(0, START_KEPT - head.length); }
+			if (out.length > OUT_KEPT) { out = out.slice(-OUT_KEPT); }   // bound the model buffer's memory
 			if (onChunk && streamed < STREAM_CAP) {
 				const room = STREAM_CAP - streamed;
 				const piece = s.length > room ? s.slice(0, room) : s;
@@ -481,7 +492,7 @@ function runCommand(root, command, onChunk, onExit, onStart, timeoutMs, opts) {
 			const exit = stopped ? 130 : (timedOut ? 124 : (code == null ? -1 : code));
 			if (onExit) { onExit(exit, ms, how); }
 			const note = stopped ? '\n[stopped by user]' : timedOut ? '\n[timed out]' : (exit !== 0 ? '\n[exit ' + exit + ']' : '');
-			resolve(commandResult(out, note) || '(no output)');
+			resolve(commandResult(out, note, undefined, total > out.length ? { start: head, total } : undefined) || '(no output)');
 		};
 		child.on('close', (code) => finish(code));
 		child.on('error', (e) => { cap('\n' + ((e && e.message) || e), 'stderr'); finish(1); });
