@@ -114,13 +114,16 @@ extension, a stylesheet or a build-time edit of the browser build's own copy of 
 **Layouts.** `levelcode.web.layout` is `chatFirst` (the chat alone, side bars closed, conversations on its
 left — the way a chat app is used) or `split` (Explorer, files on the left, the chat docked on the right — the
 way an editor is used). The status bar item at the left and **LevelCode: Layout: Switch** change the setting
-(there is no default key binding: `Cmd+Alt+L` is Find in Selection on macOS); one listener applies it, so Settings
-does the same. The first start in a workspace is `chatFirst`. The chat panel is not restored by a reload, so a
+(there is no default key binding: `Cmd+Alt+L` is Find in Selection on macOS) where it takes effect — the workspace's
+value when `.vscode/settings.json` has one, since that outranks the user's, the user's otherwise; one listener
+applies it, so Settings does the same. The first start in a workspace is `chatFirst`. The chat panel is not restored by a reload, so a
 `split` layout docks the chat again at start — without revealing the Explorer or moving the focus (that is done
 once per workspace, `workspaceState`), so an Explorer the visitor closed stays closed. The start-up and a switch wait
 for the chat's tab to exist (`onDidChangeTabs`, 2.5 s) rather than reading the tab model at a guessed time. Only
 existing workbench commands are used, so what the visitor then arranges by hand is an ordinary layout. Files that are
-open when going back to `chatFirst` stay as tabs beside the chat.
+open when going back to `chatFirst` stay open as tabs behind the chat: a group that still has files (a split file
+editor, say) is joined into the chat's (`workbench.action.joinAllGroups`, which moves them in inactive), and that one
+group is unlocked, because a group the chat was docked in is locked and would send the next file into a new split.
 
 **Widths.** The chat page decides by **its own width**, not the window's: from 1000 px it docks the
 conversation list as a 264 px rail; below 760 px it compacts; in between the list is the dialog it is on the
@@ -134,7 +137,15 @@ Constraints worth knowing before changing it:
 
 - The chat webview's CSP has no `font-src`: the skin uses the system font stack only.
 - A group that is emptied by moving the chat out of it is closed, so `split` opens a file in the first group
-  **before** it moves the chat (`applyLayout`, pinned by `workspace.test.js`).
+  **before** it moves the chat — the README, or an empty untitled document when there is none and the chat is the
+  group's only tab (`applyLayout`, pinned by `workspace.test.js`).
+- The move and join commands act on the **active editor**, and `levelcode.ai.focus` returns before the reveal has
+  reached the tab model. The window is read only once the chat is in front (until then an editor that was in front
+  of it, such as a settings editor in a group of its own, still counts as a group). Each move or join then runs only
+  when the tab model says the chat is the active editor, read immediately
+  before it (after waiting up to 1.5 s for that); otherwise it is skipped, as is every later one in that arrangement,
+  and so is one that a newer layout request has overtaken. A skipped move leaves the window as it was; a guessed one
+  would move the file beside the chat.
 - The rail asks the page for its conversations with `listSessions`; it must never call `openSessions()`,
   which seeds the list with sample conversations when nothing has arrived yet.
 - Text drawn in the theme's accent uses `textLink.foreground`, not `focusBorder` (which is translucent and a line
