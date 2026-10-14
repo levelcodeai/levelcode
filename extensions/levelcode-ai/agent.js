@@ -218,7 +218,8 @@ async function scanSearch(term, root) {
 	const out = [];
 	let size = 0;
 	let uris = [];
-	try { uris = await host.findFiles('**/*', FILE_EXCLUDES, 2000); } catch { return ''; }
+	// Scoped to `root` BEFORE the cap: across the whole workspace, another folder's files could use up all 2,000.
+	try { uris = await host.findFiles(new vscode.RelativePattern(host.uriFor(root), '**/*'), FILE_EXCLUDES, 2000); } catch { return ''; }
 	const rootPrefix = root.endsWith('/') ? root : root + '/';
 	for (const uri of uris) {
 		if (size >= 6000) { break; }

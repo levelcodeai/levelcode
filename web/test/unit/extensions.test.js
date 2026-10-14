@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
  *  web/lib/extensions.mjs — run: node web/test/unit/extensions.test.js
  *
- *  Which of Code-OSS's extensions the browser edition carries, how they are staged, and what the build id is made
- *  of for them. The id must see exactly what is staged: a grammar that changed and an id that did not is a stale
+ *  Which of Code-OSS's extensions the browser edition carries, how they are staged, and that the build id changes
+ *  with them. The id must see exactly what is staged: a grammar that changed and an id that did not is a stale
  *  file for a year under an immutable prefix.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
@@ -21,7 +21,7 @@ const write = (root, rel, text) => { const f = path.join(root, rel); fs.mkdirSyn
 
 (async () => {
 	const lib = path.join(__dirname, '..', '..', 'lib');
-	const { declarativeExtensionNames, stageDeclarativeExtensions, copyExtension, COPY_SKIP } = await import(pathToFileURL(path.join(lib, 'extensions.mjs')).href);
+	const { declarativeExtensionNames, stageDeclarativeExtensions } = await import(pathToFileURL(path.join(lib, 'extensions.mjs')).href);
 	const { hashTree } = await import(pathToFileURL(path.join(lib, 'fingerprint.mjs')).href);
 
 	const checkout = () => {
@@ -63,11 +63,14 @@ const write = (root, rel, text) => { const f = path.join(root, rel); fs.mkdirSyn
 	});
 
 	await test('the build id sees a changed grammar, a new extension and a removed one — and not a test file', () => {
+		// scripts/build-web.mjs names the build after a hash of its staging folder; this stages and hashes the same way.
 		const d = checkout();
 		const id = () => {
-			const h = createHash('sha256');
-			for (const name of declarativeExtensionNames(d, ['baked'])) { h.update('\0ext\0' + name); hashTree(h, path.join(d, name), { skip: [...COPY_SKIP, '.DS_Store'] }); }
-			return h.digest('hex');
+			const out = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-ext-out-'));
+			try {
+				stageDeclarativeExtensions(d, out, { exclude: ['baked'] });
+				return hashTree(createHash('sha256'), out, { skip: ['.DS_Store'] }).digest('hex');
+			} finally { fs.rmSync(out, { recursive: true, force: true }); }
 		};
 		try {
 			const base = id();
@@ -80,19 +83,9 @@ const write = (root, rel, text) => { const f = path.join(root, rel); fs.mkdirSyn
 			fs.rmSync(path.join(d, 'extra'), { recursive: true });
 			assert.strictEqual(id(), changed, 'and back');
 			write(d, 'json/test/fixture.json', '{"more":1}');
-			assert.strictEqual(id(), changed, 'a test file is not staged, so it is not part of the build');
-		} finally { fs.rmSync(d, { recursive: true, force: true }); }
-	});
-
-	await test('what the id skips is what the copy skips', () => {
-		for (const name of ['node_modules', 'test', 'src', '.git']) { assert.ok(COPY_SKIP.includes(name), name); }
-		const d = checkout();
-		const out = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-ext-out-'));
-		try {
 			write(d, 'json/node_modules/x/index.js', 'x');
-			copyExtension(path.join(d, 'json'), path.join(out, 'json'));
-			assert.ok(!fs.existsSync(path.join(out, 'json', 'node_modules')));
-		} finally { fs.rmSync(d, { recursive: true, force: true }); fs.rmSync(out, { recursive: true, force: true }); }
+			assert.strictEqual(id(), changed, 'a test file or a dependency is not staged, so it is not part of the build');
+		} finally { fs.rmSync(d, { recursive: true, force: true }); }
 	});
 
 	console.log(`\n${n} tests passed`);

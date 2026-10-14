@@ -44,9 +44,6 @@ export function declarativeExtensionNames(extensionsDir, excludeNames = []) {
 	return names;
 }
 
-/** Names `copyExtension` leaves out, for hashing the same inputs it copies. */
-export const COPY_SKIP = [...SKIP];
-
 /**
  * @param {string} extensionsDir Code-OSS's extensions/ directory
  * @param {string} outDir where to stage

@@ -107,7 +107,7 @@ extension, a stylesheet or a build-time edit of the browser build's own copy of 
 
 | Piece | Where | What it does, and what it depends on |
 | --- | --- | --- |
-| Colour themes | `web/theme/levelcode-web-theme/` (staged as a built-in extension by `build-web.mjs`) | "LevelCode Web Dark" / "LevelCode Web Light": neutral chrome with the editor one step lighter, hairline borders, one violet accent. They carry the `agentsPanel.*` keys the floating cards use. Follows the system (`window.autoDetectColorScheme` + the two preferred-theme settings). |
+| Colour themes | `web/theme/levelcode-web-theme/` (staged as a built-in extension by `build-web.mjs`) | "LevelCode Web Dark" / "LevelCode Web Light": neutral chrome with the editor one step lighter, hairline borders, one violet accent. They carry the `agentsPanel.*` keys the floating cards use. Follows the system (`window.autoDetectColorScheme` + the two preferred-theme settings). The syntax colours are One Dark's and One Light's with every one under 4.5:1 on the editor moved in lightness only, hue kept (the light constants darkened with them, so numbers stay apart from class names); `theme.test.js` holds every syntax colour to 4.5:1. The editor paints no token *backgrounds*, so none is set (`invalid` is red text). |
 | First paint | `initialColorTheme` in `web/lib/config.mjs`, picked by `pickInitialTheme` in `web/main.js` | The colours painted for the half second before the theme extension has loaded, so a dark visitor does not see a light flash. |
 | Default theme | `withoutConfigurationDefaults` in `web/lib/extensions.mjs` | An extension's `configurationDefaults` **outrank** the embedder's. `levelcode-themes` pins its own default theme, so the staged copy of it has that key removed (its two themes stay selectable). The desktop source is untouched. |
 | Panels, activity bar | `workbench.experimental.modernUI`, `workbench.activityBar.location: top`, `workbench.layoutControl.type: toggles` | Code-OSS's own switches. `modernUI` is **experimental**: if a bump renames or drops it the editor is still fine, only plainer (`e2e-look.mjs` still passes its theme and layout checks; its screenshots are the thing to look at). |
@@ -121,13 +121,16 @@ extension, a stylesheet or a build-time edit of the browser build's own copy of 
 **Layouts.** `levelcode.web.layout` is `chatFirst` (the chat alone, side bars closed, conversations on its
 left — the way a chat app is used) or `split` (Explorer, files on the left, the chat docked on the right — the
 way an editor is used). The status bar item at the left and **LevelCode: Layout: Switch** change the setting
-(there is no default key binding: `Cmd+Alt+L` is Find in Selection on macOS); one listener applies it, so Settings
-does the same. The first start in a workspace is `chatFirst`. The chat panel is not restored by a reload, so a
+(there is no default key binding: `Cmd+Alt+L` is Find in Selection on macOS) where it takes effect — the workspace's
+value when `.vscode/settings.json` has one, since that outranks the user's, the user's otherwise; one listener
+applies it, so Settings does the same. The first start in a workspace is `chatFirst`. The chat panel is not restored by a reload, so a
 `split` layout docks the chat again at start — without revealing the Explorer or moving the focus (that is done
 once per workspace, `workspaceState`), so an Explorer the visitor closed stays closed. The start-up and a switch wait
 for the chat's tab to exist (`onDidChangeTabs`, 2.5 s) rather than reading the tab model at a guessed time. Only
 existing workbench commands are used, so what the visitor then arranges by hand is an ordinary layout. Files that are
-open when going back to `chatFirst` stay as tabs beside the chat.
+open when going back to `chatFirst` stay open as tabs behind the chat: a group that still has files (a split file
+editor, say) is joined into the chat's (`workbench.action.joinAllGroups`, which moves them in inactive), and that one
+group is unlocked, because a group the chat was docked in is locked and would send the next file into a new split.
 
 **Widths.** The chat page decides by **its own width**, not the window's: from 1000 px it docks the
 conversation list as a 264 px rail; below 760 px it compacts; in between the list is the dialog it is on the
@@ -141,7 +144,15 @@ Constraints worth knowing before changing it:
 
 - The chat webview's CSP has no `font-src`: the skin uses the system font stack only.
 - A group that is emptied by moving the chat out of it is closed, so `split` opens a file in the first group
-  **before** it moves the chat (`applyLayout`, pinned by `workspace.test.js`).
+  **before** it moves the chat — the README, or an empty untitled document when there is none and the chat is the
+  group's only tab (`applyLayout`, pinned by `workspace.test.js`).
+- The move and join commands act on the **active editor**, and `levelcode.ai.focus` returns before the reveal has
+  reached the tab model. The window is read only once the chat is in front (until then an editor that was in front
+  of it, such as a settings editor in a group of its own, still counts as a group). Each move or join then runs only
+  when the tab model says the chat is the active editor, read immediately
+  before it (after waiting up to 1.5 s for that); otherwise it is skipped, as is every later one in that arrangement,
+  and so is one that a newer layout request has overtaken. A skipped move leaves the window as it was; a guessed one
+  would move the file beside the chat.
 - The rail asks the page for its conversations with `listSessions`; it must never call `openSessions()`,
   which seeds the list with sample conversations when nothing has arrived yet.
 - Text drawn in the theme's accent uses `textLink.foreground`, not `focusBorder` (which is translucent and a line
@@ -157,21 +168,26 @@ The extension's existing PKCE flow, with the browser's pieces in place of the OS
 1  extension   accountSignIn(): verifier → SecretStorage; builds
                <account>/ai/login?redirect_uri=<callback>&code_challenge=<S256>
 2  extension   host.openAuth(uri) → command levelcode.web.openAuthUrl (registered by main.js)
-3  main.js     checks the address is <account>/ai/…, marks the tab (sessionStorage), location.assign
+3  main.js     checks the address is <account>/ai/…, notes where the tab is (sessionStorage), location.assign
 4  account     already signed in there → mints a one-time code bound to the challenge, 302 to
                <editor>/callback.html?vscode-reqid=N&vscode-scheme=levelcode
                  &vscode-authority=levelcode.levelcode-ai&vscode-path=%2Fauth%2Fcallback&code=…
                (not signed in → the login page first)
-5  callback    writes localStorage "vscode-web.url-callbacks[N]" (dated), sees the mark → goes back to /
+5  callback    checks it is a sign-in to levelcode.levelcode-ai/auth/callback, writes localStorage
+               "vscode-web.url-callbacks[N]" (dated, the code only), goes back to where the tab was
 6  main.js     at start-up, once the workbench is listening, delivers a fresh result as
                levelcode://levelcode.levelcode-ai/auth/callback?code=… to the URL service
-7  extension   handleAuthCallback → POST /api/levelcode/v1/auth/exchange {code, verifier} → tokens
+7  extension   handleAuthCallback: a sign-in is pending (a verifier is stored) →
+               POST /api/levelcode/v1/auth/exchange {code, verifier} → tokens
 ```
 
 Why the tab leaves instead of opening a pop-up: a window opened from a chain that began in a
 webview is the first thing a strict browser (Safari, a phone) refuses. Leaving the tab and
 returning needs no permission. The PKCE verifier lives in SecretStorage, so it survives the
-navigation.
+navigation — and where the browser lets nothing persist (no IndexedDB or WebCrypto, or a refused
+write), the tab's secrets ride through that one navigation in sessionStorage and are taken back,
+and removed, when the editor starts again. The tab comes back to the address it left: a folder or
+workspace opened from the computer is opened again, not the scratch workspace.
 
 - **`?signin=1`** (the account site's "Open LevelCode" link) makes step 1 happen by itself, once:
   `main.js` removes the parameter, then delivers `levelcode://…/launch`, which focuses the chat and
@@ -179,6 +195,12 @@ navigation.
 - **A result is delivered only if it is fresh** (written in the last two minutes — the one-time
   code lives for a minute) and is removed either way. One left by a callback page whose editor
   tab is gone is delivered when the editor next starts.
+- **`callback.html` is a page anyone can link to**, and what it leaves is delivered at the next start.
+  So it passes on a LevelCode sign-in and nothing else: for `levelcode.levelcode-ai/auth/callback`
+  only, and only the one-time `code` — never a token in the link (the old flow, which the desktop
+  still accepts) or the rest of the query. The extension then takes a code only while a sign-in of
+  its own is pending (`host.caps.unaskedSignIn` is off in a browser): a link nobody asked for cannot
+  sign the user in to someone else's account.
 - **`levelcode.web.openAuthUrl` is an open-redirect if it is loose**, and any extension in the page
   can call it. It goes only to `<account origin>/ai/…`.
 - The address handed over is `encodeURI(uri.toString(true))` — the string the editor's own opener
@@ -257,7 +279,7 @@ node web/serve.mjs --dist dist-web            # http://127.0.0.1:8800
 | `--webview-origin 'https://{{uuid}}.view.example.com'` (`LEVELCODE_WEB_WEBVIEW_ORIGIN`) | Self-host the webview origin. Without it the page uses Code-OSS's CDN at this build's own commit. Needs wildcard DNS and TLS — see below. |
 | `--ext-host-origin 'https://{{uuid}}.ext.example.com'` (`LEVELCODE_WEB_EXTHOST_ORIGIN`) | Run the extension host on an origin of its own. Optional while no third-party code is loaded. |
 | `--static <dir>` | Use a prebuilt client (skips the gulp build). |
-| `--id <id>` | Override the build id (default: a fingerprint of the client, the page and the extension). |
+| `--id <id>` | Override the build id (default: a hash of everything the build put under `/_/<id>/`, staged first and named after it). |
 
 **Dev server** (`web/serve.mjs`): `--static <vscode-web dir> --extensions <dir> --extension-names
 levelcode-ai,levelcode-web --account <origin>`, plus `--product <json>` and `--config-defaults
@@ -365,7 +387,9 @@ causing the effect). Use another registrable domain.
 | Editor settings, layout | the workbench's own storage | editor origin |
 
 Clearing the browser's site data removes all of it. A private window may discard it on close; the
-secret store then falls back to memory for the session.
+secret store then falls back to memory for the session. The key the secrets are sealed with is created
+once per browser profile: two tabs opened together on a fresh profile store it in one IndexedDB
+transaction, so both end with the same key.
 
 ## Keeping the desktop and the browser in step
 
@@ -392,7 +416,7 @@ secret store then falls back to memory for the session.
 
 | Check | Command | What it proves |
 | --- | --- | --- |
-| Unit gate | `./scripts/test-extensions.sh` | Includes `web/test/unit/*.test.js`: the shims against Node, `host.js` on both sides, `main.js`'s functions (address check, delivery, the shared secret store, `?signin=1`), the manifest, the copy rewrites, the chat skin (what it inserts and that every rule is scoped), the themes (required colours, contrast of the text pairs, the page's defaults naming themes that exist) and the layout commands. Runs in CI on every PR (`test.yml`). Also run on Linux / Node 18 in a container with the network refused. |
+| Unit gate | `./scripts/test-extensions.sh` | Includes `web/test/unit/*.test.js`: the shims against Node, `host.js` on both sides, `main.js`'s functions (address check, delivery, the shared secret store, `?signin=1`), the manifest, the copy rewrites, the chat skin (what it inserts and that every rule is scoped), the themes (required colours, contrast of the text pairs, every syntax colour at 4.5:1 on the editor, the page's defaults naming themes that exist) and the layout commands. Runs in CI on every PR (`test.yml`). Also run on Linux / Node 18 in a container with the network refused. |
 | The shell | `./scripts/test-extensions.sh` (the unit suites `web/test/unit/shell-*.test.js`) | The engine: a differential against GNU bash 5.1 (905 cases, a shrink-only table of the ones that differ), fuzzing, every patch of the vendored code with its anchors, the build; the runtime: the commit and its refusals, kill and deadline against a **real engine in a worker thread**, limits; the terminal: key bytes, the line editor against real xterm.js 6.1 in its headless build, width, the output filter, history. With the Code-OSS checkout present the real-xterm halves run; `LEVELCODE_REQUIRE_XTERM=1` and `LEVELCODE_REQUIRE_WORKER=1` make a skip a failure, which is what CI sets. |
 | Mutations | `node web/test/helpers/mutation/mutate.mjs` | 371 edits to the runtime, the commit and the sanitiser, each of which a suite must catch (a tool, not a suite). |
 | The shell, in a browser | `node web/test/e2e-shell.mjs --static … --extensions …` | Real headless Chrome and the real nested Worker: nothing of the shell is fetched until it is used; a terminal from the palette; typing, files, a working folder that persists, 127, Ctrl+C on `sleep 60`, a link to `path:line:col` that opens the file at that line, a pasted three-line buffer through a resize; hostile output that does not type into the prompt or rename the terminal; the agent offered `run_command` without background, a file written through the review (Keep/Undo), a `.vscode` write refused whole, a timeout that applies nothing, the mirror tab. |

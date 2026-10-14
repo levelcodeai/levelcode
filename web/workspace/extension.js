@@ -188,7 +188,8 @@ class ScratchFileSystem {
 		const a = norm(from.path);
 		const b = norm(to.path);
 		if (a === b) { return; }
-		if (b.startsWith(under(a))) { throw vscode.FileSystemError.NoPermissions(to); }
+		// Into itself, or over a folder that contains it: replacing the destination would delete the source first.
+		if (a === '/' || b === '/' || b.startsWith(under(a)) || a.startsWith(under(b))) { throw vscode.FileSystemError.NoPermissions(to); }
 		const tx = this.db.transaction(STORE, 'readwrite');
 		const store = tx.objectStore(STORE);
 		const src = await request(store.get(a));
@@ -196,11 +197,23 @@ class ScratchFileSystem {
 		const dst = await request(store.get(b));
 		if (dst && !(options && options.overwrite)) { tx.abort(); throw vscode.FileSystemError.FileExists(to); }
 		const changes = [];
-		await this._mkdirs(store, b, changes);
-		if (dst) { store.delete(b); }
-		const t = Date.now();
+		try { await this._mkdirs(store, b, changes); } catch (e) { tx.abort(); throw e; }
+		// The source, whole, before anything is removed.
 		const nodes = [src];
 		if (src.type === DIR) { nodes.push(...await request(store.getAll(IDBKeyRange.bound(under(a), under(a) + '￿')))); }
+		// What it replaces goes in the same transaction, with everything under it: a folder written over another
+		// keeps none of the old one's files, and a file written over a folder leaves no children behind it.
+		if (dst) {
+			if (dst.type === DIR) {
+				for (const k of await request(store.getAllKeys(IDBKeyRange.bound(under(b), under(b) + '￿')))) {
+					store.delete(k);
+					changes.push({ type: vscode.FileChangeType.Deleted, path: k });
+				}
+			}
+			store.delete(b);
+			changes.push({ type: vscode.FileChangeType.Deleted, path: b });
+		}
+		const t = Date.now();
 		for (const n of nodes) {
 			const np = b + n.path.slice(a.length);
 			store.put(Object.assign({}, n, { path: np, mtime: move ? n.mtime : t, ctime: move ? n.ctime : t }));
@@ -423,13 +436,7 @@ const CHAT_WAIT_MS = 2500;
  * @param {typeof import('vscode')} api
  */
 function chatGroup(api) {
-	for (const g of api.window.tabGroups.all) {
-		for (const t of g.tabs) {
-			const input = t.input;
-			if (input && typeof input === 'object' && input.viewType === CHAT_VIEW_TYPE) { return g; }
-		}
-	}
-	return undefined;
+	return api.window.tabGroups.all.find((g) => g.tabs.some(isChatTab));
 }
 
 /**
@@ -452,28 +459,35 @@ function whenChatGroup(api, ms) {
 	});
 }
 
+/** Whether a tab is LevelCode's chat. */
+function isChatTab(t) {
+	const input = t && t.input;
+	return !!(input && typeof input === 'object' && input.viewType === CHAT_VIEW_TYPE);
+}
+
 /** Whether the chat is the tab on show in the group that has the focus: the editor the move commands act on. */
 function chatIsActive(api) {
 	const g = api.window.tabGroups.activeTabGroup;
-	const t = g && g.activeTab;
-	const input = t && t.input;
-	return !!(input && typeof input === 'object' && input.viewType === CHAT_VIEW_TYPE);
+	return isChatTab(g && g.activeTab);
 }
 
 /**
  * Wait for the chat to be the active editor. `levelcode.ai.focus` returns when the panel is revealed, not when the
  * workbench has made it the active editor, and the move commands act on the active editor: moved too early they
- * move the file next to it (or nothing). Gives up after `ms` and goes on — the layout is a courtesy.
+ * move the file next to it (or nothing). Resolves true when the chat is active, false when it was not within `ms`
+ * (or the tab model cannot say): a caller that moves editors must then not move anything.
  * @param {typeof import('vscode')} api
  * @param {number} ms
+ * @returns {Promise<boolean>}
  */
 function whenChatActive(api, ms) {
 	const tabs = api.window.tabGroups;
-	if (!tabs.activeTabGroup || chatIsActive(api) || !tabs.onDidChangeTabs) { return Promise.resolve(); }
+	if (chatIsActive(api)) { return Promise.resolve(true); }
+	if (!tabs.onDidChangeTabs) { return Promise.resolve(false); }
 	return new Promise((resolve) => {
 		let timer;
 		const subs = [];
-		const finish = () => { clearTimeout(timer); subs.forEach((d) => d.dispose()); resolve(); };
+		const finish = () => { clearTimeout(timer); subs.forEach((d) => d.dispose()); resolve(chatIsActive(api)); };
 		timer = setTimeout(finish, ms);
 		const check = () => { if (chatIsActive(api)) { finish(); } };
 		subs.push(tabs.onDidChangeTabs(check));
@@ -500,20 +514,43 @@ async function applyLayout(api, mode, opts = {}) {
 	// the switch): the later choice wins, and the earlier one must not resume and put things back.
 	const mine = ++generation;
 	const run = async (id, ...args) => { if (mine === generation) { await api.commands.executeCommand(id, ...args); } };
-	await run('levelcode.ai.focus');   // the chat, taking the focus, in whichever group it is (or the active one)
 	const waitMs = opts.waitMs === undefined ? CHAT_WAIT_MS : opts.waitMs;
+	// The commands below that act on "the active editor" (the moves, the join) run only when that editor is the chat,
+	// read immediately before each one, after waiting for the reveal to land if it has not. One that cannot be
+	// confirmed is skipped, not guessed — it would move the file beside the chat — and so is every one after it.
+	let unconfirmed = false;
+	const onChat = async (id) => {
+		if (mine !== generation || unconfirmed) { return false; }
+		if (!chatIsActive(api) && !(await whenChatActive(api, Math.min(waitMs, 1500)))) { unconfirmed = true; return false; }
+		if (mine !== generation) { return false; }
+		if (!chatIsActive(api)) { unconfirmed = true; return false; }
+		await api.commands.executeCommand(id);
+		return true;
+	};
+	await run('levelcode.ai.focus');   // the chat, taking the focus, in whichever group it is (or the active one)
 	const group = await whenChatGroup(api, waitMs);
-	if (group) { await whenChatActive(api, Math.min(waitMs, 1500)); }
+	// Read the window once the chat is in front: until then an editor that was in front of it (a settings editor, in a
+	// group of its own, when the layout was changed by saving the setting) is still in the model, and the window would
+	// look like two groups already. A chat that does not come to the front in time is not moved at all.
+	if (group && !(await whenChatActive(api, Math.min(waitMs, 1500)))) { unconfirmed = true; }
 	if (mine !== generation) { return; }
 	const columns = () => api.window.tabGroups.all.map((g) => g.viewColumn);
 	if (mode === 'chatFirst') {
 		// Bring the chat back from a side group, and put the side bars away: the page is the conversation.
 		const all = api.window.tabGroups.all;
-		if (group && all.length > 1 && group.viewColumn !== Math.min(...columns())) { await run('workbench.action.moveEditorToFirstGroup'); }
+		const first = Math.min(...columns());
+		// Groups that still have files once the chat is in the first one (the chat's own group closes if the chat was
+		// all it had): a split file editor, files the visitor put on the right. Read before the move changes the model.
+		const kept = group ? all.filter((g) => g.viewColumn !== first && g.tabs.some((t) => !isChatTab(t))) : [];
+		if (group && all.length > 1 && group.viewColumn !== first) { await onChat('workbench.action.moveEditorToFirstGroup'); }
 		// A reload brings back the groups it had; an empty one would take half the window.
 		const left = api.window.tabGroups.all;
 		const empty = left.filter((g) => g.tabs.length === 0);
 		if (empty.length && empty.length < left.length && api.window.tabGroups.close && mine === generation) { await api.window.tabGroups.close(empty); }
+		// A group with files would keep half the window too: its files join the chat's group as tabs behind the chat
+		// (a join moves them inactive, so the chat stays on show). A group the chat was docked in is locked, and a
+		// locked group sends every file opened next into a new split; one group is all chatFirst has, so it is unlocked.
+		if (kept.length && await onChat('workbench.action.joinAllGroups')) { await run('workbench.action.unlockEditorGroup'); }
 		await run('workbench.action.closeSidebar');
 		await run('workbench.action.closePanel');
 		await run('workbench.action.closeAuxiliaryBar');
@@ -524,16 +561,27 @@ async function applyLayout(api, mode, opts = {}) {
 	// emptied by moving the chat out of it is closed, and the chat would be alone again.
 	const groups = api.window.tabGroups.all;
 	if (group && groups.length < 2) {
+		// What stays behind in the first group: the README, or — a folder without one, where the chat is the only tab —
+		// an empty untitled document. Without it the move takes the chat's group with it and the window is one group.
+		const alone = group.tabs.every(isChatTab);
 		const found = await api.workspace.findFiles('README.md', undefined, 1);
 		if (mine !== generation) { return; }
-		if (found.length) { await api.window.showTextDocument(found[0], { viewColumn: api.ViewColumn.One, preserveFocus: true, preview: false }); }
-		await run('levelcode.ai.focus');
-		await run('workbench.action.moveEditorToRightGroup');
+		let keeper = found[0];
+		if (!keeper && alone) {
+			try { keeper = await api.workspace.openTextDocument(); } catch { /* nothing to keep the group with: do not move */ }
+			if (mine !== generation) { return; }
+		}
+		if (keeper) { await api.window.showTextDocument(keeper, { viewColumn: api.ViewColumn.One, preserveFocus: true, preview: false }); }
+		if (keeper || !alone) {
+			// The file is now the one on show in that group: the chat is revealed again, and moved once it is active.
+			await run('levelcode.ai.focus');
+			await onChat('workbench.action.moveEditorToRightGroup');
+		}
 	} else if (group && group.tabs.length > 1 && group.viewColumn !== Math.max(...columns())) {
 		// A reload brings the two groups back, but the chat is opened again in the first of them, next to a file
 		// (the right one is empty and, being empty, not the place the setting that keeps files out of the chat's
 		// group has had a chance to claim). Dock it.
-		await run('workbench.action.moveEditorToRightGroup');
+		await onChat('workbench.action.moveEditorToRightGroup');
 	}
 	if (opts.explorer !== false) { await run('workbench.view.explorer'); }
 }
@@ -561,6 +609,22 @@ async function applyAtStart(api, state, opts = {}) {
 }
 
 /**
+ * Change the layout setting where it takes effect. A workspace that sets it (`.vscode/settings.json`) outranks the
+ * user's setting, so writing only the user's would leave the switch doing nothing there: the workspace's value is
+ * changed when there is one, the user's preference otherwise. (A folder-level value is not a third place to look:
+ * the setting is window-scoped, which VS Code does not read from a folder of a multi-root workspace, and in a
+ * single-folder window the folder's settings ARE the workspace's.)
+ * @param {typeof import('vscode')} api
+ * @param {'chatFirst'|'split'} mode
+ */
+function writeLayout(api, mode) {
+	const cfg = api.workspace.getConfiguration('levelcode.web');
+	const info = cfg.inspect('layout');
+	const target = info && info.workspaceValue !== undefined ? api.ConfigurationTarget.Workspace : api.ConfigurationTarget.Global;
+	return cfg.update('layout', mode, target);
+}
+
+/**
  * The layout switch: a status-bar item and three commands. The commands only change the setting; one listener
  * applies it, so the same thing happens whether it was chosen here, in a menu or in Settings.
  * @param {import('vscode').ExtensionContext} context
@@ -578,7 +642,7 @@ function registerLayout(context) {
 	};
 	showLayout();
 	layoutItem.show();
-	const setLayout = (mode) => vscode.workspace.getConfiguration('levelcode.web').update('layout', mode, vscode.ConfigurationTarget.Global);
+	const setLayout = (mode) => writeLayout(vscode, mode);
 	context.subscriptions.push(
 		layoutItem,
 		vscode.workspace.onDidChangeConfiguration((e) => {
@@ -628,4 +692,4 @@ async function openLocalFolder(api) {
 
 function deactivate() { }
 
-module.exports = { activate, deactivate, openLocalFolder, applyLayout, applyAtStart, currentLayout, chatGroup, whenChatGroup, whenChatActive, LAYOUTS, APPLIED_KEY };
+module.exports = { activate, deactivate, openLocalFolder, applyLayout, applyAtStart, currentLayout, writeLayout, chatGroup, whenChatGroup, whenChatActive, LAYOUTS, APPLIED_KEY };

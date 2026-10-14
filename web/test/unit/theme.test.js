@@ -3,7 +3,8 @@
  *
  *  A theme is data, so what can go wrong is quiet: a colour that is missing and falls back to a default that
  *  does not belong, text that cannot be read, a default that names a theme the page does not have, or a pinned
- *  default somewhere else that outranks ours. These tests read the files the build ships.
+ *  default somewhere else that outranks ours. These tests read the files the build ships. "Read" includes the code:
+ *  every syntax colour is held to the same 4.5:1 as the workbench's text (a review found comments at 2.6–2.8:1).
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 'use strict';
@@ -72,6 +73,33 @@ function over(top, ground) {
 			assert.ok(contrast(c['button.foreground'], c['button.background']) >= 4.5, `${t.label}: button label ${contrast(c['button.foreground'], c['button.background']).toFixed(2)}`);
 			assert.ok(contrast(c['input.placeholderForeground'], over(c['input.background'], editor)) >= 3, `${t.label}: placeholder`);
 			assert.ok(contrast(c['statusBar.foreground'], c['statusBar.background']) >= 4.5, `${t.label}: status bar`);
+		}
+	});
+
+	await test('code can be read: every syntax colour meets WCAG AA (4.5:1) on the editor, and none counts on a token background', () => {
+		for (const t of Object.values(themes)) {
+			const editor = t.json.colors['editor.background'];
+			const low = [];
+			const painted = [];
+			let checked = 0;
+			const check = (where, fg) => {
+				if (fg === undefined) { return; }
+				assert.ok(/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(fg), `${t.label}: ${where} = ${fg}`);
+				const c = contrast(over(fg, editor), editor);
+				checked++;
+				if (c < 4.5) { low.push(`${where} ${fg} ${c.toFixed(2)}`); }
+			};
+			for (const rule of t.json.tokenColors) {
+				const where = [].concat(rule.scope || '(default)').join(', ');
+				check(where, rule.settings.foreground);
+				// The editor paints no token backgrounds ("Token background colors are currently not supported"): a
+				// foreground chosen for one is drawn on the editor's ground instead — white on white in a light theme.
+				if (rule.settings.background !== undefined) { painted.push(where); }
+			}
+			for (const [k, v] of Object.entries(t.json.semanticTokenColors || {})) { check('semantic ' + k, typeof v === 'string' ? v : v.foreground); }
+			assert.ok(checked > 20, `${t.label}: only ${checked} syntax colours were checked`);
+			assert.deepStrictEqual(low, [], `${t.label}: syntax colours below 4.5:1 on ${editor}`);
+			assert.deepStrictEqual(painted, [], `${t.label}: token backgrounds the editor does not paint`);
 		}
 	});
 

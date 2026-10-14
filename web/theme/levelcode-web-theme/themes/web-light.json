@@ -247,7 +247,7 @@
 				"punctuation.definition.comment"
 			],
 			"settings": {
-				"foreground": "#a0a1a7",
+				"foreground": "#75767e",
 				"fontStyle": "italic"
 			}
 		},
@@ -257,7 +257,7 @@
 				"punctuation.definition.string"
 			],
 			"settings": {
-				"foreground": "#50a14f"
+				"foreground": "#428541"
 			}
 		},
 		{
@@ -266,7 +266,7 @@
 				"constant.character.escape"
 			],
 			"settings": {
-				"foreground": "#0184bc"
+				"foreground": "#017eb4"
 			}
 		},
 		{
@@ -277,7 +277,7 @@
 				"constant.other"
 			],
 			"settings": {
-				"foreground": "#986801"
+				"foreground": "#765101"
 			}
 		},
 		{
@@ -287,7 +287,7 @@
 				"constant.language.undefined"
 			],
 			"settings": {
-				"foreground": "#986801"
+				"foreground": "#765101"
 			}
 		},
 		{
@@ -298,7 +298,7 @@
 				"entity.name.variable"
 			],
 			"settings": {
-				"foreground": "#e45649"
+				"foreground": "#df3425"
 			}
 		},
 		{
@@ -317,7 +317,7 @@
 				"variable.language.special"
 			],
 			"settings": {
-				"foreground": "#e45649",
+				"foreground": "#df3425",
 				"fontStyle": "italic"
 			}
 		},
@@ -329,7 +329,7 @@
 				"support.type.property-name"
 			],
 			"settings": {
-				"foreground": "#e45649"
+				"foreground": "#df3425"
 			}
 		},
 		{
@@ -387,7 +387,7 @@
 				"meta.function-call.method"
 			],
 			"settings": {
-				"foreground": "#4078f2"
+				"foreground": "#326ef1"
 			}
 		},
 		{
@@ -398,7 +398,7 @@
 				"support.class"
 			],
 			"settings": {
-				"foreground": "#c18401"
+				"foreground": "#9f6d01"
 			}
 		},
 		{
@@ -406,7 +406,7 @@
 				"entity.other.inherited-class"
 			],
 			"settings": {
-				"foreground": "#50a14f"
+				"foreground": "#428541"
 			}
 		},
 		{
@@ -415,7 +415,7 @@
 				"punctuation.definition.tag"
 			],
 			"settings": {
-				"foreground": "#e45649"
+				"foreground": "#df3425"
 			}
 		},
 		{
@@ -423,7 +423,7 @@
 				"entity.other.attribute-name"
 			],
 			"settings": {
-				"foreground": "#986801"
+				"foreground": "#765101"
 			}
 		},
 		{
@@ -433,7 +433,7 @@
 				"support.type.builtin"
 			],
 			"settings": {
-				"foreground": "#0184bc"
+				"foreground": "#017eb4"
 			}
 		},
 		{
@@ -464,7 +464,7 @@
 				"entity.name.function.decorator"
 			],
 			"settings": {
-				"foreground": "#4078f2"
+				"foreground": "#326ef1"
 			}
 		},
 		{
@@ -473,8 +473,7 @@
 				"invalid.illegal"
 			],
 			"settings": {
-				"foreground": "#ffffff",
-				"background": "#e45649"
+				"foreground": "#df3425"
 			}
 		},
 		{
@@ -484,7 +483,7 @@
 				"punctuation.definition.heading.markdown"
 			],
 			"settings": {
-				"foreground": "#e45649",
+				"foreground": "#df3425",
 				"fontStyle": "bold"
 			}
 		},
@@ -493,7 +492,7 @@
 				"markup.bold"
 			],
 			"settings": {
-				"foreground": "#986801",
+				"foreground": "#765101",
 				"fontStyle": "bold"
 			}
 		},
@@ -513,7 +512,7 @@
 				"markup.raw.block"
 			],
 			"settings": {
-				"foreground": "#50a14f"
+				"foreground": "#428541"
 			}
 		},
 		{
@@ -522,7 +521,7 @@
 				"markup.underline.link.image"
 			],
 			"settings": {
-				"foreground": "#4078f2",
+				"foreground": "#326ef1",
 				"fontStyle": "underline"
 			}
 		},
@@ -531,7 +530,7 @@
 				"markup.quote"
 			],
 			"settings": {
-				"foreground": "#a0a1a7",
+				"foreground": "#75767e",
 				"fontStyle": "italic"
 			}
 		},
@@ -540,7 +539,7 @@
 				"support.type.property-name.json"
 			],
 			"settings": {
-				"foreground": "#e45649"
+				"foreground": "#df3425"
 			}
 		},
 		{
@@ -549,18 +548,18 @@
 				"source.css support.type.property-name"
 			],
 			"settings": {
-				"foreground": "#c18401"
+				"foreground": "#9f6d01"
 			}
 		}
 	],
 	"semanticTokenColors": {
 		"parameter": "#383a42",
-		"property": "#e45649",
-		"variable.defaultLibrary": "#0184bc",
-		"function.defaultLibrary": "#4078f2",
-		"class": "#c18401",
-		"enum": "#c18401",
-		"interface": "#c18401",
+		"property": "#df3425",
+		"variable.defaultLibrary": "#017eb4",
+		"function.defaultLibrary": "#326ef1",
+		"class": "#9f6d01",
+		"enum": "#9f6d01",
+		"interface": "#9f6d01",
 		"namespace": "#383a42"
 	}
 }

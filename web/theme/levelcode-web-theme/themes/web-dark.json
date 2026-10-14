@@ -247,7 +247,7 @@
 				"punctuation.definition.comment"
 			],
 			"settings": {
-				"foreground": "#5c6370",
+				"foreground": "#7b8493",
 				"fontStyle": "italic"
 			}
 		},
@@ -474,8 +474,7 @@
 				"invalid.illegal"
 			],
 			"settings": {
-				"foreground": "#ffffff",
-				"background": "#e06c75"
+				"foreground": "#e06c75"
 			}
 		},
 		{
@@ -541,7 +540,7 @@
 				"markup.quote"
 			],
 			"settings": {
-				"foreground": "#5c6370",
+				"foreground": "#7b8493",
 				"fontStyle": "italic"
 			}
 		},
@@ -551,7 +550,7 @@
 				"comment.block.documentation"
 			],
 			"settings": {
-				"foreground": "#5c6370"
+				"foreground": "#7b8493"
 			}
 		},
 		{

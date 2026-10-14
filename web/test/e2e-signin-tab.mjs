@@ -100,7 +100,8 @@ try {
 	const again = new URL(await page.eval('location.href'));
 	check('the parameter is gone from the address', again.search === '', again.search);
 
-	/* 3. a callback page whose editor tab is gone: the result waits, and the next start delivers it */
+	/* 3. a callback page whose editor tab is gone: the result waits, and the next start delivers it — and an
+	      extension that started no sign-in of its own does not take it: anyone can link to callback.html */
 	const orphan = await chrome.newPage();
 	const base = `${editorOrigin}/callback.html?vscode-reqid=7&vscode-scheme=levelcode&vscode-authority=levelcode.levelcode-ai&vscode-path=%2Fauth%2Fcallback`;
 	await orphan.goto(base + '&code=left-behind');
@@ -118,11 +119,12 @@ try {
 	const callsBefore = accountCalls();
 	await orphan.goto(editorOrigin + '/');
 	await workbenchReady(orphan);
-	await orphan.waitFor(() => exchanges() > before, { ms: 60000, label: 'delivery at start-up' }).catch(() => null);
+	await orphan.waitFor(() => orphan.eval(`localStorage.getItem('vscode-web.url-callbacks[7]') === null`), { ms: 60000, label: 'delivery at start-up' }).catch(() => null);
 	await orphan.waitFor(() => accountCalls() > callsBefore, { ms: 30000, label: 'the second tab\'s account calls' }).catch(() => null);
+	await sleep(4000);   // time for an exchange, were there to be one
 	check('a second tab of the editor is signed in from the store the first one wrote, with no sign-in of its own', accountCalls() > callsBefore && stub.state.signIns === 1, `account calls ${callsBefore} -> ${accountCalls()}, sign-ins ${stub.state.signIns}`);
-	check('the next start delivers it to the extension (the stand-in refuses the made-up code; the attempt is the proof)', exchanges() === before + 1, `${before} -> ${exchanges()}`);
-	check('and it is gone from storage', (await orphan.eval(`localStorage.getItem('vscode-web.url-callbacks[7]')`)) === null);
+	check('the next start delivers it: it is gone from storage', (await orphan.eval(`localStorage.getItem('vscode-web.url-callbacks[7]')`)) === null);
+	check('and a code no sign-in of this editor asked for is not exchanged', exchanges() === before, `${before} -> ${exchanges()}`);
 
 	// An old one is not delivered. Written here with an age beyond the limit, by hand.
 	await orphan.eval(`localStorage.setItem('vscode-web.url-callbacks[8]', JSON.stringify({ scheme: 'levelcode', authority: 'levelcode.levelcode-ai', path: '/auth/callback', query: 'code=too-old', at: Date.now() - 10 * 60 * 1000 }))`);
