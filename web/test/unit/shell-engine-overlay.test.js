@@ -1112,6 +1112,133 @@ test('a base that fails while the change set is worked out is refused with a rea
 	assert.ok(!/^EIO: /.test(String(r.refused)));
 });
 
+/* ---------------------------------------------------------------------------------------------- a folder that ignores case */
+
+/**
+ * A base on a disk that ignores case and the form of an accent and keeps the names it was given (macOS, Windows: the
+ * usual File System Access folder): a path finds the entry whatever its spelling, a listing says the names as they
+ * were made. `apply` writes a change set the way that disk would: a path finds the entry by any spelling, and a new
+ * name is made in the folder its parent finds.
+ * @param {Record<string, string | Uint8Array | null>} files
+ */
+function foldingSetup(files) {
+	const tree = makeTree(Object.assign({ '/w': null }, files));
+	const fold = (/** @type {string} */ s) => s.normalize('NFC').toLowerCase();
+	/** what the disk finds for p, or undefined */
+	const find = (/** @type {string} */ p) => (tree.nodes.has(p) ? p : [...tree.nodes.keys()].find((k) => fold(k) === fold(p)));
+	/** where the disk puts a new p: in the folder its parent finds */
+	const place = (/** @type {string} */ p) => find(p) || (find(p.slice(0, p.lastIndexOf('/')) || '/') || p.slice(0, p.lastIndexOf('/'))) + p.slice(p.lastIndexOf('/'));
+	const inner = baseOf(tree);
+	const err = (/** @type {string} */ c) => Object.assign(new Error(c), { code: c });
+	const base = {
+		calls: inner.calls,
+		async stat(/** @type {string} */ p) { const k = find(p); if (k === undefined) { inner.calls.push('stat ' + p); throw err('ENOENT'); } const s = await inner.stat(k); inner.calls[inner.calls.length - 1] = 'stat ' + p; return s; },
+		async readFile(/** @type {string} */ p) { const k = find(p); if (k === undefined) { inner.calls.push('readFile ' + p); throw err('ENOENT'); } const b = await inner.readFile(k); inner.calls[inner.calls.length - 1] = 'readFile ' + p; return b; },
+		async readDir(/** @type {string} */ p) { const k = find(p); if (k === undefined) { inner.calls.push('readDir ' + p); throw err('ENOENT'); } const l = await inner.readDir(k); inner.calls[inner.calls.length - 1] = 'readDir ' + p; return l; },
+	};
+	const ov = createOverlay({ folders: [{ id: 'f', path: '/w', name: 'w' }], base });
+	const apply = (/** @type {any[]} */ cs) => {
+		for (const c of cs) { if (c.kind === 'mkdir' && !find(c.path)) { tree.mkdir(place(c.path)); } }
+		for (const c of cs) { if (c.kind === 'write') { tree.put(place(c.path), c.after); } }
+		for (const c of cs) { if (c.kind === 'delete') { const k = find(c.path); if (k) { tree.nodes.delete(k); } } }
+		for (const c of cs) { if (c.kind === 'rmdir') { const k = find(c.path); if (k) { tree.remove(k); } } }
+	};
+	return { tree, base, ov, fs: ov.fs, apply };
+}
+
+test('a folder that ignores case: mv a.txt A.txt is refused whole and names both spellings; it never deletes the file', async () => {
+	const { ov, fs, tree, apply } = foldingSetup({ '/w/a.txt': 'keep me\n' });
+	await fs.mv('/w/a.txt', '/w/A.txt');
+	const r = await ov.changes();
+	// the overlay keys paths by their spelling and this base answers for A.txt with a.txt: "A.txt, the bytes it already
+	// has" was no change, "a.txt removed" was one, and the set deleted the file
+	assert.deepStrictEqual(brief(r.changes), []);
+	assert.ok(typeof r.refused === 'string' && r.refused.includes('/w/a.txt') && r.refused.includes('/w/A.txt'), String(r.refused));
+	assert.ok(/does not tell upper and lower case/.test(r.refused), r.refused);
+	apply(r.changes);
+	assert.deepStrictEqual(tree.dump(), ['/w/', '/w/a.txt = "keep me\\n"']);
+});
+
+test('a folder that ignores case: every way of reaching one entry by two spellings in one command is refused, and nothing is lost', async () => {
+	/** @type {Array<[string, Record<string, string | null>, (fs: any) => Promise<void>]>} */
+	const cases = [
+		['a folder spelled two ways: mv src/a.txt SRC/a.txt', { '/w/src/a.txt': 'A' }, (fs) => fs.mv('/w/src/a.txt', '/w/SRC/a.txt')],
+		['through a name of its own in ONE command: mv a.txt t.txt; mv t.txt A.txt', { '/w/a.txt': 'A' }, async (fs) => { await fs.mv('/w/a.txt', '/w/t.txt'); await fs.mv('/w/t.txt', '/w/A.txt'); }],
+		['removed, then written under the other spelling: rm a.txt; echo new > A.txt', { '/w/a.txt': 'A' }, async (fs) => { await fs.rm('/w/a.txt'); await fs.writeFile('/w/A.txt', 'new\n'); }],
+		['an empty folder renamed by case: mv d D', { '/w/d': null, '/w/keep': 'k' }, (fs) => fs.mv('/w/d', '/w/D')],
+		['a folder removed, then written into by the other spelling: rm -r src; echo n > SRC/new.txt', { '/w/src/a.txt': 'A' }, async (fs) => { await fs.rm('/w/src', { recursive: true }); await fs.writeFile('/w/SRC/new.txt', 'n\n'); }],
+		['the same, two levels down (nothing asked the base about SRC itself): rm -r src; echo n > SRC/x/new.txt', { '/w/src/x/a.txt': 'A' }, async (fs) => { await fs.rm('/w/src', { recursive: true }); await fs.writeFile('/w/SRC/x/new.txt', 'n\n'); }],
+		['a copy onto itself: cp a.txt A.txt', { '/w/a.txt': 'A' }, (fs) => fs.cp('/w/a.txt', '/w/A.txt')],
+		['two ways of writing one accent (NFD to NFC): mv café.txt café.txt', { '/w/café.txt': 'A' }, (fs) => fs.mv('/w/café.txt', '/w/café.txt')],
+	];
+	for (const [what, files, act] of cases) {
+		const { ov, fs, tree, apply } = foldingSetup(files);
+		const was = tree.dump();
+		await act(fs);
+		const r = await ov.changes();
+		assert.deepStrictEqual(brief(r.changes), [], what);
+		assert.ok(typeof r.refused === 'string' && /are one name here/.test(r.refused), what + ': ' + String(r.refused));
+		assert.strictEqual(/they look the same: an accent is written two ways/.test(r.refused), /accent/.test(what), what + ': ' + r.refused);
+		apply(r.changes);
+		assert.deepStrictEqual(tree.dump(), was, what);
+	}
+});
+
+test('a folder that ignores case: one spelling per entry still works as that disk would do it, and a run with no two spellings asks the base nothing more', async () => {
+	// a write under another spelling changes the file the folder finds (its name stays)
+	let x = foldingSetup({ '/w/a.txt': 'old\n' });
+	await x.fs.writeFile('/w/A.txt', 'new\n');
+	let r = await x.ov.changes();
+	assert.strictEqual(r.refused, null);
+	assert.deepStrictEqual(r.changes.map((c) => [c.kind, c.path, c.existed, dec.decode(c.before)]), [['write', '/w/A.txt', true, 'old\n']]);
+	x.apply(r.changes);
+	assert.deepStrictEqual(x.tree.dump(), ['/w/', '/w/a.txt = "new\\n"']);
+	// rm under another spelling removes it
+	x = foldingSetup({ '/w/a.txt': 'old\n' });
+	await x.fs.rm('/w/A.txt');
+	r = await x.ov.changes();
+	assert.deepStrictEqual([brief(r.changes), r.refused], [['delete /w/A.txt'], null]);
+	// two spellings that are only read, and a change elsewhere: applied
+	x = foldingSetup({ '/w/a.txt': 'a', '/w/b.txt': 'b' });
+	assert.strictEqual(await x.fs.readFile('/w/A.txt'), 'a');
+	assert.strictEqual(await x.fs.readFile('/w/a.txt'), 'a');
+	await x.fs.rm('/w/b.txt');
+	r = await x.ov.changes();
+	assert.deepStrictEqual([brief(r.changes), r.refused], [['delete /w/b.txt'], null]);
+	// nothing folds together: working out the set reads what it always read, and lists nothing
+	x = foldingSetup({ '/w/a.txt': 'a', '/w/b.txt': 'b' });
+	await x.fs.writeFile('/w/new.txt', 'n');
+	await x.fs.rm('/w/b.txt');
+	const from = x.base.calls.length;
+	r = await x.ov.changes();
+	assert.deepStrictEqual(brief(r.changes), ['write /w/new.txt', 'delete /w/b.txt']);
+	assert.deepStrictEqual(x.base.calls.slice(from), ['readFile /w/b.txt']);
+});
+
+test('a folder that ignores case: a name it answers for that cannot be matched to ONE name of its listing is refused as well (it may be the same entry)', async () => {
+	const tree = makeTree({ '/w': null, '/w/q.txt': 'a', '/w/Q.TXT': 'b' });
+	const inner = baseOf(tree);
+	// it answers for q.TXT, and its listing has two names that fold to it
+	const base = Object.assign({}, inner, { async stat(/** @type {string} */ p) { return inner.stat(p === '/w/q.TXT' ? '/w/q.txt' : p); } });
+	const ov = createOverlay({ folders: [{ id: 'f', path: '/w', name: 'w' }], base });
+	assert.strictEqual(await ov.fs.exists('/w/q.TXT'), true);
+	await ov.fs.rm('/w/q.txt');
+	const r = await ov.changes();
+	assert.deepStrictEqual(r.changes, []);
+	assert.ok(/^\/w\/q\.txt and \/w\/q\.TXT may be one name here: /.test(String(r.refused)), String(r.refused));
+});
+
+test('a folder that tells case apart: a case-only rename is a write and a delete (the commit decides), and two files that differ in case stay two', async () => {
+	let x = setup({ '/w/a.txt': 'A' });
+	await x.fs.mv('/w/a.txt', '/w/A.txt');
+	let r = await x.ov.changes();
+	assert.deepStrictEqual([r.changes.map((c) => c.kind + ' ' + c.path + (c.kind === 'write' ? ' existed=' + c.existed : '')), r.refused], [['write /w/A.txt existed=false', 'delete /w/a.txt'], null]);
+	x = setup({ '/w/a.txt': 'small', '/w/A.txt': 'CAPITAL' });
+	await x.fs.mv('/w/a.txt', '/w/A.txt');
+	r = await x.ov.changes();
+	assert.deepStrictEqual([r.changes.map((c) => c.kind + ' ' + c.path + (c.kind === 'write' ? ' existed=' + c.existed + ' was=' + dec.decode(c.before) : '')), r.refused], [['write /w/A.txt existed=true was=CAPITAL', 'delete /w/a.txt'], null]);
+});
+
 /* ---------------------------------------------------------------------------------------------- run */
 
 (async () => {

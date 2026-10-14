@@ -5,7 +5,8 @@
  *                       goes through deps.setTimeout)
  *    createWorkspace()  a Map-backed vscode.workspace.fs with the error shapes of the real one (FileSystemError
  *                       with `code` 'FileNotFound' and `name` 'EntryNotFound (FileSystemError)'), failure and
- *                       hang injection, a call log, and workspaceFolders with the change event
+ *                       hang injection, a call log, and workspaceFolders with the change event; with `ignoreCase`
+ *                       it is a disk that ignores case and the form of an accent (macOS, Windows)
  *    createEngines()    a factory of fake engine workers that speak README section 4: they answer `init`, run a
  *                       script the test writes with the engine-side helpers (fs read, out, done), and can
  *                       crash, hang, or keep talking after they were terminated
@@ -88,7 +89,11 @@ const te = new TextEncoder();
 const td = new TextDecoder();
 
 /**
- * @param {{ folders?: Array<{ name: string, uri: string }> }} [o]
+ * @param {{ folders?: Array<{ name: string, uri: string }>, ignoreCase?: boolean }} [o]
+ *   `ignoreCase`: the disk of a folder on macOS or Windows (the usual File System Access folder). A path finds the entry
+ *   whatever the case of its letters and the form of its accents, and an entry keeps the name it was made with: a
+ *   write to `A.txt` where `a.txt` is changes `a.txt`. The helpers below that read the workspace for a test (`text`,
+ *   `exists`, `list` ...) take a path as it is spelled, so a test sees the names the disk really has.
  */
 function createWorkspace(o) {
 	/** @type {Map<string, { type: number, data: Uint8Array, mtime: number }>} */ const nodes = new Map();
@@ -102,6 +107,19 @@ function createWorkspace(o) {
 		const pre = k.endsWith('/') ? k : k + '/';
 		return Array.from(nodes.keys()).filter((n) => n.startsWith(pre) && !n.slice(pre.length).includes('/'));
 	};
+	const fold = (/** @type {string} */ s) => s.normalize('NFC').toLowerCase();
+	/** The key of what the disk finds for `k`: itself, or on a disk that ignores case each name matched to the one that is there. */
+	function named(/** @type {string} */ k) {
+		if (!(o && o.ignoreCase) || nodes.has(k)) { return k; }
+		const scheme = k.slice(0, k.indexOf(':') + 1);
+		let at = scheme;
+		for (const name of k.slice(scheme.length).split('/').filter(Boolean)) {
+			const want = at + '/' + name;
+			const hit = nodes.has(want) ? want : childrenOf(at === scheme ? scheme + '/' : at).find((c) => fold(c.slice(c.lastIndexOf('/') + 1)) === fold(name));
+			at = hit || want;
+		}
+		return at === scheme ? scheme + '/' : at;
+	}
 	/** Is a file on the way to `k`? (what a real disk answers ENOTDIR for) */
 	function underAFile(/** @type {string} */ k) {
 		const floor = k.indexOf(':') + 1;
@@ -121,7 +139,7 @@ function createWorkspace(o) {
 				if ('error' in r) { throw r.error; }   // whatever it is: `undefined`, a string and a number are thrown too
 			}
 		}
-		return k;
+		return named(k);
 	}
 	function mkdirp(/** @type {string} */ k) {
 		const scheme = k.slice(0, k.indexOf(':') + 1);

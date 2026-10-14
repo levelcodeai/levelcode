@@ -214,6 +214,55 @@ async function test(/** @type {string} */ name, /** @type {() => Promise<void>} 
 		x.rt.dispose();
 	});
 
+	await test('a folder that ignores case (macOS, Windows): in the terminal a case-only rename of a file or a folder is refused whole and nothing moves; one spelling, and the rename in two commands, work as that disk does them', async () => {
+		const x = setup({ workspace: { ignoreCase: true } });
+		x.ws.put('/scratch/a.txt', 'keep me\n');
+		x.ws.put('/scratch/d/f.txt', 'f\n');
+		const s = x.rt.createSession();
+		// the file: it was deleted
+		let r = await line(s, 'mv a.txt A.txt');
+		assert.deepStrictEqual({ how: r.how, exit: r.exitCode, applied: r.applied }, { how: 'exit', exit: 1, applied: 0 });
+		assert.deepStrictEqual(x.ws.list('/scratch'), ['a.txt', 'd']);
+		assert.strictEqual(x.ws.text('/scratch/a.txt'), 'keep me\n');
+		assert.ok(/None of its file changes were applied: \/scratch\/A\.txt and \/scratch\/a\.txt are one name here/.test(r.notes.join('\n')), r.notes.join('\n'));
+		assert.ok(!x.ws.calls.some((c) => /^(delete|writeFile|createDirectory) /.test(c)), x.ws.calls.join('\n'));
+		// the folder: the engine sees D as there and moves d INTO it; that was applied 3 of 4, as d/d/f.txt
+		r = await line(s, 'mv d D');
+		assert.deepStrictEqual({ exit: r.exitCode, applied: r.applied }, { exit: 1, applied: 0 });
+		assert.deepStrictEqual([x.ws.list('/scratch'), x.ws.list('/scratch/d')], [['a.txt', 'd'], ['f.txt']]);
+		assert.ok(/\/scratch\/D and \/scratch\/d are one name here/.test(r.notes.join('\n')), r.notes.join('\n'));
+		// one spelling of an entry is what that disk does with it: the write lands in a.txt, whose name stays
+		r = await line(s, 'echo new > A.txt');
+		assert.deepStrictEqual({ exit: r.exitCode, applied: r.applied }, { exit: 0, applied: 1 });
+		assert.deepStrictEqual(x.ws.list('/scratch'), ['a.txt', 'd']);
+		assert.strictEqual(x.ws.text('/scratch/a.txt'), 'new\n');
+		// what the note advises: two commands
+		r = await line(s, 'mv a.txt t.txt');
+		assert.deepStrictEqual({ exit: r.exitCode, applied: r.applied }, { exit: 0, applied: 2 });
+		r = await line(s, 'mv t.txt A.txt');
+		assert.deepStrictEqual({ exit: r.exitCode, applied: r.applied }, { exit: 0, applied: 2 });
+		assert.deepStrictEqual(x.ws.list('/scratch'), ['A.txt', 'd']);
+		assert.strictEqual(x.ws.text('/scratch/A.txt'), 'new\n');
+		x.rt.dispose();
+	});
+
+	await test('a folder that ignores case: an agent\'s mv a.txt A.txt never reaches the review as a deletion; the status is 1 and the model is told why', async () => {
+		const x = setup({ workspace: { ignoreCase: true } });
+		x.ws.put('/scratch/a.txt', 'keep me\n');
+		/** @type {string[][]} */ const asked = [];
+		const folders = [{ name: 'scratch', root: '/scratch', uri: 'levelcode-scratch:///scratch' }];
+		const o = observe(x.rt.spawnAgent('mv a.txt A.txt', {
+			cwd: '/scratch', folders,
+			commit: async (/** @type {any[]} */ changes) => { asked.push(changes.map((c) => c.kind + ' ' + c.path)); return { rest: [], notes: [], failed: 0 }; },
+		}), 5000);
+		await o.closed;
+		assert.deepStrictEqual(asked, [], 'the review is given nothing to apply');
+		assert.strictEqual(/** @type {any} */ (o.events.find((e) => e.type === 'close')).code, 1);
+		assert.ok(/None of its file changes were applied: \/scratch\/A\.txt and \/scratch\/a\.txt are one name here/.test(o.stderr), o.stderr);
+		assert.deepStrictEqual(x.ws.list('/scratch'), ['a.txt']);
+		x.rt.dispose();
+	});
+
 	finished = true;
 	console.log(`\n${n} tests passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

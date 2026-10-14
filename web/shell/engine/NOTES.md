@@ -536,8 +536,21 @@ system's (`grep -r`, `find`, `rm -rv`, `cp -rv`); `exec cmd` goes on with the sc
 * A change set cannot say "this path was a folder and is a file now" (or the reverse): writes are applied before
   deletions on purpose (`mv a b` writes b and then removes a, so a failure leaves both). Such a run is withheld as
   `incomplete` with the reason, and the next command can do it in two steps. The consistency suite counts these.
-* A case-only rename (`mv a.txt A.txt`) on a disk that ignores case is a write and a delete of "the same" file; only
-  commit.js's case-fold check defends against it (the engine does not know what kind of disk it is on).
+* The overlay keys a path by its spelling; a folder on macOS or Windows (the usual File System Access folder) does not
+  tell upper and lower case apart, nor an accent written as one character (NFC) from one written as a letter and a
+  combining mark (NFD), and answers for `A.txt` with what it has at `a.txt`. Inside a run the engine does not emulate
+  that disk: after `rm a.txt`, `cat A.txt` still finds the base's file. What it does is refuse, whole, a run that
+  CHANGED an entry under one spelling while it saw or changed the same entry under another (`spellingClash`): the net
+  difference of such a run is wrong (`mv a.txt A.txt` was "A.txt: the bytes the base already has there", which is no
+  change, and "a.txt removed", and the set deleted the file; the commit's own case checks never saw a write to compare
+  with). Only spellings that fold to the same text are looked at (a run without such a pair costs nothing more); for
+  those the base decides, by its answer for the spelling and its folder's listing, so a folder that tells case apart
+  keeps two names as two files and a case-only rename there is a write and a delete for the commit to judge. One
+  spelling of an entry is not refused (`echo x > A.txt` changes `a.txt`, `rm A.txt` removes it, as that disk does).
+  Refused although a disk would have managed: reading under one spelling and changing under another (`cat A.txt; rm
+  a.txt`). Not seen: two spellings that JavaScript's case mapping does not fold together and a disk does (rare
+  scripts). `mv d D` of a folder is, to the engine, a move of `d` INTO `D` (it sees `D` as there): refused the same way
+  (before, it was applied in part, as `d/d`). A case-only rename is two commands: `mv a.txt t.txt`, then `mv t.txt A.txt`.
 * `sed -n 'w nodir/f'` does not report the missing folder (the engine swallows the failed write of `w`).
 * Functions, aliases and options do not persist; `expandAliases` makes a session's aliases work as variables only.
 * A redirection writes to the PATH when it ends, not to an open descriptor (the overlay has none): `{ rm -rf d; echo hi;
@@ -654,8 +667,8 @@ a script that ended with status 0 with its changes withheld ends with status 1.
 The change set is the NET difference: a rewrite with the same bytes, create-then-delete and an append of nothing are not
 changes; deletions below a removed folder are listed (`viaDir`), deepest first; `before` is read lazily and only for what
 stays a change, under the read caps (`null` beyond them). If the set cannot be represented (more than `entries`, a
-folder that became a file, a folder below a removed one that the host would not list, the host failing while it was
-worked out) `changes` is empty and `stats.withheld` is `'incomplete'` and the notes say why. Buffers are transferred, each once,
+folder that became a file, a folder below a removed one that the host would not list, one entry changed under two
+spellings on a folder that ignores case (§5), the host failing while it was worked out) `changes` is empty and `stats.withheld` is `'incomplete'` and the notes say why. Buffers are transferred, each once,
 whole (a view into a larger buffer is copied first). If posting `done` throws, a smaller `done` (how `error`) is sent.
 
 ## 7. Size and speed
@@ -679,7 +692,7 @@ whole (a view into a larger buffer is copied first). If posting `done` throws, a
 | File | Tests | What |
 | --- | --- | --- |
 | `shell-engine-patches.test.js` | 94 | the vendored file (size, sha256, integrity), imports, anchors counted independently of the script, the patched hash, `--check`, refusal of a wrong file, each patch's behaviour (LC-1 .. LC-71; LC-19 and LC-20 under three process zones; LC-29 in every place that makes an escape; LC-31 against bash's own answers; LC-32 .. LC-60 each against what GNU printed for the same script, recorded once; LC-61 .. LC-71 each by a case GNU answered, which is different from GNU again with the patch taken out (`loadEngineWithout`), and LC-70 by a time ratio) |
-| `shell-engine-overlay.test.js` | 66 | mounts and relocation (both directions of overlap, `/proc`, a folder at `/mnt`), layout, caps before reads and their boundaries, notes and their cap, denied and its de-duplication, writes that are refused by the shell and writes a file system would refuse, the content write of a redirection after its opening, tombstones, opaque folders, staged files below a removed or moved folder, net change set and its order, a name with a lone surrogate, memory areas and their byte accounting, identity, devices, bytes that are not UTF-8, a base that fails |
+| `shell-engine-overlay.test.js` | 71 | mounts and relocation (both directions of overlap, `/proc`, a folder at `/mnt`), layout, caps before reads and their boundaries, notes and their cap, denied and its de-duplication, writes that are refused by the shell and writes a file system would refuse, the content write of a redirection after its opening, tombstones, opaque folders, staged files below a removed or moved folder, net change set and its order, a name with a lone surrogate, memory areas and their byte accounting, identity, devices, bytes that are not UTF-8, a base that fails, a base that ignores case and accent form (one entry under two spellings: eight ways refused, what still works, what costs nothing more) and one that does not |
 | `shell-engine-core.test.js` | 59 | handshake, program list pinned by name, streaming, decoding, limits table (every number), limit/deadline/abort/error classification and wording, exit-path flushes, never rejects, seven redirections whose target the command removes, late answers, env/cwd round trip, `/tmp`, relocation, change-set hand-over, caps from the host, `init.commands`, `tmpFiles` and `tmpEntries`, the zone of the process, names that are not UTF-8 (and bytes that are UTF-8: `dé` made with printf), a working directory that is canonical, `du` and `cp -u` at the traversal limit (the limit exactly, and one over), the stand-in engine contract |
 | `shell-engine-compat.test.js` | 94 | every normaliser case by case (including what is NOT dropped), wrappers through the engine, `od`, `cmp`, `du`, the sed scanner and its `-f` files, `cp`/`mv` onto `name/`, same file, `-T`, `-rv`, `mkdir -pv`, `touch -r -d -t`, `head`/`tail` long forms, `sort -k` (`parseSortKey`, the 72-spec grid), `xargs` (options, input, batches by size, `-s` at 1310/1311 items, 4-byte characters, `-t` order, NUL and `-E` warnings, status codes, `-p`/`-o`, the quote), the sweep of every option that needs a value, the `-z` family (`zero.plan`, refusals, `tail -z` headers, `grep -Z -z`, `sed -z`), `tr.js`, `datestr.parse` and `diff.parseOptions`/`shiftBoundaries`, `ls -v` and `sort -V` (`versionCompare`: six recorded sets and every pair antisymmetric), `ls -I --hide -X -w -n`, `seq -f`, `touch`/`tee` outside the folders, awk operands repeated, the exported lists pinned; run under three process zones. Expected text of the GNU-recorded tests: GNU as docker ran it, once |
 | `shell-engine-cpmv.test.js` | 4 | 1,778 `cp`/`mv` command lines (every source shape against every destination shape, a seeded sample of the options, and the same file and the repeated source under `-u`/`-n`) against GNU coreutils 8.32, compared on status, what -v printed, the listing, what each changed file holds and what was said; 24 listed with a reason, the list may only shrink (`web/test/fixtures/shell/cpmv/`, recorded once) |

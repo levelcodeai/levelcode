@@ -1107,6 +1107,12 @@ function createOverlay(o) {
 	 */
 	async function changes() {
 		try {
+			const clash = await spellingClash();
+			if (clash) {
+				stats.stagedBytes = stagedBytes;
+				stats.stagedEntries = entries.size;
+				return { changes: [], refused: clash };
+			}
 			return await workOutChanges();
 		} catch (e) {
 			const why = String(e && /** @type {any} */ (e).message || e).replace(/^[A-Z]+: /, '').slice(0, 160);
@@ -1114,6 +1120,84 @@ function createOverlay(o) {
 			stats.stagedEntries = entries.size;
 			return { changes: [], refused: `the editor could not be read while the changes were worked out (${why})` };
 		}
+	}
+
+	/**
+	 * One entry under two spellings. A folder on macOS or Windows (the usual File System Access folder) does not tell
+	 * upper and lower case apart, nor two ways of writing an accent (NFC and NFD), and the base answers for `A.txt` with
+	 * what it has at `a.txt`. This overlay keys paths by their spelling, so it takes them for two files, and the net
+	 * difference comes out wrong: `mv a.txt A.txt` stages "A.txt, the bytes the base already has there" (no change) and
+	 * "a.txt removed" (a change), and the set deletes the file. The commit's own case checks cannot see that: only the
+	 * delete is left in the set. So a command that changed an entry under one spelling while it saw or changed the same
+	 * entry under another has its whole set refused, with both names.
+	 *
+	 * Only spellings that fold to the same text are looked at, so a command without such a pair asks the base nothing
+	 * more. For those the base decides: a spelling is another name of an entry when the base answers for it but its
+	 * folder's listing has a different name for it. A folder that tells case apart has no answer for the other
+	 * spelling, and two names there stay two files (a case-only rename is then a write and a delete, which the commit
+	 * judges). One spelling of an entry on such a folder is not refused: `echo x > A.txt` changes `a.txt`, as it would
+	 * on that disk. Reading an entry under one spelling and changing it under another is refused although a disk would
+	 * have done something sensible with it: it cannot be told apart from a rename by what is left at the end.
+	 * @returns {Promise<string | null>} why the set is refused, or null
+	 */
+	async function spellingClash() {
+		const fold = (/** @type {string} */ s) => Array.from(s.normalize('NFC'), (ch) => ch.toUpperCase().toLowerCase()).join('').normalize('NFC');
+		/** @type {Map<string, Set<string>>} folded text -> the spellings this command used (a path and every folder above it) */
+		const groups = new Map();
+		const add = (/** @type {string} */ p) => {
+			const r = mountOf(p);
+			if (!r) { return; }
+			for (let q = p; q !== r.m.at && q !== '/'; q = parentOf(q)) {
+				const k = fold(q);
+				let g = groups.get(k);
+				if (!g) { g = new Set(); groups.set(k, g); }
+				if (g.has(q)) { break; }               // and so is every folder above it
+				g.add(q);
+			}
+		};
+		for (const p of entries.keys()) { add(p); }
+		for (const [p, s] of baseStats) { if (s) { add(p); } }
+
+		/**
+		 * The path the base has for p: each name as its folder lists it. A name the base has nothing for is new from
+		 * there down and is kept as written. null: the base answers for a name that is not in its folder's listing, and
+		 * not exactly one listed name folds to it, so which entry it is cannot be told.
+		 * @param {string} p @returns {Promise<string | null>}
+		 */
+		async function realPath(p) {
+			const r = /** @type {{ m: typeof mounts[number], host: string }} */ (mountOf(p));
+			const names = p.slice(r.m.at.length + 1).split('/');
+			let real = r.m.at;
+			for (let i = 0; i < names.length; i++) {
+				const spelled = r.m.at + '/' + names.slice(0, i + 1).join('/');
+				if (!(await baseStat(spelled, toHost(spelled)))) { return [real, ...names.slice(i)].join('/'); }
+				const listed = (await baseList(real, toHost(real))).map(([n]) => n);
+				if (listed.includes(names[i])) { real = join(real, names[i]); continue; }
+				const hits = listed.filter((n) => fold(n) === fold(names[i]));
+				if (hits.length !== 1) { return null; }
+				real = join(real, hits[0]);
+			}
+			return real;
+		}
+
+		for (const g of groups.values()) {
+			if (g.size < 2) { continue; }
+			const spellings = [...g].sort();
+			if (!spellings.some((q) => entries.has(q))) { continue; }   // only read under both: nothing to get wrong
+			/** @type {Map<string, string>} the base's path -> the first spelling that is it */
+			const seen = new Map();
+			for (const q of spellings) {
+				const real = await realPath(q);
+				const other = real === null ? spellings.find((o) => o !== q) : seen.get(real);
+				if (other !== undefined) {
+					// two names that look the same on screen (é as one character, and as e and a combining accent) are said to be that
+					const looks = other.normalize('NFC') === q.normalize('NFC') ? ' (they look the same: an accent is written two ways)' : '';
+					return `${displayText(other)} and ${displayText(q)}${looks} ${real === null ? 'may be' : 'are'} one name here: this folder does not tell upper and lower case, or two ways of writing an accent, apart, and the command used both. To change only the case of a name, move it to another name in one command and to the new name in the next`;
+				}
+				seen.set(/** @type {string} */ (real), q);
+			}
+		}
+		return null;
 	}
 
 	async function workOutChanges() {

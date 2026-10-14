@@ -236,7 +236,9 @@ and verification see it. It is refused *whole* when any change is: outside the w
 endings; over 300 files; a file with unsaved changes in the editor, or changed on disk since the command read it; a
 case-only rename. The model is told which, and that **none** of the command's changes were applied. The visitor's
 own terminal writes what its commands change straight to the folder (still whole-or-nothing, never recursive,
-never to a trash).
+never to a trash). On a folder that does not tell upper and lower case apart (macOS, Windows) the shell itself
+refuses a command that changed one file or folder under two spellings (`mv a.txt A.txt`), so in both a case-only
+rename is refused, never a deletion; it takes two commands (`mv a.txt t.txt`, then `mv t.txt A.txt`).
 
 **What it is for.** Reading and reshaping files: `grep -rn TODO src | wc -l`, `find . -name '*.md' | xargs wc -w`,
 a `sed` over twelve files, `jq` on a JSON file, a batch rename, `diff a b`. Not for running the project's tests or
