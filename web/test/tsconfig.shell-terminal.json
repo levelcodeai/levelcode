@@ -1,0 +1,22 @@
+{
+	// The type check of the terminal's SOURCES, strict: `tsc -p web/test/tsconfig.shell-terminal.json` (a TypeScript
+	// with @types/node: the Code-OSS checkout's `node_modules/.bin/tsc` has both). The tests are checked by
+	// tsconfig.shell-terminal-tests.json, which is this one with `noImplicitAny` off: they are plain scripts whose local
+	// helpers (`test`, `session`, callbacks) are not annotated.
+	"compilerOptions": {
+		"allowJs": true,
+		"checkJs": true,
+		"noEmit": true,
+		"strict": true,
+		"target": "es2022",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"lib": ["es2022"],
+		"types": ["node"],
+		// where @types/node is: the checkout is next to the repository, or above a worktree of it
+		"typeRoots": ["../../vscode/node_modules/@types", "../../../../../vscode/node_modules/@types", "../../node_modules/@types"]
+	},
+	"include": ["../shell/src/terminal/*.js"]
+}

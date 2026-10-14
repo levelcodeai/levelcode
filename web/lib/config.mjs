@@ -60,6 +60,20 @@ export function webConfig(o = {}) {
 			// modernUI fades the top 24px of every editor into the ground (a scroll shadow that is there at scroll
 			// position zero too), which washes out line one. The editor starts below it.
 			'editor.padding.top': 24,
+			// The terminal (LevelCode Shell): a scrollback that holds a screenful of output the agent printed; the
+			// workbench's own file links off (the shell's links.js is the one path: it knows the mounts and what exists);
+			// only web links may be followed; no toast when a command's status is not 0; and no kitty keyboard
+			// protocol (the shell does not speak it).
+			'terminal.integrated.scrollback': 10000,
+			'terminal.integrated.enableFileLinks': 'off',
+			'terminal.integrated.allowedLinkSchemes': ['http', 'https', 'mailto'],
+			'terminal.integrated.showExitAlert': false,
+			'terminal.integrated.enableKittyKeyboardProtocol': false,
+			// The workbench's own terminal IntelliSense and its first-run hint ("Show suggestions ⌃Space") are made for
+			// pwsh, zsh, bash and fish; the shell has its own Tab completion over the files of the workspace, and a second
+			// suggestion widget over the same line would be a second answer.
+			'terminal.integrated.suggest.enabled': false,
+			'terminal.integrated.initialHint': false,
 			// Light or dark follows the visitor's system; the dark one is where it starts.
 			'window.autoDetectColorScheme': true,
 			'workbench.colorTheme': 'LevelCode Web Dark',

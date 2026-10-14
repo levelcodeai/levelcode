@@ -87,13 +87,17 @@ log('bundling levelcode-ai for the web worker extension host');
 const r = spawnSync(process.execPath, [path.join(WEB, 'ai-extension', 'build.mjs'), '--out', extOut, '--vscode', vscodeDir, '--minify'], { stdio: 'inherit' });
 if (r.status !== 0) { die('the levelcode-ai browser build failed'); }
 
+log('bundling levelcode-shell (the shell extension and its engine worker)');
+const rShell = spawnSync(process.execPath, [path.join(WEB, 'shell', 'build.mjs'), '--out', extOut, '--vscode', vscodeDir, '--minify'], { stdio: 'inherit' });
+if (rShell.status !== 0) { die('the levelcode-shell build failed'); }
+
 log('staging the scratch workspace and the declarative built-ins');
 const scratchOut = path.join(extOut, 'levelcode-web');
 copyExtension(path.join(WEB, 'workspace'), scratchOut);
 fs.writeFileSync(path.join(scratchOut, 'package.nls.json'), '{}\n');
 const extensionsSource = path.join(vscodeDir, 'extensions');
 if (!fs.existsSync(extensionsSource)) { die('no extensions/ in ' + vscodeDir + ' to take the declarative built-ins from'); }
-const declarative = stageDeclarativeExtensions(extensionsSource, extOut, { exclude: [...baked, 'levelcode-ai', 'levelcode-web'] });
+const declarative = stageDeclarativeExtensions(extensionsSource, extOut, { exclude: [...baked, 'levelcode-ai', 'levelcode-web', 'levelcode-shell'] });
 // A checkout that has not had LevelCode's extensions copied in still builds; the themes are then absent.
 if (!declarative.includes('levelcode-themes')) {
 	const themes = path.join(REPO, 'extensions', 'levelcode-themes');
@@ -106,8 +110,8 @@ copyExtension(path.join(WEB, 'theme', 'levelcode-web-theme'), themeOut);
 fs.writeFileSync(path.join(themeOut, 'package.nls.json'), '{}\n');
 const desktopThemes = path.join(extOut, 'levelcode-themes', 'package.json');
 if (fs.existsSync(desktopThemes)) { withoutConfigurationDefaults(desktopThemes); }
-const extensions = ['levelcode-ai', 'levelcode-web', 'levelcode-web-theme', ...declarative.sort()];
-log(`${extensions.length} extensions: levelcode-ai, levelcode-web, levelcode-web-theme and ${declarative.length} declarative (${declarative.slice(0, 6).join(', ')}, ...)`);
+const extensions = ['levelcode-ai', 'levelcode-web', 'levelcode-web-theme', 'levelcode-shell', ...declarative.sort()];
+log(`${extensions.length} extensions: levelcode-ai, levelcode-web, levelcode-web-theme, levelcode-shell and ${declarative.length} declarative (${declarative.slice(0, 6).join(', ')}, ...)`);
 
 // main.js and boot.css are addressed by the build id like everything else; the page names them.
 for (const f of ['main.js', 'boot.css', 'chrome.css']) { fs.copyFileSync(path.join(WEB, f), path.join(root, f)); }
@@ -173,7 +177,8 @@ JSON.parse(m[1]);
 if (/\{\{[A-Z]+\}\}/.test(html)) { die('index.html still has an unfilled placeholder'); }
 for (const must of [`${prefix}/main.js`, `${prefix}/boot.css`, `${prefix}/static/out/nls.messages.js`, `${prefix}/extensions/levelcode-ai/extension.web.js`,
 	`${prefix}/extensions/levelcode-ai/package.json`, `${prefix}/extensions/levelcode-web/extension.js`,
-	`${prefix}/chrome.css`, `${prefix}/extensions/levelcode-web-theme/package.json`]) {
+	`${prefix}/chrome.css`, `${prefix}/extensions/levelcode-web-theme/package.json`,
+	`${prefix}/extensions/levelcode-shell/package.json`, `${prefix}/extensions/levelcode-shell/extension.js`, `${prefix}/extensions/levelcode-shell/engine.worker.js`]) {
 	if (!fs.existsSync(path.join(outDir, must))) { die('missing ' + must); }
 }
 log(`done: ${outDir}  ${mb(sizeOf(outDir))}  (client ${mb(sizeOf(path.join(root, 'static')))}, extensions ${mb(sizeOf(path.join(root, 'extensions')))})`);

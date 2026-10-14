@@ -12,6 +12,7 @@ run. For the product's own page and copy see the account site (`/web`, `/docs/br
 - [How it fits together](#how-it-fits-together)
 - [The look and the layout](#the-look-and-the-layout)
 - [Signing in](#signing-in)
+- [LevelCode Shell](#levelcode-shell) — a terminal and the agent's `run_command`, with no programs
 - [Build and run](#build-and-run)
 - [Deploying](#deploying) — origins, headers, backend settings
 - [Security model](#security-model)
@@ -27,16 +28,19 @@ A Code-OSS **web client** (the `vscode-web-min-ci` build of the pinned checkout)
 
 | Works in a tab | Stays in the Mac app |
 | --- | --- |
-| The workbench: explorer, editor tabs, themes, search, Quick Open | A terminal |
-| Chat, inline completion, the agent: read / search / create / edit / delete files | `run_command`, background commands, auto-verify commands |
-| Keep / Undo review of the agent's edits | MCP servers that start local processes |
+| The workbench: explorer, editor tabs, themes, search, Quick Open | Real programs: `node`, `npm`, `git`, `python`, a compiler — so tests and builds |
+| Chat, inline completion, the agent: read / search / create / edit / delete files | Background commands (a dev server, `read_command_output`) |
+| **LevelCode Shell**: a terminal panel and the agent's `run_command` — bash over your files with 82 built-in commands, [no programs and no network](#levelcode-shell) | A real terminal: your shell, your `PATH`, your tools |
+| Keep / Undo review of the agent's edits — and of what a shell command changed | MCP servers that start local processes |
 | Sign in with a LevelCode account (gateway), **or** your own provider key | Installing extensions (no marketplace in the page) |
 | A scratch workspace saved in the browser (every modern browser) | Importing another editor's settings, Settings Sync, the update check |
 | A folder from your computer (File System Access API: Chrome, Edge) | The Notepad++ pack and the customization pack (not loaded in the page), Agent Sketch |
 
-The browser build offers the agent **only the tools it can honour**: with no shell the shell tools
-are withheld from the model rather than offered and failing, and the system prompt is derived from
-the same lines so it never promises one (`host.caps`, see below).
+The browser build offers the agent **only the tools it can honour**. `run_command` is offered when the shell
+extension is there and can start its engine (it is **never** offered with `background`, and `read_command_output`
+is withheld); otherwise the shell tools are withheld from the model rather than offered and failing. The system
+prompt is derived from the same lines, so it never promises what is not there, and when there *is* a shell it says
+what the shell is — a simulated bash with no programs (`host.caps`, see below).
 
 ## How it fits together
 
@@ -51,6 +55,8 @@ the same lines so it never promises one (`host.caps`, see below).
  └───────────────────────────┘    (CORS)        │ │  web-worker extension host (iframe)      │ │
                                                 │ │   levelcode-ai   esbuild bundle + shims  │ │
    provider you chose  ◀──── fetch (BYOK) ──────│ │   levelcode-web  scratch workspace       │ │
+                                                │ │   levelcode-shell  terminal, run_command │ │
+                                                │ │     └ engine worker (nested, no net) │ │
                                                 │ │  chat webview  (own origin, see below)   │ │
                                                 │ └──────────────────────────────────────────┘ │
                                                 └──────────────────────────────────────────────┘
@@ -67,6 +73,7 @@ the same lines so it never promises one (`host.caps`, see below).
 | `web/workspace/` | The `levelcode-web` extension: the **scratch workspace** (`levelcode-scratch:` file system in IndexedDB, with file and text search), and the commands to open a local folder or the scratch. |
 | `web/theme/levelcode-web-theme/`, `web/chrome.css` | The two colour themes (dark and light) and the stylesheet that tidies the workbench's chrome. See [the look](#the-look-and-the-layout). |
 | `web/ai-extension/skin.js`, `skin/chat.css`, `skin/chat.js` | The chat's browser skin, cut into the browser build's copy of `media/chat.html` at build time. |
+| `web/shell/` | The `levelcode-shell` extension: the engine (vendored, patched `just-bash` in a nested Worker), the runtime that owns it, and the terminal. Its own `README.md` is the contract and `engine/NOTES.md` and `src/terminal/NOTES.md` go deeper. See [LevelCode Shell](#levelcode-shell). |
 | `web/serve.mjs` | Dev / end-to-end server. Serves a build (`--dist`) with its own `_headers`, or the pieces (`--static`, `--extensions`). |
 | `web/test/` | Unit tests (`unit/`) and the end-to-end checks (`e2e*.mjs`) with a hand-written CDP driver and a stand-in backend. |
 
@@ -201,6 +208,60 @@ workspace opened from the computer is opened again, not the scratch workspace.
   decodes `redirect_uri` until stable (three rounds at most) and then applies the exact rule in
   `Levelcode::EditorCallback`.
 
+## LevelCode Shell
+
+A shell for the files of the workspace, in the tab. It is **not a machine**: nothing in a tab can start a process, so
+it is a bash *interpreter* written in JavaScript (the vendored, patched `just-bash` 3.6.0, Apache-2.0) over
+`vscode.workspace.fs`. It parses bash — pipes, loops, functions, here-documents, `$(…)`, arithmetic, globs, `set -e` —
+and runs 82 commands that behave like the coreutils (`ls cat grep sed awk jq find sort uniq xargs diff tree …`). It
+has **no** `node`, `npm`, `git`, `python`, no compiler, no network and no background jobs: `npm test` is "command not
+found", 127, and the agent is told so before it tries.
+
+| It is | Where |
+| --- | --- |
+| A **terminal** panel for the visitor: *LevelCode Shell: New Terminal* (palette) or the terminal profile; a persistent working folder and exported variables, history, Tab completion, Ctrl+C, links from `path:line:col` in output to the file | the extension host, `Pseudoterminal` |
+| The engine behind the agent's **`run_command`** (and its verify command): the same `agent.js`, a different `child_process` | `host.spawn()` in `extensions/levelcode-ai/host.js` |
+| Mirrored: the agent's commands appear in a read-only tab, **LevelCode Agent**, without taking the focus | the terminal's agent tab |
+
+**How a command runs.** The engine is in a nested classic Worker (it never yields the thread, so stopping it is
+`terminate()`; about 45 ms to start the next one). It reads the workspace through a read-only RPC to the extension
+host and writes into a **copy-on-write overlay**: when the script has run to its end the overlay's change set is
+what comes back. A command that is stopped, times out or hits a limit applies nothing, and says so.
+
+**What reaches the workspace — everything reviewed, or the whole command refused.** The agent's change set is checked
+as a whole and then goes through the same `applyEdit` / `applyDelete` as `edit_file`, so Keep and Undo, the checkpoint
+and verification see it. It is refused *whole* when any change is: outside the workspace folders; in `.git`,
+`.vscode`, `.levelcode`, `.cursor`, `.husky`, `.github/workflows`, `AGENTS.md`, `CLAUDE.md`, `.cursorrules`,
+`.windsurfrules`; not plain UTF-8 text (binary, a byte-order mark, bare CRs) or over 1 MiB; a change of a file's line
+endings; over 300 files; a file with unsaved changes in the editor, or changed on disk since the command read it; a
+case-only rename. The model is told which, and that **none** of the command's changes were applied. The visitor's
+own terminal writes what its commands change straight to the folder (still whole-or-nothing, never recursive,
+never to a trash). On a folder that does not tell upper and lower case apart (macOS, Windows) the shell itself
+refuses a command that changed one file or folder under two spellings (`mv a.txt A.txt`), so in both a case-only
+rename is refused, never a deletion; it takes two commands (`mv a.txt t.txt`, then `mv t.txt A.txt`).
+
+**What it is for.** Reading and reshaping files: `grep -rn TODO src | wc -l`, `find . -name '*.md' | xargs wc -w`,
+a `sed` over twelve files, `jq` on a JSON file, a batch rename, `diff a b`. Not for running the project's tests or
+builds. The agent's prompt says so, and prefers its file tools for single-file work.
+
+**The honest limits** (each is in `web/shell/README.md` §7 and asserted by a test): 100,000 commands / loop
+iterations, 8 MiB of output, 64 MiB live, one file read 4 MiB, a script of 1,000,000 bytes; the agent's command runs
+until `levelcode.ai.commandTimeout`, a terminal line until Ctrl+C or ten minutes. `/tmp` lives as long as the
+terminal's engine does (it is lost when that is replaced, and the next line says so). Time is UTC unless `TZ` is set.
+Sorting is by code point. 837 of 905 differential cases against GNU bash 5.1 are byte-identical; the other 68 are a
+shrink-only table of documented differences (`web/shell/engine/NOTES.md`).
+
+**Settings and trust.** Every `levelcode.*` setting of this edition except a list of display preferences is
+`application`-scoped, so a folder's `.vscode/settings.json` cannot point the session token at another host, turn
+Autopilot on, or change the verify command (see the security model).
+
+**The next stages, and what each needs.** *Stage 2* — Python (Pyodide, MPL-2.0) and similar as custom commands
+behind the same seam. It needs the runtime's files fetched from the page's own origin (a page whose
+`connect-src` names only `'self'`) and, for threads and a blocking stdin, cross-origin isolation (COOP/COEP) on
+the editor origin — which changes what the editor may embed, and is the owner's decision. *Stage 3* — real Node, `npm` and a dev server need
+WebContainers or BrowserPod, which are **not open source** and need a licence from their vendor; nothing here ships
+or assumes one.
+
 ## Build and run
 
 Needs the bootstrapped Code-OSS checkout (`scripts/bootstrap.sh`, Node 24.x as the pin requires).
@@ -296,6 +357,24 @@ causing the effect). Use another registrable domain.
 - **Keys of the user's own** (BYOK) are stored the same way and used from the tab to the provider the
   user chose; no LevelCode call is involved (the end-to-end check asserts it). The provider must
   accept requests from a web page; Anthropic's is called with its browser-access header.
+- **A folder does not configure the editor.** Workspace Trust is off in a tab, so a setting with no scope is read
+  from the folder's `.vscode/settings.json` as if the user had written it. That would let a folder name the account
+  host the session token is sent to (`levelcode.cloud.endpoint`), the provider's base URL, Autopilot, or the budgets.
+  The browser manifest makes every `levelcode.*` setting `application`-scoped except an explicit list of display
+  preferences (`WORKSPACE_SETTINGS_OK` in `web/ai-extension/manifest.js`, double-entered in `manifest.test.js`).
+  The desktop manifest is untouched. Measured in the real workbench 2026-10-11 (unscoped: all three came back as the
+  folder's values; `application`-scoped: the defaults).
+- **The shell has no way out, and no secrets.** The engine worker is given no token, key, setting or `vscode`
+  object, has no network (`connect-src` is the page's own; the engine option `network` is never passed) and cannot
+  write: its only file operations are three reads over the RPC, bounded and path-checked on the host side. What it
+  produces is a change set the *host* validates (above). A worker that dies, runs away or is stopped is
+  `terminate()`d and its staged writes are dropped.
+- **Text from files, from commands and from the model is untrusted on its way to a terminal or a card.** Command
+  output passes an allow-list filter (OSC 52 clipboard, title changes, cursor and mode reports, mouse and focus modes
+  are dropped; the only OSC the terminal ever emits is its own, with a random nonce); the terminal's input parser
+  swallows the replies xterm would otherwise type into the prompt; file names and notes are shown with control, bidi
+  and format characters made visible; the approval card shows the command the model wrote through the same
+  sanitiser. A hostile file cannot rename the terminal, type into it, change its modes or copy to the clipboard.
 - **The scratch workspace and the extension's private state are on the extension host's origin**, in
   IndexedDB. With the host isolated they are not readable from the editor's page, by design.
 
@@ -317,7 +396,11 @@ transaction, so both end with the same key.
 ## Keeping the desktop and the browser in step
 
 - **A new tool that needs a shell, a disk or a local process** declares it: add the tool name to
-  `NEEDS_SHELL` (or gate on `host.caps`) in `agent.js` so the browser neither offers nor promises it.
+  `NEEDS_SHELL` (or gate on `host.caps`) in `agent.js` so the browser neither offers nor promises it. A tool
+  that needs a *background* process also goes in `NEEDS_BACKGROUND`: the simulated shell has none.
+- **A new thing the shell prints or the model wrote** reaches a terminal only through
+  `web/shell/src/terminal/output-filter.js` (and OSC 633 only from `shell-integration.js`), and a card or a note
+  only through `web/shell/src/sanitize.js`.
   The browser system prompt is built from the same `SYSTEM_LINES`.
 - **A new workspace read or write goes through `host`.** `fs` on a workspace path would work on the
   desktop and quietly do nothing in a tab. `extensions/levelcode-ai/test/` and `web/test/unit/` check
@@ -336,6 +419,9 @@ transaction, so both end with the same key.
 | Check | Command | What it proves |
 | --- | --- | --- |
 | Unit gate | `./scripts/test-extensions.sh` | Includes `web/test/unit/*.test.js`: the shims against Node, `host.js` on both sides, `main.js`'s functions (address check, delivery, the shared secret store, `?signin=1`), the manifest, the copy rewrites, the chat skin (what it inserts and that every rule is scoped), the themes (required colours, contrast of the text pairs, every syntax colour at 4.5:1 on the editor, the page's defaults naming themes that exist) and the layout commands. Runs in CI on every PR (`test.yml`). Also run on Linux / Node 18 in a container with the network refused. |
+| The shell | `./scripts/test-extensions.sh` (the unit suites `web/test/unit/shell-*.test.js`) | The engine: a differential against GNU bash 5.1 (905 cases, a shrink-only table of the ones that differ), fuzzing, every patch of the vendored code with its anchors, the build; the runtime: the commit and its refusals, kill and deadline against a **real engine in a worker thread**, limits; the terminal: key bytes, the line editor against real xterm.js 6.1 in its headless build, width, the output filter, history. With the Code-OSS checkout present the real-xterm halves run; `LEVELCODE_REQUIRE_XTERM=1` and `LEVELCODE_REQUIRE_WORKER=1` make a skip a failure, which is what CI sets. |
+| Mutations | `node web/test/helpers/mutation/mutate.mjs` | 371 edits to the runtime, the commit and the sanitiser, each of which a suite must catch (a tool, not a suite). |
+| The shell, in a browser | `node web/test/e2e-shell.mjs --static … --extensions …` | Real headless Chrome and the real nested Worker: nothing of the shell is fetched until it is used; a terminal from the palette; typing, files, a working folder that persists, 127, Ctrl+C on `sleep 60`, a link to `path:line:col` that opens the file at that line, a pasted three-line buffer through a resize; hostile output that does not type into the prompt or rename the terminal; the agent offered `run_command` without background, a file written through the review (Keep/Undo), a `.vscode` write refused whole, a timeout that applies nothing, the mirror tab. |
 | End to end | `node web/test/e2e.mjs --dist dist-web --stub-port <port the build used>` | Real headless Chrome: boot from static files, the extension activates in the worker, sign in through the real callback page, agent tool calls (write / list / search / read / edit) against the scratch workspace, Quick Open, Keep and Undo, a reload that keeps the session and files. |
 | The look | `node web/test/e2e-look.mjs --dist dist-web --stub-port <port>` | The skinned chat (greeting, starters, composer in the reading column, the rail at 1440 px and the dialog at 900 px), light and dark following the system with this build's own colours (also in the chat's webview), no Welcome page, no second chat, source control / run / extensions not offered, the layout switch both ways, and the docked layout docked again after a reload. Release builds only. |
 | Same-tab sign-in | `node web/test/e2e-signin-tab.mjs --dist dist-web --stub-port <port>` | No second window; verifier survives the reload; no repeat; no sign-in for a signed-in editor; a second tab uses the same session; a stranded result is delivered, an old one dropped. |
@@ -394,6 +480,15 @@ the other repository's internals and is not part of this repo's checks.
 Say these out loud rather than discover them in production:
 
 - **A real browser other than headless Chrome.** Safari and Firefox are untested; so are phones.
+- **The shell in Safari, Firefox and on a phone.** The nested Worker from a Blob, the keyboard bytes of Windows
+  and Linux, IME composition and a soft keyboard were not run; the terminal's key bytes were measured on macOS in
+  headless Chrome. Where a browser cannot start the Worker the shell is unavailable and the agent loses `run_command`
+  (that path is unit-tested, not driven).
+- **The shell on a real File System Access folder.** The terminal and the agent were driven over the scratch
+  workspace; a folder from the OS picker goes through the same `workspace.fs` but its permission prompts, and a
+  provider call that hangs behind one (reported after 60 s; a write that completes later still lands), were not run.
+- **Long terminal sessions and big trees.** Nothing was soaked: a 2000-file change, a 4 MiB file, an hour-long
+  terminal. The limits are asserted; the behaviour at the edge of memory in a real tab is not measured.
 - **The look in Safari, Firefox and on a phone.** `e2e-look.mjs` and the screenshots are headless Chrome at 1440,
   1100, 900 and 420 px wide. The chat page is responsive down to 420 px; the workbench around it is not (see
   [widths](#the-look-and-the-layout)). No screen-reader pass was done on the skin; the rail is a labelled
@@ -407,7 +502,8 @@ Say these out loud rather than discover them in production:
 - **The Markdown preview's content.** The pane's ground is now the theme's (it was white); in headless Chrome the
   preview's body rendered no text on the old and the new build alike, and that was not investigated.
 - **Known and left:** the Command Palette's "Chat: …" commands and the menus of features this edition lacks (above);
-  the empty Terminal panel behind the panel toggle (a terminal is the next stage, below); the chat page's
+  the Terminal panel behind the panel toggle is now LevelCode Shell and nothing else (there is no real terminal to
+  open); the chat page's
   composer does not move with the soft keyboard on a phone; `levelcode.ai.chat.startLocation: none` is not
   consulted by the layout.
 - **The operating system's folder picker itself.** It needs a person. Everything after it — the command, the
@@ -435,3 +531,10 @@ Say these out loud rather than discover them in production:
    should see the editor first instead.
 5. **Support statement.** Chrome and Edge for folders; scratch workspace everywhere else; phones
    unstated until run.
+6. **The shell's review policy.** Every file a command changes goes through Keep/Undo, up to 300 files of plain
+   UTF-8 text of 1 MiB each, and a command that touches a protected path is refused whole. A looser policy (more
+   files, binary files, `.github/workflows`) is the owner's, as is the list of protected names.
+7. **Stage 2's gate.** Python in the tab needs a page with `connect-src 'self'` to load its runtime and, for fast
+   threads, cross-origin isolation. Stage 3 needs a StackBlitz agreement. Neither is started.
+8. **The wording.** The product page says what the shell is and is not in one sentence; the agent's own prompt
+   says "simulated bash". Whether the sign-in page and the pricing page mention it is the account site's copy.

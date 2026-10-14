@@ -100,7 +100,7 @@ test('the context popover is billed for the list that was actually sent', () => 
 		'no rootless token estimate — the popover reports the full tool cost for a list that was not sent');
 	assert.match(agent, /const builtinsTokensEst = root \? TOOLS_TOKENS_EST : PORTABLE_TOOLS_TOKENS_EST;/,
 		'the estimate no longer switches on the root');
-	assert.match(agent, /const toolsTokensEst = \(mcp\.tools\.length \|\| extras\.length\)[\s\S]{0,120}: builtinsTokensEst;/,
+	assert.match(agent, /const toolsTokensEst = \(mcp\.tools\.length \|\| extras\.length(?: \|\| reshaped)?\)[\s\S]{0,120}: builtinsTokensEst;/,
 		'the plain path still falls back to the full-TOOLS constant');
 
 	// The two constants must actually differ, or the guard above passes on a list that gates nothing —

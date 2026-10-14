@@ -38,6 +38,7 @@ if (!nodePaths.some((p) => fs.existsSync(path.join(p, 'buffer')))) { console.err
 
 const { applyCopy } = createRequire(import.meta.url)('./copy.js');
 const { skinChat } = createRequire(import.meta.url)('./skin.js');
+const { browserSkill } = createRequire(import.meta.url)('./skills.js');
 
 const outDir = path.join(outRoot, 'levelcode-ai');
 fs.rmSync(outDir, { recursive: true, force: true });
@@ -56,6 +57,8 @@ function collect(rel, filter) {
 			let text = TEXT.has(path.extname(r)) ? applyCopy(r, buf.toString('utf8')) : null;
 			// The browser's look for the chat goes into this embedded copy and nowhere else (skin.js).
 			if (text !== null && r === 'media/chat.html') { text = skinChat(text); }
+			// The playbooks assume git and a test runner; the browser's shell has neither (skills.js).
+			if (text !== null) { text = browserSkill(r, text); }
 			out[r] = text !== null ? text : { base64: buf.toString('base64') };
 		}
 	};

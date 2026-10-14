@@ -31,3 +31,9 @@ jobs:
           node-version: "24" # as release.yml
       - name: Extension unit tests
         run: ./scripts/test-extensions.sh
+        env:
+          # The shell's runtime suite runs the REAL engine in a worker thread (stop on a CPU-bound loop, a deadline,
+          # a kill). Without this a runner that could not start a worker would skip it and still be green.
+          # (LEVELCODE_REQUIRE_XTERM is not set: the real-xterm halves need the Code-OSS checkout, which this job
+          # does not have. They run, and say so, wherever the checkout is.)
+          LEVELCODE_REQUIRE_WORKER: "1"

@@ -34,6 +34,17 @@ const REPLACEMENTS = [
 	['media/chat.html',
 		'Your keys never leave your machine — requests go direct to your provider.',
 		'Your keys never leave this browser — requests go direct to your provider.'],
+	// run_command in a tab runs in LevelCode Shell (web/shell): a shell over the workspace's files, which starts no
+	// programs. The approval card, the live card and the Autopilot pill name the user's terminal and zsh otherwise.
+	['media/chat.html',
+		"'LevelCode wants to run this in your terminal.'",
+		"'LevelCode wants to run this in LevelCode Shell, which works on your files and starts no programs.'"],
+	['media/chat.html',
+		"'<span class=\"cmdmeta\">zsh' + (m.cwd",
+		"'<span class=\"cmdmeta\">LevelCode Shell' + (m.cwd"],
+	['media/chat.html',
+		"'Autopilot: runs commands for you. Deleting files, sudo, force-push and other irreversible actions still ask.'",
+		"'Autopilot: runs commands for you. Deleting files still asks.'"],
 ];
 
 /**

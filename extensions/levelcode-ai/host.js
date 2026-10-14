@@ -22,15 +22,23 @@
 
 const vscode = require('vscode');
 const nodeFs = require('fs');
+const nodeCp = require('child_process');   // the desktop's spawn; in the browser build this is a shim that always throws ENOSYS
 const path = require('path');
 
 /** True in the browser build (web/ai-extension/entry.js sets the flag before anything else loads). */
 const isBrowser = !!globalThis.__LEVELCODE_BROWSER_HOST__;
 
+/**
+ * A shell the browser build can borrow: a LevelCode-owned extension (web/shell) that exports one. It is
+ * connected lazily (connectShell), once, the first time a run needs to know whether there is one.
+ * @type {{ info: ShellInfo, spawn: (command: string, opts: SpawnOptions) => ChildLike, forDisplay?: (text: string) => string } | null}
+ */
+let shell = null;
+
 /** What this host can do. Tools and prompt text that need a capability are withheld without it. */
 const caps = Object.freeze({
-	/** Start programs: run_command, background commands, verify commands. */
-	shell: !isBrowser,
+	/** Run command lines: run_command and verify commands. A real shell on the desktop; a registered one in the browser. */
+	get shell() { return !isBrowser || shell !== null; },
 	/** Start MCP servers as local processes (stdio). */
 	mcpStdio: !isBrowser,
 	/** Search file contents with the ripgrep binary the editor ships. */
@@ -162,6 +170,135 @@ async function withReads(run) {
 	return result;
 }
 
+/* ----- running a command line ---------------------------------------------------------------- */
+
+/** The extension (browser build) that provides the shell, and the export agent.js reads from it. */
+const SHELL_EXTENSION_ID = 'levelcode.levelcode-shell';
+const SHELL_API_VERSION = 1;
+
+/**
+ * @typedef {object} ShellInfo  What a shell says about itself; the prompt and the tool list are built from it.
+ * @property {string} label           shown on the command's card instead of "zsh"
+ * @property {boolean} background     run_command background:true works (a command that outlives its tool call)
+ * @property {boolean} programs       real programs (node, npm, git, python …) can be started
+ * @property {boolean} network        the network is reachable from a command
+ * @property {string[]} commands      command names, for the prompt
+ * @property {string[]} [missing]     commands the model is likely to try that are NOT here (node, npm, git …)
+ * @property {{ commandCount?: number, loopIterations?: number, outputBytes?: number, fileReadBytes?: number, runReadBytes?: number }} [limits]
+ *     what stops a command, so the prompt can say so
+ *
+ * @typedef {{ name: string, root: string, uri: string }} WorkspaceFolderRef
+ * @typedef {{ kind: 'write'|'delete'|'mkdir'|'rmdir', path: string, existed?: boolean, before?: Uint8Array|null, after?: Uint8Array, viaDir?: string }} Change
+ *
+ * @typedef {object} SpawnOptions
+ * @property {string} cwd                       absolute path of a workspace folder, or inside one
+ * @property {WorkspaceFolderRef[]} [folders]   the workspace folders, live and in order (a shell mounts each at its root)
+ *     For a registered shell `cwd` and each `root` are URI paths (`/proj`), never fsPath, which is `\proj` in a
+ *     browser on Windows (agent.js shellSpawnOpts); the desktop's spawn is given the fsPath it always was.
+ * @property {Record<string,string>} [env]      extra environment
+ * @property {string} [explanation]             the model's own label for the command (at most 300 characters), for a tab that mirrors it
+ * @property {(changes: Change[], control?: { cancelled(): boolean }) => Promise<{ rest: Change[], notes: string[], failed?: number, refused?: boolean }>} [commit]
+ *     Agent runs only. Called once, after the command has run to its END (never after Stop, a timeout or an engine
+ *     limit: those apply nothing) and BEFORE 'close', with the files the command left changed. The caller validates
+ *     the whole set and reviews it, or refuses it whole; it returns what the shell still has to do itself (make and
+ *     remove directories), lines to append to the command's output, and how many changes it could NOT apply (the
+ *     shell then does not report success). Without it the shell writes the changes straight to the workspace (the
+ *     user's own terminal). `control.cancelled()` turns true when the run is stopped (or the shell stops waiting for
+ *     the review): while the set is being checked the caller then applies nothing; once it is applying, what is already
+ *     in the review stays and nothing more is started (a change in flight is not interrupted).
+ *
+ * @typedef {object} ChildLike  The part of a Node ChildProcess that agent.js's runCommand uses.
+ * @property {number} [pid]     leave undefined: agent.js then kills with child.kill(signal)
+ * @property {{ on: (ev: 'data', cb: (chunk: string|Uint8Array) => void) => any }} stdout   strings (or Buffers)
+ * @property {{ on: (ev: 'data', cb: (chunk: string|Uint8Array) => void) => any }} stderr
+ * @property {(ev: 'close'|'error', cb: Function) => any} on   'close'(code) once, after every 'data'
+ * @property {(signal?: string) => boolean} kill
+ *     'SIGTERM' (Stop) and 'SIGKILL' (the timeout, or a Stop that was not heard within 1.5 s). A command that is still
+ *     running is stopped and NONE of its file changes are applied — they were only ever staged. One that has ended and
+ *     whose changes are being reviewed (`commit`) is settled at once, and what the review had applied stays in it. The
+ *     result says which. 'close' is emitted once. agent.js reports 130 for a stop and 124 for a timeout whatever the
+ *     code of 'close'.
+ */
+
+/**
+ * Start a command line. The desktop does what runCommand always did — a `sh -c` in its own process group — and
+ * nothing else; the browser hands the line to the shell that registered itself. With none registered the browser's
+ * child_process shim throws ENOSYS, as it did before there was a shell (callers withhold the tool first: caps.shell).
+ * @param {string} command
+ * @param {SpawnOptions} opts
+ * @returns {ChildLike}
+ */
+function spawn(command, opts) {
+	if (shell !== null) { return shell.spawn(command, opts); }
+	return nodeCp.spawn(command, { cwd: opts.cwd, shell: true, detached: true });
+}
+
+/** The registered shell's description, or null (always null on the desktop: its shell is the user's own). */
+function shellInfo() { return shell ? shell.info : null; }
+
+/**
+ * A model-written string as the user is shown it on an approval card or a command card: invisible and
+ * direction-changing characters made visible, so what is approved is what runs. The desktop shows text as it
+ * always has; a shell that brings its own rules (the browser's) supplies them.
+ * @param {string} text
+ * @returns {string}
+ */
+function displaySafe(text) {
+	const f = shell && shell.forDisplay;
+	if (typeof f !== 'function') { return text; }
+	try { const out = f(String(text)); return typeof out === 'string' ? out : text; } catch { return text; }
+}
+
+/**
+ * Register a shell. Called by connectShell; exported so a test (or a later in-process engine) can register one.
+ * @param {{ info: ShellInfo, spawn: Function, forDisplay?: (text: string) => string }} impl
+ * @returns {{ dispose(): void }}
+ */
+function registerShell(impl) {
+	if (!impl || typeof impl.spawn !== 'function' || !impl.info) { throw new Error('a shell needs info and spawn'); }
+	shell = impl;
+	return { dispose() { if (shell === impl) { shell = null; } } };
+}
+
+/** @type {Promise<boolean> | null} */
+let connecting = null;
+/** How long a run waits for the shell extension to activate before it carries on without one. */
+const CONNECT_TIMEOUT_MS = 10000;
+/**
+ * Browser only: find the LevelCode Shell extension, activate it (it is lazily activated, so this is where it
+ * first loads), and register what it exports. Idempotent; resolves true when a shell is now available. Never
+ * throws and never waits for ever: a missing, broken or slow shell is "no shell" for this run, which is what the
+ * browser build was before it existed — and the next run asks again (by then it may have finished activating).
+ * @param {{ timeoutMs?: number }} [opts]
+ * @returns {Promise<boolean>}
+ */
+function connectShell(opts) {
+	if (!isBrowser) { return Promise.resolve(false); }
+	if (shell !== null) { return Promise.resolve(true); }
+	if (connecting) { return connecting; }
+	const timeoutMs = (opts && opts.timeoutMs) || CONNECT_TIMEOUT_MS;
+	const attempt = (async () => {
+		let timer;
+		try {
+			const ext = vscode.extensions.getExtension(SHELL_EXTENSION_ID);
+			if (!ext) { return false; }
+			const api = ext.isActive ? ext.exports : await Promise.race([
+				ext.activate(),
+				new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('the shell extension did not activate in ' + timeoutMs + ' ms')), timeoutMs); }),
+			]);
+			if (!api || api.apiVersion !== SHELL_API_VERSION || !api.agent) { return false; }
+			registerShell(api.agent);
+			return true;
+		} catch { return false; }
+		finally { if (timer) { clearTimeout(timer); } }
+	})();
+	// Cleared AFTER it has settled, from outside: an early `return false` above runs the finally block before this
+	// assignment, so clearing inside it left a settled promise stored and every later run got its stale answer.
+	connecting = attempt;
+	attempt.then(() => { if (connecting === attempt) { connecting = null; } });
+	return attempt;
+}
+
 /* ----- checking paths synchronously --------------------------------------------------------- */
 
 /**
@@ -266,6 +403,7 @@ function findFiles(glob, exclude, max) {
 
 module.exports = {
 	isBrowser, caps,
+	spawn, shellInfo, displaySafe, registerShell, connectShell,
 	uriFor, isUserDocument, readBytes, readText, readTextOrNull, stat, exists, isBinary, withReads, withStats, knownFilesView, findFiles, openAuth,
 	// For tests.
 	_path: path,
