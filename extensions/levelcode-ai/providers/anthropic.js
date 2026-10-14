@@ -13,7 +13,11 @@ const { readLines } = require('./sse');
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 function anthropicHeaders(apiKey) {
-	return { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
+	const h = { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
+	// From a browser the call is cross-origin, and Anthropic answers CORS only to a request that says it
+	// knows the key is being used from a page (web/ai-extension/entry.js sets the flag; the desktop never does).
+	if (globalThis.__LEVELCODE_BROWSER_HOST__) { h['anthropic-dangerous-direct-browser-access'] = 'true'; }
+	return h;
 }
 
 /**

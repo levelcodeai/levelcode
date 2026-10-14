@@ -1083,7 +1083,8 @@ function moduleTrusting(keys) {
 	});
 
 	await test('the gate runs this suite, and a release asks the registry and the built app', () => {
-		assert.match(read('scripts', 'test-extensions.sh'), /^for t in extensions\/\*\/test\/\*\.test\.js modules\/\*\/test\/\*\.test\.js; do$/m);
+		// One of the loop's patterns, wherever it sits: the gate also discovers other trees (web/test/unit).
+		assert.match(read('scripts', 'test-extensions.sh'), /^for t in (?:\S+ )*modules\/\*\/test\/\*\.test\.js(?: \S+)*; do$/m);
 		const release = read('.github', 'workflows', 'release.yml');
 		const gate = position(release, 'run: ./scripts/test-extensions.sh', 'release.yml');
 		const asked = position(release, 'run: node scripts/extension-signature.mjs registry', 'release.yml');

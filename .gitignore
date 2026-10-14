@@ -38,3 +38,8 @@ node_modules/
 .DS_Store
 *.log
 out/
+
+# LevelCode in your browser: the release directory scripts/build-web.mjs writes, and the bundle's
+# generated assets module (web/ai-extension/build.mjs removes it after bundling).
+/dist-web/
+/web/ai-extension/assets.generated.js

@@ -41,8 +41,8 @@ jobs:
           node-version: "24"
       - name: Extension unit tests
         # The gate itself lives in a script, so the pull-request workflow (test.yml) runs exactly what
-        # this does. It discovers every extensions/*/test/*.test.js and modules/*/test/*.test.js, and
-        # fails if it finds none.
+        # this does. It discovers every extensions/*/test/*.test.js, modules/*/test/*.test.js and
+        # web/test/unit/*.test.js, and fails if it finds none.
         run: ./scripts/test-extensions.sh
       - name: Open VSX still signs with a key this release trusts
         # The app verifies extensions against Open VSX's signing key, and the key is pinned in the app
