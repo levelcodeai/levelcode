@@ -10,6 +10,7 @@
 
 const vscode = require('vscode');
 const { sendWithAuthRetry } = require('./providers/authRetry');
+const host = require('./host');
 
 const PREFIX_MAX = 2500; // chars of context before the cursor (smaller = faster first token)
 const SUFFIX_MAX = 1000; // chars of context after the cursor
@@ -98,7 +99,7 @@ function registerInlineComplete(context, deps) {
 		async provideInlineCompletionItems(document, position, ctx, token) {
 			const cfg = aiConfig();
 			if (!cfg.get('completions.enabled', true)) { return null; }
-			if (document.uri.scheme !== 'file' && document.uri.scheme !== 'untitled') { return null; }
+			if (!host.isUserDocument(document.uri)) { return null; }   // file and untitled; in a browser, the workspace's own schemes too
 
 			// Debounce: if the user keeps typing, this token is cancelled and we bail.
 			const debounce = Math.max(0, cfg.get('completions.debounce', 150));

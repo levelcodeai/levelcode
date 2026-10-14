@@ -8,7 +8,6 @@
 // The provider settings (custom, OpenAI-compatible, at the stand-in's address) are configuration defaults of
 // the development server; a release bakes its own defaults, so this runs against the development layout.
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startStub } from './stub-backend.mjs';

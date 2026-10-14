@@ -96,21 +96,26 @@ The extension's existing PKCE flow, with the browser's pieces in place of the OS
 1  extension   accountSignIn(): verifier → SecretStorage; builds
                <account>/ai/login?redirect_uri=<callback>&code_challenge=<S256>
 2  extension   host.openAuth(uri) → command levelcode.web.openAuthUrl (registered by main.js)
-3  main.js     checks the address is <account>/ai/…, marks the tab (sessionStorage), location.assign
+3  main.js     checks the address is <account>/ai/…, notes where the tab is (sessionStorage), location.assign
 4  account     already signed in there → mints a one-time code bound to the challenge, 302 to
                <editor>/callback.html?vscode-reqid=N&vscode-scheme=levelcode
                  &vscode-authority=levelcode.levelcode-ai&vscode-path=%2Fauth%2Fcallback&code=…
                (not signed in → the login page first)
-5  callback    writes localStorage "vscode-web.url-callbacks[N]" (dated), sees the mark → goes back to /
+5  callback    checks it is a sign-in to levelcode.levelcode-ai/auth/callback, writes localStorage
+               "vscode-web.url-callbacks[N]" (dated, the code only), goes back to where the tab was
 6  main.js     at start-up, once the workbench is listening, delivers a fresh result as
                levelcode://levelcode.levelcode-ai/auth/callback?code=… to the URL service
-7  extension   handleAuthCallback → POST /api/levelcode/v1/auth/exchange {code, verifier} → tokens
+7  extension   handleAuthCallback: a sign-in is pending (a verifier is stored) →
+               POST /api/levelcode/v1/auth/exchange {code, verifier} → tokens
 ```
 
 Why the tab leaves instead of opening a pop-up: a window opened from a chain that began in a
 webview is the first thing a strict browser (Safari, a phone) refuses. Leaving the tab and
 returning needs no permission. The PKCE verifier lives in SecretStorage, so it survives the
-navigation.
+navigation — and where the browser lets nothing persist (no IndexedDB or WebCrypto, or a refused
+write), the tab's secrets ride through that one navigation in sessionStorage and are taken back,
+and removed, when the editor starts again. The tab comes back to the address it left: a folder or
+workspace opened from the computer is opened again, not the scratch workspace.
 
 - **`?signin=1`** (the account site's "Open LevelCode" link) makes step 1 happen by itself, once:
   `main.js` removes the parameter, then delivers `levelcode://…/launch`, which focuses the chat and
@@ -118,6 +123,12 @@ navigation.
 - **A result is delivered only if it is fresh** (written in the last two minutes — the one-time
   code lives for a minute) and is removed either way. One left by a callback page whose editor
   tab is gone is delivered when the editor next starts.
+- **`callback.html` is a page anyone can link to**, and what it leaves is delivered at the next start.
+  So it passes on a LevelCode sign-in and nothing else: for `levelcode.levelcode-ai/auth/callback`
+  only, and only the one-time `code` — never a token in the link (the old flow, which the desktop
+  still accepts) or the rest of the query. The extension then takes a code only while a sign-in of
+  its own is pending (`host.caps.unaskedSignIn` is off in a browser): a link nobody asked for cannot
+  sign the user in to someone else's account.
 - **`levelcode.web.openAuthUrl` is an open-redirect if it is loose**, and any extension in the page
   can call it. It goes only to `<account origin>/ai/…`.
 - The address handed over is `encodeURI(uri.toString(true))` — the string the editor's own opener
@@ -144,7 +155,7 @@ node web/serve.mjs --dist dist-web            # http://127.0.0.1:8800
 | `--webview-origin 'https://{{uuid}}.view.example.com'` (`LEVELCODE_WEB_WEBVIEW_ORIGIN`) | Self-host the webview origin. Without it the page uses Code-OSS's CDN at this build's own commit. Needs wildcard DNS and TLS — see below. |
 | `--ext-host-origin 'https://{{uuid}}.ext.example.com'` (`LEVELCODE_WEB_EXTHOST_ORIGIN`) | Run the extension host on an origin of its own. Optional while no third-party code is loaded. |
 | `--static <dir>` | Use a prebuilt client (skips the gulp build). |
-| `--id <id>` | Override the build id (default: a fingerprint of the client, the page and the extension). |
+| `--id <id>` | Override the build id (default: a hash of everything the build put under `/_/<id>/`, staged first and named after it). |
 
 **Dev server** (`web/serve.mjs`): `--static <vscode-web dir> --extensions <dir> --extension-names
 levelcode-ai,levelcode-web --account <origin>`, plus `--product <json>` and `--config-defaults
@@ -234,7 +245,9 @@ causing the effect). Use another registrable domain.
 | Editor settings, layout | the workbench's own storage | editor origin |
 
 Clearing the browser's site data removes all of it. A private window may discard it on close; the
-secret store then falls back to memory for the session.
+secret store then falls back to memory for the session. The key the secrets are sealed with is created
+once per browser profile: two tabs opened together on a fresh profile store it in one IndexedDB
+transaction, so both end with the same key.
 
 ## Keeping the desktop and the browser in step
 

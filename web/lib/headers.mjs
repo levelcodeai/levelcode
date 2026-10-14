@@ -110,7 +110,9 @@ export function toNginx(p, root = '/srv/levelcode-web') {
 			if (k === 'Content-Type') { lines.push(`    types { } default_type ${v};`); continue; }
 			lines.push(`    add_header ${k} "${v.replace(/"/g, '\\"')}" always;`);
 		}
-		lines.push('    try_files $uri =404;', '  }', '');
+		// `try_files $uri` looks for a FILE, and `/` is a directory: the root rule would answer 404 before `index`
+		// could run, and an exact location keeps the request from reaching the fallback below. It names the page.
+		lines.push(r.path === '/' ? '    try_files /index.html =404;' : '    try_files $uri =404;', '  }', '');
 	}
 	lines.push('  location / { try_files $uri $uri/ =404; }', '}');
 	return lines.join('\n') + '\n';

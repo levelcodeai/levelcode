@@ -11,8 +11,9 @@
 //      minute), or takes a prebuilt one with --static;
 //   2. bundles levelcode-ai for the web worker extension host (web/ai-extension), copies the scratch
 //      workspace extension (web/workspace) and every declarative built-in (grammars, themes, icons);
-//   3. lays everything out under a build-addressed prefix (/_/<id>/...), renders index.html with the
-//      configuration baked in, and writes the HTTP policy for the host (_headers, nginx).
+//   3. names the build after a hash of everything it staged, lays that out under the build-addressed
+//      prefix (/_/<id>/...), renders index.html with the configuration baked in, and writes the HTTP
+//      policy for the host (_headers, nginx).
 //
 // It changes nothing outside --out, except that building the client from the checkout leaves gulp's own output,
 // vscode-web/, next to it (pass --static to use a client built earlier and skip that). It does not deploy.
@@ -65,27 +66,15 @@ for (const must of ['out/vs/workbench/workbench.web.main.internal.js', 'out/vs/w
 	if (!fs.existsSync(path.join(staticDir, must))) { die('the web client is missing ' + must); }
 }
 
-/* ----- 2. identity of this build ---------------------------------------------------------------- */
-const fingerprint = createHash('sha256');
-fingerprint.update(fs.readFileSync(path.join(staticDir, 'out/vs/workbench/workbench.web.main.internal.js')));
-for (const f of ['main.js', 'boot.css', 'index.html']) { fingerprint.update(fs.readFileSync(path.join(WEB, f))); }
-// Everything that goes into /_/<id>/ and is not the web client itself: the extension (its sources, media and skills),
-// its browser build, the scratch workspace, and the page's own configuration code.
-const aiDir = path.join(REPO, 'extensions', 'levelcode-ai');
-hashTree(fingerprint, aiDir, { skip: ['test', 'node_modules', 'scripts', '.DS_Store'] });
-hashTree(fingerprint, path.join(WEB, 'ai-extension'), { skip: ['assets.generated.js', 'node_modules', '.DS_Store'] });
-hashTree(fingerprint, path.join(WEB, 'workspace'), { skip: ['node_modules', '.DS_Store'] });
-hashTree(fingerprint, path.join(WEB, 'lib'), { skip: ['.DS_Store'] });
-const id = String(args.id || fingerprint.digest('hex').slice(0, 12));
-let gitHead = 'unknown';
-try { gitHead = execFileSync('git', ['-C', REPO, 'rev-parse', '--short=10', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { /* not a checkout */ }
-log('build id ' + id + ' (levelcode ' + gitHead + ')');
-
-/* ----- 3. assemble ------------------------------------------------------------------------------- */
+/* ----- 2. assemble, under a name the build does not have yet ------------------------------------- */
+// Everything under /_/<id>/ is served as never changing, so the id is a hash of exactly what is there: it is put
+// together first, in a staging folder, and named after it. A list of inputs to hash missed what it did not name —
+// a theme, a grammar, the web client's CSS or a worker — and a changed file was then served stale for a year.
+// Nothing staged depends on the id; only the page (index.html, outside it) names it.
 fs.rmSync(outDir, { recursive: true, force: true });
-const prefix = `/_/${id}`;
-const root = path.join(outDir, '_', id);
-fs.mkdirSync(root, { recursive: true });
+const staging = path.join(outDir, '_', '.staging');
+fs.mkdirSync(staging, { recursive: true });
+let root = staging;
 
 log('copying the web client');
 fs.cpSync(staticDir, path.join(root, 'static'), { recursive: true, filter: (src) => !/\.(js|css)\.map$/.test(src) });
@@ -113,9 +102,19 @@ if (!declarative.includes('levelcode-themes')) {
 const extensions = ['levelcode-ai', 'levelcode-web', ...declarative.sort()];
 log(`${extensions.length} extensions: levelcode-ai, levelcode-web and ${declarative.length} declarative (${declarative.slice(0, 6).join(', ')}, ...)`);
 
-log('writing the page');
 // main.js and boot.css are addressed by the build id like everything else; the page names them.
 for (const f of ['main.js', 'boot.css']) { fs.copyFileSync(path.join(WEB, f), path.join(root, f)); }
+
+/* ----- 3. identity of this build: what was staged ------------------------------------------------- */
+const id = String(args.id || hashTree(createHash('sha256'), staging, { skip: ['.DS_Store'] }).digest('hex').slice(0, 12));
+const prefix = `/_/${id}`;
+root = path.join(outDir, '_', id);
+fs.renameSync(staging, root);
+let gitHead = 'unknown';
+try { gitHead = execFileSync('git', ['-C', REPO, 'rev-parse', '--short=10', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { /* not a checkout */ }
+log('build id ' + id + ' (levelcode ' + gitHead + ')');
+
+log('writing the page');
 
 const productConfiguration = {
 	// No gallery: nothing is installed from the Internet into the page's own origin.
@@ -169,5 +168,5 @@ for (const must of [`${prefix}/main.js`, `${prefix}/boot.css`, `${prefix}/static
 	`${prefix}/extensions/levelcode-ai/package.json`, `${prefix}/extensions/levelcode-web/extension.js`]) {
 	if (!fs.existsSync(path.join(outDir, must))) { die('missing ' + must); }
 }
-log(`done: ${outDir}  ${mb(sizeOf(outDir))}  (client ${mb(sizeOf(path.join(root, 'static')))}, extensions ${mb(sizeOf(extOut))})`);
+log(`done: ${outDir}  ${mb(sizeOf(outDir))}  (client ${mb(sizeOf(path.join(root, 'static')))}, extensions ${mb(sizeOf(path.join(root, 'extensions')))})`);
 log('serve it with:  node web/serve.mjs --dist ' + path.relative(process.cwd(), outDir));

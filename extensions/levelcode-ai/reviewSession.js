@@ -386,6 +386,9 @@ function registerReview(context, post, dbg, recordTouch) {
 				try { current.set(s.uri, ((await host.readTextOrNull(vscode.Uri.parse(s.uri).fsPath)) || '').replace(/^﻿/, '')); } catch { /* */ }
 			}
 			rehydrate((uri, s) => current.get(s.uri) || '');
+			// The chat may have asked for the cards (resync, on `ready`) while these reads were still out, and was
+			// sent none. Send them now; a chat that is not listening yet asks again when it is.
+			if (pending.size) { resync(); }
 		})();
 	}
 

@@ -931,7 +931,8 @@ async function contentHits(terms, dir) {
 	if (!dir) { return hits; }
 	const prefix = dir.endsWith('/') ? dir : dir + '/';
 	let uris = [];
-	try { uris = await host.findFiles('**/*', '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/*.map,**/*.min.*}', 400); } catch { return hits; }
+	// Scoped to `dir` BEFORE the cap: across the whole workspace, another folder's files could use up all 400.
+	try { uris = await host.findFiles(new vscode.RelativePattern(host.uriFor(dir), '**/*'), '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/*.map,**/*.min.*}', 400); } catch { return hits; }
 	const needles = terms.map((t) => t.toLowerCase());
 	const deadline = Date.now() + 4000;   // the same budget rgFiles gives ripgrep
 	for (const uri of uris) {
@@ -1094,7 +1095,10 @@ function recordDiagramStat(ev) {
 const diagramFolders = () => (vscode.workspace.workspaceFolders || []).map((f) => ({ name: f.name, root: f.uri.fsPath }));
 /** This conversation's diagrams. One for the life of the extension; reset with the conversation. */
 const diagrams = createDiagrams({
-	resolveLink: (link) => diagramLinks.resolveLink(link, diagramFolders()),
+	// A diagram's links are checked as it is drawn, and that cannot wait. Where files can only be looked at
+	// asynchronously (LevelCode in a browser) they are checked against the files the extension has indexed
+	// (buildFileIndex); the desktop reads the disk, as before. The click checks the file itself.
+	resolveLink: (link) => diagramLinks.resolveLink(link, diagramFolders(), { fs: host.knownFilesView([...workspaceFiles.values()].map((u) => u.path)) || undefined }),
 	onStat: recordDiagramStat
 });
 /** True once a diagram's spec has left the model's context (a compaction, or a resume that did not fit) —
@@ -1117,7 +1121,7 @@ async function openDiagramLink(id, nodeId) {
 	const node = record && record.spec ? record.spec.nodes.find((n) => n.id === String(nodeId)) : null;
 	if (!node || !node.link) { dbg('diagram.link.unknown', { id }); return; }
 	// Checked again at the moment of the click: the file may have moved, or become a link, since it was drawn.
-	const r = diagramLinks.resolveLink(node.link, diagramFolders());
+	const r = await host.withStats((fs) => diagramLinks.resolveLink(node.link, diagramFolders(), { fs }));
 	if (!r.ok) { vscode.window.showWarningMessage('LevelCode: that link cannot be opened — ' + r.reason + '.'); dbg('diagram.link.refused', { reason: r.reason }); return; }
 	recordDiagramStat({ type: 'link' });
 	try {
@@ -3567,10 +3571,16 @@ async function handleAuthCallback(uri) {
 	try {
 		const q = new URLSearchParams(uri.query || '');
 		const code = q.get('code');
+		const verifier = ctx ? await ctx.secrets.get(ACCOUNT_VERIFIER_KEY) : null;
+		// Where the callback is a page anyone can link to (LevelCode in a browser), a link nobody asked for must not
+		// sign the user in to someone else's account: only a code that answers a sign-in this editor started is taken.
+		if (!host.caps.unaskedSignIn && (!code || !verifier)) {
+			dbg('account.callback', { ignored: code ? 'no sign-in pending' : 'not a sign-in code' });
+			return;
+		}
 		// Preferred: PKCE code → exchange for tokens using the verifier we stashed at sign-in.
 		if (code) {
 			const endpoint = cloudApiUrl(); // token exchange is a BACKEND (Rails) call, not the website
-			const verifier = ctx ? await ctx.secrets.get(ACCOUNT_VERIFIER_KEY) : null;
 			try {
 				const res = await fetch(endpoint + '/api/levelcode/v1/auth/exchange', {
 					method: 'POST',
