@@ -227,6 +227,13 @@ async function commitShellChanges(changes, ctx, io) {
 			plan.push({ c, review: p.review, rel: p.rel });
 		}
 	}
+	// Folders are the shell's to make and remove (`rest`), but not in the protected places: an empty `.vscode` made, or
+	// an empty folder under `.git` removed, is a change there as much as a file is.
+	for (const c of changes) {
+		if (c.kind !== 'mkdir' && c.kind !== 'rmdir') { continue; }
+		const p = reviewPathFor(c.path, folders);
+		if (p && isProtected(p.rel)) { refusals.push({ c, why: 'repository metadata, tool settings and instruction files are not changed by commands — the user does that' }); }
+	}
 	// A case-only rename: a delete and a write whose paths are equal ignoring case but not equal.
 	for (const c of files) {
 		if (c.kind !== 'delete') { continue; }

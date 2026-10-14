@@ -220,6 +220,22 @@ const ids = (out) => out.failed.map((f) => f.c.path).sort();
 		for (const p of ['GIT/config', 'src/Git.js', '.GITIGNORE', '.Gitattributes', 'VSCODE/x', '.github/WORKFLOW.md', 'my.GIT/x', 'Agents.txt']) { assert.ok(!isProtected(p), p + ' is not protected'); }
 	});
 
+	await test('protected folders are not made or removed either: a command that would is refused whole, and its folders are not left to the shell', async () => {
+		for (const c of [{ kind: 'rmdir', path: '/ws/.git/refs/tags' }, { kind: 'mkdir', path: '/ws/.vscode' }, { kind: 'mkdir', path: '/ws/.GIT/hooks' },
+			{ kind: 'mkdir', path: '/ws/.github/workflows' }, { kind: 'rmdir', path: '/ws/sub/.Husky' }]) {
+			const r = rig();
+			const out = await commitShellChanges([W('/ws/ok.txt', 'fine'), c], r.ctx, r.io);
+			assert.strictEqual(out.refused, true, c.kind + ' ' + c.path);
+			assert.deepStrictEqual(out.rest, [], 'the shell is handed no folder to make or remove: ' + c.path);
+			assert.deepStrictEqual(r.edits, [], 'and the file beside it is not applied either');
+			assert.match(out.notes[0], /refused: .* — repository metadata/);
+		}
+		const ok = rig();
+		const fine = await commitShellChanges([{ kind: 'mkdir', path: '/ws/src/git' }, { kind: 'rmdir', path: '/ws/vscode-notes' }], ok.ctx, ok.io);
+		assert.strictEqual(fine.refused, false);
+		assert.deepStrictEqual(fine.rest.map((c) => c.path), ['/ws/src/git', '/ws/vscode-notes']);
+	});
+
 	await test('outside the workspace folders: refused', async () => {
 		const r = rig();
 		const out = await commitShellChanges([W('/etc/passwd', 'x')], r.ctx, r.io);
