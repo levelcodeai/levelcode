@@ -7,6 +7,7 @@
 // the desktop's files are untouched (this is applied to the embedded copy, like copy.js and skin.js).
 //
 // Plain CommonJS; web/test/unit/skills.test.js pins it.
+// @ts-check
 'use strict';
 
 const PREAMBLE = [
