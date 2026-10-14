@@ -18,6 +18,8 @@
  *
  *  What is refused, and why:
  *    - outside the workspace folders                          (a mount is the boundary)
+ *    - in a folder the review would not find again            (two folders called proj, or at one path: the review
+ *                                                              finds a folder by name and would write the other's)
  *    - repository / tool metadata and instruction files       (a script can hide `rm -rf .git`, or write
  *      (in any letter case: .GIT is .git on most disks)        .vscode/settings.json or AGENTS.md, which later
  *                                                              steer the agent with the user's authority)
@@ -97,6 +99,22 @@ function eolStyle(text) {
 function hasLoneCr(text) { return /\r(?!\n)/.test(text); }
 
 /**
+ * The workspace folder an absolute path is in: the deepest one, as host.uriFor picks it. Null when it is in none.
+ * @template {{name:string, root:string}} F
+ * @param {string} abs
+ * @param {F[]} folders
+ * @returns {F|null}
+ */
+function folderOf(abs, folders) {
+	/** @type {F|null} */ let best = null;
+	for (const f of folders) {
+		const inside = abs === f.root || abs.startsWith(f.root === '/' ? '/' : f.root + '/');
+		if (inside && (!best || f.root.length > best.root.length)) { best = f; }
+	}
+	return best;
+}
+
+/**
  * The path a review call takes for an absolute path: relative to its workspace folder, and — with more than
  * one folder — prefixed with the folder's name, which is how resolveWorkspacePath finds the folder
  * deterministically (an unprefixed path means "the first folder").
@@ -105,14 +123,30 @@ function hasLoneCr(text) { return /\r(?!\n)/.test(text); }
  * @returns {{ review: string, rel: string }|null} null when `abs` is in none of them
  */
 function reviewPathFor(abs, folders) {
-	let best = null;
-	for (const f of folders) {
-		const inside = abs === f.root || abs.startsWith(f.root === '/' ? '/' : f.root + '/');
-		if (inside && (!best || f.root.length > best.root.length)) { best = f; }
-	}
+	const best = folderOf(abs, folders);
 	if (!best) { return null; }
 	const rel = abs.slice(best.root === '/' ? 1 : best.root.length + 1);
 	return { rel, review: folders.length > 1 ? best.name + '/' + rel : rel };
+}
+
+/**
+ * Why the review could apply a change in `folder` to ANOTHER folder's file, or null when it cannot. The review finds a
+ * file by the path reviewPathFor makes: the folder by the name the path starts with — the first folder of that name, as
+ * resolveWorkspacePath finds it — then the file by its absolute path (host.uriFor: the first folder at that root). So
+ * with two clones called proj (/a/proj, /b/proj) a change to the second was compared with the right file (readNow)
+ * and written into the first. A runtime that tells same-named folders apart (planMounts) hands back paths, and the
+ * review takes names: rather than teach the review — which the file tools share — to take a folder, the change is
+ * refused. The first folder of a name is the one the review finds, so its changes go through as before.
+ * @param {{name:string, root:string}} folder
+ * @param {Array<{name:string, root:string}>} folders
+ * @returns {string|null}
+ */
+function folderMixUp(folder, folders) {
+	if (folders.some((f) => f !== folder && f.root === folder.root)) { return 'two workspace folders are at ' + folder.root + ', and a path cannot say which of them it is in'; }
+	if (folders.length < 2) { return null; }
+	if (folder.name.split(/[\\/]/)[0] !== folder.name) { return 'the name of its workspace folder, "' + folder.name + '", has a slash in it, and the review would read it as a path'; }
+	if (folders.find((f) => f.name === folder.name) !== folder) { return 'another workspace folder is also called "' + folder.name + '", and the review finds a folder by its name: it would apply this change there'; }
+	return null;
 }
 
 /**
@@ -164,6 +198,8 @@ async function commitShellChanges(changes, ctx, io) {
 	for (const c of files) {
 		const p = reviewPathFor(c.path, folders);
 		if (p === null) { refusals.push({ c, why: 'it is outside the workspace folders' }); continue; }
+		const mixUp = folderMixUp(/** @type {{name:string, root:string}} */ (folderOf(c.path, folders)), folders);
+		if (mixUp) { refusals.push({ c, why: mixUp }); continue; }
 		if (isProtected(p.rel)) { refusals.push({ c, why: 'repository metadata, tool settings and instruction files are not changed by commands — the user does that' }); continue; }
 		const key = c.path.toLowerCase();
 		if (seenLower.has(key) && seenLower.get(key) !== c.path) { refusals.push({ c, why: 'it differs from ' + seenLower.get(key) + ' only in letter case, which a case-insensitive disk cannot keep apart' }); continue; }

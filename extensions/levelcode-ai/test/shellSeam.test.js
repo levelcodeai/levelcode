@@ -28,7 +28,9 @@ const folder = (name, p) => ({ name, uri: { fsPath: p, path: p, toString: () => 
 const vscodeMock = {
 	workspace: { workspaceFolders: [folder('app', root)], findFiles: async () => [], asRelativePath: (u) => String(u.fsPath || u),
 		// the browser build reads through vscode.workspace.fs; here that is the temp directory
-		fs: { readFile: async (u) => fs.promises.readFile(u.fsPath) } },
+		fs: { readFile: async (u) => fs.promises.readFile(u.fsPath),
+			stat: async (u) => { const s = await fs.promises.stat(u.fsPath); return { type: s.isDirectory() ? 2 : 1, size: s.size }; } } },
+	FileType: { File: 1, Directory: 2 },
 	env: { appRoot: '' },
 	Uri: { file: (p) => ({ fsPath: p, path: p }) },
 	extensions: { getExtension: () => undefined },
@@ -260,6 +262,42 @@ function ctxFor(over) {
 			}
 			calls[0].child.emit('close', 0);
 			await p;
+		});
+
+		await test('BROWSER, two workspace folders called proj: a command\'s change to the second is never written into the first', async () => {
+			const { agent, host } = load(true);
+			const calls = registerFake(host);
+			const enc = (s) => new TextEncoder().encode(s);
+			const a = path.join(root, 'a', 'proj'), b = path.join(root, 'b', 'proj');
+			fs.mkdirSync(a, { recursive: true }); fs.mkdirSync(b, { recursive: true });
+			fs.writeFileSync(path.join(a, 'x.txt'), 'A\n'); fs.writeFileSync(path.join(b, 'x.txt'), 'B\n');
+			const saved = vscodeMock.workspace.workspaceFolders;
+			vscodeMock.workspace.workspaceFolders = [folder('proj', a), folder('proj', b)];
+			try {
+				// What reviewSession.applyEdit / applyDelete do to find the file they change: the same resolver, then host.uriFor.
+				const written = [];
+				const find = async (r, mustExist) => { const abs = await agent.resolveWorkspacePathAsync(r.path, { mustExist }); if (abs) { written.push(host.uriFor(abs).fsPath); } return !!abs; };
+				script = [tool('t1', 'run_command', { command: 'make', explanation: 'x' }), say('Done: x')];
+				const p = agent.runAgent(ctxFor({ applyEdit: (r) => find(r, !!r.exists), applyDelete: (r) => find(r, true) }));
+				await settle(); await settle();
+				const commit = calls[0].opts.commit;
+				// readNow compares b/proj/x.txt with what the command read (B), which is right: the write is what went wrong.
+				const out = await commit([
+					{ kind: 'write', path: b + '/x.txt', existed: true, before: enc('B\n'), after: enc('B2\n') },
+					{ kind: 'write', path: b + '/new.txt', existed: false, before: null, after: enc('n\n') },
+				]);
+				assert.deepStrictEqual(written, [], 'nothing is written — and nothing into ' + a);
+				assert.strictEqual(out.refused, true);
+				assert.match(out.notes.join('\n'), /refused: proj\/x\.txt — another workspace folder is also called "proj"/);
+				// The first folder of the name is the one the review finds: a change to it is applied, there.
+				const ok = await commit([{ kind: 'write', path: a + '/x.txt', existed: true, before: enc('A\n'), after: enc('A2\n') }]);
+				assert.strictEqual(ok.refused, false);
+				assert.deepStrictEqual(written, [a + '/x.txt']);
+				calls[0].child.emit('close', 0);
+				await p;
+			} finally {
+				vscodeMock.workspace.workspaceFolders = saved;
+			}
 		});
 
 		await test('BROWSER, the shell says the run was stopped while its changes were being checked: the commit hook applies nothing', async () => {

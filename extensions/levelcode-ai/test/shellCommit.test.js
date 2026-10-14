@@ -47,6 +47,43 @@ const ids = (out) => out.failed.map((f) => f.c.path).sort();
 		assert.strictEqual(reviewPathFor('/ws/sub/x', [{ name: 'ws', root: '/ws' }, { name: 'sub', root: '/ws/sub' }]).review, 'sub/x', 'the deepest folder wins, as host.uriFor does');
 	});
 
+	await test('two folders the review cannot tell apart: a change it would apply to the other one is refused, and the whole set with it', async () => {
+		// The review finds a folder by the name a path starts with (the first folder of that name, as resolveWorkspacePath
+		// does), then a file by its absolute path (the first folder at that root, as host.uriFor does).
+		const twins = [{ name: 'proj', root: '/a/proj' }, { name: 'proj', root: '/b/proj' }];
+		let r = rig({ '/b/proj/x.txt': 'old', '/a/proj/y.txt': 'y' }, { folders: twins });
+		let out = await commitShellChanges([W('/b/proj/x.txt', 'new', 'old'), W('/a/proj/y.txt', 'y2', 'y')], r.ctx, r.io);
+		assert.strictEqual(out.refused, true);
+		assert.deepStrictEqual(r.edits, [], 'proj/x.txt would have been written into /a/proj');
+		assert.deepStrictEqual(ids(out), ['/b/proj/x.txt']);
+		assert.match(out.notes[0], /refused: proj\/x\.txt — another workspace folder is also called "proj"/);
+		r = rig({ '/b/proj/gone.txt': 'g' }, { folders: twins });
+		assert.strictEqual((await commitShellChanges([D('/b/proj/gone.txt', 'g')], r.ctx, r.io)).refused, true, 'a delete too');
+		assert.deepStrictEqual(r.deletes, []);
+		// The first folder of the name is the one the review finds: its changes are applied, to it.
+		r = rig({ '/a/proj/y.txt': 'y' }, { folders: twins });
+		out = await commitShellChanges([W('/a/proj/y.txt', 'y2', 'y')], r.ctx, r.io);
+		assert.strictEqual(out.refused, false);
+		assert.deepStrictEqual(r.edits, [{ path: 'proj/y.txt', exists: true, proposed: 'y2' }]);
+		// Two folders at one path (the scratch folder, and a folder from the computer called scratch): a path names neither.
+		r = rig({ '/scratch/x.txt': 'old' }, { folders: [{ name: 'scratch', root: '/scratch' }, { name: 'mine', root: '/scratch' }] });
+		out = await commitShellChanges([W('/scratch/x.txt', 'new', 'old')], r.ctx, r.io);
+		assert.strictEqual(out.refused, true);
+		assert.match(out.notes[0], /two workspace folders are at \/scratch/);
+		// A folder whose name has a slash in it: the review reads the name as a path and finds another folder, or none.
+		r = rig({}, { folders: [{ name: 'web', root: '/web' }, { name: 'a/b', root: '/ab' }] });
+		out = await commitShellChanges([W('/ab/x.txt', 'new')], r.ctx, r.io);
+		assert.strictEqual(out.refused, true);
+		assert.match(out.notes[0], /"a\/b", has a slash in it/);
+		r = rig({}, { folders: [{ name: 'a/b', root: '/ab' }] });
+		assert.strictEqual((await commitShellChanges([W('/ab/x.txt', 'new')], r.ctx, r.io)).refused, false, 'alone, a folder is found without its name');
+		// Folders of distinct names, nested ones included, are as they were.
+		r = rig({}, { folders: [{ name: 'ws', root: '/ws' }, { name: 'sub', root: '/ws/sub' }, { name: 'lib', root: '/lib' }] });
+		out = await commitShellChanges([W('/ws/sub/a.txt', 'a'), W('/lib/b.txt', 'b'), W('/ws/c.txt', 'c')], r.ctx, r.io);
+		assert.strictEqual(out.refused, false);
+		assert.deepStrictEqual(r.edits.map((e) => e.path), ['lib/b.txt', 'ws/c.txt', 'sub/a.txt']);
+	});
+
 	await test('text changes are reviewed; edit and delete counts and ctx.touched follow; the files named in the note', async () => {
 		const r = rig({ '/ws/a.txt': 'old', '/ws/b.txt': 'bye' });
 		const out = await commitShellChanges([W('/ws/new.txt', 'hi\n'), W('/ws/a.txt', 'new', 'old'), D('/ws/b.txt', 'bye')], r.ctx, r.io);
