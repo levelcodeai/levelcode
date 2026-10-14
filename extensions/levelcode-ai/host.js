@@ -201,8 +201,9 @@ const SHELL_API_VERSION = 1;
  *     the whole set and reviews it, or refuses it whole; it returns what the shell still has to do itself (make and
  *     remove directories), lines to append to the command's output, and how many changes it could NOT apply (the
  *     shell then does not report success). Without it the shell writes the changes straight to the workspace (the
- *     user's own terminal). `control.cancelled()` turns true when the run was stopped while the set was being
- *     checked: the caller then applies nothing (once the first write has begun nothing interrupts it).
+ *     user's own terminal). `control.cancelled()` turns true when the run is stopped (or the shell stops waiting for
+ *     the review): while the set is being checked the caller then applies nothing; once it is applying, what is already
+ *     in the review stays and nothing more is started (a change in flight is not interrupted).
  *
  * @typedef {object} ChildLike  The part of a Node ChildProcess that agent.js's runCommand uses.
  * @property {number} [pid]     leave undefined: agent.js then kills with child.kill(signal)
@@ -210,9 +211,11 @@ const SHELL_API_VERSION = 1;
  * @property {{ on: (ev: 'data', cb: (chunk: string|Uint8Array) => void) => any }} stderr
  * @property {(ev: 'close'|'error', cb: Function) => any} on   'close'(code) once, after every 'data'
  * @property {(signal?: string) => boolean} kill
- *     'SIGTERM' (Stop) and 'SIGKILL' (the timeout, or a Stop that was not heard within 1.5 s): the command is stopped
- *     and NONE of its file changes are applied — they were only ever staged — and the result says so. 'close' is
- *     emitted once. agent.js reports 130 for a stop and 124 for a timeout whatever the code of 'close'.
+ *     'SIGTERM' (Stop) and 'SIGKILL' (the timeout, or a Stop that was not heard within 1.5 s). A command that is still
+ *     running is stopped and NONE of its file changes are applied — they were only ever staged. One that has ended and
+ *     whose changes are being reviewed (`commit`) is settled at once, and what the review had applied stays in it. The
+ *     result says which. 'close' is emitted once. agent.js reports 130 for a stop and 124 for a timeout whatever the
+ *     code of 'close'.
  */
 
 /**

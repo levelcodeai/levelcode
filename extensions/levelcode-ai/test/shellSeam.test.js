@@ -154,7 +154,10 @@ function ctxFor(over) {
 			assert.match(t.system, /run_command runs ONE command line in LevelCode Shell/);
 			assert.match(t.system, /Programs that exist: cat ls grep\. Shell builtins work too\. Everything else answers "command not found" \(exit 127\) — node, npm, git …/);
 			assert.match(t.system, /There is no network\. Nothing runs in the background/);
-			assert.match(t.system, /A stopped command changes nothing/);
+			// A Stop, or the time limit, while the command's changes are being reviewed settles the run at once, and what the
+			// review had applied stays in Keep/Undo (the shell's note says so): the prompt must not promise that nothing changed.
+			assert.ok(!/A stopped command changes nothing/.test(t.system), 'the prompt promises what a Stop during the review does not keep');
+			assert.match(t.system, /A command stopped while it runs changes nothing; one stopped while its file changes were being reviewed may have applied some of them \(they are then in the Keep\/Undo review\), and its result says so\./);
 			assert.match(t.system, /NONE of that command's changes are applied/);
 			assert.ok(!/dev servers|tail -f|There is no terminal|Run the extension unit tests/.test(t.system));
 		});
