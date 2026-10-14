@@ -91,6 +91,17 @@ node "$SCRIPT_DIR/strip-proprietary.mjs" "$BUILT_APP/LevelCode.app/Contents/Reso
 echo "[build] Hiding not-yet-ready features from the app (LevelCode Sync) …"
 node "$SCRIPT_DIR/strip-unreleased.mjs" "$BUILT_APP/LevelCode.app/Contents/Resources/app"
 
+# Extension signatures. The editor verifies an extension through a module that only Microsoft's
+# products may ship, so an app built from the open source had none: it refused every signed
+# extension from Open VSX ("Signature verification was not executed") and never updated one.
+# Install LevelCode's verifier (modules/extension-signature), then prove the built editor will load
+# it and that it tells a real package from a changed one. `check` failing is a build failing: an
+# upstream change that would bring the refusal back stops here. --replace: this checkout is what
+# this build ships. See docs/EXTENSION-SIGNATURES.md.
+echo "[build] Installing the Open VSX signature verifier …"
+node "$SCRIPT_DIR/extension-signature.mjs" install "$BUILT_APP/LevelCode.app/Contents/Resources/app" --replace
+node "$SCRIPT_DIR/extension-signature.mjs" check "$BUILT_APP/LevelCode.app/Contents/Resources/app"
+
 # Stamp the LevelCode RELEASE version for anything a human reads (update tooltip, About). product.json
 # `version` deliberately stays the Code-OSS base — it is what extensions' engines.vscode is validated
 # against — so the release version rides ALONGSIDE it rather than replacing it. Without this the update
