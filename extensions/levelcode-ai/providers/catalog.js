@@ -42,6 +42,13 @@ const CAPS = {
 	// real one is 1.05M (OpenRouter models API, 2026-09-06) and it reads images. Without this row the
 	// gateway picker offers it while the composer refuses attachments and the meter sizes it wrong.
 	'gpt-6-astra': { context: 1050000, tools: true, vision: true },
+	// Gemini 4 Argon (2026-10-13): a 1,048,576 window, image and file input, and reasoning that is always
+	// on. The `gemini` heuristic below gave it 1,000,000 and no reasoning flag. No `fast`: it must never
+	// become the ghost-text model. `effort` is sent as `reasoning: { effort }` (see reasoningEffortFor),
+	// and only under the vendor-prefixed id, which is how OpenRouter and the LevelCode gateway name it;
+	// both take that field for this model. A bare id may reach some other endpoint, so it asks for none.
+	'google/gemini-4-argon': { context: 1048576, tools: true, vision: true, reasoning: true, effort: 'medium' },
+	'gemini-4-argon':        { context: 1048576, tools: true, vision: true, reasoning: true },
 	'o3-mini':     { context: 200000, tools: true, reasoning: true },
 	'o1':          { context: 200000, tools: true, reasoning: true },
 	'o1-mini':     { context: 128000, tools: false, reasoning: true },   // o1-mini has no function calling
@@ -191,6 +198,21 @@ function fastCompletionModel(providerId) {
 	return (p && FAST_COMPLETION[p.id]) || null;
 }
 
+/**
+ * The `reasoning.effort` to ask of a model, or null to send none (the provider's default applies).
+ * Only a model whose CAPS row names an effort gets one. `purpose` 'compact' is for the summaries the
+ * editor writes for itself, which need little thought, so it asks for 'low'; chat and the agent get the
+ * row's own effort.
+ * @param {string} modelId
+ * @param {'chat'|'agent'|'compact'} purpose
+ * @returns {string|null}
+ */
+function reasoningEffortFor(modelId, purpose) {
+	const effort = modelCaps(modelId).effort;
+	if (!effort) { return null; }
+	return purpose === 'compact' ? 'low' : effort;
+}
+
 /** Format a caps object as a compact QuickPick detail string, e.g. "128k ctx · tools · vision". */
 function fmtContext(n) { return n >= 1000 ? Math.round(n / 1000) + 'k ctx' : n + ' ctx'; }
 function describeCaps(c) {
@@ -296,6 +318,7 @@ async function getModelChoices(providerId, opts) {
 module.exports = {
 	CAPS, modelCaps, baseName, heuristicCaps,
 	supportsToolsForModel, diagramSupportForModel, supportsVisionForModel, contextWindowFor, fastCompletionModel,
+	reasoningEffortFor,
 	describeCaps, describeModel,
 	mapOpenRouterModels, mapModelIds, fetchModels, getModelChoices
 };

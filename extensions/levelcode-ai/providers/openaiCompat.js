@@ -47,9 +47,10 @@ function isReasoningModel(model) {
  * Build the /v1/chat/completions request body. Pure — unit-testable.
  * OpenAI has no top-level `system` field, so a `system` string becomes a leading
  * {role:'system'} message (exactly what the old Ollama path did). The output-token cap is sent as
- * `max_completion_tokens` for reasoning models and `max_tokens` otherwise.
+ * `max_completion_tokens` for reasoning models and `max_tokens` otherwise. A `reasoningEffort` becomes
+ * OpenRouter's `reasoning: { effort }`; callers pass one only for a model that takes it (catalog.js).
  * @param {{model:string, system?:string, messages:any[], maxTokens?:number,
- *          stream?:boolean, stop?:string[], temperature?:number}} opts
+ *          stream?:boolean, stop?:string[], temperature?:number, reasoningEffort?:string|null}} opts
  */
 function buildChatBody(opts) {
 	const msgs = opts.system
@@ -62,6 +63,7 @@ function buildChatBody(opts) {
 	if (opts.stream) { body.stream = true; }
 	if (opts.stop && opts.stop.length) { body.stop = opts.stop; }
 	if (opts.temperature != null && !reasoning) { body.temperature = opts.temperature; }
+	if (opts.reasoningEffort) { body.reasoning = { effort: opts.reasoningEffort }; }
 	return body;
 }
 
@@ -262,7 +264,7 @@ async function streamOpenAIAgentTurn(opts) {
 	// the field, so we gate it strictly on the model id. cached_tokens is still read for ALL providers below.
 	const messages = translate.toOpenAIMessages(opts.system, opts.messages, { cache: isAnthropicFamily(opts.model) });
 	const tools = translate.toOpenAITools(opts.tools);
-	const body = buildChatBody({ model: opts.model, messages, maxTokens: opts.maxTokens, stream: true });
+	const body = buildChatBody({ model: opts.model, messages, maxTokens: opts.maxTokens, stream: true, reasoningEffort: opts.reasoningEffort });
 	if (tools) { body.tools = tools; }
 	// Ask for a final usage chunk (choices:[] + usage) so the agent's context meter isn't stuck at 0
 	// on OpenAI-shaped providers — they omit usage from streams unless include_usage is set. Mainstream

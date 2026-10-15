@@ -2159,7 +2159,10 @@ async function compactAgentMemory() {
 		// than Compact failing on a 401 that the next chat message would have recovered from.
 		summary = await authRetry(req, (r) => providers.complete({
 			providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL, label: r.label,
-			model: r.model, maxTokens: 1500,
+			// A reasoning model thinks out of the same budget, and 1,500 tokens of thought leaves an empty
+			// summary. It gets room for both, and is asked to think little.
+			model: r.model, maxTokens: catalog.modelCaps(r.model).reasoning ? 8192 : 1500,
+			reasoningEffort: catalog.reasoningEffortFor(r.model, 'compact'),
 			system: COMPACT_SYSTEM,
 			messages: [{ role: 'user', content: COMPACT_INSTRUCTIONS + flat }]
 		}));
@@ -2586,6 +2589,7 @@ async function handleSend(text, images) {
 		const doStream = (r) => providers.streamChat({
 			providerId: r.providerId, apiKey: r.apiKey, baseURL: r.baseURL, label: r.label,
 			model: r.model, maxTokens: r.maxTokens, system: SYSTEM_PROMPT,
+			reasoningEffort: catalog.reasoningEffortFor(r.model, 'chat'),
 			messages: withImages(conversation), signal: abort.signal, onDelta
 		});
 		try {

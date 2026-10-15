@@ -44,6 +44,16 @@ test('isReasoningModel: matches o1/o3/o4 (incl. openrouter-prefixed), NOT gpt-4o
 	for (const m of ['o1', 'o1-preview', 'o3-mini', 'o4-mini', 'openai/o3-mini']) { assert.strictEqual(oc.isReasoningModel(m), true, m); }
 	for (const m of ['gpt-4o', 'gpt-4o-mini', 'openai/gpt-4o', 'codestral-latest', 'grok-2-latest', 'meta-llama/llama-3.3-70b-instruct', 'deepseek-chat']) { assert.strictEqual(oc.isReasoningModel(m), false, m); }
 });
+test('buildChatBody: a reasoning effort becomes reasoning.effort; without one, no reasoning field is sent', () => {
+	const g = oc.buildChatBody({ model: 'google/gemini-4-argon', messages: [], maxTokens: 32768, reasoningEffort: 'medium' });
+	assert.deepStrictEqual(g.reasoning, { effort: 'medium' });
+	// Argon is not an o-series model: it keeps max_tokens, the field OpenRouter lists for it.
+	assert.strictEqual(g.max_tokens, 32768);
+	assert.ok(!('max_completion_tokens' in g));
+	for (const e of [undefined, null, '']) {
+		assert.ok(!('reasoning' in oc.buildChatBody({ model: 'm', messages: [], reasoningEffort: e })), String(e));
+	}
+});
 test('buildChatBody: reasoning model → max_completion_tokens (no max_tokens) and temperature dropped', () => {
 	const o = oc.buildChatBody({ model: 'o3-mini', messages: [], maxTokens: 8192, temperature: 0.2 });
 	assert.strictEqual(o.max_completion_tokens, 8192);
@@ -224,6 +234,22 @@ async function testAsync(name, fn) { await fn(); n++; console.log('  ok - ' + na
 			(e) => e.name === 'AbortError'
 		);
 		assert.strictEqual(calls, 1, 'AbortError propagates immediately — never retried');
+	});
+
+	// The effort has to survive index.js, which copies the options it forwards field by field.
+	await testAsync('chat, one-shot and agent turns all carry reasoningEffort into the request body', async () => {
+		const P = require('../providers/index');
+		const bodies = [];
+		global.fetch = async (url, init) => { bodies.push(JSON.parse(init.body)); return fakeRes(400, '{"error":{"message":"stop here"}}'); };
+		const base = { providerId: 'openrouter', apiKey: 'k', model: 'google/gemini-4-argon', maxTokens: 64, system: 's', messages: [{ role: 'user', content: 'hi' }], reasoningEffort: 'medium' };
+		await assert.rejects(P.streamChat(Object.assign({}, base, { onDelta() {} })), /stop here/);
+		await assert.rejects(P.complete(base), /stop here/);
+		await assert.rejects(P.streamAgentTurn(Object.assign({}, base, { tools: [] })), /stop here/);
+		assert.strictEqual(bodies.length, 3);
+		for (const b of bodies) { assert.deepStrictEqual(b.reasoning, { effort: 'medium' }); assert.strictEqual(b.model, 'google/gemini-4-argon'); }
+		bodies.length = 0;
+		await assert.rejects(P.streamAgentTurn(Object.assign({}, base, { tools: [], reasoningEffort: null })), /stop here/);
+		assert.ok(!('reasoning' in bodies[0]), 'no effort, no field');
 	});
 
 	global.fetch = savedFetch;

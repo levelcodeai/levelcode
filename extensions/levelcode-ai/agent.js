@@ -16,6 +16,7 @@ const cp = require('child_process');
 const os = require('os');   // MCP servers need a cwd even when no folder is open
 const host = require('./host');   // the machine we run on: workspace I/O is async here, and capabilities differ (browser)
 const providers = require('./providers/index');
+const catalog = require('./providers/catalog');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
 const { commitShellChanges } = require('./shellCommit');
@@ -1142,7 +1143,11 @@ async function runAgent(ctx) {
 	// full API call whose input grows with the (never-truncated) transcript, so an adversarial or
 	// runaway model that keeps hitting the cap could otherwise rack up unbounded, user-billed calls.
 	// Budget = a generous multiple of the per-turn cap; once exceeded we stop continuing and hand back.
-	const perTurnMax = Math.max(1024, Math.min(32768, ctx.maxTokens || 8192));
+	// A reasoning model spends its hidden reasoning out of the same max_tokens, so the 8,192 default can
+	// leave nothing for the answer (Gemini 4 Argon reasons on every turn). Such models get the ceiling,
+	// 32,768, which is also the most a paid request may ask of the LevelCode gateway.
+	const reasons = !!catalog.modelCaps(ctx.model).reasoning;
+	const perTurnMax = Math.max(1024, Math.min(32768, reasons ? 32768 : (ctx.maxTokens || 8192)));
 	const OUTPUT_TOKEN_BUDGET = perTurnMax * 8;
 	let cumulativeOutputTokens = 0;
 	// [LevelCode] Gateway turns report real money: this run's cost + the wallet balance, both RETAIL
@@ -1219,6 +1224,7 @@ async function runAgent(ctx) {
 			const turnOpts = {
 				providerId: ctx.providerId, baseURL: ctx.baseURL, label: ctx.label,
 				apiKey: ctx.apiKey, model: ctx.model, maxTokens: perTurnMax, system: system,
+				reasoningEffort: catalog.reasoningEffortFor(ctx.model, 'agent'),
 				messages, tools: tools, signal: ctx.signal,
 				onText: (t) => { streamed = true; textChars += t.length; ctx.post({ type: 'agentDelta', text: t }); },
 				onToolStart: (name, id) => {
