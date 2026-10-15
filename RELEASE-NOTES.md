@@ -10,9 +10,11 @@ The editor checks every extension it downloads before installing it. In every Le
 
 v1.4.0 ships LevelCode's own checker in that place. It confirms that the package is exactly what Open VSX published, using the registry's signing key.
 
-- **The key is built into the app and never downloaded.** A daily check watches for Open VSX changing it, so a changed key is noticed before installs start failing.
+- **If you turned checking off to get past the old prompt, turn it back on.** Setting `extensions.verifySignature` to `false` stops all checking, and an upgrade leaves the setting as you set it. Remove it, or set it to `true`.
+- **The key is built into the app and never downloaded.** If Open VSX ever changes it, extensions signed with the new key are refused until a LevelCode update carries that key. Extensions already installed keep working. A daily check against the registry looks for exactly that, so a change shows up first as a failed check on our side, not only as your failed installs.
 - **A package that does not match is refused, with the reason.** A package that was changed after publishing, or signed with another key, is refused as untrusted, and the editor says so.
 - **It confirms the package came from Open VSX, not that the code is safe.** It says nothing about what an extension does, any more than an app store's signature does.
+- **An extension installed from a `.vsix` file is not checked.** It comes without a signature to check it against, as in VS Code.
 - **Every build is tested on a real extension.** The build installs one through the app's own command line and stops if it is refused, the test that would have caught this.
 
 ### The agent can draw
