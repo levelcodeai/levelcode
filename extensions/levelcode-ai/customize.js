@@ -97,7 +97,7 @@ function htmlFor(nonce, s) {
 		row('Auto-check', s.updates ? 'on' : 'off', s.updates) +
 		'<div class="btns">' + btn('Check for updates', 'levelcode.update.check') + '</div>');
 
-	const hack = section('🛠️', 'Hackability',
+	const hack = section('🛠️', 'Customization',
 		'<p class="muted">Make it yours — a user init script and your own packages, hot-reloaded.</p>' +
 		'<div class="btns">' + btn('Open init script', 'levelcode.init.edit') + btn('Generate a package', 'levelcode.package.generate') + '</div>');
 
