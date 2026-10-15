@@ -26,7 +26,7 @@
       {
         "id": "welcome",
         "title": "Welcome to LevelCode",
-        "description": "Your AI-native, hackable, Notepad++-powered editor — set it up in a couple of minutes.",
+        "description": "The AI code editor that keeps you in control — set it up in a couple of minutes.",
         "steps": [
           {
             "id": "ai",

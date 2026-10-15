@@ -1,7 +1,7 @@
 {
   "name": "levelcode-hackability",
-  "displayName": "LevelCode Hackability",
-  "description": "Atom-style hackability for LevelCode — a user init script that runs your own code at startup.",
+  "displayName": "LevelCode Customization",
+  "description": "Make LevelCode yours: an init script that runs your own code at startup, Atom and Notepad++ keymap presets, and your own packages, reloaded as you edit them.",
   "publisher": "levelcode",
   "version": "0.1.0",
   "license": "MIT",
@@ -54,7 +54,7 @@
       }
     ],
     "configuration": {
-      "title": "LevelCode Hackability",
+      "title": "LevelCode Customization",
       "properties": {
         "levelcode.init.enabled": {
           "type": "boolean",
