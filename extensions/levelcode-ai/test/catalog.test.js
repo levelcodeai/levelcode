@@ -27,6 +27,35 @@ test('modelCaps: gpt-6-astra is an explicit row, not the gpt-4/5 heuristic', () 
 	assert.strictEqual(C.supportsVisionForModel('openai', 'gpt-6-astra'), true);
 	assert.strictEqual(C.contextWindowFor('openai', 'gpt-6-astra'), 1050000);
 });
+// Gemini 4 Argon reaches the picker from the gateway roster and from OpenRouter (BYOK). Its window is
+// 1,048,576, not the gemini heuristic's 1,000,000, and it reasons on every turn.
+test('modelCaps: gemini-4-argon is an explicit row under both ids; only the OpenRouter id asks for an effort', () => {
+	const slug = C.modelCaps('google/gemini-4-argon');
+	const bare = C.modelCaps('gemini-4-argon');
+	for (const c of [slug, bare]) {
+		assert.strictEqual(c.context, 1048576);
+		assert.strictEqual(c.tools, true);
+		assert.strictEqual(c.vision, true);
+		assert.strictEqual(c.reasoning, true);
+		assert.ok(!c.fast, 'never the ghost-text model');
+	}
+	assert.strictEqual(slug.effort, 'medium');
+	assert.ok(!('effort' in bare), 'a bare id may reach an endpoint that was not checked for the field');
+	assert.strictEqual(C.contextWindowFor('openrouter', 'google/gemini-4-argon'), 1048576);
+	assert.strictEqual(C.supportsVisionForModel('openai', 'google/gemini-4-argon'), true);   // the gateway's provider id
+	assert.strictEqual(C.supportsToolsForModel('openrouter', 'google/gemini-4-argon'), true);
+	assert.strictEqual(C.supportsToolsForModel('openai', 'google/gemini-4-argon'), true);
+	assert.strictEqual(C.describeModel('google/gemini-4-argon'), '1049k ctx · reasoning · tools · vision');
+});
+test('reasoningEffortFor: medium for chat and the agent, low for compaction, none for a model without one', () => {
+	assert.strictEqual(C.reasoningEffortFor('google/gemini-4-argon', 'chat'), 'medium');
+	assert.strictEqual(C.reasoningEffortFor('google/gemini-4-argon', 'agent'), 'medium');
+	assert.strictEqual(C.reasoningEffortFor('google/gemini-4-argon', 'compact'), 'low');
+	for (const id of ['gemini-4-argon', 'moonshotai/kimi-k2.7-code', 'moonshotai/kimi-k3', 'o3-mini', 'anthropic/claude-opus-5', '']) {
+		assert.strictEqual(C.reasoningEffortFor(id, 'agent'), null, id);
+		assert.strictEqual(C.reasoningEffortFor(id, 'compact'), null, id);
+	}
+});
 test('modelCaps: Fable 5 / 5.1 carry the 1M window under every id they arrive as', () => {
 	for (const id of ['anthropic/claude-fable-5', 'anthropic/claude-fable-5.1', 'claude-fable-5-1']) {
 		assert.deepStrictEqual(C.modelCaps(id), { context: 1000000, tools: true, vision: true, caching: true }, id);

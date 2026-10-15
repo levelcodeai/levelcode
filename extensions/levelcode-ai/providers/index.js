@@ -158,7 +158,7 @@ async function streamChat(o) {
 	return openai.streamOpenAI({
 		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: o.label || p.label,
 		model: o.model, maxTokens: o.maxTokens, system: o.system, messages: o.messages,
-		signal: o.signal, onDelta: o.onDelta, onRetry: o.onRetry
+		signal: o.signal, onDelta: o.onDelta, onRetry: o.onRetry, reasoningEffort: o.reasoningEffort
 	});
 }
 
@@ -181,7 +181,7 @@ async function complete(o) {
 	return openai.completeOpenAI({
 		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: o.label || p.label,
 		model: o.model, maxTokens: o.maxTokens, system: o.system, messages: o.messages,
-		stop: o.stop, signal: o.signal, onRetry: o.onRetry
+		stop: o.stop, signal: o.signal, onRetry: o.onRetry, reasoningEffort: o.reasoningEffort
 	});
 }
 
@@ -216,7 +216,8 @@ async function streamAgentTurn(o) {
 	return openai.streamOpenAIAgentTurn({
 		baseURL: o.baseURL || p.baseURL, apiKey: o.apiKey, headers: p.headers, label: o.label || p.label,
 		model: o.model, maxTokens: o.maxTokens, system: o.system, messages: o.messages, tools: o.tools,
-		signal: o.signal, onText: o.onText, onToolStart: o.onToolStart, onToolInput: o.onToolInput, onRetry: o.onRetry
+		signal: o.signal, onText: o.onText, onToolStart: o.onToolStart, onToolInput: o.onToolInput, onRetry: o.onRetry,
+		reasoningEffort: o.reasoningEffort
 	});
 }
 

@@ -102,7 +102,7 @@ const FUNCTIONS = [
 // eslint-disable-next-line no-new-func
 const makeHost = new Function('env', [
 	"'use strict';",
-	'const { vscode, session, providers, resolveGateway, fetch, ctx, dbg, aiConfig, refreshCloudProfile, fetchCloudRoster, sendConfigToWebview,',
+	'const { vscode, session, providers, catalog, resolveGateway, fetch, ctx, dbg, aiConfig, refreshCloudProfile, fetchCloudRoster, sendConfigToWebview,',
 	'  gatewayModel, maxOutputTokens, currentProviderId, baseUrlFor, getProviderKey, activeModel, storeImages, agentFlow,',
 	'  listWorkspaceFiles, workspaceMapBlock, activeFileBlock, contextFileBlocks, gatherAutoContext, labelImages, withImages,',
 	'  sealLiveSession, resetConversationState, postContextFiles, postMemoryDigest, sessionsManager, currentContextLimit,',
@@ -258,6 +258,8 @@ function boot(over) {
 				}
 			};
 		},
+		// The real capability table: the chat asks it which reasoning effort, if any, a model takes.
+		catalog: require('../providers/catalog'),
 		providers: {
 			getProvider: (id) => ({ id, label: 'Claude' }),
 			isInsecureCustomUrl: () => false,
@@ -271,7 +273,7 @@ function boot(over) {
 		aiConfig: () => vscode.workspace.getConfiguration('levelcode.ai'),
 		dbg: () => { }, refreshCloudProfile: async () => { }, fetchCloudRoster: () => { }, sendConfigToWebview: () => { },
 		gatewayModel: () => 'cloud-model', maxOutputTokens: () => 4096, currentProviderId: () => 'claude',
-		baseUrlFor: () => '', activeModel: () => 'claude-model', storeImages: () => [], agentFlow: async () => { },
+		baseUrlFor: () => '', activeModel: () => t.activeModelId || 'claude-model', storeImages: () => [], agentFlow: async () => { },
 		listWorkspaceFiles: async () => [], workspaceMapBlock: () => '', activeFileBlock: () => '',
 		contextFileBlocks: async () => [], gatherAutoContext: async () => ({ blocks: [], names: [] }),
 		labelImages: (b) => b, withImages: (m) => m,
@@ -486,6 +488,16 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		assert.strictEqual(t.calls.stream[0].apiKey, 'sk-own');
 		assert.ok(t.types().includes('assistantDone'));
 		assert.ok(!t.posted.some((m) => m.code === 'session_expired' || m.type === 'sessionExpired'), 'no sign-in card');
+	});
+
+	await test('chat: a model whose catalog row names a reasoning effort sends it, and any other sends none', async () => {
+		const t = boot({ byokKey: 'sk-own' });
+		await t.host.handleSend('hello');
+		assert.strictEqual(t.calls.stream[0].reasoningEffort, null, 'a model without an effort');
+		t.activeModelId = 'google/gemini-4-argon';
+		await t.host.handleSend('and again');
+		assert.strictEqual(t.calls.stream[1].model, 'google/gemini-4-argon');
+		assert.strictEqual(t.calls.stream[1].reasoningEffort, 'medium');
 	});
 
 	await test('BYOK: no account and no key is "No API key set for <provider>", not a session card', async () => {
