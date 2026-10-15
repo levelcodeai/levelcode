@@ -1,6 +1,6 @@
 # LevelCode v1.4.0
 
-Extensions from Open VSX install again, and now every install is checked. Up to v1.3.1, LevelCode could not check any signed extension, so every install from Open VSX stopped at **Install Anyway**, and installed extensions never updated. This release checks each one against Open VSX's own signing key. The agent can also draw now: when structure is the point, it puts a diagram in the chat, in your theme, with boxes that open the code they name. And Gemini 4 Argon, Google's new reasoning model, gets its real context window and room to think.
+Extensions from Open VSX install again, and the editor checks them before installing. Up to v1.3.1, LevelCode could not check any signed extension, so every install from Open VSX stopped at **Install Anyway**, and installed extensions never updated. This release checks what Open VSX serves against the registry's own signing key. The agent can also draw now: when structure is the point, it puts a diagram in the chat, in your theme, with boxes that open the code they name. And Gemini 4 Argon, Google's new reasoning model, gets its real context window and room to think.
 
 ## Highlights
 
