@@ -189,7 +189,8 @@ write), the tab's secrets ride through that one navigation in sessionStorage and
 and removed, when the editor starts again. The tab comes back to the address it left: a folder or
 workspace opened from the computer is opened again, not the scratch workspace.
 
-- **`?signin=1`** (the account site's "Open LevelCode" link) makes step 1 happen by itself, once:
+- **`?signin=1`** (the account site's "Open LevelCode" link, and where a sign-in on the account site
+  lands while the web edition is on) makes step 1 happen by itself, once:
   `main.js` removes the parameter, then delivers `levelcode://…/launch`, which focuses the chat and
   starts the sign-in only when there is no session.
 - **A result is delivered only if it is fresh** (written in the last two minutes — the one-time
@@ -329,17 +330,21 @@ Three settings on the Rails app (all default **off**; with none set nothing chan
 | Variable | Meaning |
 | --- | --- |
 | `LEVELCODE_WEB_EDITOR_ORIGINS` | Comma list of origins the editor is served from, exactly (`https://editor.example.com`). A sign-in code is only ever sent to `<origin>/callback.html` with the right parameters. Also the CORS list. |
-| `LEVELCODE_WEB_EDITOR_URL` | Where the account site's "Open LevelCode" goes: one of those origins and, optionally, a path. |
+| `LEVELCODE_WEB_EDITOR_URL` | Where the account site's "Open LevelCode" goes, and where a sign-in on the account site lands (with `?signin=1`; a `next` page the visitor asked for wins): one of those origins and, optionally, a path. |
 | `LEVELCODE_WEB_EXTENSION_HOST_ORIGINS` | Comma list (one wildcard each) of origins the extension host runs on, when isolated. CORS only — never a callback. |
 
 `GET /api/levelcode/v1/web_editor` answers `{ enabled, url }`; the account SPA shows its entry
 points only when it is on.
 
-**Do not host the editor on a subdomain of the account host.** The account session cookie is
-`SameSite=Lax`, which is a site boundary, not an origin one: it is sent on a request from a sibling
-subdomain, and the API takes that cookie when there is no bearer token. A page that runs other
-people's extensions there could cause credentialed requests (CORS stops it *reading* the answer, not
-causing the effect). Use another registrable domain.
+**On a subdomain of the account host — `app.levelcode.ai` — and why that is safe now.** The account
+session cookie is `SameSite=Lax`, which is a site boundary, not an origin one: it is sent on a request
+from a sibling subdomain. The API takes it only from the account site's own pages (`Sec-Fetch-Site:
+same-origin`, systemu-net/thin.ly#454), and the `/ai/*` writes carry Rails' CSRF token, so the
+editor's page cannot spend the account's session; it uses its own bearer token, as the desktop does.
+**Deploy that backend before** setting the variables above for a subdomain. What a subdomain can
+still do that another domain cannot: set a cookie for the parent domain (a `__Host-` session cookie
+would refuse it — not done), and run whatever the page runs — LevelCode's own code only. Before the
+page runs anyone else's, put the extension host on another registrable domain.
 
 ## Security model
 
@@ -520,8 +525,8 @@ Say these out loud rather than discover them in production:
 
 ## Decisions that are the owner's
 
-1. **The editor's domain.** Not a subdomain of the account host (see Deploying). Which registrable
-   domain, and who holds it.
+1. **The editor's domain.** *Decided 2026-10-17:* `app.levelcode.ai`, and a sign-in at levelcode.ai
+   lands there (systemu-net/thin.ly#454). Open: the `__Host-` session cookie (see Deploying).
 2. **The webview origin.** Keep Code-OSS's CDN (no setup; a dependency on Microsoft's hosting of the
    published page for this build's commit) or self-host a wildcard origin.
 3. **Isolating the extension host.** Worth it before any third-party extension is ever allowed; not
