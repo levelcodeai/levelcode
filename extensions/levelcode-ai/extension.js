@@ -2240,7 +2240,12 @@ async function compactAgentMemory() {
 }
 
 let lastAgentGoal = null;   // remembered so the response bar's Retry can re-run it
-async function agentFlow(text, imageBlocks) {
+/**
+ * Run the agent on a goal. `opts.typed` says the person typed `text` into the chat just now (handleSend);
+ * every other caller — a diagram retry, Retry and Continue on the response bar — passes words the person
+ * did not type here, some of them read back from a session file or written by the model.
+ */
+async function agentFlow(text, imageBlocks, opts) {
 	if (text && text.trim()) { lastAgentGoal = text; }
 	const cfg = aiConfig();
 	const providerId = currentProviderId();
@@ -2269,7 +2274,10 @@ async function agentFlow(text, imageBlocks) {
 	checkpoints.push(currentCheckpoint);
 	post({ type: 'checkpointOpened', turnId: currentCheckpoint.turnId });
 	agentMessages.push(goalMsg);
-	if (text && text.trim()) { humanGoals.push(text.trim()); if (humanGoals.length > 20) { humanGoals.splice(0, humanGoals.length - 20); } }
+	// Only what the person typed becomes their word to the Ask When Risky reviewer. A retried or generated goal
+	// stays activity: a typed goal Retry repeats is already on this list, and one from a resumed session must
+	// not be (see resumeSession).
+	if (opts && opts.typed && text && text.trim()) { humanGoals.push(text.trim()); if (humanGoals.length > 20) { humanGoals.splice(0, humanGoals.length - 20); } }
 	trimAgentMemory();
 	// Sessions: mark where THIS turn's messages begin (the goal, post-trim). agentMessages is a trimmed
 	// live window, but a persisted session is the FULL append-only history — so after the run we persist
@@ -2578,7 +2586,7 @@ async function handleSend(text, images) {
 	if ((!text || !text.trim()) && !imageBlocks.length) { return; }
 	text = text || '';
 	if (ctx) { ctx.globalState.update('levelcode.ai.hasSentMessage', true); }   // user engaged → stop auto-revealing the panel on launch
-	if (agentMode) { await agentFlow(text, imageBlocks); return; }
+	if (agentMode) { await agentFlow(text, imageBlocks, { typed: true }); return; }
 	const cfg = aiConfig();
 	const providerId = currentProviderId();
 	dbg('chat.send', { provider: providerId, model: activeModel(cfg, providerId), chars: text.length, history: conversation.length });

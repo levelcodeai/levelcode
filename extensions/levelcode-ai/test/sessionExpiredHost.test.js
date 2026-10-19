@@ -108,7 +108,7 @@ const makeHost = new Function('env', [
 	'  sealLiveSession, resetConversationState, postContextFiles, postMemoryDigest, sessionsManager, currentContextLimit,',
 	'  refreshSessions, focusChatView, review, checkpoints } = env;',
 	"const SYSTEM_PROMPT = 'system';",
-	'let activeWebview = env.webview, cloudSignedIn = env.signedIn, agentMode = false, conversation = [], pendingContext = null, conversationEpoch = 0, abort = null;',
+	'let activeWebview = env.webview, cloudSignedIn = env.signedIn, agentMode = !!env.agentMode, conversation = [], pendingContext = null, conversationEpoch = 0, abort = null;',
 	'let agentMessages = [], currentCheckpoint = null, lastAgentGoal = null;',
 	// resumeSession starts the Ask When Risky reviewer's record of the person's goals over (agentReview.js).
 	'let humanGoals = [], humanAnswers = [];',
@@ -184,7 +184,7 @@ function boot(over) {
 	for (const k of Object.keys(o.settings)) { if (o.settings[k] === null) { delete settings[k]; } else { settings[k] = o.settings[k]; } }
 
 	const secrets = new Map(), state = new Map(), posted = [], ops = [];
-	const calls = { refresh: [], stream: [], keyPrompts: 0 };
+	const calls = { refresh: [], stream: [], keyPrompts: 0, flows: [] };
 	const vscode = { workspace: { getConfiguration: (section) => ({ get: (k, d) => (settings[section + '.' + k] === undefined ? d : settings[section + '.' + k]) }) } };
 	const webview = { postMessage: (m) => { posted.push(m); } };
 	const t = {
@@ -214,7 +214,7 @@ function boot(over) {
 		last: (type) => posted.filter((m) => m.type === type).pop()
 	};
 	const env = {
-		vscode, resolveGateway, webview: o.webview ? webview : undefined, signedIn: !!o.access,
+		vscode, resolveGateway, webview: o.webview ? webview : undefined, signedIn: !!o.access, agentMode: !!o.agentMode,
 		session: o.refreshTimeoutMs ? Object.assign({}, session, { REFRESH_TIMEOUT_MS: o.refreshTimeoutMs }) : session,
 		ctx: {
 			secrets: {
@@ -275,7 +275,7 @@ function boot(over) {
 		aiConfig: () => vscode.workspace.getConfiguration('levelcode.ai'),
 		dbg: () => { }, refreshCloudProfile: async () => { }, fetchCloudRoster: () => { }, sendConfigToWebview: () => { },
 		gatewayModel: () => 'cloud-model', maxOutputTokens: () => 4096, currentProviderId: () => 'claude',
-		baseUrlFor: () => '', activeModel: () => t.activeModelId || 'claude-model', storeImages: () => [], agentFlow: async () => { },
+		baseUrlFor: () => '', activeModel: () => t.activeModelId || 'claude-model', storeImages: () => [], agentFlow: async (text, _img, opts) => { calls.flows.push({ text, typed: !!(opts && opts.typed) }); },
 		listWorkspaceFiles: async () => [], workspaceMapBlock: () => '', activeFileBlock: () => '',
 		contextFileBlocks: async () => [], gatherAutoContext: async () => ({ blocks: [], names: [] }),
 		labelImages: (b) => b, withImages: (m) => m,
@@ -1082,6 +1082,21 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		await t.host.checkCloudSession('focus');
 		assert.strictEqual(t.posted.filter((m) => m.type === 'sessionExpired').length, 1, 'found inside the ten minutes');
 		assert.strictEqual(t.calls.refresh.length, 1);
+	});
+
+	await test('SEND in agent mode: the goal reaches agentFlow marked as typed — the Ask When Risky reviewer\'s only source of the person\'s word', async () => {
+		const t = boot({ agentMode: true, settings: { 'levelcode.ai.providerMode': 'byok' }, byokKey: 'k' });
+		await t.host.handleSend('Run the tests and fix what fails', []);
+		assert.deepStrictEqual(t.calls.flows, [{ text: 'Run the tests and fix what fails', typed: true }]);
+	});
+
+	await test('…and nothing else does: Retry, Continue and a diagram retry pass words the person did not type here', async () => {
+		// The response bar's buttons live in the message switch, which no harness lifts: pinned from source.
+		// Exactly one caller may say `typed: true`, and it is handleSend.
+		assert.strictEqual((src.match(/typed: true/g) || []).length, 1, 'another caller marks its goal as typed');
+		assert.match(src, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks, \{ typed: true \}\); return; \}/);
+		assert.match(src, /case 'retry':[^\n]*await agentFlow\(lastAgentGoal\);/);
+		assert.match(src, /case 'continueAgent':[^\n]*await agentFlow\('Continue from where you left off[^\n]*'\);/);
 	});
 
 	await test('`ready` does not say it twice: the handler has just read the same token, and the card is replayed last', async () => {
