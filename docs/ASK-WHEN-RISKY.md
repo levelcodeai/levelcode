@@ -63,8 +63,11 @@ produce ratings, and `high` asks however the person was quoted.
 
 ### Every failure asks
 
-No answer within 30 seconds, an error from the provider, an answer that is not the JSON above: the
-command goes to the person, and the card says the reviewer could not decide. A broken reviewer makes
+No answer within 30 seconds, an error from the provider, an answer that is not the JSON above (all three
+ratings, `injection` included — an answer that leaves it out has not said there was none): the
+command goes to the person, and the card says the reviewer could not decide. So does a command longer than
+the reviewer's 4,000-character budget, without a model call: the reviewer must see the whole line it vouches
+for, and a cut in the middle is exactly where something could hide. A broken reviewer makes
 the mode behave like Default Approvals, never like Autopilot. Stopping the run during a review ends
 it without asking and without running.
 
@@ -86,9 +89,11 @@ Command line:
 <command>
 ```
 
-- **Only the PERSON section speaks for the person.** The host records the goals as they are typed
-  (`humanGoals` in `extension.js`) and `agent.js` records ask_user choices; nothing is inferred from
-  the transcript, which also holds the loop's own nudges and compaction summaries.
+- **Only the PERSON section speaks for the person.** The host records a goal only when it arrives from
+  the chat's input box (`agentFlow(…, { typed: true })`, set by `handleSend` alone): a diagram retry,
+  Retry after a resume and Continue pass words the person did not type here, and stay activity.
+  `agent.js` records ask_user choices. Nothing is inferred from the transcript, which also holds the
+  loop's own nudges and compaction summaries.
 - **Everything else is activity**, inside a fence with a per-request random id, so text in a file
   that looks like `PERSON` or `END ACTIVITY` stays inside it. Long entries are cut in the middle with
   `[... N characters left out ...]`, and the reviewer is told that what it cannot see is not safe by
@@ -132,7 +137,8 @@ Both new settings are **application-scoped**, and `readApprovalMode()` reads onl
 value: a folder's `.vscode/settings.json` is written by whoever wrote the repository and must not be
 able to loosen approvals. When `agent.approvals` has never been set, the older `agent.autopilot`
 boolean still means Autopilot, and choosing a mode keeps that boolean equal to "mode is Autopilot".
-(The old boolean itself is not application-scoped on the desktop; that is tracked separately.)
+A change in Settings, or in another window, takes effect on the next command, and the pill follows it
+(`onConfigChanged`).
 
 ## Where the idea came from
 
@@ -168,22 +174,28 @@ What LevelCode does differently, on purpose:
 The first three rows follow from the first one: without a sandbox, a wrong "allow" runs on the
 person's real machine, so the model never gets the last word on anything that cannot be undone.
 
-## What was run, and what was not (2026-10-19, macOS 27.0.1, Node 24)
+## What was run, and what was not (2026-10-19, macOS 27.0.1, Node 24, on develop e528846)
 
 Run:
-- `scripts/test-extensions.sh`: all 129 suites, including `test/agentReview.test.js` (25: policy,
-  parsing, the request's shape and bounds, every failure path) and `test/agentReviewGate.test.js` (16:
-  the real `runAgent` → `run_command` chain in all three modes, with the provider and `spawn` stood in).
-- Ten single-defect mutations (the danger set reaching the reviewer, `high` running, injection
-  ignored, a failed review running, the reviewer's cost dropped, the cache ignoring edits, a goal
-  repeated as activity, ask_user choices not recorded, no timeout race, `delete_file` ungated): each
-  turned its test red. The timeout mutation first passed, because a promise that never settles lets
-  Node exit 0 midway; both suites now fail unless they reach their last test.
+- `scripts/test-extensions.sh`: all 131 suites, including `test/agentReview.test.js` (27: policy,
+  parsing, the request's shape and bounds, every failure path), `test/agentReviewGate.test.js` (15: the
+  real `runAgent` → `run_command` chain in all three modes, with the provider and `spawn` stood in),
+  `test/agentReviewAnthropic.test.js` (the real dispatcher and native Anthropic adapter, only `fetch`
+  stood in), and the host halves lifted into `sessionExpiredHost` and `diagramHost` (typed goals, the
+  settings reload).
+- Sixteen single-defect mutations (the danger set reaching the reviewer, `high` running, injection
+  ignored, a failed review running, the reviewer's cost dropped, a goal repeated as activity, ask_user
+  choices not recorded, no timeout race, `delete_file` ungated, the Anthropic callback, a missing
+  injection rating accepted, a long command reviewed, an untyped goal recorded, the send path not
+  marking its goal, a diagram retry marked typed, a settings change ignored): each turned a test red.
+  The timeout mutation first passed, because a promise that never settles lets Node exit 0 midway; the
+  suites now fail unless they reach their last test.
 - `scripts/approvals-editor-check.js` in the dev build with a stand-in provider: 12 checks (the menu,
   the saved setting, a passed `ls -la` with no card, the `.env` upload stopped with the reviewer's
   reason, `rm -rf build` asking without a review, the README's planted instruction inside the fence,
   the count at the end, no page errors).
-- `tsc --checkJs` over `extension.js`, `agent.js` and `agentReview.js`: no new undefined names.
+- `tsc --checkJs` over `extension.js`, `agent.js`, `agentReview.js` and `providers/anthropic.js`: no new
+  undefined names.
 
 Not run:
 - **No real model has been the reviewer.** The stand-in answers with fixed ratings. How often a real
