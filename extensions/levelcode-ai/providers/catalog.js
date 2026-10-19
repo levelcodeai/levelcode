@@ -204,13 +204,14 @@ function fastCompletionModel(providerId) {
  * editor writes for itself, which need little thought, so it asks for 'low'; chat and the agent get the
  * row's own effort.
  * @param {string} modelId
- * @param {'chat'|'agent'|'compact'} purpose
+ * @param {'chat'|'agent'|'compact'|'review'} purpose
  * @returns {string|null}
  */
 function reasoningEffortFor(modelId, purpose) {
 	const effort = modelCaps(modelId).effort;
 	if (!effort) { return null; }
-	return purpose === 'compact' ? 'low' : effort;
+	// Compaction and the Ask When Risky reviewer are short, bounded jobs: think little.
+	return (purpose === 'compact' || purpose === 'review') ? 'low' : effort;
 }
 
 /** Format a caps object as a compact QuickPick detail string, e.g. "128k ctx · tools · vision". */

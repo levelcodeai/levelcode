@@ -95,10 +95,20 @@ let abort = null;
 let cloudSignedIn = false;
 /** Agent mode: sending runs the autonomous tool loop instead of plain chat. */
 let agentMode = true;
-/** Autopilot: the agent runs commands without asking (except the danger set — see commandSafety.js)
- *  and prefers self-verifying over pausing to ask. Initialized from config on 'ready', toggled live,
- *  and persisted so an explicit opt-in survives a restart. */
-let autopilot = false;
+/** Command approvals, one of three modes (agentReview.js):
+ *   'ask'       Default Approvals: every command asks.
+ *   'review'    Ask When Risky: a reviewer model passes routine commands; the rest ask.
+ *   'autopilot' Autopilot: commands run without asking, and the agent prefers self-verifying over pausing.
+ *  In 'review' and 'autopilot' the danger set (commandSafety.js) still asks. Initialized from config on
+ *  'ready', switched live from the chat's approvals menu, and persisted so a choice survives a restart. */
+let approvalMode = 'ask';
+const APPROVAL_MODES = ['ask', 'review', 'autopilot'];
+/** What the person typed as goals in THIS conversation, newest last — the only text the Ask When Risky
+ *  reviewer treats as their word (with their ask_user choices, below). Kept by the host because only the
+ *  host knows which user messages a person wrote: the transcript also holds the loop's own nudges. */
+let humanGoals = [];
+/** The person's choices in ask_user this conversation (agent.js appends), for the same reviewer. */
+let humanAnswers = [];
 /** Apply-then-review session (Keep/Undo for applied agent edits). Set in activate(). */
 let review;
 /** Persistent agent transcript for the session (tool calls + results), so follow-up goals
@@ -108,6 +118,30 @@ let agentMessages = [];
 function post(msg) { if (activeWebview) { activeWebview.postMessage(msg); } }
 
 function aiConfig() { return vscode.workspace.getConfiguration('levelcode.ai'); }
+
+/** The approvals mode from settings. `agent.approvals` wins when the user has set it; before it existed
+ *  the only setting was the `agent.autopilot` boolean, so an older opt-in still means Autopilot.
+ *  Only the USER's value is read: a folder's .vscode/settings.json is written by whoever wrote the
+ *  repository, and must not be able to loosen approvals (the setting is application-scoped too). */
+function readApprovalMode() {
+	const cfg = aiConfig();
+	const i = cfg.inspect('agent.approvals');
+	const set = i && i.globalValue;
+	if (APPROVAL_MODES.includes(/** @type {any} */ (set))) { return /** @type {string} */ (set); }
+	return cfg.get('agent.autopilot', false) ? 'autopilot' : 'ask';
+}
+/** Switch modes from the chat menu: live for the running goal (agent.js reads it per command), saved,
+ *  and echoed so the menu can never disagree with the host. `agent.autopilot` is kept equal to
+ *  "mode is Autopilot", so nothing that still reads the old boolean sees a stale answer. */
+function setApprovalMode(mode) {
+	if (!APPROVAL_MODES.includes(mode)) { return; }
+	approvalMode = mode;
+	const cfg = aiConfig();
+	cfg.update('agent.approvals', mode, vscode.ConfigurationTarget.Global);
+	if (cfg.get('agent.autopilot', false) !== (mode === 'autopilot')) { cfg.update('agent.autopilot', mode === 'autopilot', vscode.ConfigurationTarget.Global); }
+	dbg('approvals.set', { mode });
+	post({ type: 'approvals', mode });
+}
 
 /** Inline debug trace — prints a 🐛 DEBUG line in the chat (gated by levelcode.ai.debug). */
 function dbg(label, data) { if (aiConfig().get('debug', false)) { post({ type: 'debug', label, data: data != null ? data : null }); } }
@@ -1638,6 +1672,10 @@ async function resumeSession(id) {
 	if (!r) { post({ type: 'agentError', message: 'That session could not be opened — it may have been deleted.' }); return; }
 
 	agentMessages = Array.isArray(r.messages) ? r.messages.slice() : [];   // what the model resumes with
+	// The Ask When Risky reviewer counts only goals typed since this point as the person's word. A session
+	// file is read back from `sessions.dir`, which a workspace setting can point anywhere, so its earlier
+	// goals go to the reviewer as activity. That errs toward asking, never toward running.
+	humanGoals = []; humanAnswers = [];
 	// Tier 2/3: the head didn't fit the window, so only the recent tail is in context. Prepend a factual
 	// note so the model KNOWS earlier turns exist (a real head-summary is a later refinement) — the user
 	// still sees the whole transcript in the replay. Ephemeral: never persisted (recordTurn appends only
@@ -1728,6 +1766,7 @@ function resetConversationState() {
 	clearQuestions();
 	conversation = [];
 	agentMessages = [];
+	humanGoals = []; humanAnswers = [];
 	diagrams.reset();                      // the next conversation starts at d-1, owing nothing
 	diagramsStubbed = false;
 	checkpoints.length = 0; currentCheckpoint = null;   // drop the per-turn restore stack
@@ -2230,6 +2269,7 @@ async function agentFlow(text, imageBlocks) {
 	checkpoints.push(currentCheckpoint);
 	post({ type: 'checkpointOpened', turnId: currentCheckpoint.turnId });
 	agentMessages.push(goalMsg);
+	if (text && text.trim()) { humanGoals.push(text.trim()); if (humanGoals.length > 20) { humanGoals.splice(0, humanGoals.length - 20); } }
 	trimAgentMemory();
 	// Sessions: mark where THIS turn's messages begin (the goal, post-trim). agentMessages is a trimmed
 	// live window, but a persisted session is the FULL append-only history — so after the run we persist
@@ -2270,10 +2310,15 @@ async function agentFlow(text, imageBlocks) {
 			get maxSteps() { return Math.max(1, aiConfig().get('agent.maxSteps', 25)); },
 			maxTokens: Math.max(1024, cfg.get('agent.maxTokens', 8192)),   // per-turn output cap; continued across turns if hit
 			post, dbg,
-			// LIVE, not a snapshot: agent.js reads ctx.autopilot at each run_command, so flipping the
-			// Autopilot toggle mid-run takes effect on the very next command (run commands without asking,
-			// except the danger set — commandSafety.js).
-			get autopilot() { return autopilot; },
+			// LIVE, not a snapshot: agent.js reads the mode at each run_command, so switching approvals
+			// mid-run takes effect on the very next command. `autopilot` stays for the code that only asks
+			// "is it Autopilot?" (the system prompt's note, older call sites).
+			get approvalMode() { return approvalMode; },
+			get autopilot() { return approvalMode === 'autopilot'; },
+			// Ask When Risky: the reviewer's model (empty = the agent's own), and the person's own words.
+			get reviewModel() { return String(aiConfig().get('agent.reviewModel', '') || '').trim(); },
+			userRequests: humanGoals,
+			userAnswers: humanAnswers,
 			approve: requestApproval,           // run_command only
 			ask: requestQuestions,              // ask_user — clickable clarifying questions
 			// Gateway-mode token refresh for the agent loop: on a mid-run 401 (expired access token)
@@ -3109,9 +3154,10 @@ class ChatViewProvider {
 				// `ready` is the earliest a freshly-loaded webview can hear anything, so it is also where a
 				// surface that just took over replays the conversation it inherited (openChatInEditor) — and,
 				// after that, a session expiry this document was not there to see (replaySessionExpired).
-				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); await checkCloudSession('ready'); autopilot = aiConfig().get('agent.autopilot', false); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); post({ type: 'autopilot', on: autopilot }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } postMemoryDigest(); if (pendingTranscriptReplay) { const t = pendingTranscriptReplay; pendingTranscriptReplay = ''; replayLiveTranscript(t); } await replaySessionExpired(); break;
+				case 'ready': cloudSignedIn = !!(ctx && await ctx.secrets.get(ACCOUNT_TOKEN_KEY)); await checkCloudSession('ready'); approvalMode = readApprovalMode(); sendConfigToWebview(); postActiveFile(); postContextFiles(); post({ type: 'mode', agent: agentMode }); post({ type: 'approvals', mode: approvalMode }); postAccount(); buildFileIndex(); post({ type: 'contextUsage', input: 0, limit: currentContextLimit() }); if (review) { review.resync(); } postMemoryDigest(); if (pendingTranscriptReplay) { const t = pendingTranscriptReplay; pendingTranscriptReplay = ''; replayLiveTranscript(t); } await replaySessionExpired(); break;
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
-				case 'setAutopilot': autopilot = !!msg.on; aiConfig().update('agent.autopilot', autopilot, vscode.ConfigurationTarget.Global); dbg('autopilot.set', { on: autopilot }); post({ type: 'autopilot', on: autopilot }); break;
+				case 'setApprovals': setApprovalMode(String(msg.mode || '')); break;
+				case 'setAutopilot': setApprovalMode(msg.on ? 'autopilot' : 'ask'); break;   // the two-option menu's message
 				case 'send': await handleSend(msg.text, msg.images); break;
 				// One surface for "that could not be attached" — VS Code's own, not a second one
 				// invented inside the transcript.

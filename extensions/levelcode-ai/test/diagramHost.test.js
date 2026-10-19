@@ -121,6 +121,7 @@ const makeHost = new Function('env', [
 	decl('FILE_EXCLUDES'),
 	'let abort = null, agentMessages = [], lastAgentGoal = null, diagramsStubbed = false;',
 	'let conversation = [], currentCheckpoint = null, agentMode = true;',
+	'let humanGoals = [], humanAnswers = [];',   // resumeSession resets the reviewer's record of the person's goals
 	decl('diagramFolders'),
 	...HOST.map(extract),
 	'return { ' + HOST.join(', ') + ',',

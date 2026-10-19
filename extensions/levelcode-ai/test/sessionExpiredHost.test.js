@@ -110,6 +110,8 @@ const makeHost = new Function('env', [
 	"const SYSTEM_PROMPT = 'system';",
 	'let activeWebview = env.webview, cloudSignedIn = env.signedIn, agentMode = false, conversation = [], pendingContext = null, conversationEpoch = 0, abort = null;',
 	'let agentMessages = [], currentCheckpoint = null, lastAgentGoal = null;',
+	// resumeSession starts the Ask When Risky reviewer's record of the person's goals over (agentReview.js).
+	'let humanGoals = [], humanAnswers = [];',
 	// resumeSession also hands a session's stored diagrams back to the diagram service
 	// (docs/RICH-DIAGRAMS.md). These sessions have none; test/diagramHost.test.js runs it with the real one.
 	'let diagramsStubbed = false; const diagrams = { load: () => {}, stubsFor: () => [] };',

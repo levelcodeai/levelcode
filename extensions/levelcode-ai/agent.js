@@ -19,6 +19,7 @@ const providers = require('./providers/index');
 const catalog = require('./providers/catalog');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
+const { reviewCommand, approvalModeOf } = require('./agentReview');
 const { commitShellChanges } = require('./shellCommit');
 const { loadProjectRules } = require('./projectRules');
 const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
@@ -615,10 +616,12 @@ async function runTool(tu, ctx) {
 			const abs = await resolveWorkspacePathAsync(input.path || '', { mustExist: true });
 			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint(); }
 			try { const st = await host.stat(abs); if (st && st.isDirectory) { return 'ERROR: ' + input.path + ' is a directory — delete_file removes a single file.'; } } catch { /* */ }
-			// Deletion is in the autopilot danger set — ask even when autopilot runs everything else silently.
-			// (In manual mode nothing gates here: the edit is applied and reviewed with Keep/Undo as before.)
-			if (ctx.autopilot && typeof ctx.approve === 'function') {
-				const okDel = await ctx.approve({ kind: 'delete', path: input.path, danger: dangerLabel('deletion') });
+			// Deletion is in the danger set — ask even when autopilot (or Ask When Risky) runs other commands
+			// without asking; it never goes to the reviewer. (In manual mode nothing gates here: the edit is
+			// applied and reviewed with Keep/Undo as before.)
+			const delMode = approvalModeOf(ctx);
+			if (delMode !== 'ask' && typeof ctx.approve === 'function') {
+				const okDel = await ctx.approve({ kind: 'delete', path: input.path, danger: dangerLabel('deletion'), mode: delMode });
 				if (!okDel) { return 'User skipped deleting ' + input.path + '. Do not retry it.'; }
 			}
 			const ok = ctx.applyDelete ? await ctx.applyDelete({ path: input.path }) : false;
@@ -645,12 +648,24 @@ async function runTool(tu, ctx) {
 				if (!wf) { return 'ERROR: no workspace folder named "' + input.folder + '"' + whereHint(); }
 				cwdRoot = wf.root;
 			}
-			// Autopilot runs commands without asking — EXCEPT the danger set (deletion, sudo, force-push,
-			// remote|shell, publish, system writes), which always asks. Manual mode asks for everything.
-			const danger = ctx.autopilot ? classifyCommand(cmd) : { dangerous: true, category: null };
-			const approved = danger.dangerous
-				? await ctx.approve({ kind: 'command', command: host.displaySafe(cmd), explanation: host.displaySafe(input.explanation || ''), danger: danger.category ? dangerLabel(danger.category) : null })
-				: true;
+			// Approvals (agentReview.js). 'ask' (Default Approvals) asks for everything. 'autopilot' runs every
+			// command outside the danger set (deletion, sudo, force-push, remote|shell, publish, system writes).
+			// 'review' (Ask When Risky) shows a command outside the danger set to a reviewer model first and
+			// runs it only on the reviewer's ratings. The danger set asks in both, and never reaches the reviewer.
+			const mode = approvalModeOf(ctx);
+			const danger = mode === 'ask' ? { dangerous: true, category: null } : classifyCommand(cmd);
+			const card = { kind: 'command', command: host.displaySafe(cmd), explanation: host.displaySafe(input.explanation || ''), mode };
+			let approved;
+			if (danger.dangerous) {
+				approved = await ctx.approve(Object.assign(card, { danger: danger.category ? dangerLabel(danger.category) : null }));
+			} else if (mode === 'autopilot') {
+				approved = true;
+			} else {
+				const r = await reviewGate(ctx, { command: cmd, explanation: String(input.explanation || ''), cwd: cwdRoot });
+				if (r.outcome === 'stopped') { return 'Stopped before this command ran.'; }
+				approved = r.outcome === 'allow'
+					|| await ctx.approve(Object.assign(card, { danger: null, review: { risk: r.verdict ? r.verdict.risk : null, reason: host.displaySafe(r.reason || ''), failure: r.failure } }));
+			}
 			if (!approved) { return 'User skipped this command. Do not retry it.'; }
 			const runId = tu.id || ('run-' + Date.now());
 			ctx.post({ type: 'termRun', id: runId, command: host.displaySafe(cmd), cwd: path.basename(cwdRoot) || 'workspace', background: bg, explanation: host.displaySafe(input.explanation || '') });
@@ -736,6 +751,8 @@ async function runTool(tu, ctx) {
 				return '- ' + (a.header ? a.header + ' — ' : '') + (a.question || '') + ' → ' + sel;
 			});
 			if (res.notes) { lines.push('- Additional notes from the user: ' + res.notes); }
+			// The person's own choices: the reviewer (agentReview.js) counts these as their word.
+			if (Array.isArray(ctx.userAnswers)) { ctx.userAnswers.push(lines.join('\n')); }
 			return 'The user answered your questions (these are their recorded decisions — honor them and do NOT ask again):\n' + lines.join('\n') + '\n\nProceed with the work using these answers.';
 		}
 		if (tu.name === 'use_skill') {
@@ -842,6 +859,57 @@ function isAgentAuthError(e) {
  *
  * Never throws: MCP is an enhancement, and no server misconfiguration may take down an agent run.
  */
+/**
+ * Ask When Risky: show one command to the reviewer (agentReview.js) and report what it decided.
+ *
+ * The same command in the same folder, with no file edited since it last passed, passes again without
+ * a second review: `npm test` five times in a row is one review. An edit in between makes it a new
+ * question, because the command may now run code the reviewer has not seen.
+ *
+ * The review is a real model call on the run's own provider, so in gateway mode it costs credits. Its
+ * cost is kept on ctx and added to the run's total, so the response bar's figure includes it.
+ * @returns {Promise<{outcome:'allow'|'ask'|'stopped', verdict:any, reason:string, failure:string|null}>}
+ */
+async function reviewGate(ctx, action) {
+	const stats = ctx.reviewStats || (ctx.reviewStats = { ran: 0, asked: 0 });
+	const passed = ctx.reviewPassed || (ctx.reviewPassed = new Set());
+	const key = action.cwd + '\n' + (ctx.editCount || 0) + '\n' + action.command;
+	if (passed.has(key)) {
+		stats.ran++;
+		ctx.post({ type: 'agentTool', icon: 'workspace-trusted', text: 'Reviewer · passed this exact command earlier, no edits since' });
+		return { outcome: 'allow', verdict: null, reason: '', failure: null };
+	}
+	const model = ctx.reviewModel || ctx.model;
+	const reasons = !!catalog.modelCaps(model).reasoning;
+	ctx.post({ type: 'agentStatus', text: 'reviewing the command…' });
+	const r = await reviewCommand({
+		// One turn, no tools, on the run's own route and key. A reasoning model thinks out of the same
+		// budget, so it gets room for both and is asked to think little (as compaction does).
+		runTurn: (o) => providers.streamAgentTurn({
+			providerId: ctx.providerId, apiKey: ctx.apiKey, baseURL: ctx.baseURL, label: ctx.label,
+			model, maxTokens: reasons ? 4096 : 400, system: o.system, messages: o.messages, tools: [],
+			signal: o.signal, reasoningEffort: catalog.reasoningEffortFor(model, 'review')
+		}),
+		messages: ctx.messages, userRequests: ctx.userRequests, userAnswers: ctx.userAnswers,
+		command: action.command, explanation: action.explanation, cwd: action.cwd, signal: ctx.signal
+	});
+	if (r.usage) {
+		if (r.usage.cost_micros != null) { ctx.reviewCostMicros = (ctx.reviewCostMicros || 0) + r.usage.cost_micros; }
+		if (r.usage.credits_remaining_micros != null) { ctx.credits = r.usage.credits_remaining_micros; }
+	}
+	if (ctx.dbg) { ctx.dbg('review.done', { outcome: r.outcome, failure: r.failure, risk: r.verdict && r.verdict.risk, authorization: r.verdict && r.verdict.authorization, injection: r.verdict && r.verdict.injection, model, costMicros: r.usage && r.usage.cost_micros }); }
+	if (r.outcome === 'allow') {
+		stats.ran++;
+		passed.add(key);
+		ctx.post({ type: 'agentStatus', text: 'running command…' });
+		ctx.post({ type: 'agentTool', icon: 'workspace-trusted', text: 'Reviewer · ' + r.verdict.risk + ' risk — ' + host.displaySafe(r.reason || 'no reason given') });
+	} else if (r.outcome === 'ask') {
+		stats.asked++;
+		ctx.post({ type: 'agentStatus', text: 'waiting for your answer…' });   // not "reviewing" while the card waits
+	}
+	return r;
+}
+
 /**
  * G1 launch gate for ONE repo-authored server. Returns true if it may be spawned.
  *
@@ -1041,7 +1109,10 @@ async function runAgent(ctx) {
 		: (ctx.autopilot && sh
 			// A simulated shell has no build, no tests, no sudo and no network to be careful about: say what is true of it.
 			? '\n\nAUTOPILOT IS ON. Work end-to-end without pausing for confirmation. Your run_command calls run immediately and what they change appears in the user\'s Keep/Undo review; a command line that deletes files still asks the user first. Do NOT call ask_user for anything you can reasonably decide; pick a sensible default and proceed. When you are unsure whether a change is correct, do not stop to ask: verify it with what you have (read the files back, grep, diff, jq, and the editor\'s diagnostics for the files you changed), fix and re-verify. You cannot run tests or builds here, so never claim you did.'
-			: '');
+			: (approvalModeOf(ctx) === 'review' && shellOn
+				// Ask When Risky: a reviewer reads the explanation, so it has to say what the command really does.
+				? '\n\nASK WHEN RISKY IS ON. Before each run_command runs, an independent reviewer compares it with what the user asked for. Routine commands for the task run straight away; risky or off-task ones go to the user. Give every run_command an accurate explanation of what it does — the reviewer reads it, and a vague or misleading one sends the command to the user. Do not split a risky operation into innocent-looking steps to get it past the reviewer.'
+				: ''));
 	// Project rules: fold a repo's own AGENTS.md (or CLAUDE.md / .cursorrules) into the cached system
 	// block so the agent follows the project's conventions from turn one. Read once per run — an edit is
 	// picked up on the next run.
@@ -1423,7 +1494,13 @@ async function runAgent(ctx) {
 		if (ctx.diagrams) {
 			try { for (const m of ctx.diagrams.endRun()) { ctx.post(m); } } catch (e) { dbg('diagram.settle.error', { msg: String((e && e.message) || e) }); }
 		}
-		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, costMicros: runCostMicros, creditsLeftMicros: ctx.credits != null ? ctx.credits : null });
+		// Ask When Risky: the reviewer's calls are part of what the run cost, and the user sees what it did.
+		runCostMicros += ctx.reviewCostMicros || 0;
+		const rs = ctx.reviewStats;
+		if (rs && (rs.ran || rs.asked)) {
+			ctx.post({ type: 'agentTool', icon: 'workspace-trusted', text: 'Reviewer · ran ' + rs.ran + ' command' + (rs.ran === 1 ? '' : 's') + ' on its own, sent ' + rs.asked + ' to you' });
+		}
+		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, costMicros: runCostMicros, creditsLeftMicros: ctx.credits != null ? ctx.credits : null, reviewRan: rs ? rs.ran : 0, reviewAsked: rs ? rs.asked : 0 });
 		// [LevelCode] Gateway runs now carry real money: costMicros = what THIS run cost, credits = the
 		// remaining balance — both RETAIL micro-$. BYOK runs send neither (null/0) and the bar omits them.
 		ctx.post({
