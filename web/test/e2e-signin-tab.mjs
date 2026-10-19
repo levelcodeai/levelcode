@@ -17,7 +17,7 @@
 //     and an old one is not.
 //
 //   node web/test/e2e-signin-tab.mjs --static <vscode-web dir> --extensions <built extensions dir> [--product <json>]
-//   node web/test/e2e-signin-tab.mjs --dist <release dir> --stub-port <the account port it was built with>
+//   node web/test/e2e-signin-tab.mjs --dist <release dir> --stub-port <the account port it was built with> [--pages]
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -43,7 +43,7 @@ const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ?
 
 const stub = await startStub({ editorOrigin, port: args['stub-port'] ? Number(args['stub-port']) : 0 });
 const server = spawn(process.execPath, [path.join(HERE, '..', 'serve.mjs'), '--port', String(PORT), ...(DIST
-	? ['--dist', DIST]
+	? ['--dist', DIST, ...(args.pages ? ['--pages'] : [])]
 	: ['--static', STATIC, '--extensions', EXTS, '--extension-names', 'levelcode-ai,levelcode-web', '--account', stub.origin,
 		...(args.product ? ['--product', args.product] : [])])], { stdio: 'inherit' });
 // With the extension host on an origin of its own (--product with webEndpointUrlTemplate, or a release built with

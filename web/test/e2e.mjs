@@ -8,6 +8,7 @@
 // the real one must. It proves the editor's half of the contract; thin.ly's half is its own specs.
 //
 //   node web/test/e2e.mjs --static <vscode-web dir> --extensions <built extensions dir> [--shots <dir>]
+//   node web/test/e2e.mjs --dist <release dir> --stub-port <port> [--pages]   (--pages: served as Cloudflare Pages serves it)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,7 +38,7 @@ const shot = async (page, name) => { if (SHOTS) { await page.screenshot(path.joi
 // A release has its account origin baked into index.html, so the stand-in has to be where it was built to look.
 const stub = await startStub({ editorOrigin, port: args['stub-port'] ? Number(args['stub-port']) : 0 });
 const server = spawn(process.execPath, [path.join(HERE, '..', 'serve.mjs'), '--port', String(EDITOR_PORT), ...(DIST
-	? ['--dist', DIST]
+	? ['--dist', DIST, ...(args.pages ? ['--pages'] : [])]
 	: ['--static', STATIC, '--extensions', EXTS, '--extension-names', args['extension-names'] || 'levelcode-ai,levelcode-web', '--account', stub.origin,
 		...(args.product ? ['--product', args.product] : [])])], { stdio: 'inherit' });
 let chrome;
@@ -225,6 +226,18 @@ try {
 	check('after a reload the editor is still signed in', after > before, `${before} -> ${after}`);
 	check('after a reload the file that was kept is still there', (await scratchFile('/scratch/notes.md')) === 'notes\n');
 	await shot(page, '4-reload');
+
+	/* 4b. what the client loads from its own node_modules: the terminal's library (xterm), the syntax colouring
+	       (vscode-textmate, vscode-oniguruma). A host that does not have a file answers with something else — Cloudflare
+	       Pages, which is never sent a folder named node_modules, answers with the page — and the editor runs without it. */
+	if (DIST) {
+		await page.palette('LevelCode Shell: New Terminal');
+		const term = await page.waitFor(() => page.eval(`[...document.querySelectorAll('.xterm .xterm-screen')].some((e) => e.getBoundingClientRect().width > 0)`), { ms: 30000, label: 'a terminal' }).catch(() => false);
+		check('a terminal opens (LevelCode Shell: New Terminal): its library loaded', !!term);
+	}
+	const asPage = page.requests.filter((r) => /\.(m?js|json|wasm)(\?|$)/.test(r.url) && /text\/html/.test(r.mimeType || ''));
+	check('no script, JSON or WebAssembly file came back as an HTML page (a file the host does not have)', asPage.length === 0,
+		JSON.stringify(asPage.slice(0, 4).map((r) => r.url.replace(/^https?:\/\/[^/]+/, ''))));
 
 	/* 5. a folder from "the computer". The OS picker needs a person, so the page's File System Access entry point is
 	      replaced by one that hands back a real FileSystemDirectoryHandle (a folder of the origin-private file system);

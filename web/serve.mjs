@@ -2,6 +2,7 @@
 // Development / end-to-end server for LevelCode in the browser. Dependency-free.
 //
 //   node web/serve.mjs --static <vscode-web dir> --extensions <dir of built extensions> [--port 8800]
+//   node web/serve.mjs --dist <release> [--pages]
 //
 // It serves exactly what a static host serves in production (see scripts/build-web.mjs), with
 // the Code-OSS web build mounted at /static and the LevelCode extensions at /extensions.
@@ -10,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { webConfig, renderIndex, WEB_DIR } from './lib/config.mjs';
 import { parseHeadersFile, headersFor } from './lib/headers.mjs';
+import { uploaded, parseRedirects, matchRedirect, resolvePage } from './lib/pages.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, v, i, all) => {
 	if (v.startsWith('--')) { a.push([v.slice(2), all[i + 1] && !all[i + 1].startsWith('--') ? all[i + 1] : 'true']); }
@@ -23,6 +25,16 @@ const STATIC_DIR = path.resolve(args.static || process.env.LEVELCODE_WEB_STATIC 
 const EXT_DIR = path.resolve(args.extensions || process.env.LEVELCODE_WEB_EXTENSIONS || '');
 if (!DIST && !args.static && !process.env.LEVELCODE_WEB_STATIC) { console.error('missing --static <vscode-web dir> (or --dist <built release>)'); process.exit(2); }
 const RULES = DIST && fs.existsSync(path.join(DIST, '_headers')) ? parseHeadersFile(fs.readFileSync(path.join(DIST, '_headers'), 'utf8')) : { rules: [] };
+// --pages (with --dist): answer as Cloudflare Pages answers that release — only what wrangler uploads, its _redirects,
+// its .html redirects, and the page for an address that matches nothing (web/lib/pages.mjs).
+const PAGES = !!DIST && args.pages === 'true';
+const REDIRECTS = PAGES && fs.existsSync(path.join(DIST, '_redirects')) ? parseRedirects(fs.readFileSync(path.join(DIST, '_redirects'), 'utf8')) : [];
+/** A file Pages would have: uploaded, a regular file, not a symbolic link. */
+function pagesFile(rel) {
+	if (!uploaded(rel)) { return false; }
+	const p = within(DIST, rel);
+	try { return !!p && fs.lstatSync(p).isFile(); } catch { return false; }
+}
 
 const config = webConfig({
 	account: args.account || process.env.LEVELCODE_ACCOUNT_ORIGIN,
@@ -51,7 +63,13 @@ const server = http.createServer((req, res) => {
 	try { pathname = decodeURIComponent(url.pathname); } catch { res.writeHead(400).end('bad path'); return; }
 
 	let file = null;
-	if (DIST) {
+	if (PAGES) {
+		const r = matchRedirect(REDIRECTS, pathname);
+		if (r && r.status !== 200) { res.writeHead(r.status, { location: r.to + url.search }).end(); return; }
+		const page = resolvePage(r ? r.to : pathname, pagesFile);
+		if (page && 'redirect' in page) { res.writeHead(308, { location: page.redirect + url.search }).end(); return; }
+		file = path.join(DIST, page ? page.file : 'index.html');   // no such file: the page, as Pages answers it
+	} else if (DIST) {
 		file = within(DIST, pathname === '/' ? 'index.html' : pathname.slice(1));
 		if (file && fs.existsSync(file) && fs.statSync(file).isDirectory()) { file = path.join(file, 'index.html'); }
 	} else {

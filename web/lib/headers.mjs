@@ -70,7 +70,11 @@ export function policy(o) {
 
 /** Netlify / Cloudflare Pages `_headers` text. */
 export function toHeadersFile(p) {
-	return p.rules.map((r) => r.path + '\n' + Object.entries(r.headers).map(([k, v]) => `  ${k}: ${v}`).join('\n')).join('\n\n') + '\n';
+	// Cloudflare Pages serves a page `x.html` at `/x` (it redirects /x.html there), and matches rules against the address
+	// asked for: a rule for /callback.html alone would leave the sign-in page it serves without its headers. So each
+	// page's rule is also written for its address without `.html` (/index.html's is `/`, which has its own rule).
+	const rules = p.rules.flatMap((r) => (/^\/[^/]+\.html$/.test(r.path) && r.path !== '/index.html' ? [r, { ...r, path: r.path.slice(0, -'.html'.length) }] : [r]));
+	return rules.map((r) => r.path + '\n' + Object.entries(r.headers).map(([k, v]) => `  ${k}: ${v}`).join('\n')).join('\n\n') + '\n';
 }
 
 /** Parse a `_headers` file back into rules (the dev server serves a built release with it). */
