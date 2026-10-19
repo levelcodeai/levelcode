@@ -97,7 +97,7 @@ const FUNCTIONS = [
 	'refreshCloudToken', 'renewSession', 'storedToken', 'catchUpWithStoredSession', 'withSessionLock', 'sameSession', 'sessionExpired', 'postSessionExpired',
 	'sessionExpiredPending', 'isEndedSessionError', 'clearSessionExpired', 'replaySessionExpired', 'checkCloudSession',
 	'refreshGatewayToken', 'prepProviderRequest', 'handleSend', 'currentAccount', 'postAccount', 'accountSignOut',
-	'storeSession', 'newChat', 'resumeSession', 'restoreCheckpoint', 'onConfigChanged', 'readApprovalMode'
+	'storeSession', 'newChat', 'resumeSession', 'restoreCheckpoint', 'onConfigChanged', 'readApprovalMode', 'rememberTypedGoal'
 ];
 // eslint-disable-next-line no-new-func
 const makeHost = new Function('env', [
@@ -123,7 +123,7 @@ const makeHost = new Function('env', [
 	'return { ' + FUNCTIONS.join(', ') + ',',
 	'  KEY: { token: ACCOUNT_TOKEN_KEY, refresh: ACCOUNT_REFRESH_KEY, profile: ACCOUNT_PROFILE_KEY, expired: ACCOUNT_EXPIRED_KEY },',
 	'  signedIn: () => cloudSignedIn, conversation: () => conversation, abort: () => abort,',
-	'  openWebview: (w) => { activeWebview = w; }, setAgentMessages: (m) => { agentMessages = m; }, approvalMode: () => approvalMode };'
+	'  openWebview: (w) => { activeWebview = w; }, setAgentMessages: (m) => { agentMessages = m; }, approvalMode: () => approvalMode, humanGoals: () => humanGoals };'
 ].join('\n'));
 
 // The defaults a fresh install runs with come from package.json, not from this file: the whole
@@ -1097,9 +1097,21 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		// The response bar's buttons live in the message switch, which no harness lifts: pinned from source.
 		// Exactly one caller may say `typed: true`, and it is handleSend.
 		assert.strictEqual((src.match(/typed: true/g) || []).length, 1, 'another caller marks its goal as typed');
+		assert.match(src, /async function agentFlow\(text, imageBlocks, opts\) \{[\s\S]{0,4000}?rememberTypedGoal\(text, opts\);/, 'agentFlow hands the flag through unchanged');
 		assert.match(src, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks, \{ typed: true \}\); return; \}/);
 		assert.match(src, /case 'retry':[^\n]*await agentFlow\(lastAgentGoal\);/);
 		assert.match(src, /case 'continueAgent':[^\n]*await agentFlow\('Continue from where you left off[^\n]*'\);/);
+	});
+
+	await test('TYPED GOALS: only a goal marked typed is recorded as the person\'s — trimmed, newest 20', async () => {
+		const t = boot();
+		t.host.rememberTypedGoal('Redraw the diagram “x” with render_diagram.');
+		t.host.rememberTypedGoal('Continue from where you left off', {});
+		t.host.rememberTypedGoal('   ', { typed: true });
+		assert.deepStrictEqual(t.host.humanGoals(), [], 'untyped or empty text was recorded');
+		for (let i = 0; i < 23; i++) { t.host.rememberTypedGoal('  goal ' + i + '  ', { typed: true }); }
+		assert.strictEqual(t.host.humanGoals().length, 20);
+		assert.deepStrictEqual([t.host.humanGoals()[0], t.host.humanGoals()[19]], ['goal 3', 'goal 22']);
 	});
 
 	await test('SETTINGS: the approvals mode changed in Settings or another window takes effect at once, and the pill follows', async () => {
