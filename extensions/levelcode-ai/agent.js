@@ -888,6 +888,9 @@ async function reviewGate(ctx, action) {
 		runTurn: (o) => providers.streamAgentTurn({
 			providerId: ctx.providerId, apiKey: ctx.apiKey, baseURL: ctx.baseURL, label: ctx.label,
 			model, maxTokens: reasons ? 4096 : 400, system: o.system, messages: o.messages, tools: [],
+			// The answer is collected, never streamed into the chat — but the native Anthropic adapter calls
+			// onText for every text delta, so it is handed one that does nothing.
+			onText: () => { }, onToolStart: () => { }, onToolInput: () => { },
 			signal: o.signal, reasoningEffort: catalog.reasoningEffortFor(model, 'review')
 		}),
 		messages: ctx.messages, userRequests: ctx.userRequests, userAnswers: ctx.userAnswers,
