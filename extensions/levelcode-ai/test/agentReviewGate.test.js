@@ -11,7 +11,7 @@
  *   1. Ask When Risky is never looser than Autopilot: a danger-set command asks the person, and the
  *      reviewer is not consulted at all.
  *   2. A command the reviewer does not pass, or cannot judge, asks the person, with the reason on the card.
- *   3. A command the reviewer passes runs without a card, and the run says so.
+ *   3. A command the reviewer passes runs without a card, and the run says so — and every run is reviewed.
  *   4. Default Approvals and Autopilot behave exactly as before: no reviewer call in either.
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
@@ -211,18 +211,14 @@ const reviewerRows = (posted) => posted.filter((m) => m.type === 'agentTool' && 
 			// two agent turns at 1000 each, one review at 250
 			assert.strictEqual(r.done.costMicros, 2250);
 		});
-		await testAsync('REVIEW: the same command twice with no edit between is reviewed once', async () => {
+		await testAsync('REVIEW: the same command twice is reviewed twice — an earlier pass is never reused', async () => {
+			// What `sh check.sh` does depends on check.sh, which an earlier command, a git switch or the person
+			// may have changed with no edit the agent made: nothing here can tell, so nothing is reused.
 			reviewer = verdict('low', 'implied', 'ok');
-			const r = await run('review', [cmd('npm test'), cmd('npm test')]);
-			assert.strictEqual(r.reviews, 1);
-			assert.strictEqual(r.ran.length, 2);
-			assert.match(reviewerRows(r.posted).join('\n'), /passed this exact command earlier, no edits since/);
-		});
-		await testAsync('REVIEW: an edit between them makes it a new question', async () => {
-			reviewer = verdict('low', 'implied', 'ok');
-			const r = await run('review', [cmd('npm test'), { name: 'write_file', input: { path: 'a.js', content: 'x' } }, cmd('npm test')],
-				{ ctx: { applyEdit: async () => true, touched: new Set() } });
-			assert.strictEqual(r.reviews, 2);
+			const r = await run('review', [cmd('sh check.sh'), cmd('git switch other-branch'), cmd('sh check.sh')]);
+			assert.strictEqual(r.reviews, 3);
+			assert.strictEqual(r.ran.length, 3);
+			assert.ok(!reviewerRows(r.posted).some((t) => /earlier/.test(t)), 'a pass was reused');
 		});
 		await testAsync('REVIEW: the person\'s ask_user choices reach the reviewer as theirs', async () => {
 			reviewer = verdict('medium', 'explicit', 'You chose to install it.');

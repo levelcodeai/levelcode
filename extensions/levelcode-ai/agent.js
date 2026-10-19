@@ -862,9 +862,9 @@ function isAgentAuthError(e) {
 /**
  * Ask When Risky: show one command to the reviewer (agentReview.js) and report what it decided.
  *
- * The same command in the same folder, with no file edited since it last passed, passes again without
- * a second review: `npm test` five times in a row is one review. An edit in between makes it a new
- * question, because the command may now run code the reviewer has not seen.
+ * Every run is reviewed, including a command that passed a moment ago. What a command does depends on the
+ * files it runs, and those change in ways no counter here can see: an earlier command, a `git switch`, the
+ * person in their own terminal. Reusing an earlier pass would vouch for code the reviewer has not seen.
  *
  * The review is a real model call on the run's own provider, so in gateway mode it costs credits. Its
  * cost is kept on ctx and added to the run's total, so the response bar's figure includes it.
@@ -872,13 +872,6 @@ function isAgentAuthError(e) {
  */
 async function reviewGate(ctx, action) {
 	const stats = ctx.reviewStats || (ctx.reviewStats = { ran: 0, asked: 0 });
-	const passed = ctx.reviewPassed || (ctx.reviewPassed = new Set());
-	const key = action.cwd + '\n' + (ctx.editCount || 0) + '\n' + action.command;
-	if (passed.has(key)) {
-		stats.ran++;
-		ctx.post({ type: 'agentTool', icon: 'workspace-trusted', text: 'Reviewer · passed this exact command earlier, no edits since' });
-		return { outcome: 'allow', verdict: null, reason: '', failure: null };
-	}
 	const model = ctx.reviewModel || ctx.model;
 	const reasons = !!catalog.modelCaps(model).reasoning;
 	ctx.post({ type: 'agentStatus', text: 'reviewing the command…' });
@@ -903,7 +896,6 @@ async function reviewGate(ctx, action) {
 	if (ctx.dbg) { ctx.dbg('review.done', { outcome: r.outcome, failure: r.failure, risk: r.verdict && r.verdict.risk, authorization: r.verdict && r.verdict.authorization, injection: r.verdict && r.verdict.injection, model, costMicros: r.usage && r.usage.cost_micros }); }
 	if (r.outcome === 'allow') {
 		stats.ran++;
-		passed.add(key);
 		ctx.post({ type: 'agentStatus', text: 'running command…' });
 		ctx.post({ type: 'agentTool', icon: 'workspace-trusted', text: 'Reviewer · ' + r.verdict.risk + ' risk — ' + host.displaySafe(r.reason || 'no reason given') });
 	} else if (r.outcome === 'ask') {

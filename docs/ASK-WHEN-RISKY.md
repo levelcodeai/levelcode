@@ -99,11 +99,12 @@ Command line:
   read back from `sessions.dir`, which a folder setting can point anywhere. The earlier goals still
   reach the reviewer, as activity. This errs toward asking.
 
-### Reviewed once, until something changes
+### Every run is reviewed
 
-The same command line in the same folder, with no file edited since it last passed, passes again
-without a second call (`npm test` five times in a row is one review). An edit in between makes it a
-new question, because the command may now run code the reviewer has not seen.
+A command that passed a moment ago is reviewed again. What `sh check.sh` does depends on `check.sh`, which an
+earlier command, a `git switch` or the person in their own terminal may have changed, and nothing the
+extension can cheaply observe says it has not. Reusing a pass would vouch for code the reviewer never saw.
+The price is one review call per run, `npm test` included.
 
 ## Cost and wait
 
