@@ -253,6 +253,11 @@ function decide(v) {
  * @returns {Promise<{outcome:'allow'|'ask'|'stopped', verdict:any, reason:string, failure:string|null, usage:any}>}
  */
 async function reviewCommand(o) {
+	// The reviewer must see the whole command it is vouching for. One longer than its budget would reach it
+	// cut in the middle while the full line runs, and the cut is exactly where something could hide: no review.
+	if (String(o.command == null ? '' : o.command).length > LIMITS.command) {
+		return { outcome: 'ask', verdict: null, reason: 'This command is too long for the reviewer to read in full, so this one is your call.', failure: 'too-long', usage: null };
+	}
 	const req = buildReviewRequest(o);
 	const ac = new AbortController();
 	const parent = o.signal;
