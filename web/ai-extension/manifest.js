@@ -40,6 +40,9 @@ const REMOVED_SETTINGS = new Set([
  * Default-deny: a setting added to the desktop manifest later is application-scoped here until someone puts it on
  * this list, and web/test/unit/manifest.test.js fails if one is on it that does not exist.
  *
+ * The desktop manifest opens the same list (scope in extensions/levelcode-ai/package.json, since 2026-10-19: Restricted
+ * Mode did not stop a folder there either). extensions/levelcode-ai/test/settingsScope.test.js fails if the two differ.
+ *
  * Only things that change what is shown, or which of the open files are offered as context, are listed.
  */
 const WORKSPACE_SETTINGS_OK = new Set([

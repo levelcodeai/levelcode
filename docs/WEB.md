@@ -391,8 +391,11 @@ page runs anyone else's, put the extension host on another registrable domain.
   host the session token is sent to (`levelcode.cloud.endpoint`), the provider's base URL, Autopilot, or the budgets.
   The browser manifest makes every `levelcode.*` setting `application`-scoped except an explicit list of display
   preferences (`WORKSPACE_SETTINGS_OK` in `web/ai-extension/manifest.js`, double-entered in `manifest.test.js`).
-  The desktop manifest is untouched. Measured in the real workbench 2026-10-11 (unscoped: all three came back as the
-  folder's values; `application`-scoped: the defaults).
+  Measured in the real workbench 2026-10-11 (unscoped: all three came back as the folder's values;
+  `application`-scoped: the defaults). The desktop manifest has the same scopes since 2026-10-19, where Workspace
+  Trust is on but did not help: the extension declares `untrustedWorkspaces.supported: true`, and VS Code ignores
+  `restrictedConfigurations` unless it is `'limited'`. `extensions/levelcode-ai/test/settingsScope.test.js` keeps the
+  two lists equal; `extensions/levelcode-ai/scripts/folder-settings-editor-check.js` checks it in the real editor.
 - **The shell has no way out, and no secrets.** The engine worker is given no token, key, setting or `vscode`
   object, has no network (`connect-src` is the page's own; the engine option `network` is never passed) and cannot
   write: its only file operations are three reads over the RPC, bounded and path-checked on the host side. What it
