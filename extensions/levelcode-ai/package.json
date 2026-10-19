@@ -142,6 +142,12 @@
         "icon": "$(history)"
       },
       {
+        "command": "levelcode.ai.searchSessions",
+        "title": "AI: Search Sessions…",
+        "category": "LevelCode",
+        "icon": "$(search)"
+      },
+      {
         "command": "levelcode.ai.memory",
         "title": "AI: Project Memory",
         "category": "LevelCode",
@@ -296,6 +302,13 @@
         {
           "command": "levelcode.ai.discardEdit",
           "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "levelcode.ai.searchSessions",
+          "when": "view == levelcodeAi.sessions",
+          "group": "navigation@1"
         }
       ]
     },
@@ -526,6 +539,11 @@
           "type": "boolean",
           "default": true,
           "description": "Give the agent a recall_sessions tool so it can search this project's past-session outcomes on demand — e.g. when you ask \"what did we do about refunds?\" it looks up the earlier work instead of guessing. Read-only, searches only the local journal. Turn off to remove the tool."
+        },
+        "levelcode.ai.sessions.memory.notes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let the agent keep what you ask it to remember — a correction (\"no, use pnpm\"), a confirmed approach, a decision, where something lives — and forget it when you ask. A note counts as yours only when the words it quotes are in what you typed and it says no more than they do; any other note waits in the Memory tab until you confirm it. Notes are plain lines in this project's memory folder, shown under \"From you\". Turn off to remove the remember and forget tools."
         },
         "levelcode.ai.sessions.memory.facts": {
           "type": "boolean",

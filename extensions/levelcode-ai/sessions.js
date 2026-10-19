@@ -19,6 +19,11 @@ const store = require('./sessionStore');
 const events = require('./sessionEvents');
 const planner = require('./sessionResume');
 const memory = require('./sessionMemory');
+const fs = require('fs');
+
+/** History search bounds: characters of one session kept for matching, and sessions kept in the cache. */
+const SEARCH_MAX_CHARS = 400000;
+const SEARCH_CACHE_MAX = 200;
 const imageStore = require('./imageStore');
 
 /**
@@ -298,6 +303,22 @@ function createSessions(opts) {
 		try { memory.appendFacts(root, slug, arr.map((t) => memory.factObservation(t, sourceId, iso()))); consolidate(); return true; }
 		catch (e) { return false; }
 	}
+	/**
+	 * Keep a note the person asked the agent to remember (design §12). `verified` is the host's verdict from
+	 * sessionMemory.groundNote — whether the note could be credited to the person's own words. Appended to
+	 * facts.jsonl like any observation, so it gets the same fold, panel, recall and "not true" as a fact.
+	 * @returns {boolean}
+	 */
+	function rememberNote(sourceId, note) {
+		const n = note || {};
+		const text = String(n.text == null ? '' : n.text).replace(/\s+/g, ' ').trim().slice(0, 240);
+		if (!text) { return false; }
+		try {
+			memory.appendFacts(root, slug, memory.factObservation(text, sourceId, iso(), { kind: n.kind, said: n.said, verified: n.verified === true }));
+			consolidate();
+			return true;
+		} catch (e) { return false; }
+	}
 	/** All folded facts (active + inferred) — what the memory panel lists. */
 	function factsList() { try { return memory.foldFacts(memory.readFacts(root, slug)); } catch (e) { return []; } }
 	/** Confirm ('confirm') or mark not-true ('remove') a fact by its normalized key. Re-consolidates. */
@@ -366,9 +387,60 @@ function createSessions(opts) {
 	/** The session index for this project (what the panel/view list). Empty (never throws) if unreadable. */
 	function list() { try { return store.loadIndex(root, slug).entries; } catch (e) { return []; } }
 
+	// What each session SAYS, as one lowercased string plus its readable turns, cached by file size + mtime:
+	// History search runs on every pause in typing, and a session file only grows by appends.
+	const searchCache = new Map();
+	function searchable(id) {
+		const file = store.sessionFile(root, slug, id);
+		let st;
+		try { st = fs.statSync(file); } catch (e) { return null; }
+		const hit = searchCache.get(file);
+		if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) { return hit; }
+		let turns = [];
+		try { turns = events.toDisplayTurns(events.eventsToMessages(store.readSession(file).events)); } catch (e) { turns = []; }
+		const hay = turns.map((t) => String((t && t.text) || '')).join('\n').toLowerCase().slice(0, SEARCH_MAX_CHARS);
+		const v = { size: st.size, mtimeMs: st.mtimeMs, turns, hay };
+		searchCache.set(file, v);
+		if (searchCache.size > SEARCH_CACHE_MAX) { searchCache.delete(searchCache.keys().next().value); }
+		return v;
+	}
+	/**
+	 * History search: the sessions whose title or conversation contains EVERY word of the query, newest first,
+	 * each with a cited snippet. Archived sessions are included (finding old work is the point); trashed ones
+	 * are not. Reads at most `scanMax` sessions' transcripts. Empty for an empty query or on error.
+	 * @returns {Array<{id:string, title:string|null, updatedAt:string, lifecycle:string, pinned:boolean, snippet:string, inTitle:boolean}>}
+	 */
+	function search(query, opts) {
+		const o = opts || {};
+		const limit = Number.isFinite(o.limit) && o.limit > 0 ? o.limit : 30;
+		const scanMax = Number.isFinite(o.scanMax) && o.scanMax > 0 ? o.scanMax : 150;
+		const terms = memory.queryTerms(query);
+		if (!terms.length) { return []; }
+		const phrase = String(query || '').toLowerCase().replace(/\s+/g, ' ').trim();
+		const out = [];
+		try {
+			const entries = list().filter((e) => e && e.lifecycle !== 'trashed')
+				.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+				.slice(0, scanMax);
+			for (const e of entries) {
+				const head = ((e.title || '') + ' ' + (e.preview || '')).toLowerCase();
+				const body = searchable(e.id);
+				const hay = head + '\n' + (body ? body.hay : '');
+				if (!terms.every((t) => hay.indexOf(t) >= 0)) { continue; }
+				// The snippet shows the whole phrase when the conversation has it, else the first word that is there.
+				const snippet = body ? (memory.snippetFor(body.turns, [phrase].concat(terms))) : '';
+				out.push({ id: e.id, title: e.title || null, updatedAt: e.updatedAt || '', lifecycle: e.lifecycle || 'active',
+					pinned: !!e.pinned, snippet, inTitle: terms.every((t) => (e.title || '').toLowerCase().indexOf(t) >= 0) });
+				if (out.length >= limit) { break; }
+			}
+		} catch (e) { return out; }
+		// Title matches first, then the rest, each newest first (the scan order).
+		return out.filter((r) => r.inTitle).concat(out.filter((r) => !r.inTitle));
+	}
+
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, diagrams, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, factsList, factAction, supersedeFact, memoryPaths, mediaRoot, sweepMedia, list, liveId };
+	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, diagrams, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, rememberNote, factsList, factAction, supersedeFact, memoryPaths, mediaRoot, sweepMedia, list, search, liveId };
 }
 
 module.exports = { createSessions };

@@ -1429,7 +1429,8 @@ function enrichMemoryAsync(id) {
 	const factsOn = aiConfig().get('sessions.memory.facts', true);
 	// The active facts this session might make obsolete — passed to the same call for the §4 conflict pass.
 	let existing = [];
-	if (factsOn) { try { existing = (m.digest().facts || []).filter((f) => f.active !== false); } catch (e) { existing = []; } }
+	// A note the person asked to keep is not the summarizer's to replace: only they change it (remember, forget, the panel).
+	if (factsOn) { try { existing = sessionMemory.supersedableFacts(m.digest().facts); } catch (e) { existing = []; } }
 	Promise.resolve(summarizeSessionOutcome(messages, existing)).then((res) => {
 		const r = res || {};
 		let changed = false;
@@ -1448,6 +1449,9 @@ function enrichMemoryAsync(id) {
 // truth, which is the opposite of what decay is for.
 const FACT_STATE_NOTE = {
 	confirmed: '',                                             // the user said yes; it needs no hedge
+	yours: ' [the user asked you to keep this]',
+	// A note the agent saved that could not be credited to the user's words: kept, listed, not in effect.
+	'unconfirmed-note': ' [a note the user has not confirmed — do not act on it]',
 	observed: ' [inferred from repeated sessions — unconfirmed]',
 	inferred: ' [seen once, unconfirmed — weak evidence]',
 	superseded: ' [SUPERSEDED — later work replaced this]',
@@ -1471,7 +1475,8 @@ function formatRecall(hits, query, facts) {
 				const when = f.at ? String(f.at).slice(0, 10) : 'undated';
 				const note = FACT_STATE_NOTE[f.state] != null ? FACT_STATE_NOTE[f.state] : '';
 				const by = f.state === 'superseded' && f.supersededBy ? '\n    ↳ replaced by: ' + f.supersededBy : '';
-				return '- ' + f.text + note + ' (' + when + ')' + by;
+				const said = f.state === 'yours' && f.said ? '\n    ↳ they said: "' + f.said + '"' : '';
+				return '- ' + f.text + note + ' (' + when + ')' + by + said;
 			}).join('\n');
 	}
 	if (arr.length) {
@@ -1487,6 +1492,53 @@ function formatRecall(hits, query, facts) {
 	}
 	return out;
 }
+// The remember tool's host half. The agent proposes a note with the person's words; THIS decides whether it
+// is theirs (sessionMemory.groundNote — deterministic, no model), keeps it either way, and says which.
+function rememberNoteTool(note) {
+	const m = sessionsManager();
+	if (!m) { return { verified: false, message: 'No project memory is available in this workspace (open a folder).' }; }
+	const n = note || {};
+	const kind = sessionMemory.NOTE_KINDS.includes(n.kind) ? n.kind : 'preference';
+	const g = sessionMemory.groundNote({ text: n.text, said: n.said, personWords: n.personWords });
+	// The note's provenance is this conversation's session; a first run has none on disk yet, so make it now
+	// (recordTurn reuses it when the turn ends).
+	let sourceId = null;
+	try { const live = m.ensure(); sourceId = live ? live.id : null; } catch (e) { sourceId = null; }
+	const ok = m.rememberNote(sourceId, { kind, text: n.text, said: n.said, verified: g.verified });
+	dbg('sessions.memory.remember', { kind, verified: g.verified, reason: g.reason, grounded: Math.round(g.grounded * 100) / 100, ok });
+	if (!ok) { return { verified: false, message: 'ERROR: the note could not be saved.' }; }
+	refreshMemoryViews();
+	if (g.verified) {
+		return { verified: true, message: 'Remembered as the user\'s ' + kind + ' note. It is in this project\'s memory now and in every future session. No need to repeat it back at length.' };
+	}
+	const why = g.reason === 'not-said' ? 'the quoted words were not found in what the user typed this run'
+		: g.reason === 'adds-to-what-was-said' ? 'the note says more than the quoted words do'
+			: 'the quoted words are too short to credit';
+	return { verified: false, message: 'Saved as UNCONFIRMED (' + why + '). It is listed in the Memory tab and has no effect until the user confirms it there. If the user did ask for this, quote their exact words in `said` and keep the note to what they said.' };
+}
+// The forget tool's host half: removes the best-matching note or fact, when the person's own words ask for it.
+function forgetNoteTool(req) {
+	const m = sessionsManager();
+	if (!m) { return { removed: '', message: 'No project memory is available in this workspace.' }; }
+	const r = req || {};
+	const asked = sessionMemory.groundNote({ text: r.said, said: r.said, personWords: r.personWords });
+	if (!asked.verified) {
+		return { removed: '', message: 'Not removed: the quoted words were not found in what the user typed this run. Tell the user they can remove it from the Memory tab.' };
+	}
+	const hit = (m.recallFacts(String(r.query || ''), { limit: 1 }) || [])[0];
+	if (!hit) { return { removed: '', message: 'Nothing in this project\'s memory matches "' + String(r.query || '') + '".' }; }
+	m.factAction(hit.key, 'remove');
+	dbg('sessions.memory.forget', { key: hit.key, state: hit.state });
+	refreshMemoryViews();
+	return { removed: hit.text, message: 'Removed from memory: "' + hit.text + '". Tell the user what you removed, in case it was the wrong one (saying it again with remember brings it back).' };
+}
+// After memory changes from the chat: the Memory tab's list and the welcome-back strip.
+function refreshMemoryViews() {
+	const m = sessionsManager();
+	if (m && sessionsWebview) { try { sessionsWebview.postMessage({ type: 'memoryList', items: m.memoryItems(), facts: m.factsList() }); } catch (e) { /* view closed */ } }
+	postMemoryDigest();
+}
+
 // The recall_sessions tool callback handed to the agent — only when memory + the recall setting are on.
 function recallSessionsTool(query) {
 	const m = sessionsManager();
@@ -1538,6 +1590,47 @@ async function handleFactAction(action, key, webview) {
 // (§4.9): Done archives (reversible, never deletes), Delete soft-trashes, Rename retitles, Pin toggles.
 // Done/Delete offer an Undo (restore) so an accidental click is recoverable. Best-effort — a History action
 // must never throw into the UI.
+/**
+ * Search Sessions… — every session not in the trash, by its title and what was said in it, newest first,
+ * each with the line it matched. A quick pick rather than a field in History: History stays the short list
+ * of recent work it was made to be (77d4f13), and this reaches the sessions that list no longer shows.
+ */
+function searchSessionsQuickPick() {
+	const m = sessionsManager();
+	if (!m) { vscode.window.showInformationMessage('Open a folder to search its sessions.'); return; }
+	const qp = vscode.window.createQuickPick();
+	qp.placeholder = 'Search this project\'s sessions — titles and what was said';
+	qp.matchOnDescription = false; qp.matchOnDetail = false;
+	let timer = null;
+	const when = (iso) => { const t = Date.parse(iso || ''); return Number.isFinite(t) ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''; };
+	const run = (q) => {
+		let results = [];
+		try { results = m.search(q, { limit: 40 }); } catch (e) { results = []; }
+		dbg('sessions.search', { chars: q.length, results: results.length });
+		// alwaysShow: these items are already the matches; the quick pick's own label filter would drop the
+		// ones that matched inside the conversation rather than in the title.
+		qp.items = results.length
+			? results.map((r) => ({ label: r.title || 'Untitled', description: [when(r.updatedAt), r.lifecycle === 'archived' ? 'done' : '', r.pinned ? 'pinned' : ''].filter(Boolean).join(' · '), detail: r.snippet || '', alwaysShow: true, id: r.id }))
+			: [{ label: 'No session mentions “' + q + '”', alwaysShow: true, id: '' }];
+		qp.busy = false;
+	};
+	qp.onDidChangeValue((v) => {
+		clearTimeout(timer);
+		const q = String(v || '').trim();
+		if (q.length < 2) { qp.items = []; qp.busy = false; return; }
+		qp.busy = true;
+		timer = setTimeout(() => run(q), 200);
+	});
+	qp.onDidAccept(async () => {
+		const pick = qp.selectedItems[0];
+		if (!pick || !pick.id) { return; }
+		qp.hide();
+		await handleSessionAction('resume', pick.id);
+	});
+	qp.onDidHide(() => { clearTimeout(timer); qp.dispose(); });
+	qp.show();
+}
+
 async function handleSessionAction(action, id) {
 	const m = sessionsManager();
 	if (!m || !id) { return; }
@@ -2299,6 +2392,10 @@ async function agentFlow(text, imageBlocks) {
 			diagramsStubbed: diagramsStubbed,
 			// The recall_sessions tool: search past-session outcomes on demand. Off → the tool isn't offered at all.
 			recallSessions: (aiConfig().get('sessions.memory.enabled', true) && aiConfig().get('sessions.memory.recallTool', true)) ? recallSessionsTool : undefined,
+			// Memory the person asks for: the remember/forget tools, and the goal as typed, which is what a
+			// note's quoted words are checked against (docs/levelcode-sessions-memory.md §12).
+			goalText: String(text || ''),
+			memoryNotes: (aiConfig().get('sessions.memory.enabled', true) && aiConfig().get('sessions.memory.notes', true)) ? { remember: rememberNoteTool, forget: forgetNoteTool } : undefined,
 
 			// MCP (docs/MCP.md S3). Config is read HERE and handed in, like verify/commandTimeout, so
 			// agent.js keeps doing the loading + connecting + naming without reaching for the editor API.
@@ -3682,6 +3779,7 @@ function activate(context) {
 		// Both land on the same panel, each on its own tab, so a button says exactly where it goes.
 		vscode.commands.registerCommand('levelcode.ai.sessions', () => revealSessions('history')),
 		vscode.commands.registerCommand('levelcode.ai.memory', () => revealSessions('memory')),
+		vscode.commands.registerCommand('levelcode.ai.searchSessions', () => searchSessionsQuickPick()),
 		// Reachable from an image tab's title bar: dropping a file onto the workbench opens it there,
 		// so that is where someone already is when they realise the drop did not attach it.
 		// Called by the CORE patch in editorDropTarget.ts when an image is dropped onto the chat

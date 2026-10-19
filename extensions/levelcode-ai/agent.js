@@ -173,6 +173,10 @@ const PORTABLE_TOOLS_TOKENS_EST = Math.round(JSON.stringify(PORTABLE_TOOLS).leng
 // wires ctx.recallSessions (memory + the recall setting on), so it costs nothing otherwise. Read-only and
 // instant like use_skill — it searches the project's OWN past-session outcomes, never the file system.
 const RECALL_TOOL = { name: 'recall_sessions', description: 'Search THIS project\'s past sessions for relevant earlier work — their recorded outcomes (what was built/fixed/decided), the files they touched, and the conversations themselves. Use when the user refers to earlier work ("what did we do about refunds?", "did we already fix the webhook?") or when prior context would clearly help before you start. Returns cited past-session outcomes (with a matching transcript snippet when the match is deep in the conversation) and dates; treat them as memory — informative but possibly stale, so verify against the current code.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'keywords or a short question, e.g. "refund retries" or "MCP timeline rail"' } }, required: ['query'] } };
+// Memory the person asks for (docs/levelcode-sessions-memory.md §12). The host decides whether a note can be
+// credited to the person (sessionMemory.groundNote); the agent only proposes it, with their words.
+const REMEMBER_TOOL = { name: 'remember', description: 'Save something the user told you, so future sessions in THIS project start knowing it. Use it when the user asks you to remember something; when they correct how you work ("no, use pnpm", "don\'t mock the database") or confirm an approach that was not obvious ("yes, keep doing that"); when they state a decision or constraint (write dates as absolute dates); or when they say where something lives (a dashboard, a ticket tracker, a doc). Do NOT save what the code or git history already shows, or details of the current task. `said` MUST be the user\'s own words, copied exactly from their message — the note is credited to them only when those words are found in what they typed and the note says no more than they did; otherwise it is kept unconfirmed until they confirm it. Keep `text` short and close to their words.', input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['preference', 'project', 'reference'], description: 'preference = how the user wants you to work (corrections and confirmed approaches); project = a decision, constraint or deadline; reference = where to find something outside the code' }, text: { type: 'string', description: 'the note, one sentence, in the user\'s terms, e.g. "Use pnpm, never npm, in this repo"' }, said: { type: 'string', description: 'the user\'s exact words this note rests on, copied from their message' } }, required: ['kind', 'text', 'said'] } };
+const FORGET_TOOL = { name: 'forget', description: 'Remove a note or fact from this project\'s memory when the user asks you to forget it or says it is no longer true. `said` MUST be the user\'s own words asking for it, copied exactly. Removes the best match for `query` and tells you what it removed.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'words that identify the memory, e.g. "pnpm"' }, said: { type: 'string', description: 'the user\'s exact words asking you to forget it' } }, required: ['query', 'said'] } };
 
 // How much of a background command's accumulated output the sniffers re-read on each chunk. Generous
 // next to any single log line, so a url split across chunk boundaries is still found, yet small enough
@@ -736,6 +740,11 @@ async function runTool(tu, ctx) {
 				return '- ' + (a.header ? a.header + ' — ' : '') + (a.question || '') + ' → ' + sel;
 			});
 			if (res.notes) { lines.push('- Additional notes from the user: ' + res.notes); }
+			// What the person chose and wrote here is theirs: `remember` may quote it (see heard, below).
+			if (Array.isArray(ctx.heardThisRun)) {
+				for (const a of res.answers) { for (const sel of (a.selected || [])) { ctx.heardThisRun.push(String(sel)); } }
+				if (res.notes) { ctx.heardThisRun.push(String(res.notes)); }
+			}
 			return 'The user answered your questions (these are their recorded decisions — honor them and do NOT ask again):\n' + lines.join('\n') + '\n\nProceed with the work using these answers.';
 		}
 		if (tu.name === 'use_skill') {
@@ -748,6 +757,27 @@ async function runTool(tu, ctx) {
 			}
 			ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🧩 using skill: ' + name });   // quiet chip — only on success (🧩 is the marker; 'sparkle' falls back cleanly)
 			return body;                                                                       // SKILL.md body → tool_result, steers the next turns
+		}
+		if (tu.name === 'remember' || tu.name === 'forget') {
+			if (!ctx.memoryNotes) { return 'ERROR: project memory is off in this session.'; }
+			// What the person typed this run: their goal and their answers to ask_user. The host checks `said` against it.
+			const heard = [String(ctx.goalText || '')].concat(Array.isArray(ctx.heardThisRun) ? ctx.heardThisRun : []).filter(Boolean);
+			const said = String(input.said || '').trim();
+			if (!said) { return 'ERROR: pass `said` — the user\'s exact words, copied from their message.'; }
+			try {
+				if (tu.name === 'remember') {
+					const text = String(input.text || '').replace(/\s+/g, ' ').trim();
+					if (!text) { return 'ERROR: pass `text` — the note, one sentence.'; }
+					const r = ctx.memoryNotes.remember({ kind: String(input.kind || 'preference'), text, said, personWords: heard }) || {};
+					ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 remembered: ' + host.displaySafe(text) + (r.verified ? '' : ' (unconfirmed)') });
+					return String(r.message || 'Saved.');
+				}
+				const query = String(input.query || '').trim();
+				if (!query) { return 'ERROR: pass `query` — words that identify the memory.'; }
+				const r = ctx.memoryNotes.forget({ query, said, personWords: heard }) || {};
+				if (r.removed) { ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 forgot: ' + host.displaySafe(r.removed) }); }
+				return String(r.message || 'Nothing was removed.');
+			} catch (e) { return 'ERROR: memory could not be updated.'; }
 		}
 		if (tu.name === 'recall_sessions') {
 			if (typeof ctx.recallSessions !== 'function') { return 'ERROR: session recall is not available in this session.'; }
@@ -1004,6 +1034,8 @@ function saysDone(text) {
 }
 
 async function runAgent(ctx) {
+	// The person's own words this run beyond the goal (their ask_user answers) — what `remember` may quote.
+	if (!Array.isArray(ctx.heardThisRun)) { ctx.heardThisRun = []; }
 	// No workspace is no longer a refusal. It used to fail the whole run here, which meant a question
 	// that never needed a folder — "what does this error mean?", anything through an MCP server, a
 	// follow-up about the conversation itself — died on a guard written for the file tools. The root
@@ -1102,6 +1134,7 @@ async function runAgent(ctx) {
 	// then there is nothing to fetch, and a tool that is never needed is a standing cost for nothing.
 	const extras = [];
 	if (ctx.recallSessions) { extras.push(RECALL_TOOL); }
+	if (ctx.memoryNotes) { extras.push(REMEMBER_TOOL, FORGET_TOOL); }
 	if (rich) { extras.push(diagramTool.RENDER_DIAGRAM); if (ctx.diagramsStubbed) { extras.push(diagramTool.GET_DIAGRAM); } }
 	if (extras.length) { tools = tools.concat(extras); }
 	// Withhold what this host cannot do: no shell, no run_command, no read_command_output — and for a shell that
