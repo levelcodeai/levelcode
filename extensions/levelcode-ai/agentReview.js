@@ -217,8 +217,12 @@ function parseVerdict(text) {
 	const risk = String(obj.risk || '').trim().toLowerCase();
 	const authorization = String(obj.authorization || '').trim().toLowerCase();
 	if (!RISKS.includes(risk) || !AUTHORIZATIONS.includes(authorization)) { return null; }
+	// All three ratings or none: an answer that leaves out `injection` has not said there was none, and a
+	// default of false would let a half-answer run a command.
 	const inj = obj.injection;
-	const injection = inj === true || (typeof inj === 'string' && inj.trim().toLowerCase() === 'true');
+	const injWord = typeof inj === 'string' ? inj.trim().toLowerCase() : null;
+	if (!(typeof inj === 'boolean' || injWord === 'true' || injWord === 'false')) { return null; }
+	const injection = inj === true || injWord === 'true';
 	// eslint-disable-next-line no-control-regex
 	const reason = clip(oneLine(String(obj.reason || '').replace(/[\u0000-\u001f\u007f]/g, ' ')), 200);
 	return { risk, authorization, injection, reason };

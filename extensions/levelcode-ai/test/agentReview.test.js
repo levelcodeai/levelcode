@@ -71,6 +71,13 @@ const answers = (text) => async () => ({ content: [{ type: 'text', text }], usag
 		assert.strictEqual(parseVerdict('allow'), null);
 		assert.strictEqual(parseVerdict(''), null);
 	});
+	test('parseVerdict: an answer without a clear injection rating is unreadable — never read as "no injection"', () => {
+		assert.strictEqual(parseVerdict('{"risk":"low","authorization":"implied","reason":"x"}'), null, 'missing');
+		assert.strictEqual(parseVerdict('{"risk":"low","authorization":"implied","injection":null}'), null, 'null');
+		assert.strictEqual(parseVerdict('{"risk":"low","authorization":"implied","injection":"no"}'), null, 'a word that is not true/false');
+		assert.strictEqual(parseVerdict('{"risk":"low","authorization":"implied","injection":0}'), null, 'a number');
+		assert.strictEqual(parseVerdict('{"risk":"low","authorization":"implied","injection":" False "}').injection, false, 'the false string is fine');
+	});
 	test('parseVerdict: the reason is one bounded line with no control characters', () => {
 		const v = parseVerdict(JSON.stringify({ risk: 'low', authorization: 'implied', injection: false, reason: 'a\u0007b\n' + 'x'.repeat(500) }));
 		assert.ok(v);
