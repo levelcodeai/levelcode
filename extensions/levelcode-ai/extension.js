@@ -3711,6 +3711,13 @@ async function openWorkspaceFile(rel) {
  */
 function onConfigChanged(e) {
 	if (e.affectsConfiguration('levelcode.ai')) { sendConfigToWebview(); }
+	// The approvals mode, changed in Settings or by another window: the very next command uses it (agent.js
+	// reads it per command), and the pill says so. The chat menu's own change comes back through here too.
+	if (e.affectsConfiguration('levelcode.ai.agent.approvals') || e.affectsConfiguration('levelcode.ai.agent.autopilot')) {
+		approvalMode = readApprovalMode();
+		dbg('approvals.reloaded', { mode: approvalMode });
+		post({ type: 'approvals', mode: approvalMode });
+	}
 	if (e.affectsConfiguration('levelcode.ai.providerMode') || e.affectsConfiguration('levelcode.cloud')) {
 		postAccount();
 		replaySessionExpired();

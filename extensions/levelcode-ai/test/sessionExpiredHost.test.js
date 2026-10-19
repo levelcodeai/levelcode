@@ -97,7 +97,7 @@ const FUNCTIONS = [
 	'refreshCloudToken', 'renewSession', 'storedToken', 'catchUpWithStoredSession', 'withSessionLock', 'sameSession', 'sessionExpired', 'postSessionExpired',
 	'sessionExpiredPending', 'isEndedSessionError', 'clearSessionExpired', 'replaySessionExpired', 'checkCloudSession',
 	'refreshGatewayToken', 'prepProviderRequest', 'handleSend', 'currentAccount', 'postAccount', 'accountSignOut',
-	'storeSession', 'newChat', 'resumeSession', 'restoreCheckpoint', 'onConfigChanged'
+	'storeSession', 'newChat', 'resumeSession', 'restoreCheckpoint', 'onConfigChanged', 'readApprovalMode'
 ];
 // eslint-disable-next-line no-new-func
 const makeHost = new Function('env', [
@@ -112,6 +112,8 @@ const makeHost = new Function('env', [
 	'let agentMessages = [], currentCheckpoint = null, lastAgentGoal = null;',
 	// resumeSession starts the Ask When Risky reviewer's record of the person's goals over (agentReview.js).
 	'let humanGoals = [], humanAnswers = [];',
+	// onConfigChanged re-reads the approvals mode (Settings, another window).
+	"let approvalMode = 'ask';", decl('APPROVAL_MODES'),
 	// resumeSession also hands a session's stored diagrams back to the diagram service
 	// (docs/RICH-DIAGRAMS.md). These sessions have none; test/diagramHost.test.js runs it with the real one.
 	'let diagramsStubbed = false; const diagrams = { load: () => {}, stubsFor: () => [] };',
@@ -121,7 +123,7 @@ const makeHost = new Function('env', [
 	'return { ' + FUNCTIONS.join(', ') + ',',
 	'  KEY: { token: ACCOUNT_TOKEN_KEY, refresh: ACCOUNT_REFRESH_KEY, profile: ACCOUNT_PROFILE_KEY, expired: ACCOUNT_EXPIRED_KEY },',
 	'  signedIn: () => cloudSignedIn, conversation: () => conversation, abort: () => abort,',
-	'  openWebview: (w) => { activeWebview = w; }, setAgentMessages: (m) => { agentMessages = m; } };'
+	'  openWebview: (w) => { activeWebview = w; }, setAgentMessages: (m) => { agentMessages = m; }, approvalMode: () => approvalMode };'
 ].join('\n'));
 
 // The defaults a fresh install runs with come from package.json, not from this file: the whole
@@ -185,7 +187,8 @@ function boot(over) {
 
 	const secrets = new Map(), state = new Map(), posted = [], ops = [];
 	const calls = { refresh: [], stream: [], keyPrompts: 0, flows: [] };
-	const vscode = { workspace: { getConfiguration: (section) => ({ get: (k, d) => (settings[section + '.' + k] === undefined ? d : settings[section + '.' + k]) }) } };
+	// inspect() as the user scope sees it: these settings are the user's (a folder cannot set them).
+	const vscode = { workspace: { getConfiguration: (section) => ({ get: (k, d) => (settings[section + '.' + k] === undefined ? d : settings[section + '.' + k]), inspect: (k) => ({ globalValue: settings[section + '.' + k] }) }) } };
 	const webview = { postMessage: (m) => { posted.push(m); } };
 	const t = {
 		posted, calls, ops, secrets, state, webview, settings,
@@ -1097,6 +1100,27 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 		assert.match(src, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks, \{ typed: true \}\); return; \}/);
 		assert.match(src, /case 'retry':[^\n]*await agentFlow\(lastAgentGoal\);/);
 		assert.match(src, /case 'continueAgent':[^\n]*await agentFlow\('Continue from where you left off[^\n]*'\);/);
+	});
+
+	await test('SETTINGS: the approvals mode changed in Settings or another window takes effect at once, and the pill follows', async () => {
+		const t = boot({ settings: { 'levelcode.ai.agent.approvals': 'autopilot' } });
+		assert.strictEqual(t.host.approvalMode(), 'ask', 'the window started before the change');
+		t.host.onConfigChanged(settingChanged('levelcode.ai', 'levelcode.ai.agent.approvals'));
+		assert.strictEqual(t.host.approvalMode(), 'autopilot');
+		assert.deepStrictEqual(t.posted.filter((m) => m.type === 'approvals'), [{ type: 'approvals', mode: 'autopilot' }]);
+		// Back to Default Approvals the same way — the case that matters: Autopilot must not linger.
+		const t2 = boot({ settings: { 'levelcode.ai.agent.approvals': 'ask', 'levelcode.ai.agent.autopilot': true } });
+		t2.host.onConfigChanged(settingChanged('levelcode.ai', 'levelcode.ai.agent.approvals'));
+		assert.strictEqual(t2.host.approvalMode(), 'ask', 'an explicit approvals value wins over the old boolean');
+		// The old boolean alone still means Autopilot, and changing it is picked up too.
+		const t3 = boot({ settings: { 'levelcode.ai.agent.autopilot': true } });
+		t3.host.onConfigChanged(settingChanged('levelcode.ai', 'levelcode.ai.agent.autopilot'));
+		assert.strictEqual(t3.host.approvalMode(), 'autopilot');
+		// An unrelated change leaves it alone.
+		const t4 = boot({ settings: { 'levelcode.ai.agent.approvals': 'review' } });
+		t4.host.onConfigChanged(settingChanged('levelcode.ai', 'levelcode.ai.chat.fontSize'));
+		assert.strictEqual(t4.host.approvalMode(), 'ask');
+		assert.deepStrictEqual(t4.posted.filter((m) => m.type === 'approvals'), []);
 	});
 
 	await test('`ready` does not say it twice: the handler has just read the same token, and the card is replayed last', async () => {
