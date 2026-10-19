@@ -62,7 +62,7 @@ export class Page {
 				if (d.params.entry.level === 'error') { this.logs.push({ t: Date.now(), tag, type: 'log-error', text: `${d.params.entry.text} ${d.params.entry.url || ''}`.slice(0, 500) }); }
 				break;
 			case 'Network.responseReceived':
-				this.requests.push({ url: d.params.response.url, status: d.params.response.status, type: d.params.type });
+				this.requests.push({ url: d.params.response.url, status: d.params.response.status, type: d.params.type, mimeType: d.params.response.mimeType });
 				if (d.params.response.status >= 400) { this.failed.push(`${d.params.response.status} ${d.params.response.url}`); }
 				break;
 			case 'Network.loadingFailed':

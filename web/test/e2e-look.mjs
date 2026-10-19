@@ -12,7 +12,7 @@
 // The sign-in is the stand-in's (?signin=1), exactly as in e2e-signin-tab.mjs; the chat's empty state is what
 // a signed-in visitor sees.
 //
-//   node web/test/e2e-look.mjs --dist <release dir> --stub-port <the account port it was built with> [--shots <dir>]
+//   node web/test/e2e-look.mjs --dist <release dir> --stub-port <the account port it was built with> [--shots <dir>] [--pages]
 //
 // Release only: the look is a property of what the build ships (the theme package, chrome.css, the skinned chat
 // page), and the development server's pieces do not include them.
@@ -39,7 +39,7 @@ const results = [];
 const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); return ok; };
 
 const stub = await startStub({ editorOrigin, port: args['stub-port'] ? Number(args['stub-port']) : 0 });
-const server = spawn(process.execPath, [path.join(HERE, '..', 'serve.mjs'), '--port', String(PORT), '--dist', DIST], { stdio: 'inherit' });
+const server = spawn(process.execPath, [path.join(HERE, '..', 'serve.mjs'), '--port', String(PORT), '--dist', DIST, ...(args.pages ? ['--pages'] : [])], { stdio: 'inherit' });
 let chrome;
 const finish = async (code) => { try { chrome && chrome.close(); } catch {} try { server.kill(); } catch {} try { await stub.close(); } catch {} process.exit(code); };
 process.on('SIGINT', () => finish(130));
