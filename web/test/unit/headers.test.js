@@ -46,5 +46,16 @@ const block = (conf, match) => {
 		assert.strictEqual(headersFor(p, '/')['Content-Security-Policy'], headersFor(p, '/index.html')['Content-Security-Policy']);
 	});
 
+	await test('Cloudflare Pages: the sign-in page keeps its headers at /callback, where Pages serves callback.html', async () => {
+		const { parseHeadersFile } = await import(pathToFileURL(path.join(__dirname, '..', '..', 'lib', 'headers.mjs')).href);
+		const read = parseHeadersFile(toHeadersFile(p));
+		const at = (address) => (read.rules.find((r) => r.path === address) || { headers: {} }).headers;
+		assert.deepStrictEqual(at('/callback'), at('/callback.html'), 'the same rule under both addresses');
+		assert.match(at('/callback')['Content-Security-Policy'] || '', /^default-src 'none'/);
+		assert.strictEqual(at('/callback')['Cache-Control'], 'no-store');
+		assert.ok(!read.rules.some((r) => r.path === '/index'), '/index.html is served at /, which has its own rule');
+		assert.ok(!/location = \/callback \{/.test(conf), 'nginx serves callback.html as named and needs no second address');
+	});
+
 	console.log(`\n${n} tests passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

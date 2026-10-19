@@ -287,7 +287,8 @@ node web/serve.mjs --dist dist-web            # http://127.0.0.1:8800
 **Dev server** (`web/serve.mjs`): `--static <vscode-web dir> --extensions <dir> --extension-names
 levelcode-ai,levelcode-web --account <origin>`, plus `--product <json>` and `--config-defaults
 <json>` to override the product configuration. The extension is built with
-`node web/ai-extension/build.mjs --out <dir> --vscode <checkout>`.
+`node web/ai-extension/build.mjs --out <dir> --vscode <checkout>`. With `--dist <release> --pages` it answers
+as Cloudflare Pages does (below): the release-level end-to-end checks take `--pages` too.
 
 **Release layout.** `index.html` and the callback page are at the root, un-cached. Everything
 else is under `/_/<id>/` and cached for a year (`immutable`): `static/` (the client), `extensions/`,
@@ -322,6 +323,29 @@ Content-Security-Policy for the editor is the tightest the workbench allows:
   `form-action 'none'`, `frame-ancestors 'none'`.
 
 The callback page has `default-src 'none'` and only its own script and style.
+
+### On Cloudflare Pages
+
+Pages reads `_headers` as written, and three things it does differently from a plain file server are
+handled in the release itself. `web/serve.mjs --dist <release> --pages` answers the way Pages does
+(`web/lib/pages.mjs`), so the end-to-end checks run against a release as it will be served there:
+
+- **It is never sent a folder named `node_modules`.** `wrangler pages deploy` leaves out `**/node_modules`
+  (and `.git`, `.DS_Store`), with no option to keep them, and the client loads its terminal (xterm), its syntax
+  colouring (vscode-textmate, vscode-oniguruma) and more from `static/node_modules`. On the first deploy every
+  one of those came back as the page (Pages answers an address it has no file for with `index.html`), and
+  the terminal did not open. The build stages the same files again as `static/node-modules`, and the
+  release's `_redirects` serves them from there at the address the client asks for
+  (`/_/:id/static/node_modules/* /_/:id/static/node-modules/:splat 200`). Any other host serves
+  `node_modules` itself and ignores `_redirects`. The build refuses a `node_modules` folder anywhere else.
+- **It serves `x.html` at `/x`** (and redirects `/x.html` there, query kept), and matches `_headers` rules
+  against the address asked for: every page's rule is also written for its address without `.html`, so the
+  sign-in page keeps its own policy at `/callback`.
+- **A file it does not have is answered with the page, status 200.** A check that only looks at status codes
+  does not see it; `e2e.mjs` fails on any script, JSON or WebAssembly response that is HTML.
+
+The limits that matter: 25 MiB per file (the largest is a 24.6 MiB diagram bundle in the client) and 20,000
+files on the free plan (1,840 uploaded with the copy, measured; about twice that with the previous build kept online).
 
 ### On the account site
 
@@ -427,7 +451,7 @@ transaction, so both end with the same key.
 | The shell | `./scripts/test-extensions.sh` (the unit suites `web/test/unit/shell-*.test.js`) | The engine: a differential against GNU bash 5.1 (905 cases, a shrink-only table of the ones that differ), fuzzing, every patch of the vendored code with its anchors, the build; the runtime: the commit and its refusals, kill and deadline against a **real engine in a worker thread**, limits; the terminal: key bytes, the line editor against real xterm.js 6.1 in its headless build, width, the output filter, history. With the Code-OSS checkout present the real-xterm halves run; `LEVELCODE_REQUIRE_XTERM=1` and `LEVELCODE_REQUIRE_WORKER=1` make a skip a failure, which is what CI sets. |
 | Mutations | `node web/test/helpers/mutation/mutate.mjs` | 371 edits to the runtime, the commit and the sanitiser, each of which a suite must catch (a tool, not a suite). |
 | The shell, in a browser | `node web/test/e2e-shell.mjs --static … --extensions …` | Real headless Chrome and the real nested Worker: nothing of the shell is fetched until it is used; a terminal from the palette; typing, files, a working folder that persists, 127, Ctrl+C on `sleep 60`, a link to `path:line:col` that opens the file at that line, a pasted three-line buffer through a resize; hostile output that does not type into the prompt or rename the terminal; the agent offered `run_command` without background, a file written through the review (Keep/Undo), a `.vscode` write refused whole, a timeout that applies nothing, the mirror tab. |
-| End to end | `node web/test/e2e.mjs --dist dist-web --stub-port <port the build used>` | Real headless Chrome: boot from static files, the extension activates in the worker, sign in through the real callback page, agent tool calls (write / list / search / read / edit) against the scratch workspace, Quick Open, Keep and Undo, a reload that keeps the session and files. |
+| End to end | `node web/test/e2e.mjs --dist dist-web --stub-port <port the build used> [--pages]` | Real headless Chrome: boot from static files, the extension activates in the worker, sign in through the real callback page, agent tool calls (write / list / search / read / edit) against the scratch workspace, Quick Open, Keep and Undo, a reload that keeps the session and files, a terminal that opens, and no script, JSON or WebAssembly file answered with HTML. `--pages`: served as Cloudflare Pages serves it (also for the look and same-tab sign-in checks). |
 | The look | `node web/test/e2e-look.mjs --dist dist-web --stub-port <port>` | The skinned chat (greeting, starters, composer in the reading column, the rail at 1440 px and the dialog at 900 px), light and dark following the system with this build's own colours (also in the chat's webview), no Welcome page, no second chat, source control / run / extensions not offered, the layout switch both ways, and the docked layout docked again after a reload. Release builds only. |
 | Same-tab sign-in | `node web/test/e2e-signin-tab.mjs --dist dist-web --stub-port <port>` | No second window; verifier survives the reload; no repeat; no sign-in for a signed-in editor; a second tab uses the same session; a stranded result is delivered, an old one dropped. |
 | Bring your own key | `node web/test/e2e-byok.mjs --static … --extensions …` | The request goes from the tab to the provider with the user's key and nothing of LevelCode's. |

@@ -13,7 +13,7 @@
 //      workspace extension (web/workspace) and every declarative built-in (grammars, themes, icons);
 //   3. names the build after a hash of everything it staged, lays that out under the build-addressed
 //      prefix (/_/<id>/...), renders index.html with the configuration baked in, and writes the HTTP
-//      policy for the host (_headers, nginx).
+//      policy for the host (_headers, nginx) and, for Cloudflare Pages, a _redirects.
 //
 // It changes nothing outside --out, except that building the client from the checkout leaves gulp's own output,
 // vscode-web/, next to it (pass --static to use a client built earlier and skip that). It does not deploy.
@@ -26,6 +26,7 @@ import { webConfig, renderIndex } from '../web/lib/config.mjs';
 import { stageDeclarativeExtensions, copyExtension, withoutConfigurationDefaults } from '../web/lib/extensions.mjs';
 import { policy, toHeadersFile, toNginx } from '../web/lib/headers.mjs';
 import { hashTree } from '../web/lib/fingerprint.mjs';
+import { NODE_MODULES_COPY, toRedirectsFile } from '../web/lib/pages.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(REPO, 'web');
@@ -46,6 +47,15 @@ const log = (m) => console.log('[build-web] ' + m);
 const die = (m) => { console.error('[build-web] ' + m); process.exit(1); };
 const sizeOf = (p) => { let n = 0; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); e.isDirectory() ? walk(f) : (n += fs.statSync(f).size); } }; walk(p); return n; };
 const mb = (n) => (n / 1048576).toFixed(1) + ' MB';
+/** Every folder under `dir` named `name`, not looking inside one that is. */
+const directoriesNamed = (dir, name, found = []) => {
+	for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+		if (!e.isDirectory()) { continue; }
+		const f = path.join(dir, e.name);
+		if (e.name === name) { found.push(f); } else { directoriesNamed(f, name, found); }
+	}
+	return found;
+};
 
 /* ----- 1. Code-OSS's web client ---------------------------------------------------------------- */
 let staticDir;
@@ -78,6 +88,12 @@ let root = staging;
 
 log('copying the web client');
 fs.cpSync(staticDir, path.join(root, 'static'), { recursive: true, filter: (src) => !/\.(js|css)\.map$/.test(src) });
+// The client loads its terminal (xterm), its syntax colouring (vscode-textmate, vscode-oniguruma) and more from
+// static/node_modules. Cloudflare Pages is never sent a folder by that name (wrangler leaves out **/node_modules): the
+// same files are staged again as static/node-modules, and the release's _redirects (written below) serves them from
+// there at the address the client asks for. Any other host serves node_modules itself and ignores _redirects.
+const clientModules = path.join(root, 'static', 'node_modules');
+if (fs.existsSync(clientModules)) { fs.cpSync(clientModules, path.join(root, 'static', NODE_MODULES_COPY), { recursive: true }); }
 const baked = new Set(fs.existsSync(path.join(staticDir, 'extensions')) ? fs.readdirSync(path.join(staticDir, 'extensions')) : []);
 
 const extOut = path.join(root, 'extensions');
@@ -98,8 +114,10 @@ fs.writeFileSync(path.join(scratchOut, 'package.nls.json'), '{}\n');
 const extensionsSource = path.join(vscodeDir, 'extensions');
 if (!fs.existsSync(extensionsSource)) { die('no extensions/ in ' + vscodeDir + ' to take the declarative built-ins from'); }
 const declarative = stageDeclarativeExtensions(extensionsSource, extOut, { exclude: [...baked, 'levelcode-ai', 'levelcode-web', 'levelcode-shell'] });
-// A checkout that has not had LevelCode's extensions copied in still builds; the themes are then absent.
-if (!declarative.includes('levelcode-themes')) {
+// A checkout that has not had LevelCode's extensions copied in still builds; the themes are then absent. A client built
+// from a checkout that has them has them baked in, and a second copy here would be skipped with an error for each of
+// its translations.
+if (!declarative.includes('levelcode-themes') && !baked.has('levelcode-themes')) {
 	const themes = path.join(REPO, 'extensions', 'levelcode-themes');
 	if (fs.existsSync(themes)) { copyExtension(themes, path.join(extOut, 'levelcode-themes')); declarative.push('levelcode-themes'); }
 }
@@ -115,6 +133,11 @@ log(`${extensions.length} extensions: levelcode-ai, levelcode-web, levelcode-web
 
 // main.js and boot.css are addressed by the build id like everything else; the page names them.
 for (const f of ['main.js', 'boot.css', 'chrome.css']) { fs.copyFileSync(path.join(WEB, f), path.join(root, f)); }
+
+// Nothing else may be in a folder named node_modules: Pages would not have it, and nothing would serve it from elsewhere.
+for (const dir of directoriesNamed(staging, 'node_modules')) {
+	if (dir !== clientModules) { die(path.relative(staging, dir) + ' is a node_modules folder, which Cloudflare Pages is never sent'); }
+}
 
 /* ----- 3. identity of this build: what was staged ------------------------------------------------- */
 const id = String(args.id || hashTree(createHash('sha256'), staging, { skip: ['.DS_Store'] }).digest('hex').slice(0, 12));
@@ -159,6 +182,9 @@ for (const f of ['callback.html', 'callback.js', 'callback.css', 'icon.svg', 'ic
 const toPattern = (o) => (o ? o.replace('{{uuid}}', '*') : '');
 const pol = policy({ account, webviewOrigin: toPattern(webviewOrigin), extHostOrigin: toPattern(extHostOrigin), base: '/_' });
 fs.writeFileSync(path.join(outDir, '_headers'), toHeadersFile(pol));
+if (fs.existsSync(path.join(root, 'static', NODE_MODULES_COPY))) {
+	fs.writeFileSync(path.join(outDir, '_redirects'), toRedirectsFile());
+}
 fs.mkdirSync(path.join(outDir, 'deploy'), { recursive: true });
 fs.writeFileSync(path.join(outDir, 'deploy', 'nginx.conf'), toNginx(pol));
 const info = {
