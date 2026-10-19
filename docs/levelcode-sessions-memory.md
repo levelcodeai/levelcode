@@ -1,6 +1,6 @@
 # LevelCode Sessions — Project Memory & Continuity
 
-**Status:** **shipped** — M1–M4 complete (§10) · **Scope:** `extensions/levelcode-ai` + the sessions store · **Third of the triad:** [`levelcode-chat-sessions-design.md`](./levelcode-chat-sessions-design.md) stores a chat · [`levelcode-sessions-experience.md`](./levelcode-sessions-experience.md) lets you browse it · **this doc lets the project *remember itself*.**
+**Status:** **shipped** — M1–M4 complete (§10); M5, memory from you, in review (§12) · **Scope:** `extensions/levelcode-ai` + the sessions store · **Third of the triad:** [`levelcode-chat-sessions-design.md`](./levelcode-chat-sessions-design.md) stores a chat · [`levelcode-sessions-experience.md`](./levelcode-sessions-experience.md) lets you browse it · **this doc lets the project *remember itself*.**
 
 > The wish, in the user's words: *"if in one session we tidy the CHANGELOG for v1.0.4, then a new session already knows something about what was achieved — the past experience keeps growing, and it feels like home."* That is the right ambition. It is also the feature most likely to become expensive, stale, creepy, or wrong. This document is mostly about **not** doing those four things while still delivering the magic.
 
@@ -156,6 +156,7 @@ The magic, delivered quietly (never a wall of text):
 | `sessions.memory.journalRecentDays` | `21` | recency window fed to the always-on digest |
 | `sessions.memory.confirmFacts` | `false` | require a click before an inferred Fact becomes confirmed |
 | `sessions.memory.recallTool` | `true` | expose `recall_sessions` to the agent |
+| `sessions.memory.notes` | `true` | expose `remember` / `forget` to the agent (§12) |
 
 ---
 
@@ -186,6 +187,94 @@ The magic, delivered quietly (never a wall of text):
 - **Poisoning from hostile repos** → outcomes-not-content extraction, bounded reviewable digest, untrusted-context framing, memory-never-executes (§7).
 - **Creepiness** → nothing is hidden; it's plain files with a review surface and a delete button; inferred facts are visibly low-confidence until confirmed.
 - **Over-remembering noise** → not every session earns a Fact; the Journal is recency-weighted and decays; one-off Q&A sessions contribute a thin line at most, and fade.
+
+---
+
+## 12. Memory from you (M5) — and Search Sessions
+
+Everything in §3–§10 is memory LevelCode *infers*: the summarizer reads a finished session and writes an
+outcome and at most two facts. Nothing records what the person *says* they want kept, and the most valuable
+kind of memory, a correction ("no, use pnpm") or a confirmed approach, is usually phrased as an order, which
+§7's instruction guard rightly holds back when it comes from a transcript.
+
+### What changes
+
+- **Two agent tools, `remember` and `forget`.** The agent saves a note during the run when the person asks it
+  to remember something, corrects how it works, confirms an approach that was not obvious, states a decision
+  (with an absolute date), or says where something lives. Each note has a `kind` (`preference`, `project`,
+  `reference`), the note `text`, and `said`: the person's own words, copied from their message.
+- **A note is credited to the person by code, not by the model** (`sessionMemory.groundNote`):
+  1. `said` must appear in what the person typed *this run*: their goal (handed over by the host as typed)
+     and their ask_user choices and notes. Nothing the agent read counts.
+  2. The note must say no more than those words: at least two thirds of its content words must come from
+     them (exact, a shared start of four letters or more, or a five-letter stem).
+
+  A credited note is active at once, even phrased as an order, because the person said it. Any other note is
+  still kept and listed, as *unconfirmed*: one Confirm click in the Memory tab makes it active. That is the
+  same asymmetry as §7: a false negative costs one click, a false positive would put a repository's order into
+  every future session.
+- **Notes live in `facts.jsonl`** as observations with `origin: "person"`, `kind`, `said` (secret-scrubbed)
+  and `verified`, so they get the existing fold, panel, recall and "not true". Two rules differ from facts:
+  repetition never promotes an uncredited note, and the summarizer's supersede pass is never shown a note
+  (`supersedableFacts`). Only the person changes it: `remember` again, `forget`, or the panel.
+- **`MEMORY.md`** gets a "From you" section, each line with the person's words beside it. Every line older
+  than a day says how old it is ("9 days old"). The always-on file is capped at 25 notes and 15 facts; the
+  rest are named as "…and N more; recall_sessions finds them".
+- **`forget`** removes the best match for a query, only when the request is in the person's own words, and
+  tells the agent what it removed so it can say so.
+- **Search Sessions…** (Command Palette, and a search icon in the Sessions panel's title bar): every session
+  not in the trash, archived ones included, matched on its title and its whole conversation (all words must
+  match), newest first, each with the line it matched. A quick pick, not a field in History: History stays
+  the short list of recent work it was cut down to on 2026-08-02 (77d4f13), and this reaches what that list no
+  longer shows. Transcripts are read at most 150 at a time and cached by file size and modification time.
+
+### Where the shape came from: Claude's desktop app
+
+Read from `/Applications/Claude.app` (2.42304.2) and the Claude Code it downloads (2.1.299) on 2026-10-19:
+
+- **Memory is files the agent writes itself**, one per memory, typed `user` / `feedback` / `project` /
+  `reference`, with a one-line pointer in a `MEMORY.md` index that is always loaded and cut off after 200
+  lines. The agent is told to save when the user corrects *or confirms* its approach, to record the why, and
+  to convert relative dates. Claude Code keeps the folder beside the project's transcripts
+  (`~/.claude/projects/<project>/memory/`); in its Cowork mode the app passes another folder and the
+  guidelines through environment variables, and allows writes there.
+- **Recall is per request**: a side model call is shown each memory's type, file name, date and description
+  and picks up to five that clearly help the current request, never one it already picked. Each memory it
+  brings back carries "This memory is N days old… verify" once it is older than a day.
+- **A background "dream"** periodically rewrites the memory files from recent sessions: merges, updates,
+  prunes.
+- **History** is a metadata record per session (title and where the title came from, archived, last activity,
+  turns, model) beside an append-only transcript, and transcript search is a plain case-insensitive match
+  across sessions, returning one snippet each.
+
+What LevelCode does differently, on purpose:
+
+| | Claude | LevelCode |
+|---|---|---|
+| who decides a memory is the user's | the agent writes the file | the host checks the quoted words against what the person typed |
+| a memory phrased as an order | saved like any other | saved; active only when credited to the person, else one click |
+| recall | a model picks up to 5 per request | the capped always-on digest plus `recall_sessions` on demand |
+| age warning | on recalled memories older than a day | on every digest line older than a day |
+| consolidation | a model "dream" pass over the files | the existing deterministic fold on every seal |
+| history search | substring match, one snippet per session | every word must match, title matches first, one snippet each |
+
+Per-request selection was left out for a reason that is specific to LevelCode: memory reaches the agent in
+the system prompt, which providers cache together with the whole conversation after it. Changing it per
+request would make every new goal re-send the conversation at full price. Claude adds recalled memories to
+the conversation as attachments (its transcripts carry `attachment` records); doing that here touches how a
+goal is stored, titled, compacted and replayed, and is a separate change.
+
+### What was run (2026-10-19, macOS 27.0.1, Node 24)
+
+- `scripts/test-extensions.sh`, including `test/memoryNotes.test.js` (21: the crediting check, the fold, the
+  digest, recall states, search over a real store), `test/memoryNotesHost.test.js` (8: the real runAgent with
+  a stood-in provider, and the host halves lifted out of `extension.js`), and ten new hostile cases in
+  `test/memoryPoisoning.test.js` (each order, quoted against a real goal, stays an inactive note).
+- Fifteen single-defect mutations, each turning a test red.
+- `scripts/memory-editor-check.js` in the dev build with a stand-in provider: 11 checks, from the remember
+  call through the Memory tab, the next session's instructions and Search Sessions reopening the conversation.
+
+Not run: a real model deciding when to call `remember` (only a scripted one has), the browser edition, Linux.
 
 ---
 
