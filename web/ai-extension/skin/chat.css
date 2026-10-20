@@ -60,6 +60,12 @@ body.lc-web #composer:focus-within, body.lc-web #composer.focused {
 	border-color: color-mix(in srgb, var(--lcw-accent-text) 80%, var(--lcw-line-strong));
 	box-shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 10px 32px rgba(0, 0, 0, .18), 0 0 0 3px color-mix(in srgb, var(--lcw-accent-text) 26%, transparent);
 }
+/* While the working light turns (chat.html, "the working aura") the focus halo steps back, as on the desktop:
+   the light is a hairline on the border, and a 3px accent halo round it would swallow it. */
+body.lc-web.aura-working #composer:focus-within, body.lc-web.aura-working #composer.focused {
+	border-color: color-mix(in srgb, var(--lcw-accent-text) 35%, var(--lcw-line-strong));
+	box-shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 10px 32px rgba(0, 0, 0, .14);
+}
 body.lc-web textarea#input { font-size: 15px; line-height: 1.5; min-height: 46px; background: transparent; border: 0; }
 body.lc-web #toolbar .tbtn { border-radius: 999px; }
 body.lc-web #toolbar .pill { border-radius: 999px; background: transparent; border-color: transparent; padding: 3px 10px; color: var(--lcw-dim); }
