@@ -32,7 +32,7 @@ const crypto = require('crypto');
 
 // The agent's built-in tools (agent.js TOOLS). An MCP tool may never shadow one of these.
 const BUILTIN_TOOL_NAMES = [
-	'list_files', 'read_file', 'search', 'update_plan', 'edit_file', 'write_file',
+	'list_files', 'read_file', 'search', 'update_plan', 'wrap_up', 'edit_file', 'write_file',
 	'delete_file', 'run_command', 'read_command_output', 'ask_user', 'use_skill'
 ];
 

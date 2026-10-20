@@ -119,7 +119,7 @@ const makeHost = new Function('env', [
 	'  sessionsManager, currentContextLimit, post, replaySessionExpired, postContextFiles, refreshSessions, focusChatView } = env;',
 	"const COMPACT_SYSTEM = 'system', COMPACT_INSTRUCTIONS = 'Summarize:\\n';",
 	decl('FILE_EXCLUDES'),
-	'let abort = null, agentMessages = [], lastAgentGoal = null, diagramsStubbed = false;',
+	'let abort = null, agentMessages = [], lastAgentGoal = null, diagramsStubbed = false, agentPlan = { steps: null }, steerInbox = [];',
 	'let conversation = [], currentCheckpoint = null, agentMode = true;',
 	decl('diagramFolders'),
 	...HOST.map(extract),

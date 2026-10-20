@@ -104,6 +104,16 @@ let review;
 /** Persistent agent transcript for the session (tool calls + results), so follow-up goals
  *  remember prior runs. Reset by New Chat. */
 let agentMessages = [];
+/** The agent's task list for this conversation (docs/PLAN-PROGRESS.md). agent.js keeps `steps` current through
+ *  update_plan and wrap_up, and every run of the conversation gets the same object, so an {"advance": true}
+ *  moves the list an earlier run left. A new conversation, and a resumed one, start with none. */
+let agentPlan = { steps: null };
+/** Messages the user pressed "Send now" on while the agent works. The running loop takes them at its next
+ *  step (ctx.takeSteers); what it never reaches it hands back to the chat's queue when the run ends. */
+let steerInbox = [];
+/** The agent run going now, as a token only its own agentFlow holds: a late finally from a run that was torn
+ *  down cannot mark a newer run as over. */
+let activeAgentRun = null;
 
 function post(msg) { if (activeWebview) { activeWebview.postMessage(msg); } }
 
@@ -1638,6 +1648,7 @@ async function resumeSession(id) {
 	if (!r) { post({ type: 'agentError', message: 'That session could not be opened — it may have been deleted.' }); return; }
 
 	agentMessages = Array.isArray(r.messages) ? r.messages.slice() : [];   // what the model resumes with
+	agentPlan = { steps: null }; steerInbox = [];                          // the list is drawn live, never replayed
 	// Tier 2/3: the head didn't fit the window, so only the recent tail is in context. Prepend a factual
 	// note so the model KNOWS earlier turns exist (a real head-summary is a later refinement) — the user
 	// still sees the whole transcript in the replay. Ephemeral: never persisted (recordTurn appends only
@@ -1728,6 +1739,7 @@ function resetConversationState() {
 	clearQuestions();
 	conversation = [];
 	agentMessages = [];
+	agentPlan = { steps: null }; steerInbox = [];
 	diagrams.reset();                      // the next conversation starts at d-1, owing nothing
 	diagramsStubbed = false;
 	checkpoints.length = 0; currentCheckpoint = null;   // drop the per-turn restore stack
@@ -2200,6 +2212,19 @@ async function compactAgentMemory() {
 	return { ok: true, beforeMsgTokens, afterMsgTokens };
 }
 
+/**
+ * "Send now" on a queued message: hand it to the running agent at its next step. With no run going there is
+ * nothing to hand it to, so it goes straight back to the chat's queue — which sends it as a normal message.
+ */
+function acceptSteer(msg) {
+	const id = typeof msg.id === 'string' ? msg.id : '';
+	const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+	if (!id) { return; }
+	if (!activeAgentRun || !text) { post({ type: 'steersReturned', ids: [id] }); return; }
+	steerInbox.push({ id, text });
+	dbg('steer.waiting', { chars: text.length, waiting: steerInbox.length });
+}
+
 let lastAgentGoal = null;   // remembered so the response bar's Retry can re-run it
 async function agentFlow(text, imageBlocks) {
 	if (text && text.trim()) { lastAgentGoal = text; }
@@ -2253,9 +2278,13 @@ async function agentFlow(text, imageBlocks) {
 	}
 	const diagBaseline = verifyCfg.enabled ? snapshotDiagnostics() : new Map();
 	dbg('verify.config', { enabled: verifyCfg.enabled, hasCommand: !!verifyCfg.command, maxRounds: verifyCfg.maxRounds, includeWarnings: verifyCfg.includeWarnings });
+	const runToken = {};
+	activeAgentRun = runToken;
 	try {
 		await runAgent({
 			messages: withImages(agentMessages), // persists across runs → the agent remembers the session
+			plan: agentPlan,                    // the conversation's task list (update_plan / wrap_up keep it)
+			takeSteers: () => steerInbox.splice(0),   // "Send now" messages, taken at the loop's next step
 			providerId: req.providerId,         // Anthropic native, or an OpenAI-shaped provider via translation (P2)
 			baseURL: req.baseURL,               // for the custom / Ollama endpoints
 			label: req.label,                   // route name for error attribution — "LevelCode Cloud" on the gateway,
@@ -2329,6 +2358,7 @@ async function agentFlow(text, imageBlocks) {
 			signal: abort.signal
 		});
 	} finally {
+		if (activeAgentRun === runToken) { activeAgentRun = null; }
 		// Everything below writes to state a teardown may already have replaced. runAgent holds
 		// `agentMessages` BY REFERENCE, so a teardown that rebinds the global leaves this run pushing
 		// into an orphaned array — and then `agentMessages.slice(sessTurnStart)` would slice the NEW,
@@ -3118,6 +3148,7 @@ class ChatViewProvider {
 				case 'notice': if (msg.text) { vscode.window.showWarningMessage(String(msg.text)); } break;
 				case 'pickImages': await pickImages(); break;
 				case 'attachImagePaths': await attachImagePaths(msg.paths); break;
+				case 'steer': acceptSteer(msg); break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
 				case 'approvalResponse': {
