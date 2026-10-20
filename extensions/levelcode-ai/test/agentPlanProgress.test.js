@@ -58,6 +58,8 @@ async function test(name, fn) { await fn(); n++; console.log('  ok - ' + name); 
 let seq = 0;
 const call = (name, input) => ({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't' + (++seq), name, input }] });
 const say = (text) => ({ stop_reason: 'end_turn', content: [{ type: 'text', text }] });
+/** One response with several tool calls, in order. */
+const calls = (...cs) => ({ stop_reason: 'tool_use', content: cs.map(([name, input]) => ({ type: 'tool_use', id: 't' + (++seq), name, input })) });
 
 /**
  * Run one goal on scripted turns. `extra` is merged into the run's ctx (plan, verify, takeSteers …).
@@ -180,6 +182,28 @@ const ITEMS = { items: [{ content: 'Read the parser', status: 'in_progress' }, {
 			assert.deepStrictEqual(r.wraps.map((w) => w.recap), ['Dates parse now, and the file is clean.'], 'only the wrap-up that passed reached the chat');
 			assert.strictEqual(r.posted.filter((m) => m.type === 'verifyRun').length, 2, 'checked at each wrap-up, and not again for the "Done:" line');
 			assert.deepStrictEqual(r.done, ['done']);
+		});
+
+		await test('AFTER WRAP-UP, SAME RESPONSE: a later call is answered, not run — the hand-back was checked as it stood', async () => {
+			const r = await run([
+				call('update_plan', ITEMS),
+				calls(['wrap_up', { recap: 'The parser reads dates.' }], ['update_plan', { items: [{ content: 'Something new', status: 'in_progress' }] }]),
+				say('Done: dates parse.')
+			], { plan: { steps: null } });
+			assert.match(r.results[2], /^Not run: wrap_up already handed the work back in this response/);
+			assert.deepStrictEqual(r.plans, ['in_progress pending pending', 'completed completed completed'], 'the call after wrap_up changed the list');
+			assert.deepStrictEqual(r.done, ['done']);
+		});
+
+		await test('…but after a wrap-up that verification REFUSED, the same response\'s next call runs (it is the fix)', async () => {
+			const ctx = { plan: { steps: null }, editCount: 1, verify: { enabled: true, maxRounds: 2, command: '' },
+				getTouchedUris: () => ['src/parse.js'], getNewDiagnostics: async () => ({ text: 'src/parse.js:4  error  Missing semicolon', count: 1 }) };
+			const r = await run([
+				calls(['wrap_up', { recap: 'Dates parse now.' }], ['update_plan', ITEMS]),
+				say('Done: still fixing.')
+			], ctx);
+			assert.match(r.results[0], /^Not shown: your changes did not pass verification/);
+			assert.match(r.results[1], /^Task list shown/);
 		});
 
 		await test('SEND NOW, AFTER A STEP: the message rides with the tool results, and the chat is told it landed', async () => {

@@ -1498,8 +1498,16 @@ async function runAgent(ctx) {
 				// next API call 400s ("tool_use ids were found without tool_result blocks").
 				const results = [];
 				let cancelled = false;
+				// Set once a wrap_up in THIS response is accepted: it was checked and shown as the end of the
+				// work, so a call the same response makes after it would change things behind the hand-back.
+				let handedBack = false;
 				for (const tu of toolUses) {
 					if (cancelled || ctx.signal.aborted) { cancelled = true; dbg('tool.cancelled', { name: tu.name }); results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'Cancelled by the user.' }); continue; }
+					if (handedBack) {
+						dbg('tool.afterWrapUp', { name: tu.name });
+						results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'Not run: wrap_up already handed the work back in this response, and it was checked as it stood. Do the work first, then call wrap_up last.' });
+						continue;
+					}
 					if (turn.malformed && turn.malformed.has(tu.id)) {
 						dbg('tool.malformed', { name: tu.name });
 						// A diagram spec is the one input worth a second look: JSON with a trailing comma or a
@@ -1517,7 +1525,9 @@ async function runAgent(ctx) {
 						continue;
 					}
 					if (tu.name === 'wrap_up') {
+						const before = wrapped;
 						results.push({ type: 'tool_result', tool_use_id: tu.id, content: await wrapUp(tu) });
+						if (wrapped && wrapped !== before) { handedBack = true; }   // accepted (not refused by verification)
 						continue;
 					}
 					dbg('tool.call', { name: tu.name, input: inputPreview(tu.input, !!(ctx.mcpRoutes && ctx.mcpRoutes.has(tu.name))) });
