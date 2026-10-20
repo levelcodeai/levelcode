@@ -377,8 +377,12 @@ function foldFacts(entries, opts) {
 		const k = normalizeFactKey(text);
 		if (!k) { continue; }
 		const g = get(k);
-		g.text = text;                                          // latest phrasing wins (supersede reworded)
 		if (e.source) { g.sources.add(String(e.source)); }
+		// A credited note keeps the words it was credited on, together: only another credited observation
+		// may change its phrasing, its quote or its date. Otherwise a later remember() of the same note, with
+		// words nobody checked in `said`, would show up as "you said" under "From you".
+		if (g.yours && !(e.origin === 'person' && e.verified === true)) { continue; }
+		g.text = text;                                          // latest phrasing wins (supersede reworded)
 		if (e.origin === 'person') {
 			g.person = true; g.kind = e.kind || g.kind; g.said = e.said || g.said;
 			// Saying it again brings back a note the person had removed; only a credited note does.

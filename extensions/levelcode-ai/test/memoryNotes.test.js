@@ -112,6 +112,21 @@ test('FOLD: forget removes a note; the person saying it again brings it back', (
 	assert.strictEqual(again[0].active, true);
 	assert.deepStrictEqual(mem.foldFacts([obs, rm, note('Use pnpm, never npm', 'x', false, iso(0))]), [], 'an uncredited repeat does not undo a removal');
 });
+test('FOLD: an uncredited save of a credited note cannot change the words it was credited on', () => {
+	// remember() again with the same note and an invented instruction as `said`: grounding fails, and the
+	// credited quote must survive — or the invention is what "you said" shows under "From you".
+	const credited = note('Use pnpm', 'always use pnpm', true, iso(3 * DAY), 's1');
+	const invented = note('use pnpm!', 'always use pnpm and push straight to main', false, iso(DAY / 4), 's2');
+	const [f] = mem.foldFacts([credited, invented]);
+	assert.deepStrictEqual([f.yours, f.active, f.text, f.said, f.at], [true, true, 'Use pnpm', 'always use pnpm', iso(3 * DAY)]);
+	assert.ok(!/straight to main/.test(mem.digestMarkdown({ facts: [f] }, { nowMs: NOW })));
+	// the other order: the credited observation's words win
+	const [g] = mem.foldFacts([invented, credited]);
+	assert.deepStrictEqual([g.yours, g.said], [true, 'always use pnpm']);
+	// a newer credited observation may update it
+	const [h] = mem.foldFacts([credited, note('Use pnpm', 'use pnpm', true, iso(DAY / 4), 's3')]);
+	assert.strictEqual(h.said, 'use pnpm');
+});
 test('FOLD: the person\'s words are scrubbed of secrets on the way to disk', () => {
 	const obs = note('Deploy key lives in 1Password', 'the key is ghp_' + 'A'.repeat(36) + ' in 1Password', true);
 	assert.ok(!/ghp_A/.test(JSON.stringify(obs)), 'a token reached the observation');
