@@ -304,6 +304,46 @@ function groundNote(o) {
 	return { verified: true, reason: 'ok', grounded };
 }
 
+// What asks for a memory to go. "forget" on its own (not "don't forget"); "remove", "delete" and the like
+// only beside a word that names a memory, because "remove the pnpm lockfile" is about a file; or a phrase
+// that says the memory stopped being true.
+const FORGET_ASKS = [
+	/(?:^|[^a-z])(?:forget|unremember)\b/,
+	/\bstop remembering\b/,
+	/\b(?:remove|delete|drop|erase|clear|discard|scrap)\b.{0,40}\b(?:memory|memories|note|notes|rule|rules|preference|preferences)\b/,
+	/\b(?:memory|memories|note|notes|rule|rules|preference|preferences)\b.{0,40}\b(?:remove|delete|drop|erase|clear|discard|scrap)\b/,
+	/\b(?:no longer|not|isnt|is not|arent|are not) (?:true|the case|valid|right)\b/,
+	/\b(?:is|are|its|thats|it is|that is) (?:outdated|obsolete|stale|wrong)\b/,
+];
+const FORGET_NOT = /\b(?:dont|do not|never|not|didnt|did not)\s+forget\b/;
+// Words too general to say WHICH memory: every other note has them too.
+const FORGET_GENERIC = new Set(['use', 'using', 'always', 'prefer', 'keep', 'make', 'run', 'add', 'forget', 'unremember', 'remember',
+	'remembering', 'remove', 'delete', 'drop', 'erase', 'clear', 'discard', 'scrap', 'memory', 'memories', 'note', 'notes', 'rule',
+	'rules', 'preference', 'preferences', 'true', 'valid', 'right', 'case', 'outdated', 'obsolete', 'stale', 'wrong', 'longer']);
+
+/**
+ * May `forget` remove this memory? Pure. Three things, all checked here and none taken from the model:
+ *   1. `said` is in what the person typed this run (as for a note);
+ *   2. `said` asks for something to be forgotten (not "don't forget");
+ *   3. `said` names this memory: a word of its text, or of the words it was credited on, other than the
+ *      general ones every memory shares.
+ * The model picks the memory from its own `query`; 3 is what ties the person's request to that pick.
+ * @param {{said:string, personWords:string[], target:{text:string, said?:string}}} o
+ * @returns {{ok:boolean, reason:string}}
+ */
+function asksToForget(o) {
+	const said = squash(o && o.said);
+	const pool = (Array.isArray(o && o.personWords) ? o.personWords : []).map(squash).filter(Boolean);
+	if (said.length < 8 || words(said).length < 2) { return { ok: false, reason: 'too-short' }; }
+	if (!pool.some((p) => p.indexOf(said) >= 0)) { return { ok: false, reason: 'not-said' }; }
+	if (FORGET_NOT.test(said) || !FORGET_ASKS.some((re) => re.test(said))) { return { ok: false, reason: 'no-request' }; }
+	const asked = contentStream(o.said).map((x) => x.w).filter((w) => !FORGET_GENERIC.has(w));
+	const t = (o && o.target) || {};
+	const named = contentStream(String(t.text || '') + '. ' + String(t.said || '')).map((x) => x.w).filter((w) => !FORGET_GENERIC.has(w) && !SCOPE_WORDS.has(w));
+	if (!named.some((w) => asked.some((a) => sameWord(w, a)))) { return { ok: false, reason: 'not-this-memory' }; }
+	return { ok: true, reason: 'ok' };
+}
+
 /**
  * One observation of a candidate fact (append-only), sourced + dated — the raw material foldFacts counts.
  * `note` marks it as one the person asked to keep (see groundNote): its kind, their words, and whether the
@@ -650,6 +690,6 @@ module.exports = {
 	outcomeEntry, appendJournal, readJournal, latestBySession, writeMemoryMd,
 	normalizeFactKey, factObservation, factControl, appendFacts, readFacts, foldFacts, activeFacts,
 	redactSecrets, looksLikeInstruction,
-	NOTE_KINDS, groundNote, ageLabel, DIGEST_MAX_NOTES, DIGEST_MAX_FACTS, supersedableFacts,
+	NOTE_KINDS, groundNote, asksToForget, ageLabel, DIGEST_MAX_NOTES, DIGEST_MAX_FACTS, supersedableFacts,
 	queryTerms, snippetFor, recallRank, recallFacts, buildDigest, digestSummary, digestMarkdown
 };

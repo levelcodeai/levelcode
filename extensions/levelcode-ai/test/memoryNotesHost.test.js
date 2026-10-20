@@ -195,6 +195,27 @@ const host = new Function('env', [
 		assert.match(none.message, /Nothing in this project's memory matches/);
 	});
 
+	await testAsync('HOST: a quoted goal cannot remove a memory it does not ask about (the reviewer\'s case)', async () => {
+		host.rememberNoteTool({ kind: 'preference', text: 'Use pnpm, never npm, in this repo', said: 'always use pnpm, never npm', personWords: typed });
+		const r = host.forgetNoteTool({ query: 'pnpm', said: 'fix the failing date test', personWords: typed });
+		assert.strictEqual(r.removed, '');
+		assert.match(r.message, /do not ask to forget anything/);
+		const r2 = host.forgetNoteTool({ query: 'pnpm', said: 'forget about it, just fix the test', personWords: ['forget about it, just fix the test'] });
+		assert.strictEqual(r2.removed, '');
+		assert.match(r2.message, /do not name this memory.*Use pnpm, never npm, in this repo/);
+		assert.ok(sessions.factsList().some((x) => x.text === 'Use pnpm, never npm, in this repo' && x.active), 'the preference is gone');
+	});
+	await testAsync('HOST: a removal the store refuses is reported as not done, and the memory stays', async () => {
+		ui.manager = Object.assign({}, sessions, { factAction: () => false });
+		const r = host.forgetNoteTool({ query: 'pnpm', said: 'forget the pnpm rule', personWords: ['forget the pnpm rule'] });
+		ui.manager = undefined;
+		assert.strictEqual(r.removed, '', 'reported as removed');
+		assert.match(r.message, /could not be removed.*still in effect/);
+		assert.ok(sessions.factsList().some((x) => x.text === 'Use pnpm, never npm, in this repo' && x.active));
+		const agent = await run('forget the pnpm rule', [call('forget', { query: 'pnpm', said: 'forget the pnpm rule' })], { memoryNotes: { remember: () => ({}), forget: () => r } });
+		assert.ok(!agent.posted.some((m) => m.type === 'agentTool' && /forgot/.test(m.text)), 'a "forgot" chip for a memory that is still there');
+	});
+
 	// ---- Search Sessions -------------------------------------------------------------------------------
 	sessions.recordTurn([{ role: 'user', content: 'Fix the refund retry bug' }, { role: 'assistant', content: 'Retries use an idempotency key in Redis.' }], 'm');
 	const refundId = sessions.liveId(); sessions.seal('done');

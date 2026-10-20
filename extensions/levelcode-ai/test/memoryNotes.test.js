@@ -74,6 +74,25 @@ test('GROUND: a quote too short to mean anything is not enough', () => {
 	assert.deepStrictEqual(mem.groundNote({ text: 'ok then', said: 'ok then', personWords: ['ok then'] }).reason, 'too-short');
 });
 
+// ---- asksToForget: may forget remove this memory? --------------------------------------------------
+const pnpmNote = { text: 'Use pnpm, never npm, in this repo', said: 'always use pnpm, never npm' };
+const forgetOk = (said, target, pw) => mem.asksToForget({ said, personWords: pw || ['so: ' + said + '.'], target: target || pnpmNote });
+test('FORGET: the person\'s words must ask for something to go — a typed goal is not a removal request', () => {
+	// The reviewer's case: the goal is real and quotable, and says nothing about forgetting.
+	assert.deepStrictEqual(forgetOk('fix the failing date test', pnpmNote, typed), { ok: false, reason: 'no-request' });
+	assert.strictEqual(forgetOk('don\'t forget pnpm is required').reason, 'no-request', '"don\'t forget" keeps it');
+	assert.strictEqual(forgetOk('remove the pnpm lockfile').reason, 'no-request', 'removing a file is not removing a memory');
+	assert.strictEqual(forgetOk('forget the pnpm rule', pnpmNote, ['something else']).reason, 'not-said');
+});
+test('FORGET: …and name the memory the model picked', () => {
+	assert.strictEqual(forgetOk('forget about it, just fix the test').reason, 'not-this-memory');
+	assert.strictEqual(forgetOk('forget the date test', { text: 'Never mock the database' }).reason, 'not-this-memory');
+	for (const said of ['forget the pnpm rule', 'remove the pnpm rule from memory', 'the npm note is no longer true', 'that pnpm preference is outdated']) {
+		assert.strictEqual(forgetOk(said).ok, true, said);
+	}
+	assert.strictEqual(forgetOk('forget the rebase rule', { text: 'Always rebase before merging' }).ok, true);
+});
+
 // ---- the fold: what a note does ------------------------------------------------------------------
 const note = (text, said, verified, at, src) => mem.factObservation(text, src || 's1', at || iso(DAY / 2), { kind: 'preference', said, verified });
 test('FOLD: a credited note is active at once — even phrased as an order — and marked as theirs', () => {

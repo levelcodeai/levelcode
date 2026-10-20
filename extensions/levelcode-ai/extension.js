@@ -1557,14 +1557,25 @@ function forgetNoteTool(req) {
 	const m = sessionsManager();
 	if (!m) { return { removed: '', message: 'No project memory is available in this workspace.' }; }
 	const r = req || {};
-	const asked = sessionMemory.groundNote({ text: r.said, said: r.said, personWords: r.personWords });
-	if (!asked.verified) {
+	const said = { said: r.said, personWords: r.personWords };
+	// Typed this run? Checked before the lookup, so a quote nobody typed learns nothing about what is stored.
+	const typed = sessionMemory.asksToForget(Object.assign({ target: { text: '' } }, said));
+	if (typed.reason === 'not-said' || typed.reason === 'too-short') {
 		return { removed: '', message: 'Not removed: the quoted words were not found in what the user typed this run. Tell the user they can remove it from the Memory tab.' };
 	}
 	const hit = (m.recallFacts(String(r.query || ''), { limit: 1 }) || [])[0];
 	if (!hit) { return { removed: '', message: 'Nothing in this project\'s memory matches "' + String(r.query || '') + '".' }; }
-	m.factAction(hit.key, 'remove');
-	dbg('sessions.memory.forget', { key: hit.key, state: hit.state });
+	// The person's words must ask for it to go AND name it: the model's query picked it, their words decide.
+	// A credited note's own quote can name it; an uncredited one's quote was never checked, so it cannot.
+	const asked = sessionMemory.asksToForget(Object.assign({ target: { text: hit.text, said: hit.state === 'yours' ? hit.said : '' } }, said));
+	dbg('sessions.memory.forget', { key: hit.key, state: hit.state, asked: asked.reason });
+	if (!asked.ok) {
+		const why = asked.reason === 'no-request' ? 'the quoted words do not ask to forget anything' : 'the quoted words do not name this memory';
+		return { removed: '', message: 'Not removed (' + why + '). The closest memory is "' + hit.text + '". If the user wants it gone, quote the words where they asked for it, or tell them they can use Forget on it in the Memory tab.' };
+	}
+	if (!m.factAction(hit.key, 'remove')) {
+		return { removed: '', message: 'ERROR: "' + hit.text + '" could not be removed: the memory store refused the write, so it is still in effect. Tell the user.' };
+	}
 	refreshMemoryViews();
 	return { removed: hit.text, message: 'Removed from memory: "' + hit.text + '". Tell the user what you removed, in case it was the wrong one (saying it again with remember brings it back).' };
 }
