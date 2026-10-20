@@ -251,6 +251,31 @@ const host = new Function('env', [
 		assert.deepStrictEqual(ui.resumed, [refundId]);
 		assert.strictEqual(qp.disposed, true);
 	});
+	await testAsync('SEARCH: the quick pick searches every session, a batch at a time; a new keystroke stops the older scan', async () => {
+		sessions.recordTurn([{ role: 'user', content: 'Check the platypus exporter' }, { role: 'assistant', content: 'The platypus exporter writes CSV.' }], 'm');
+		const oldId = sessions.liveId(); sessions.seal('done');
+		for (let i = 0; i < 60; i++) { sessions.recordTurn([{ role: 'user', content: 'Chore ' + i }, { role: 'assistant', content: 'Done.' }], 'm'); sessions.seal('done'); }
+		/** @type {string[]} */ const asked = [];
+		ui.manager = Object.assign({}, sessions, { searchStep: (q, o) => { asked.push(q); return sessions.searchStep(q, o); } });
+		host.searchSessionsQuickPick();
+		const qp = ui.quickPick;
+		const settled = async () => { const end = Date.now() + 3000; while (Date.now() < end) { await new Promise((r) => setTimeout(r, 20)); if (!qp.busy) { return; } } throw new Error('the search never finished'); };
+		qp._h.change('platypus exporter');
+		await settled();
+		assert.deepStrictEqual(qp.items.map((x) => x.id), [oldId], 'the oldest of 60+ sessions, past the first batch');
+		assert.match(qp.items[0].detail, /you: Check the platypus exporter/);
+		assert.ok(asked.length >= 2, 'one step read everything: ' + asked.length);
+		// type again while a scan is running: the old query's scan stops after the step it is in
+		asked.length = 0;
+		qp._h.change('chore');
+		const end = Date.now() + 3000; while (!asked.length && Date.now() < end) { await new Promise((r) => setTimeout(r, 5)); }
+		qp._h.change('platypus');
+		await settled();
+		assert.strictEqual(asked.filter((q) => q === 'chore').length, 1, 'the scan for "chore" went on after the next keystroke');
+		assert.deepStrictEqual(qp.items.map((x) => x.id), [oldId]);
+		qp.hide();
+		ui.manager = undefined;
+	});
 	await testAsync('SEARCH: no match says so, and picking that line does nothing', async () => {
 		host.searchSessionsQuickPick();
 		const qp = ui.quickPick;

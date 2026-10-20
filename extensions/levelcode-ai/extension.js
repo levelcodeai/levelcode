@@ -1649,20 +1649,36 @@ function searchSessionsQuickPick() {
 	qp.placeholder = 'Search this project\'s sessions — titles and what was said';
 	qp.matchOnDescription = false; qp.matchOnDetail = false;
 	let timer = null;
+	let gen = 0;   // bumped by every keystroke and by closing: a scan still going for an older query stops
 	const when = (iso) => { const t = Date.parse(iso || ''); return Number.isFinite(t) ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''; };
+	// Every session is searched, a step at a time (searchStep reads a batch of conversations), so a project
+	// with years of history never blocks the editor. The list is re-ranked as each step lands, and says
+	// "no session mentions" only once every session has been searched.
 	const run = (q) => {
-		let results = [];
-		try { results = m.search(q, { limit: 40 }); } catch (e) { results = []; }
-		dbg('sessions.search', { chars: q.length, results: results.length });
-		// alwaysShow: these items are already the matches; the quick pick's own label filter would drop the
-		// ones that matched inside the conversation rather than in the title.
-		qp.items = results.length
-			? results.map((r) => ({ label: r.title || 'Untitled', description: [when(r.updatedAt), r.lifecycle === 'archived' ? 'done' : '', r.pinned ? 'pinned' : ''].filter(Boolean).join(' · '), detail: r.snippet || '', alwaysShow: true, id: r.id }))
-			: [{ label: 'No session mentions “' + q + '”', alwaysShow: true, id: '' }];
-		qp.busy = false;
+		const mine = gen;
+		const found = [];
+		let from = 0;
+		const step = () => {
+			if (mine !== gen) { return; }
+			let r;
+			try { r = m.searchStep(q, { from }); } catch (e) { r = { matches: [], next: null }; }
+			found.push(...r.matches);
+			const done = r.next == null;
+			const results = m.rankSearch(found, 40);
+			if (done) { dbg('sessions.search', { chars: q.length, results: results.length }); }
+			// alwaysShow: these items are already the matches; the quick pick's own label filter would drop the
+			// ones that matched inside the conversation rather than in the title.
+			qp.items = results.length
+				? results.map((x) => ({ label: x.title || 'Untitled', description: [when(x.updatedAt), x.lifecycle === 'archived' ? 'done' : '', x.pinned ? 'pinned' : ''].filter(Boolean).join(' · '), detail: x.snippet || '', alwaysShow: true, id: x.id }))
+				: (done ? [{ label: 'No session mentions “' + q + '”', alwaysShow: true, id: '' }] : []);
+			qp.busy = !done;
+			if (!done) { from = r.next; setTimeout(step, 0); }
+		};
+		step();
 	};
 	qp.onDidChangeValue((v) => {
 		clearTimeout(timer);
+		gen++;
 		const q = String(v || '').trim();
 		if (q.length < 2) { qp.items = []; qp.busy = false; return; }
 		qp.busy = true;
@@ -1674,7 +1690,7 @@ function searchSessionsQuickPick() {
 		qp.hide();
 		await handleSessionAction('resume', pick.id);
 	});
-	qp.onDidHide(() => { clearTimeout(timer); qp.dispose(); });
+	qp.onDidHide(() => { clearTimeout(timer); gen++; qp.dispose(); });
 	qp.show();
 }
 

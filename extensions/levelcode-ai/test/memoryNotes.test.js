@@ -233,10 +233,51 @@ test('SEARCH: a session that grows is searched as it is now', () => {
 	assert.deepStrictEqual(m.search('pool pagination').map((x) => x.id), [idPool]);
 	m.seal('done');
 });
-test('SEARCH: an empty or one-letter query finds nothing; scanMax bounds the reads', () => {
+test('SEARCH: an empty or one-letter query finds nothing; a step reads at most readMax conversations and says where to go on', () => {
 	assert.deepStrictEqual(m.search(''), []);
 	assert.deepStrictEqual(m.search('a'), []);
-	assert.strictEqual(m.search('redis', { scanMax: 1 }).length, 1);
+	assert.deepStrictEqual(m.searchStep('', {}), { matches: [], next: null });
+	const steps = []; let from = 0;
+	for (;;) { const r = m.searchStep('redis', { from, readMax: 1 }); steps.push(r); if (r.next == null) { break; } assert.strictEqual(r.next, from + 1); from = r.next; }
+	assert.strictEqual(steps.length, 3, 'three sessions not in the trash, one read a step');
+	assert.deepStrictEqual(m.rankSearch(steps.flatMap((r) => r.matches)).map((x) => x.id), m.search('redis').map((x) => x.id));
+});
+
+// A project with more history than one step reads: 160 sessions, the oldest ones holding the matches.
+const tmpBig = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-search-'));
+process.on('exit', () => { try { fs.rmSync(tmpBig, { recursive: true, force: true }); } catch { /* best effort */ } });
+let tb = NOW;
+const big = createSessions({ root: tmpBig, slug: 'big', projectPath: '/big', memory: true, now: () => new Date(tb += 60000) });
+big.recordTurn(turn('Quokka migration plan', 'Planned in three steps.'), 'm'); const idQuokkaTitle = big.liveId(); big.seal('done');
+big.recordTurn(turn('Look at the old importer', 'Its retry loop is fine. The wombat flag is never read.'), 'm'); const idWombat = big.liveId(); big.seal('done');
+// one long conversation: the phrase is in its last turn, past the first 400,000 characters
+const long = []; for (let i = 0; i < 9; i++) { long.push(...turn('Step ' + i + ' of the long refactor', 'x'.repeat(50000))); }
+long.push(...turn('One more thing', 'The numbat cache is warmed at boot.'));
+big.recordTurn(long, 'm'); const idNumbat = big.liveId(); big.seal('done');
+for (let i = 0; i < 160; i++) { big.recordTurn(turn('Routine task ' + i, i < 40 ? 'Touched the quokka adapter again.' : 'Nothing notable.'), 'm'); big.seal('done'); }
+test('SEARCH: every session is searched, not only the newest 150', () => {
+	assert.deepStrictEqual(big.search('wombat').map((x) => x.id), [idWombat], 'a match in the conversation of the second-oldest of 163');
+	assert.match(big.search('wombat')[0].snippet, /wombat flag is never read/);
+});
+test('SEARCH: the whole conversation is searched, not only its first 400,000 characters', () => {
+	assert.deepStrictEqual(big.search('numbat').map((x) => x.id), [idNumbat]);
+});
+test('SEARCH: an older title match outranks newer matches in the conversation, before the limit', () => {
+	// 40 newer sessions mention quokka; the one titled with it is the oldest of all.
+	const r = big.search('quokka', { limit: 5 });
+	assert.strictEqual(r.length, 5);
+	assert.deepStrictEqual([r[0].id, r[0].inTitle], [idQuokkaTitle, true]);
+	assert.strictEqual(big.search('quokka', { limit: 100 }).length, 41);
+});
+test('SEARCH: the first step reports a title match anywhere, with no read; a later step adds its snippet', () => {
+	const first = big.searchStep('quokka migration', { readMax: 10 });
+	assert.deepStrictEqual(first.matches.map((x) => [x.id, x.snippet]), [[idQuokkaTitle, '']]);
+	assert.strictEqual(first.next, 10);
+	let r = first, all = first.matches.slice();
+	while (r.next != null) { r = big.searchStep('quokka migration', { from: r.next, readMax: 10 }); all = all.concat(r.matches); }
+	const [top] = big.rankSearch(all);
+	assert.strictEqual(top.id, idQuokkaTitle);
+	assert.match(top.snippet, /Quokka migration plan/i);
 });
 
 // ---- rememberNote, through the manager --------------------------------------------------------------

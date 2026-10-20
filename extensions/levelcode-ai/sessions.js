@@ -21,9 +21,26 @@ const planner = require('./sessionResume');
 const memory = require('./sessionMemory');
 const fs = require('fs');
 
-/** History search bounds: characters of one session kept for matching, and sessions kept in the cache. */
-const SEARCH_MAX_CHARS = 400000;
-const SEARCH_CACHE_MAX = 200;
+/** History search bounds: characters of conversation the cache holds in all (one larger session is still
+ *  searched whole, and is then the only one kept), and conversations read from disk per searchStep. */
+const SEARCH_CACHE_CHARS = 20000000;
+const SEARCH_READ_BATCH = 50;
+
+/**
+ * Search results in the order they are shown, at most `limit`: a session whose title has every word first,
+ * then the rest, each newest first. One result per session; a later one with a snippet replaces one without.
+ * Ranked BEFORE the cut, so an older title match is never pushed out by newer matches in the conversation.
+ */
+function rankSearch(results, limit) {
+	const byId = new Map();
+	for (const r of (Array.isArray(results) ? results : [])) {
+		if (!r || !r.id) { continue; }
+		const had = byId.get(r.id);
+		if (!had || (!had.snippet && r.snippet)) { byId.set(r.id, r); }
+	}
+	const out = [...byId.values()].sort((a, b) => (Number(b.inTitle) - Number(a.inTitle)) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+	return Number.isFinite(limit) && limit > 0 ? out.slice(0, limit) : out;
+}
 const imageStore = require('./imageStore');
 
 /**
@@ -388,59 +405,92 @@ function createSessions(opts) {
 	function list() { try { return store.loadIndex(root, slug).entries; } catch (e) { return []; } }
 
 	// What each session SAYS, as one lowercased string plus its readable turns, cached by file size + mtime:
-	// History search runs on every pause in typing, and a session file only grows by appends.
+	// History search runs on every pause in typing, and a session file only grows by appends. The whole
+	// conversation is kept: a phrase in its last turn must be found like one in its first. The cache is
+	// bounded by the characters it holds in all, least recently used out first.
 	const searchCache = new Map();
+	let searchCacheChars = 0;
 	function searchable(id) {
 		const file = store.sessionFile(root, slug, id);
 		let st;
 		try { st = fs.statSync(file); } catch (e) { return null; }
 		const hit = searchCache.get(file);
-		if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) { return hit; }
+		if (hit) { searchCache.delete(file); }
+		if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) { searchCache.set(file, hit); return hit; }
+		if (hit) { searchCacheChars -= hit.hay.length; }
 		let turns = [];
 		try { turns = events.toDisplayTurns(events.eventsToMessages(store.readSession(file).events)); } catch (e) { turns = []; }
-		const hay = turns.map((t) => String((t && t.text) || '')).join('\n').toLowerCase().slice(0, SEARCH_MAX_CHARS);
+		const hay = turns.map((t) => String((t && t.text) || '')).join('\n').toLowerCase();
 		const v = { size: st.size, mtimeMs: st.mtimeMs, turns, hay };
 		searchCache.set(file, v);
-		if (searchCache.size > SEARCH_CACHE_MAX) { searchCache.delete(searchCache.keys().next().value); }
+		searchCacheChars += hay.length;
+		while (searchCacheChars > SEARCH_CACHE_CHARS && searchCache.size > 1) {
+			const [k, old] = searchCache.entries().next().value;
+			searchCache.delete(k);
+			searchCacheChars -= old.hay.length;
+		}
 		return v;
 	}
 	/**
-	 * History search: the sessions whose title or conversation contains EVERY word of the query, newest first,
-	 * each with a cited snippet. Archived sessions are included (finding old work is the point); trashed ones
-	 * are not. Reads at most `scanMax` sessions' transcripts. Empty for an empty query or on error.
-	 * @returns {Array<{id:string, title:string|null, updatedAt:string, lifecycle:string, pinned:boolean, snippet:string, inTitle:boolean}>}
+	 * One step of History search, newest first. Every session's title and preview are in the index, so the
+	 * first step reports every session whose title or preview has every word, with no read. Each step then
+	 * reads the conversations of the next `readMax` sessions from `from` (cached ones cost nothing) and
+	 * reports those that have every word, in the title or what was said, each with a snippet. Pass `next`
+	 * back as `from` until it is null; rankSearch puts the steps together. Archived sessions are included
+	 * (finding old work is the point); trashed ones are not.
+	 * @returns {{ matches: Array<{id:string, title:string|null, updatedAt:string, lifecycle:string, pinned:boolean, snippet:string, inTitle:boolean}>, next: number|null }}
+	 */
+	function searchStep(query, opts) {
+		const o = opts || {};
+		const from = Number.isFinite(o.from) && o.from > 0 ? Math.floor(o.from) : 0;
+		const readMax = Number.isFinite(o.readMax) && o.readMax > 0 ? Math.floor(o.readMax) : SEARCH_READ_BATCH;
+		const terms = memory.queryTerms(query);
+		if (!terms.length) { return { matches: [], next: null }; }
+		const phrase = String(query || '').toLowerCase().replace(/\s+/g, ' ').trim();
+		const matches = [];
+		const head = (e) => ((e.title || '') + ' ' + (e.preview || '')).toLowerCase();
+		const result = (e, body) => ({ id: e.id, title: e.title || null, updatedAt: e.updatedAt || '', lifecycle: e.lifecycle || 'active', pinned: !!e.pinned,
+			// The snippet shows the whole phrase when the conversation has it, else the first word that is there.
+			snippet: body ? memory.snippetFor(body.turns, [phrase].concat(terms)) : '',
+			inTitle: terms.every((t) => (e.title || '').toLowerCase().indexOf(t) >= 0) });
+		try {
+			const entries = list().filter((e) => e && e.lifecycle !== 'trashed')
+				.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+			const end = Math.min(entries.length, from + readMax);
+			if (from === 0) {
+				for (let i = end; i < entries.length; i++) { const h = head(entries[i]); if (terms.every((t) => h.indexOf(t) >= 0)) { matches.push(result(entries[i], null)); } }
+			}
+			for (let i = from; i < end; i++) {
+				const e = entries[i];
+				const body = searchable(e.id);
+				const hay = head(e) + '\n' + (body ? body.hay : '');
+				if (terms.every((t) => hay.indexOf(t) >= 0)) { matches.push(result(e, body)); }
+			}
+			return { matches, next: end < entries.length ? end : null };
+		} catch (e) { return { matches, next: null }; }
+	}
+	/**
+	 * History search, whole: every session not in the trash whose title or conversation has EVERY word of the
+	 * query, ranked (rankSearch), at most `limit`. Reads every conversation it has not cached; the quick pick
+	 * uses searchStep instead, so a large project never blocks it. Empty for an empty query or on error.
 	 */
 	function search(query, opts) {
 		const o = opts || {};
 		const limit = Number.isFinite(o.limit) && o.limit > 0 ? o.limit : 30;
-		const scanMax = Number.isFinite(o.scanMax) && o.scanMax > 0 ? o.scanMax : 150;
-		const terms = memory.queryTerms(query);
-		if (!terms.length) { return []; }
-		const phrase = String(query || '').toLowerCase().replace(/\s+/g, ' ').trim();
-		const out = [];
-		try {
-			const entries = list().filter((e) => e && e.lifecycle !== 'trashed')
-				.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
-				.slice(0, scanMax);
-			for (const e of entries) {
-				const head = ((e.title || '') + ' ' + (e.preview || '')).toLowerCase();
-				const body = searchable(e.id);
-				const hay = head + '\n' + (body ? body.hay : '');
-				if (!terms.every((t) => hay.indexOf(t) >= 0)) { continue; }
-				// The snippet shows the whole phrase when the conversation has it, else the first word that is there.
-				const snippet = body ? (memory.snippetFor(body.turns, [phrase].concat(terms))) : '';
-				out.push({ id: e.id, title: e.title || null, updatedAt: e.updatedAt || '', lifecycle: e.lifecycle || 'active',
-					pinned: !!e.pinned, snippet, inTitle: terms.every((t) => (e.title || '').toLowerCase().indexOf(t) >= 0) });
-				if (out.length >= limit) { break; }
-			}
-		} catch (e) { return out; }
-		// Title matches first, then the rest, each newest first (the scan order).
-		return out.filter((r) => r.inTitle).concat(out.filter((r) => !r.inTitle));
+		const all = [];
+		let from = 0;
+		for (;;) {
+			const r = searchStep(query, { from, readMax: o.readMax });
+			all.push(...r.matches);
+			if (r.next == null) { break; }
+			from = r.next;
+		}
+		return rankSearch(all, limit);
 	}
 
 	function liveId() { return live ? live.id : null; }
 
-	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, diagrams, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, rememberNote, factsList, factAction, supersedeFact, memoryPaths, mediaRoot, sweepMedia, list, search, liveId };
+	return { ensure, recordTurn, seal, resume, fork, archive, trash, restore, setPinned, rename, autoArchiveStale, digest, consolidate, transcript, diagrams, refineSummary, recall, recallFacts, memoryItems, forget, recordFacts, rememberNote, factsList, factAction, supersedeFact, memoryPaths, mediaRoot, sweepMedia, list, search, searchStep, rankSearch, liveId };
 }
 
-module.exports = { createSessions };
+module.exports = { createSessions, rankSearch };
