@@ -108,7 +108,7 @@ test('SEND: an image with no words is a valid message', () => {
 });
 
 test('HOST: images become refs in the conversation, and bytes only at request time', () => {
-	assert.match(ext, /case 'send': await handleSend\(msg\.text, msg\.images\)/, 'send must carry images');
+	assert.match(ext, /case 'send': await handleSend\(msg\.text, msg\.images[,)]/, 'send must carry images');
 	const store = fnBody(ext, 'storeImages');
 	assert.match(store, /imageStore\.put\(/, 'bytes must go through the store');
 	assert.match(store, /type: 'image', ref/, 'the conversation must keep a ref, never the base64');
@@ -137,7 +137,7 @@ test('AGENT MODE: the default path carries images too', () => {
 	// which never saw them — so in the DEFAULT mode a pasted screenshot was written to disk and
 	// dropped. The exact silent-drop failure this whole feature exists to prevent.
 	// (The third argument marks the goal as typed, for the Ask When Risky reviewer — not about images.)
-	assert.match(ext, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks(, \{ typed: true \})?\); return; \}/,
+	assert.match(ext, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks(, \{ typed: (true|!reply) \})?\); return; \}/,
 		'agent mode must forward the image blocks');
 	assert.match(ext, /async function agentFlow\(text, imageBlocks(, opts)?\)/, 'agentFlow must accept them');
 	const body = fnBody(ext, 'agentFlow');

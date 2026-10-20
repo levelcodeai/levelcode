@@ -3466,7 +3466,8 @@
     if (b.dataset.tb === 'reply') {
       const a = (w.actions || [])[+b.dataset.i]; if (!a) { return; }
       w.dismissed = true; renderTurnBox();
-      sendOrQueue(a.message || a.label, []);
+      // A reply's words are the agent's (you saw its label): sent as a reply, never as text you typed.
+      sendOrQueue(a.message || a.label, [], true);
     } else if (b.dataset.tb === 'dismiss') {
       w.dismissed = true; renderTurnBox(); input.focus();
     }
@@ -3489,8 +3490,8 @@
   function queuePeek(text){ return String(text || '').replace(/\s+/g, ' ').trim(); }
   function queueCount(n){ return n + ' message' + (n === 1 ? '' : 's') + ' queued'; }
   function canSendNow(e){ return !!e && !e.sending && !e.images.length && streaming && runIsAgent; }
-  function enqueue(text, images){
-    queue.push({ id: 'q' + (++queueSeq) + '-' + Date.now().toString(36), text: text, images: images || [], sending: false });
+  function enqueue(text, images, reply){
+    queue.push({ id: 'q' + (++queueSeq) + '-' + Date.now().toString(36), text: text, images: images || [], sending: false, reply: reply === true });
     renderQueue();
   }
   function queueEntry(id){ return queue.find(function(e){ return e.id === id; }); }
@@ -3574,7 +3575,7 @@
   }
   function sendQueuedNow(id){
     const e = queueEntry(id); if (!e || e.sending) { return; }
-    if (!busy()) { dropQueued(id); renderQueue(); postSend(e.text, e.images); return; }
+    if (!busy()) { dropQueued(id); renderQueue(); postSend(e.text, e.images, e.reply); return; }
     if (!canSendNow(e)) { return; }
     e.sending = true; renderQueue();
     vscode.postMessage({ type: 'steer', id: e.id, text: e.text });
@@ -3606,12 +3607,13 @@
     if (!lastRunOk) { queueToComposer(stopAsked ? ' because the run was stopped' : ' because the run didn’t finish'); return; }
     const e = queue.find(function(x){ return !x.sending; }); if (!e) { return; }
     dropQueued(e.id); renderQueue();
-    postSend(e.text, e.images);
+    postSend(e.text, e.images, e.reply);
   }
   // A reply button in the next-step box, or anything else that sends on your behalf: queued while busy.
-  function sendOrQueue(text, images){
-    if (busy()) { enqueue(text, images); return; }
-    postSend(text, images);
+  // `reply` marks words the agent wrote and you clicked, so the host does not count them as typed.
+  function sendOrQueue(text, images, reply){
+    if (busy()) { enqueue(text, images, reply); return; }
+    postSend(text, images, reply);
   }
   queueBar.addEventListener('click', function(ev){
     const b = ev.target.closest && ev.target.closest('[data-q]');
@@ -3863,7 +3865,7 @@
     postSend(t, imgs);
   }
   // Send a message: your bubble in the transcript, then the host. `imgs` are the composer's attachment objects.
-  function postSend(t, imgs){
+  function postSend(t, imgs, reply){
     const payload = imgs.map(function(i){
       return { media_type: i.media_type, base64: i.base64, w: i.w, h: i.h, bytes: i.bytes };
     });
@@ -3873,7 +3875,7 @@
     forceStick();
     if (turn.wrap) { turn.wrap.dismissed = true; renderTurnBox(); }   // you answered: the box has done its job
     awaitingStart = true; stopAsked = false; syncSendBtn();
-    vscode.postMessage({ type: 'send', text: t, images: payload });
+    vscode.postMessage({ type: 'send', text: t, images: payload, reply: reply === true });
   }
 
   // ── attached images ───────────────────────────────────────────────────────────────────────────

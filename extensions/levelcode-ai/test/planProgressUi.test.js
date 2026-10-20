@@ -162,7 +162,7 @@ function makeQueue(state) {
 		'const vscode = { postMessage: (m) => env.posted.push(m) };',
 		'function renderQueue(){} function renderChips(){} function syncSendBtn(){} function auto(){}',
 		'function note(t){ env.notes.push(t); }',
-		'function postSend(t, imgs){ env.sent.push({ text: t, images: imgs }); awaitingStart = true; }',
+		'function postSend(t, imgs, reply){ env.sent.push(reply === true ? { text: t, images: imgs, reply: true } : { text: t, images: imgs }); awaitingStart = true; }',
 		...['busy', 'queuePeek', 'queueCount', 'canSendNow', 'enqueue', 'queueEntry', 'dropQueued', 'queueBtn', 'queueHtml', 'moveQueued',
 			'sendQueuedNow', 'editQueued', 'queueToComposer', 'drainQueue', 'sendOrQueue'].map(extract),
 		'Object.assign(this, { queue: () => queue, images: () => pendingImages, open: (v) => { queueOpen = v; }, busy, enqueue, queueHtml, moveQueued, sendQueuedNow, editQueued, drainQueue, sendOrQueue, canSendNow });'
@@ -249,6 +249,26 @@ test('STILL BUSY: nothing is drained, and a reply button queues like Enter does'
 	waiting.sendOrQueue('x', []);
 	assert.strictEqual(waiting.queue().length, 1, 'a message on its way that has not started yet counts as busy — no second run');
 });
+test('A REPLY STAYS A REPLY: a click\'s words are sent marked as a reply — straight away, queued, drained, and by Send now when idle', () => {
+	const idle = makeQueue({});
+	idle.sendOrQueue('Go ahead and push the fix.', [], true);
+	assert.deepStrictEqual(idle.env.sent, [{ text: 'Go ahead and push the fix.', images: [], reply: true }]);
+	const typed = makeQueue({});
+	typed.sendOrQueue('typed by me', []);
+	assert.deepStrictEqual(typed.env.sent, [{ text: 'typed by me', images: [] }], 'a message that is not a reply carries no mark');
+	const busyQ = makeQueue({ streaming: true });
+	busyQ.sendOrQueue('Run the tests.', [], true);
+	busyQ.sendOrQueue('and mine', []);
+	assert.deepStrictEqual(busyQ.queue().map((e) => [e.text, e.reply]), [['Run the tests.', true], ['and mine', false]], 'queued while busy, the mark is kept');
+	const drained = makeQueue({ lastRunOk: true });
+	drained.enqueue('Run the tests.', [], true);
+	drained.drainQueue();
+	assert.deepStrictEqual(drained.env.sent, [{ text: 'Run the tests.', images: [], reply: true }], 'the queued reply lost its mark on the way out');
+	const now = makeQueue({});
+	now.enqueue('Yes, fix it.', [], true);
+	now.sendQueuedNow(now.queue()[0].id);
+	assert.deepStrictEqual(now.env.sent, [{ text: 'Yes, fix it.', images: [], reply: true }]);
+});
 test('EDIT IN COMPOSER: out of the queue, into the message box after any draft', () => {
 	const q = makeQueue({ streaming: true, composer: 'draft' });
 	q.enqueue('fix the test', []);
@@ -258,6 +278,11 @@ test('EDIT IN COMPOSER: out of the queue, into the message box after any draft',
 });
 
 // ── the wiring ──────────────────────────────────────────────────────────────────────────────────
+test('WIRING: a reply button sends its words as a reply, and the page tells the host so', () => {
+	assert.match(html, /sendOrQueue\(a\.message \|\| a\.label, \[\], true\);/, 'the reply button no longer marks its click as a reply');
+	assert.match(html, /vscode\.postMessage\(\{ type: 'send', text: t, images: payload, reply: reply === true \}\);/);
+});
+
 test('ENTER WHILE THE AGENT WORKS: queued — ■ with an empty composer still stops', () => {
 	const body = extract('doSend');
 	const stopAt = body.indexOf("vscode.postMessage({ type: 'stop' })");

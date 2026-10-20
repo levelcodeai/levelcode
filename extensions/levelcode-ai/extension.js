@@ -2750,12 +2750,18 @@ function withImages(msgs) {
 	return touched ? out : msgs;
 }
 
-async function handleSend(text, images) {
+/**
+ * A message from the chat. `opts.reply` marks a click on a reply button in the next-step box: words the agent
+ * wrote (the person saw a short label), so the goal is not recorded as typed — not for the Ask When Risky
+ * reviewer, not for `remember` to quote.
+ */
+async function handleSend(text, images, opts) {
+	const reply = !!(opts && opts.reply);
 	const imageBlocks = storeImages(images);
 	if ((!text || !text.trim()) && !imageBlocks.length) { return; }
 	text = text || '';
 	if (ctx) { ctx.globalState.update('levelcode.ai.hasSentMessage', true); }   // user engaged → stop auto-revealing the panel on launch
-	if (agentMode) { await agentFlow(text, imageBlocks, { typed: true }); return; }
+	if (agentMode) { await agentFlow(text, imageBlocks, { typed: !reply }); return; }
 	const cfg = aiConfig();
 	const providerId = currentProviderId();
 	dbg('chat.send', { provider: providerId, model: activeModel(cfg, providerId), chars: text.length, history: conversation.length });
@@ -3335,7 +3341,7 @@ class ChatViewProvider {
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'setApprovals': setApprovalMode(String(msg.mode || '')); break;
 				case 'setAutopilot': setApprovalMode(msg.on ? 'autopilot' : 'ask'); break;   // the two-option menu's message
-				case 'send': await handleSend(msg.text, msg.images); break;
+				case 'send': await handleSend(msg.text, msg.images, { reply: msg.reply === true }); break;
 				// One surface for "that could not be attached" — VS Code's own, not a second one
 				// invented inside the transcript.
 				case 'notice': if (msg.text) { vscode.window.showWarningMessage(String(msg.text)); } break;
