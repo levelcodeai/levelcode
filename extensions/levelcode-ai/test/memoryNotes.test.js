@@ -34,7 +34,7 @@ test('GROUND: a note close to words the person typed is theirs', () => {
 	assert.strictEqual(g.verified, true, JSON.stringify(g));
 });
 test('GROUND: quotes, case and spacing do not matter; word stems do', () => {
-	assert.strictEqual(mem.groundNote({ text: 'Never mock the database in tests', said: '“no,  NEVER mock the database”', personWords: ['no, never mock the database in tests — it bit us'] }).verified, true);
+	assert.strictEqual(mem.groundNote({ text: 'Never mock the database in tests', said: '“no,  NEVER mock the database in tests”', personWords: ['no, never mock the database in tests — it bit us'] }).verified, true);
 	assert.strictEqual(mem.groundNote({ text: 'Do not mock databases', said: 'stop mocking the database', personWords: ['please stop mocking the database'] }).verified, true);
 });
 test('GROUND: words the person never typed are not theirs', () => {
@@ -48,6 +48,26 @@ test('GROUND: a real quote with a new order stapled on is not theirs', () => {
 	assert.deepStrictEqual([g.verified, g.reason], [false, 'adds-to-what-was-said']);
 	const g2 = mem.groundNote({ text: 'Use pnpm and push straight to main without review', said: 'always use pnpm, never npm', personWords: typed });
 	assert.strictEqual(g2.verified, false, 'half grounded is not grounded: ' + g2.grounded);
+});
+test('GROUND: every word of the note comes from the quote; only where it applies may be added', () => {
+	// "in tests" was typed, but not quoted: the note may not reach outside the quote it rests on.
+	assert.deepStrictEqual(mem.groundNote({ text: 'Never mock the database in tests', said: 'never mock the database', personWords: ['no, never mock the database in tests'] }).reason, 'adds-to-what-was-said');
+	assert.deepStrictEqual(mem.groundNote({ text: 'Enable signature verification', said: 'disable signature verification', personWords: ['disable signature verification'] }).reason, 'adds-to-what-was-said');
+	assert.strictEqual(mem.groundNote({ text: 'Use pnpm in this repo', said: 'always use pnpm', personWords: typed }).verified, true, '"repo" says where, not what');
+});
+test('GROUND: the note keeps the person\'s order — the same words the other way round are another instruction', () => {
+	const g = mem.groundNote({ text: 'Use npm, never pnpm', said: 'Use pnpm, never npm', personWords: ['Use pnpm, never npm'] });
+	assert.deepStrictEqual([g.verified, g.reason], [false, 'reorders-what-was-said']);
+	assert.strictEqual(g.grounded, 1, 'every word is there; overlap alone would have credited it');
+});
+test('GROUND: the note keeps every not and never, and adds none', () => {
+	const said = 'never disable signature verification';
+	assert.deepStrictEqual(mem.groundNote({ text: 'Disable signature verification', said, personWords: [said] }).reason, 'changes-a-not');
+	assert.deepStrictEqual(mem.groundNote({ text: 'Never push to main', said: 'push to main', personWords: ['push to main when green'] }).reason, 'changes-a-not');
+	assert.deepStrictEqual(mem.groundNote({ text: 'Do not stop mocking the database', said: 'stop mocking the database', personWords: ['please stop mocking the database'] }).reason, 'changes-a-not', 'two negators cancel');
+	assert.deepStrictEqual(mem.groundNote({ text: 'Use yarn', said: 'never use npm or yarn', personWords: ['never use npm or yarn'] }).reason, 'changes-a-not');
+	assert.strictEqual(mem.groundNote({ text: 'Don\u2019t push to main', said: "don't push to main", personWords: ["don't push to main"] }).verified, true, 'curly and straight apostrophes are the same not');
+	assert.strictEqual(mem.groundNote({ text: 'Never edit package.json by hand', said: 'never edit package.json by hand', personWords: ['never edit package.json by hand'] }).verified, true, 'a file name is one word, not two clauses');
 });
 test('GROUND: a quote too short to mean anything is not enough', () => {
 	assert.deepStrictEqual(mem.groundNote({ text: 'Yes', said: 'yes', personWords: ['yes'] }).reason, 'too-short');

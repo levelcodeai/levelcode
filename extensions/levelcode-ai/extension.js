@@ -1547,8 +1547,10 @@ function rememberNoteTool(note) {
 	}
 	const why = g.reason === 'not-said' ? 'the quoted words were not found in what the user typed this run'
 		: g.reason === 'adds-to-what-was-said' ? 'the note says more than the quoted words do'
-			: 'the quoted words are too short to credit';
-	return { verified: false, message: 'Saved as UNCONFIRMED (' + why + '). It is listed in the Memory tab and has no effect until the user confirms it there. If the user did ask for this, quote their exact words in `said` and keep the note to what they said.' };
+			: g.reason === 'reorders-what-was-said' ? 'the note puts the quoted words in a different order'
+				: g.reason === 'changes-a-not' ? 'the note drops or adds a not/never the quoted words do not have'
+					: 'the quoted words are too short to credit';
+	return { verified: false, message: 'Saved as UNCONFIRMED (' + why + '). It is listed in the Memory tab and has no effect until the user confirms it there. If the user did ask for this, quote their exact words in `said` and keep the note to what they said, in their order, with every not/never they used.' };
 }
 // The forget tool's host half: removes the best-matching note or fact, when the person's own words ask for it.
 function forgetNoteTool(req) {

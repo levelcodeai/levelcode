@@ -160,7 +160,7 @@ const host = new Function('env', [
 		assert.ok(!/straight to main/.test(fs.readFileSync(sessions.memoryPaths().memoryMd, 'utf8')), 'it reached MEMORY.md');
 		const r2 = host.rememberNoteTool({ kind: 'project', text: 'Use yarn', said: 'switch to yarn now', personWords: typed });
 		assert.match(r2.message, /were not found in what the user typed/);
-		assert.strictEqual(host.rememberNoteTool({ kind: 'nonsense', text: 'Use pnpm for scripts', said: 'always use pnpm', personWords: typed }).verified, true, 'an unknown kind is kept as a preference');
+		assert.strictEqual(host.rememberNoteTool({ kind: 'nonsense', text: 'Always use pnpm', said: 'always use pnpm', personWords: typed }).verified, true, 'an unknown kind is kept as a preference');
 	});
 	await testAsync('HOST: forget needs the person\'s own words, then removes the best match and names it', async () => {
 		const no = host.forgetNoteTool({ query: 'pnpm', said: 'forget the pnpm rule', personWords: typed });

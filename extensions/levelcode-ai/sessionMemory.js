@@ -227,8 +227,63 @@ function inVocab(w, vocab, stems) {
 	return false;
 }
 
+// Words that turn what follows them around. "stop" and "avoid" are here because "stop mocking the database"
+// and "do not mock the database" say the same thing; treating them alike keeps both readings consistent.
+const NEGATORS = new Set(('no not never none nor neither nothing without cannot stop avoid dont doesnt didnt isnt arent '
+	+ 'wasnt werent wont cant shouldnt mustnt wouldnt couldnt havent hasnt neednt').split(' '));
+// Words a note may add without changing what the person asked for: where it applies, nothing else.
+const SCOPE_WORDS = new Set(['repo', 'repository', 'project', 'codebase', 'workspace', 'here']);
+
+/**
+ * The content words of a text in order, each marked with whether it is negated: an odd number of negators
+ * before it, since the previous content word, in the same clause. A clause ends at punctuation, so the "no"
+ * in "no, never mock the database" does not cancel the "never".
+ */
+function contentStream(text) {
+	const out = [];
+	// A full stop ends a clause only before a space or the end, so "package.json" stays one word.
+	const clauses = String(text == null ? '' : text).replace(/[\u2018\u2019]/g, '\'').split(/[,;:!?()\u2014\u2013]+|\.(?=\s|$)|\s-\s/);
+	for (const clause of clauses) {
+		let negs = 0;
+		for (const raw of words(clause)) {
+			const w = raw.replace(/'/g, '');
+			if (NEGATORS.has(w)) { negs++; continue; }
+			if (STOPWORDS.has(w) || w.length < 3) { continue; }
+			out.push({ w, neg: negs % 2 === 1 });
+			negs = 0;
+		}
+	}
+	return out;
+}
+/** inVocab for one word: the same, one the start of the other (four letters at least), or a shared 5-letter stem. */
+function sameWord(w, v) {
+	if (w === v) { return true; }
+	if (w.length >= 5 && v.length >= 5 && w.slice(0, 5) === v.slice(0, 5)) { return true; }
+	return w.length >= 4 && v.length >= 4 && (v.startsWith(w) || w.startsWith(v));
+}
+/** Can every item of `note` be matched, in order, to a later item of `said`? `sameNeg` also requires each match to be negated alike. */
+function alignsInOrder(note, said, sameNeg) {
+	let at = -1;
+	for (const x of note) {
+		let found = -1;
+		for (let i = at + 1; i < said.length; i++) {
+			if ((!sameNeg || said[i].neg === x.neg) && sameWord(x.w, said[i].w)) { found = i; break; }
+		}
+		if (found < 0) { return false; }
+		at = found;
+	}
+	return true;
+}
+
 /**
  * Can this note be credited to the person? Pure. `personWords` is everything the person typed this run.
+ *
+ * Conservative on purpose: a credited note is active at once, so it must say what the person said and
+ * nothing else. Every content word of the note comes from the quote (a word naming where it applies, like
+ * "repo", is allowed), in the quote's order, each negated exactly as it is in the quote. Word overlap alone
+ * is not enough: "Use npm, never pnpm" has every word of "use pnpm, never npm", and "Disable signature
+ * verification" every word of "never disable signature verification". A rewrite this cannot check is kept as
+ * an unconfirmed note, one Confirm click away.
  * @param {{text:string, said:string, personWords:string[]}} o
  * @returns {{verified:boolean, reason:string, grounded:number}}
  */
@@ -237,15 +292,16 @@ function groundNote(o) {
 	const pool = (Array.isArray(o && o.personWords) ? o.personWords : []).map(squash).filter(Boolean);
 	if (said.length < 8 || words(said).length < 2) { return { verified: false, reason: 'too-short', grounded: 0 }; }
 	if (!pool.some((p) => p.indexOf(said) >= 0)) { return { verified: false, reason: 'not-said', grounded: 0 }; }
-	const vocab = new Set(words(said));
+	const saidStream = contentStream(o && o.said);
+	const vocab = new Set(saidStream.map((x) => x.w));
 	const stems = new Set([...vocab].filter((w) => w.length >= 5).map((w) => w.slice(0, 5)));
-	const content = words(o && o.text).filter((w) => !STOPWORDS.has(w) && w.length >= 3);
-	if (!content.length) { return { verified: false, reason: 'empty', grounded: 0 }; }
-	const hit = content.filter((w) => inVocab(w, vocab, stems)).length;
-	const grounded = hit / content.length;
-	// Two thirds: room to turn "always use pnpm, never npm" into "Use pnpm, not npm, in this repo", and
-	// none to staple a second order onto it.
-	return grounded >= 2 / 3 ? { verified: true, reason: 'ok', grounded } : { verified: false, reason: 'adds-to-what-was-said', grounded };
+	const note = contentStream(o && o.text).filter((x) => !SCOPE_WORDS.has(x.w));
+	if (!note.length) { return { verified: false, reason: 'empty', grounded: 0 }; }
+	const grounded = note.filter((x) => inVocab(x.w, vocab, stems)).length / note.length;
+	if (grounded < 1) { return { verified: false, reason: 'adds-to-what-was-said', grounded }; }
+	if (!alignsInOrder(note, saidStream, false)) { return { verified: false, reason: 'reorders-what-was-said', grounded }; }
+	if (!alignsInOrder(note, saidStream, true)) { return { verified: false, reason: 'changes-a-not', grounded }; }
+	return { verified: true, reason: 'ok', grounded };
 }
 
 /**
