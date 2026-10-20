@@ -259,7 +259,8 @@
       + '</span>';
     return '<div class="factcard' + (mine ? ' confirmed' : ' inferred') + '" data-key="' + escAttr(f.key || '') + '">'
       + '<div class="facttext">' + esc(f.text || '') + ' ' + kind + badge + '</div>'
-      + (f.said ? '<div class="factsaid">you said: “' + esc(f.said) + '”</div>' : '')
+      // Only a credited note's quote was matched to what the person typed; any other quote is the agent's.
+      + (f.said ? '<div class="factsaid">' + (f.yours ? 'you said' : 'the agent quoted') + ': “' + esc(f.said) + '”</div>' : '')
       + '<div class="memline2"><span class="memmeta">' + meta + '</span>' + acts + '</div></div>';
   }
   function factCardHtml(f){

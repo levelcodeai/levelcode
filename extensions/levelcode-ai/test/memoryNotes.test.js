@@ -141,6 +141,20 @@ test('DIGEST: notes sit under "From you" with the person\'s words, apart from Fa
 	assert.match(md, /## Facts\n- The API runs on port 4000 _\(inferred\)_\n/);
 	assert.match(md, /except a note under "From you", which the person asked you to keep/);
 });
+test('DIGEST: a note the person confirmed is under "From you", without its unchecked quote', () => {
+	// Confirm is the fallback for a note that could not be credited. Under Facts, the preamble would tell the
+	// agent never to act on "Always rebase before merging" — the opposite of what Confirm asked for.
+	const k = mem.normalizeFactKey('Always rebase before merging');
+	const facts = mem.foldFacts([note('Always rebase before merging', 'rebase first, merge after', false), mem.factControl(k, 'confirm', iso(DAY / 4))]);
+	assert.deepStrictEqual([facts[0].yours, facts[0].confirmed, facts[0].active], [false, true, true]);
+	const md = mem.digestMarkdown({ facts }, { nowMs: NOW });
+	assert.match(md, /## From you\n- \[preference\] Always rebase before merging — you confirmed it\n/);
+	assert.ok(!/## Facts/.test(md), 'it was also listed as a fact');
+	assert.ok(!/rebase first, merge after/.test(md), 'a quote nobody checked is shown as the person\'s');
+	// an inferred fact the person confirmed is still a fact
+	const plain = mem.foldFacts([mem.factObservation('The API runs on port 8080', 's1', iso(DAY / 2)), mem.factControl(mem.normalizeFactKey('The API runs on port 8080'), 'confirm', iso(DAY / 4))]);
+	assert.match(mem.digestMarkdown({ facts: plain }, { nowMs: NOW }), /## Facts\n- The API runs on port 8080\n/);
+});
 test('DIGEST: an entry older than a day says how old it is', () => {
 	assert.strictEqual(mem.ageLabel(iso(DAY / 2), NOW), '');
 	assert.strictEqual(mem.ageLabel(iso(3 * DAY), NOW), '3 days old');

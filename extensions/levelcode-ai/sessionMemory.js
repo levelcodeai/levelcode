@@ -600,8 +600,11 @@ const DIGEST_MAX_FACTS = 15;
 function digestMarkdown(digest, opts) {
 	const d = digest || {}, o = opts || {};
 	const all = Array.isArray(d.facts) ? d.facts : [];
-	const notes = all.filter((f) => f.yours);
-	const facts = all.filter((f) => !f.yours);
+	// The person's notes: credited to their words, or confirmed by them in the Memory tab. A confirmed note
+	// belongs here too; under Facts the preamble would tell the agent never to act on it.
+	const isNote = (f) => !!(f.yours || (f.person && f.confirmed));
+	const notes = all.filter(isNote);
+	const facts = all.filter((f) => !isNote(f));
 	const recent = Array.isArray(d.recently) ? d.recently : [];
 	const pinned = Array.isArray(d.pinned) ? d.pinned : [];
 	if (!all.length && !recent.length && !pinned.length) { return ''; }
@@ -616,10 +619,12 @@ function digestMarkdown(digest, opts) {
 		+ 'was true then._\n';
 	if (notes.length) {
 		// The person's own words, kept because they asked. Their phrasing is shown, so a reader can see the
-		// note says no more than they did.
+		// note says no more than they did. A note they confirmed was never matched to their words, so its
+		// quote is not shown as theirs.
 		md += '\n## From you\n';
 		for (const f of notes.slice(0, DIGEST_MAX_NOTES)) {
-			md += '- [' + (f.kind || 'preference') + '] ' + f.text + (f.said ? ' — you said: "' + f.said + '"' : '') + aged(f.at) + '\n';
+			const why = f.yours ? (f.said ? ' — you said: "' + f.said + '"' : '') : ' — you confirmed it';
+			md += '- [' + (f.kind || 'preference') + '] ' + f.text + why + aged(f.at) + '\n';
 		}
 		if (notes.length > DIGEST_MAX_NOTES) { md += '- …and ' + (notes.length - DIGEST_MAX_NOTES) + ' more; recall_sessions finds them.\n'; }
 	}
