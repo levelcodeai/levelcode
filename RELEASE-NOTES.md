@@ -26,14 +26,25 @@ These are the same eleven the browser edition allows.
 - **They are now shared by all your profiles.** VS Code keeps settings like these in the Default profile. A value written in another profile's `settings.json` is ignored, and changing one from another profile writes it to the Default profile for you.
 - **Nothing changes if you only ever set them in your user settings**, which is where the Settings editor and the chat's own menus put them.
 
+### The agent shows its plan, and you can keep typing while it works
+
+**Enter no longer stops the agent.** Until now, pressing Enter while the agent was working stopped the run. Now what you type waits just above the message box and is sent as your next message when the run finishes. To stop a run, use ■ with the message box empty.
+
+- **A task list under the latest message.** When a job has more than one step, the agent keeps a short task list as the last thing in the conversation. The step it is on spins (it stops spinning while the agent waits for you to approve something), finished steps turn grey, and a long list shows the steps around the current one with "earlier steps" and "more to go" counts. The list goes away when the run ends. It replaces the "Plan 2/5" bar above Keep all / Undo all.
+- **A clear hand-back.** When a run ends with a decision for you, the agent asks one question with one or two answers to click ("Run the tests now?"). Clicking an answer sends it as your next message. Before that box appears, the files the agent changed are checked (the editor's diagnostics, and your verify command if you set one); if the check fails, the agent fixes the problems first.
+- **Messages that wait their turn.** One waiting message shows as a single row; several fold into "3 messages queued · Next: …". **Send now** hands a message to the agent at its next step without stopping the run. You can also edit a waiting message in the message box, reorder several, or remove them. If a run is stopped or fails, anything still waiting comes back into the message box instead of being sent.
+
 ## Not in this release
 
 <!-- TODO -->
+- **Send now is for text.** A waiting message with an image is sent when the run ends, not mid-run. And a message sent with Send now is read after the step the agent is on: it does not interrupt a command that is already running, and it does not hold back the agent's next edit while it waits.
 
 ## Test coverage
 
 <!-- TODO measure with scripts/draft-release-notes.mjs (counted cases only). -->
 - `settingsScope` (4 cases): every LevelCode AI setting is user-only unless it is on the list above; every scope is one the editor knows, because it reads a misspelt one as a setting a folder can set; and the desktop and the browser edition allow the same list.
+- `turnPlan` (20 cases), `agentPlanProgress` (11) and `planProgressUi` (24): how the task list and the hand-back are read and moved; the agent loop ending on a hand-back with a question without another model call, checking its edits there, and delivering Send now at the next step (or handing it back when the run stops); and the chat page's list, box and queue, down to Enter queueing instead of stopping.
+- `scripts/plan-progress-editor-check.js` runs a scripted agent in the real editor (17 checks, light and dark), and `web/test/e2e-plan-progress.mjs` does the same in the browser edition (9 checks). Neither is part of the gate.
 - `scripts/folder-settings-editor-check.js` opens the real editor on a project that tries all of the above and checks that none of it takes effect. It is not part of the gate.
 
 **Full changelog:** https://github.com/levelcodeai/levelcode/compare/v1.4.0...vX.Y.Z

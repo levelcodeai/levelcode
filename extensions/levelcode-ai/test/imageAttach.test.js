@@ -100,12 +100,15 @@ test('SEND: an image with no words is a valid message', () => {
 	const body = fnBody(html, 'doSend');
 	assert.match(body, /if \(!t && !pendingImages\.length\) return;/,
 		'"look at this" is implied by attaching — an image alone must be sendable');
-	assert.match(body, /images: imgs/, 'the send payload must carry the images');
+	// The images ride the send, or wait with it in the queue while the agent works (docs/PLAN-PROGRESS.md).
+	assert.match(body, /enqueue\(t, imgs\)/, 'a message queued mid-run must keep its images');
+	assert.match(body, /postSend\(t, imgs\)/, 'the send must carry the images');
+	assert.match(fnBody(html, 'postSend'), /images: payload/, 'the send payload must carry the images');
 	assert.match(body, /clearImages\(\)/, 'the tray must empty on send, or the next turn re-sends them');
 });
 
 test('HOST: images become refs in the conversation, and bytes only at request time', () => {
-	assert.match(ext, /case 'send': await handleSend\(msg\.text, msg\.images\)/, 'send must carry images');
+	assert.match(ext, /case 'send': await handleSend\(msg\.text, msg\.images[,)]/, 'send must carry images');
 	const store = fnBody(ext, 'storeImages');
 	assert.match(store, /imageStore\.put\(/, 'bytes must go through the store');
 	assert.match(store, /type: 'image', ref/, 'the conversation must keep a ref, never the base64');
@@ -134,7 +137,7 @@ test('AGENT MODE: the default path carries images too', () => {
 	// which never saw them — so in the DEFAULT mode a pasted screenshot was written to disk and
 	// dropped. The exact silent-drop failure this whole feature exists to prevent.
 	// (The third argument marks the goal as typed, for the Ask When Risky reviewer — not about images.)
-	assert.match(ext, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks(, \{ typed: true \})?\); return; \}/,
+	assert.match(ext, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks(, \{ typed: (true|!reply) \})?\); return; \}/,
 		'agent mode must forward the image blocks');
 	assert.match(ext, /async function agentFlow\(text, imageBlocks(, opts)?\)/, 'agentFlow must accept them');
 	const body = fnBody(ext, 'agentFlow');
@@ -340,7 +343,9 @@ test('SEND: never sends while an image is still decoding', () => {
 	assert.match(body, /if \(inflightImages\.size\) \{/, 'the in-flight check must be a real gate');
 	assert.match(body, /await new Promise/, 'and it must actually wait');
 	const gateAt = body.indexOf('if (inflightImages.size) {');
-	const sendAt = body.indexOf("vscode.postMessage({ type: 'send'");
+	// The message leaves doSend one of two ways — sent (postSend) or, while the agent works, queued
+	// (enqueue) — and the gate has to come before the FIRST of them.
+	const sendAt = Math.min(body.indexOf('enqueue(t, imgs)'), body.indexOf('postSend(t, imgs)'));
 	assert.ok(gateAt >= 0 && sendAt > gateAt, 'the wait must come BEFORE the send');
 	assert.match(body, /i\.loading/, 'and a surviving placeholder is refused outright');
 	assert.match(html, /async function doSend/, 'waiting requires it to be async');
@@ -352,8 +357,8 @@ test('SEND: the model is re-checked, because it can change after attaching', () 
 	// The attach-time gate is not enough — a model can be switched between attaching and sending.
 	const body = fnBody(html, 'doSend');
 	assert.match(body, /pendingImages\.length && !canSeeImages/, 'no re-check before sending');
-	assert.ok(body.indexOf('!canSeeImages') < body.indexOf('vscode.postMessage({ type: \'send\''),
-		'the check must come BEFORE the send');
+	assert.ok(body.indexOf('!canSeeImages') < Math.min(body.indexOf('enqueue(t, imgs)'), body.indexOf('postSend(t, imgs)')),
+		'the check must come BEFORE the send (or the queue)');
 	assert.ok(!/clearImages\(\)/.test(body.slice(body.indexOf('!canSeeImages'), body.indexOf('return;', body.indexOf('!canSeeImages')))),
 		'refusing must not discard what was typed or attached');
 });

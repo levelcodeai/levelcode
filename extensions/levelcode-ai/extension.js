@@ -114,6 +114,16 @@ let review;
 /** Persistent agent transcript for the session (tool calls + results), so follow-up goals
  *  remember prior runs. Reset by New Chat. */
 let agentMessages = [];
+/** The agent's task list for this conversation (docs/PLAN-PROGRESS.md). agent.js keeps `steps` current through
+ *  update_plan and wrap_up, and every run of the conversation gets the same object, so an {"advance": true}
+ *  moves the list an earlier run left. A new conversation, and a resumed one, start with none. */
+let agentPlan = { steps: null };
+/** Messages the user pressed "Send now" on while the agent works. The running loop takes them at its next
+ *  step (ctx.takeSteers); what it never reaches it hands back to the chat's queue when the run ends. */
+let steerInbox = [];
+/** The agent run going now, as a token only its own agentFlow holds: a late finally from a run that was torn
+ *  down cannot mark a newer run as over. */
+let activeAgentRun = null;
 
 function post(msg) { if (activeWebview) { activeWebview.postMessage(msg); } }
 
@@ -1794,6 +1804,7 @@ async function resumeSession(id) {
 	if (!r) { post({ type: 'agentError', message: 'That session could not be opened — it may have been deleted.' }); return; }
 
 	agentMessages = Array.isArray(r.messages) ? r.messages.slice() : [];   // what the model resumes with
+	agentPlan = { steps: null }; steerInbox = [];                          // the list is drawn live, never replayed
 	// The Ask When Risky reviewer counts only goals typed since this point as the person's word. A session
 	// file is read back from `sessions.dir`, which a workspace setting can point anywhere, so its earlier
 	// goals go to the reviewer as activity. That errs toward asking, never toward running.
@@ -1888,6 +1899,7 @@ function resetConversationState() {
 	clearQuestions();
 	conversation = [];
 	agentMessages = [];
+	agentPlan = { steps: null }; steerInbox = [];
 	humanGoals = []; humanAnswers = [];
 	diagrams.reset();                      // the next conversation starts at d-1, owing nothing
 	diagramsStubbed = false;
@@ -2361,6 +2373,19 @@ async function compactAgentMemory() {
 	return { ok: true, beforeMsgTokens, afterMsgTokens };
 }
 
+/**
+ * "Send now" on a queued message: hand it to the running agent at its next step. With no run going there is
+ * nothing to hand it to, so it goes straight back to the chat's queue — which sends it as a normal message.
+ */
+function acceptSteer(msg) {
+	const id = typeof msg.id === 'string' ? msg.id : '';
+	const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+	if (!id) { return; }
+	if (!activeAgentRun || !text) { post({ type: 'steersReturned', ids: [id] }); return; }
+	steerInbox.push({ id, text });
+	dbg('steer.waiting', { chars: text.length, waiting: steerInbox.length });
+}
+
 let lastAgentGoal = null;   // remembered so the response bar's Retry can re-run it
 /**
  * The goal as the person typed it, for `remember` and `forget` to quote: '' unless `opts.typed`. A Retry of a
@@ -2436,9 +2461,13 @@ async function agentFlow(text, imageBlocks, opts) {
 	}
 	const diagBaseline = verifyCfg.enabled ? snapshotDiagnostics() : new Map();
 	dbg('verify.config', { enabled: verifyCfg.enabled, hasCommand: !!verifyCfg.command, maxRounds: verifyCfg.maxRounds, includeWarnings: verifyCfg.includeWarnings });
+	const runToken = {};
+	activeAgentRun = runToken;
 	try {
 		await runAgent({
 			messages: withImages(agentMessages), // persists across runs → the agent remembers the session
+			plan: agentPlan,                    // the conversation's task list (update_plan / wrap_up keep it)
+			takeSteers: () => steerInbox.splice(0),   // "Send now" messages, taken at the loop's next step
 			providerId: req.providerId,         // Anthropic native, or an OpenAI-shaped provider via translation (P2)
 			baseURL: req.baseURL,               // for the custom / Ollama endpoints
 			label: req.label,                   // route name for error attribution — "LevelCode Cloud" on the gateway,
@@ -2521,6 +2550,7 @@ async function agentFlow(text, imageBlocks, opts) {
 			signal: abort.signal
 		});
 	} finally {
+		if (activeAgentRun === runToken) { activeAgentRun = null; }
 		// Everything below writes to state a teardown may already have replaced. runAgent holds
 		// `agentMessages` BY REFERENCE, so a teardown that rebinds the global leaves this run pushing
 		// into an orphaned array — and then `agentMessages.slice(sessTurnStart)` would slice the NEW,
@@ -2720,12 +2750,18 @@ function withImages(msgs) {
 	return touched ? out : msgs;
 }
 
-async function handleSend(text, images) {
+/**
+ * A message from the chat. `opts.reply` marks a click on a reply button in the next-step box: words the agent
+ * wrote (the person saw a short label), so the goal is not recorded as typed — not for the Ask When Risky
+ * reviewer, not for `remember` to quote.
+ */
+async function handleSend(text, images, opts) {
+	const reply = !!(opts && opts.reply);
 	const imageBlocks = storeImages(images);
 	if ((!text || !text.trim()) && !imageBlocks.length) { return; }
 	text = text || '';
 	if (ctx) { ctx.globalState.update('levelcode.ai.hasSentMessage', true); }   // user engaged → stop auto-revealing the panel on launch
-	if (agentMode) { await agentFlow(text, imageBlocks, { typed: true }); return; }
+	if (agentMode) { await agentFlow(text, imageBlocks, { typed: !reply }); return; }
 	const cfg = aiConfig();
 	const providerId = currentProviderId();
 	dbg('chat.send', { provider: providerId, model: activeModel(cfg, providerId), chars: text.length, history: conversation.length });
@@ -3305,12 +3341,13 @@ class ChatViewProvider {
 				case 'setMode': agentMode = !!msg.agent; post({ type: 'mode', agent: agentMode }); break;
 				case 'setApprovals': setApprovalMode(String(msg.mode || '')); break;
 				case 'setAutopilot': setApprovalMode(msg.on ? 'autopilot' : 'ask'); break;   // the two-option menu's message
-				case 'send': await handleSend(msg.text, msg.images); break;
+				case 'send': await handleSend(msg.text, msg.images, { reply: msg.reply === true }); break;
 				// One surface for "that could not be attached" — VS Code's own, not a second one
 				// invented inside the transcript.
 				case 'notice': if (msg.text) { vscode.window.showWarningMessage(String(msg.text)); } break;
 				case 'pickImages': await pickImages(); break;
 				case 'attachImagePaths': await attachImagePaths(msg.paths); break;
+				case 'steer': acceptSteer(msg); break;
 				case 'stop': dbg('stop.clicked', { running: commandStops.size }); for (const [, stop] of commandStops) { try { stop(); } catch (e) { /* gone */ } } if (abort) { abort.abort(); } clearApprovals(); clearQuestions(); break;
 				case 'stopCommand': { dbg('stopCommand', { id: msg.id }); const s = commandStops.get(msg.id); if (s) { try { s(); } catch (e) { /* gone */ } } break; }
 				case 'approvalResponse': {

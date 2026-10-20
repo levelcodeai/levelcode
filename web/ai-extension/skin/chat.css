@@ -80,7 +80,7 @@ body.lc-web .msg.user .body {
 }
 body.lc-web .msgcopy { border-color: transparent; }
 body.lc-web pre, body.lc-web .codeblock { border-radius: 12px; }
-body.lc-web #reviewBar, body.lc-web #planBar { border-radius: 14px; }
+body.lc-web #reviewBar, body.lc-web .turnbox, body.lc-web .qb { border-radius: 14px; }
 
 /* ---- the conversation list and the account card carry their own (One Dark) palette in chat.html; point it at the
    theme, so the rail and the sign-in are the same family as the page next to them. */

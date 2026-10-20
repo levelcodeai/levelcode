@@ -53,7 +53,7 @@
      `calc(100% - 2 * --shell-x)` rather than a bare `width: 100%` + margin: without it these boxes
      would out-dent the transcript by the log's padding in every panel narrower than the cap, which is
      most sidebars. Overlays are `position: fixed` and deliberately excluded. */
-  #bgTasksBar, #ctxBar, #planBar, #reviewBar, #workbar, #composer, #status {
+  #bgTasksBar, #ctxBar, #reviewBar, #workbar, #queueBar, #composer, #status {
     width: calc(100% - 2 * var(--shell-x));
     max-width: var(--prose-max);
     margin-inline: auto;
@@ -846,43 +846,91 @@
   .bgt-stop:hover { background: var(--vscode-errorForeground, #f14c4c); color: #fff; border-color: transparent; }
   .bgt-stop[disabled] { opacity: .6; cursor: default; }
   .bgt-stop svg { width: 1em; height: 1em; }
-  #planBar { flex: 0 0 auto; padding: 8px 8px 6px; max-height: 38vh; overflow-y: auto; scrollbar-gutter: stable;
-    background: var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e));
-    border-top: 1px solid var(--border); box-shadow: 0 -8px 14px -8px rgba(0,0,0,.4); }
-  #planBar .plancard { margin: 0; }
-  .plancard { border: 1px solid var(--border); border-radius: 12px; margin: 6px 2px; overflow: hidden; background: var(--field-bg); }
-  .plancard .phead { display: flex; align-items: center; gap: 8px; padding: 9px 12px 8px; font-size: 12px; font-weight: 600; letter-spacing: .01em; cursor: pointer; user-select: none; }
-  .plancard .ptoggle { flex: 0 0 auto; display: inline-flex; color: var(--muted); opacity: .65; transition: transform .18s cubic-bezier(.4,0,.2,1); }
-  .plancard .ptoggle .ci { width: 13px; height: 13px; }
-  .plancard .phead:hover .ptoggle { opacity: 1; }
-  .plancard.collapsed .ptoggle { transform: rotate(-90deg); }
-  .plancard .phtitle { flex: 1 1 auto; min-width: 0; }
-  .plancard .pcount { flex: 0 0 auto; opacity: .75; font-weight: 500; font-variant-numeric: tabular-nums; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; padding: 1px 8px; border-radius: 999px; background: rgba(127,127,127,.14); }
-  .plancard.alldone .pcount { opacity: 1; color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground, #4ec97a) 16%, transparent); }
-  /* Dismiss (×): reveals on header hover, and stays visible once the plan is done (its primary use). */
-  .plancard .pdismiss { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: var(--muted); font-size: 14px; line-height: 1; opacity: 0; cursor: pointer; border-radius: 6px; transition: opacity .12s, background .12s; }
-  .plancard .phead:hover .pdismiss, .plancard.alldone .pdismiss { opacity: .55; }
-  /* :focus-visible so a keyboard-only user can see AND ring the control even on a not-yet-done plan
-     — it is opacity:0 by default (revealed on hover/done), so focus must reveal it too. */
-  .plancard .pdismiss:hover, .plancard .pdismiss:focus-visible { opacity: 1; background: rgba(127,127,127,.16); }
-  .plancard .pdismiss:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
-  .plancard .pprog { height: 3px; margin: 0 12px 2px; border-radius: 3px; background: rgba(127,127,127,.16); overflow: hidden; }
-  .plancard .pprog .pfill { height: 100%; border-radius: 3px; background: var(--accent); transition: width .4s cubic-bezier(.4,0,.2,1); }
-  .plancard.alldone .pprog .pfill { background: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
-  .plancard .pitems { padding: 6px 0 7px; }
-  .plancard.collapsed .pprog, .plancard.collapsed .pitems { display: none; }
-  .plancard .pitem { display: flex; gap: 9px; align-items: center; padding: 4px 12px; font-size: 12.5px; line-height: 1.45; position: relative; }
-  .plancard .pitem .pic { flex: 0 0 auto; width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; }
-  .plancard .pitem .pic .ci { width: 13px; height: 13px; }
-  .plancard .pitem.done .pic { color: var(--vscode-gitDecoration-addedResourceForeground, #4ec97a); }
-  .plancard .pitem.done .ptitle { opacity: .5; text-decoration: line-through; text-decoration-thickness: 1px; }
-  .plancard .pitem.doing { background: color-mix(in srgb, var(--accent) 11%, transparent); }
-  .plancard .pitem.doing::before { content: ''; position: absolute; left: 0; top: 3px; bottom: 3px; width: 2px; border-radius: 2px; background: var(--accent); }
-  .plancard .pitem.doing .pic { color: var(--accent); }
-  .plancard .pitem.doing .pic .ci { animation: spin .9s linear infinite; }
-  .plancard .pitem.doing .ptitle { font-weight: 600; }
-  .plancard .pitem.todo .pic { color: var(--muted); opacity: .5; }
-  .plancard .pitem.todo .ptitle { opacity: .82; }
+  /* ── The turn box (docs/PLAN-PROGRESS.md) ───────────────────────────────────────────────────────────
+     One card, always the LAST thing in the transcript: the agent's task list while a run works, and the
+     next-step box (recap, question, replies) when a run hands back with a question. Modelled on the Claude
+     desktop app: a hairline ring rather than a filled panel, finished steps in the secondary colour with no
+     strike-through, a spinner on the step in progress only while the agent is actually working. */
+  .turnbox { border-radius: 10px; box-shadow: inset 0 0 0 1px var(--border); overflow: clip;
+    font-size: var(--prose-size); line-height: 1.5; animation: tbFade .3s cubic-bezier(.25,.1,.35,1); }
+  .turnbox[hidden], .tb-plan[hidden], .tb-next[hidden] { display: none; }
+  .tb-plan { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; }
+  .tb-note { margin: 0; font-size: 12px; color: var(--muted); }
+  .tb-note.tb-gap { padding-left: 22px; }
+  .tb-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .tb-step { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+  .tb-step.completed { color: var(--muted); }
+  /* The icon sits on the FIRST line of a step that wraps: as tall as one line of the text beside it. */
+  .tb-ic { flex: 0 0 16px; height: 1.5em; display: inline-flex; align-items: center; justify-content: center; }
+  .tb-ic .ci { width: 14px; height: 14px; }
+  .tb-step.pending .tb-ic { color: var(--muted); opacity: .6; }
+  .tb-spin .ci { animation: spin .9s linear infinite; }
+  .tb-txt { flex: 1; min-width: 0; overflow-wrap: anywhere; user-select: text; }
+  .tb-txt code { font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: .9em; padding: 0 .3em; border-radius: 4px; background: rgba(127,127,127,.15); }
+  .tb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .tb-next { display: flex; flex-direction: column; gap: 10px; padding: 14px; animation: tbStep .3s ease-out both; }
+  .tb-line { display: flex; align-items: flex-start; gap: 8px; }
+  .tb-line p { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; user-select: text; }
+  .tb-recap { color: var(--muted); }
+  .tb-x { flex: 0 0 auto; width: 22px; height: 22px; margin: -1px -4px 0 0; display: inline-flex; align-items: center; justify-content: center;
+    padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+  .tb-x:hover { color: var(--vscode-foreground); background: rgba(127,127,127,.16); }
+  .tb-x .ci { width: 13px; height: 13px; }
+  .tb-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tb-act { font: inherit; font-size: 12.5px; line-height: 1.4; padding: 4px 12px; border-radius: 6px; cursor: pointer; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); background: transparent; color: var(--vscode-foreground); }
+  .tb-act:hover { background: rgba(127,127,127,.14); }
+  .tb-act.primary { border-color: transparent; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .tb-act.primary:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+  .tb-act:focus-visible, .tb-x:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  @keyframes tbFade { from { opacity: 0; } }
+  @keyframes tbStep { from { opacity: 0; transform: translateY(4px); } }
+
+  /* ── Messages sent while the agent works wait here, just above the composer, and send themselves when
+     the run is over. One message is one row; several fold into "N messages queued · Next: …". ── */
+  #queueBar { flex: 0 0 auto; margin-block: 0 6px; position: relative; }
+  #queueBar[hidden] { display: none; }
+  .qb { border-radius: 10px; background: var(--field-bg); box-shadow: inset 0 0 0 1px var(--border); font-size: 12.5px; line-height: 1.45; animation: tbStep .2s ease-out both; }
+  .qb.leaving { animation: qbLeave .15s ease-out forwards; }
+  .qb-head { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 0 6px 0 12px; box-sizing: border-box;
+    font: inherit; color: inherit; background: none; border: 0; border-radius: 10px; text-align: start; }
+  button.qb-head { cursor: pointer; }
+  button.qb-head:hover { background: rgba(127,127,127,.08); }
+  button.qb-head:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .qb-count { flex: 0 0 auto; font-weight: 600; }
+  .qb-peek { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qb-btn { flex: 0 0 auto; width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+    border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+  .qb-btn:hover { color: var(--vscode-foreground); background: rgba(127,127,127,.16); }
+  .qb-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .qb-btn[disabled] { opacity: .45; cursor: default; background: none; }
+  .qb-btn .ci { width: 14px; height: 14px; }
+  .qb-btn.busy .ci { animation: spin .9s linear infinite; }
+  .qb-list { list-style: none; margin: 0; padding: 4px; max-height: min(40vh, 22rem); overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--border); }
+  .qb-item { position: relative; display: flex; align-items: flex-start; gap: 6px; padding: 5px 4px 5px 8px; border-radius: 6px; }
+  .qb-item + .qb-item { border-top: 1px solid var(--border); border-radius: 0; }
+  .qb-item.dragging { opacity: .6; background: rgba(127,127,127,.14); }
+  .qb-item.over { box-shadow: inset 0 2px 0 var(--accent); }
+  .qb-text { flex: 1; min-width: 0; padding-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; user-select: text; }
+  .qb-item.sending .qb-text, .qb.sending .qb-peek { color: var(--muted); }
+  .qb-tools { flex: 0 0 auto; display: inline-flex; gap: 2px; opacity: 0; }
+  .qb-item:hover .qb-tools, .qb-item:focus-within .qb-tools, .qb-item.menu-open .qb-tools { opacity: 1; }
+  @media (hover: none) { .qb-tools { opacity: 1; } }
+  .qb-grip { cursor: grab; }
+  .qb-menu { position: absolute; right: 4px; top: 30px; z-index: 6; min-width: 160px; padding: 4px; border-radius: 8px;
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-editor-background)));
+    color: var(--vscode-menu-foreground, var(--vscode-foreground)); border: 1px solid var(--vscode-menu-border, var(--border)); box-shadow: 0 4px 16px rgba(0,0,0,.28); }
+  .qb-menu[hidden] { display: none; }
+  .qb-menu button { display: block; width: 100%; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+  .qb-menu button:hover, .qb-menu button:focus-visible { outline: none; background: var(--vscode-menu-selectionBackground, rgba(127,127,127,.2)); color: var(--vscode-menu-selectionForeground, inherit); }
+  .qb-menu button[disabled] { opacity: .45; cursor: default; background: none; }
+  .qb-menu .danger { color: var(--vscode-errorForeground, #f14c4c); }
+  .qb-menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+  .qb-foot { display: flex; justify-content: flex-end; padding: 2px 8px 6px; }
+  .qb-clear { font: inherit; font-size: 11.5px; padding: 2px 6px; border: 0; border-radius: 4px; background: none; color: var(--vscode-errorForeground, #f14c4c); cursor: pointer; }
+  .qb-clear:hover { background: rgba(127,127,127,.14); }
+  @keyframes qbLeave { to { opacity: 0; transform: translateY(6px); } }
+  @media (prefers-reduced-motion: reduce) { .turnbox, .tb-next, .qb, .qb.leaving { animation: none; } .tb-spin .ci, .qb-btn.busy .ci { animation: none; } }
   @keyframes agentpulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
   .diff { overflow: auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11.5px; line-height: 1.5; padding: 4px 0; }
   .diff .dl { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 10px 0 22px; text-indent: -16px; }
@@ -1507,9 +1555,6 @@
   <div id="bgTasksBar" style="display:none"></div>
   <div id="ctxBar" style="display:none"></div>
 
-  <!-- active agent plan — sticky, just above the Keep all / Undo all bar -->
-  <div id="planBar" style="display:none"></div>
-
   <div id="reviewBar" style="display:none">
     <span class="rcount">Reviewing 0 changes</span>
     <span class="rstat"></span>
@@ -1521,6 +1566,9 @@
   <!-- persistent "agent is working" indicator: shown for the WHOLE run (tied to streaming), so there's
        never a gap between actions where nothing shows. Its label tracks the current activity. -->
   <div id="workbar" hidden role="status" aria-live="polite"><span class="wspin" aria-hidden="true"></span><span class="wtext shimmer">Working…</span></div>
+
+  <!-- messages sent while the agent works: they wait here and send themselves when it is ready -->
+  <div id="queueBar" hidden></div>
 
   <div id="imgzoom" hidden role="dialog" aria-modal="true" aria-label="Attached image"><img alt=""></div>
 
@@ -1760,6 +1808,17 @@
     'sync': { vb: '0 0 16 16', p: '<path d="M2.006 8.267 0.78 9.5 0 8.73l2.09-2.07.76.01 2.09 2.12-.76.76-1.167-1.18a5 5 0 0 0 9.4 1.983l.813.597A6 6 0 0 1 2.006 8.267Zm11.99-.518L15.22 6.51 16 7.29l-2.09 2.07-.76-.01-2.09-2.12.76-.76 1.167 1.18a5 5 0 0 0-9.4-1.983l-.813-.597A6 6 0 0 1 13.996 7.75Z"/>' },
     'chevron-down': { vb: '0 0 16 16', p: '<path d="M3.22 5.97a.75.75 0 0 1 1.06 0L8 9.69l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L3.22 7.03a.75.75 0 0 1 0-1.06z"/>' },
     'circle': { vb: '0 0 16 16', p: '<path fill-rule="evenodd" clip-rule="evenodd" d="M8 1C11.86 1 15 4.14 15 8C15 11.86 11.86 15 8 15C4.14 15 1 11.86 1 8C1 4.14 4.14 1 8 1ZM8 2C4.691 2 2 4.691 2 8C2 11.309 4.691 14 8 14C11.309 14 14 11.309 14 8C14 4.691 11.309 2 8 2Z"/>' },
+    // The turn box and the queue band (docs/PLAN-PROGRESS.md): a finished step (a disc with the tick cut out),
+    // the step in progress while the agent works (a spinning arc) and while it waits on you (three dots),
+    // and the queue's buttons.
+    'check-circle-filled': { vb: '0 0 16 16', p: '<path fill-rule="evenodd" clip-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1ZM4.6 8.1l.85-.85L7.1 8.9l3.45-3.55.85.85-4.3 4.4Z"/>' },
+    'spinner': { vb: '0 0 16 16', p: '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="1.6"/><path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' },
+    'dots-circle': { vb: '0 0 16 16', p: '<circle cx="8" cy="8" r="6.35" fill="none" stroke="currentColor" stroke-width="1.1"/><circle cx="5.4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="10.6" cy="8" r=".9"/>' },
+    'close': { vb: '0 0 16 16', p: '<path d="M4.25 4.25l7.5 7.5M11.75 4.25l-7.5 7.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>' },
+    'chevron-up': { vb: '0 0 16 16', p: '<path d="M3.22 10.03a.75.75 0 0 0 1.06 0L8 6.31l3.72 3.72a.75.75 0 1 0 1.06-1.06L8.53 4.72a.75.75 0 0 0-1.06 0L3.22 8.97a.75.75 0 0 0 0 1.06z"/>' },
+    'arrow-return': { vb: '0 0 16 16', p: '<path d="M12.5 3.5V8a1.75 1.75 0 0 1-1.75 1.75H4M6.75 7 4 9.75l2.75 2.75" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>' },
+    'gripper': { vb: '0 0 16 16', p: '<circle cx="6" cy="4" r="1"/><circle cx="10" cy="4" r="1"/><circle cx="6" cy="8" r="1"/><circle cx="10" cy="8" r="1"/><circle cx="6" cy="12" r="1"/><circle cx="10" cy="12" r="1"/>' },
+    'kebab': { vb: '0 0 16 16', p: '<circle cx="8" cy="3.5" r="1.15"/><circle cx="8" cy="8" r="1.15"/><circle cx="8" cy="12.5" r="1.15"/>' },
     // Named only by the HOST, as the `icon:` on a message — layout: the "Moved to the editor" banner;
     // globe: the preview chip; history: the recall and project-memory chips. Nothing in this file spells
     // them, and a name the set lacks is PRINTED as a word in place of the glyph (test/chatIcons.test.js).
@@ -1838,6 +1897,7 @@
     for (const im of pendingImages) { h += imgChip(im); }
     chipsEl.innerHTML = h;
     syncAttachImgBtn();
+    syncSendBtn();   // an image alone is something to send — or, while the agent works, to queue
     chipsEl.querySelectorAll('.imgx').forEach(function(x){
       const go = function(e){ e.stopPropagation(); e.preventDefault(); removeImage(x.getAttribute('data-img')); };
       x.onclick = go;
@@ -3313,43 +3373,303 @@
     if (m.done){ delete bgTasks[m.id]; }   // finished → drop from the running tray
     renderBgTasks();
   }
-  const planBar = document.getElementById('planBar');
-  let planCollapsed = false;   // persists across the agent's repeated update_plan re-renders (within a run)
-  let planWasDone = false;     // rising-edge latch → auto-collapse a finished plan exactly once
-  function renderPlan(todos){
-    // Empty list = clear (agentStart / newChat / dismiss). Reset the collapse state so the NEXT plan
-    // starts fresh and expanded rather than inheriting a previous run's collapsed/done latches.
-    if (!todos || !todos.length){ planBar.style.display = 'none'; planBar.innerHTML = ''; planCollapsed = false; planWasDone = false; return; }
-    const total = todos.length, done = todos.filter(t => t && t.status === 'done').length;
-    const pct = Math.round(done / total * 100), allDone = done === total;
-    // A finished checklist shouldn't keep hogging up to 38vh: auto-collapse it to the (green) header the
-    // moment it first completes. Rising-edge only, so a manual re-expand of a done plan sticks afterward.
-    if (allDone && !planWasDone){ planCollapsed = true; }
-    planWasDone = allDone;
-    let items = '';
-    for (const t of todos){
-      const st = t.status === 'done' ? 'done' : t.status === 'in_progress' ? 'doing' : 'todo';
-      const ic = st === 'done' ? codicon('check-circle') : st === 'doing' ? codicon('sync') : codicon('circle');
-      items += '<div class="pitem ' + st + '"><span class="pic">' + ic + '</span><span class="ptitle">' + esc(t.title) + '</span></div>';
+  // ── The turn box (docs/PLAN-PROGRESS.md) ────────────────────────────────────────────────────────────
+  // One card, always the LAST thing in the transcript. While a run works it holds the agent's task list
+  // (update_plan); when a run hands back with a question (wrap_up) it holds the next-step box instead: the
+  // recap, the question, and one or two replies you can click. Modelled on the Claude desktop app.
+  //   steps    the conversation's list, as the host last sent it ({ content, status })
+  //   stale    the list is from before your last message and this run has not touched it yet
+  //   running  an agent run is going
+  //   wrap     the run's hand-back ({ recap, ask, actions, blocked, dismissed })
+  const turn = { steps: [], stale: false, running: false, wrap: null };
+  const TB_WINDOW = 8;   // rows of a long list on show (Claude shows 12; this is a side panel)
+  const TB_WAITING = 'Waiting on you. Pick a reply, or type your own.';
+  const turnBox = document.createElement('div');
+  turnBox.id = 'turnBox'; turnBox.className = 'turnbox'; turnBox.hidden = true;
+  // The rows of a long list to show: from one step above the step in progress (the last finished step
+  // stays in view), never running past the end. `earlier` counts what is cut above; `more`, the open steps
+  // cut below.
+  function planWindow(steps, size){
+    let at = steps.findIndex(function(s){ return s.status === 'in_progress'; });
+    if (at < 0) { at = steps.findIndex(function(s){ return s.status !== 'completed'; }); }
+    if (at < 0) { at = steps.length; }
+    const from = Math.max(0, Math.min(at - 1, steps.length - size));
+    const after = steps.slice(from + size);
+    return { rows: steps.slice(from, from + size), earlier: from, more: after.filter(function(s){ return s.status !== 'completed'; }).length };
+  }
+  // What the card shows. The list only while a run works (a list from before your last message keeps a
+  // caption until the run touches it, and is not shown at all if it was finished). The next-step box only
+  // once the run is over, when the hand-back asks you something or the agent cannot go on.
+  function turnView(t, parked){
+    const w = t.wrap;
+    if (!t.running && w && !w.dismissed && (w.blocked || (w.ask && w.actions && w.actions.length))) {
+      return { plan: null, next: { recap: w.recap || '', ask: w.ask || TB_WAITING, actions: (w.actions || []).slice(0, 2) } };
     }
-    const head = '<div class="phead"><span class="ptoggle">' + codicon('chevron-down') + '</span>'
-               + '<span class="phtitle">Plan</span><span class="pcount">' + done + '/' + total + '</span>'
-               + '<span class="pdismiss" title="Dismiss plan" role="button" tabindex="0" aria-label="Dismiss plan">&times;</span></div>'
-               + '<div class="pprog"><div class="pfill" style="width:' + pct + '%"></div></div>';
-    planBar.innerHTML = '<div class="plancard' + (allDone ? ' alldone' : '') + (planCollapsed ? ' collapsed' : '') + '">'
-                      + head + '<div class="pitems">' + items + '</div></div>';
-    const phead = planBar.querySelector('.phead');
-    if (phead){ phead.onclick = () => { planCollapsed = !planCollapsed; const c = planBar.querySelector('.plancard'); if (c){ c.classList.toggle('collapsed', planCollapsed); } }; }
-    // Dismiss (×): close the finished — or abandoned — plan outright. stopPropagation so the header's
-    // collapse-toggle doesn't also fire. Clearing resets the latches via the empty-todos branch above.
-    const pdismiss = planBar.querySelector('.pdismiss');
-    if (pdismiss){
-      const dismiss = (e) => { e.preventDefault(); e.stopPropagation(); renderPlan([]); };
-      pdismiss.onclick = dismiss;
-      pdismiss.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' '){ dismiss(e); } };   // keyboard-activate, like ctxStat / approvals
+    const steps = t.steps || [];
+    const allDone = steps.every(function(s){ return s.status === 'completed'; });
+    if (!t.running || !steps.length || (t.stale && allDone)) { return { plan: null, next: null }; }
+    const win = planWindow(steps, TB_WINDOW);
+    return { plan: { rows: win.rows, earlier: win.earlier, more: win.more, stale: !!t.stale, spin: !t.stale && !parked }, next: null };
+  }
+  function tbInline(text){ return esc(text).replace(/`([^`\n]+)`/g, '<code>$1</code>'); }
+  function turnBoxHtml(v){
+    if (v.next) {
+      const n = v.next;
+      const x = '<button type="button" class="tb-x" data-tb="dismiss" title="Dismiss" aria-label="Dismiss">' + codicon('close') + '</button>';
+      return '<div class="tb-next" role="group" aria-label="Next step">'
+        + (n.recap ? '<div class="tb-line"><p class="tb-recap" dir="auto">' + esc(n.recap) + '</p>' + x + '</div>' : '')
+        + '<div class="tb-line"><p class="tb-ask" dir="auto">' + esc(n.ask) + '</p>' + (n.recap ? '' : x) + '</div>'
+        + (n.actions.length ? '<div class="tb-acts">' + n.actions.map(function(a, i){
+            return '<button type="button" class="tb-act' + (i === 0 ? ' primary' : '') + '" data-tb="reply" data-i="' + i + '" title="' + escAttr(a.message || a.label) + '">' + esc(a.label) + '</button>';
+          }).join('') + '</div>' : '')
+        + '</div>';
     }
-    planBar.style.display = 'block';
-    scrollIfStuck();   // log shrank as the sticky plan appeared — keep pinned if we were at bottom
+    if (!v.plan) { return ''; }
+    const p = v.plan;
+    let h = '<div class="tb-plan">';
+    if (p.stale) { h += '<p class="tb-note">Plan from before your last message</p>'; }
+    if (p.earlier) { h += '<p class="tb-note tb-gap">' + p.earlier + ' earlier step' + (p.earlier === 1 ? '' : 's') + '</p>'; }
+    h += '<ul class="tb-steps" role="list" aria-label="Task list">';
+    for (const s of p.rows) {
+      const st = s.status === 'completed' || s.status === 'in_progress' ? s.status : 'pending';
+      const ic = st === 'completed' ? codicon('check-circle-filled') + '<span class="tb-sr">done</span>'
+        : st === 'in_progress' ? (p.spin ? codicon('spinner') : codicon('dots-circle')) + '<span class="tb-sr">in progress</span>'
+        : codicon('circle') + '<span class="tb-sr">not done</span>';
+      h += '<li class="tb-step ' + st + '"><span class="tb-ic' + (st === 'in_progress' && p.spin ? ' tb-spin' : '') + '">' + ic + '</span>'
+        + '<span class="tb-txt">' + tbInline(s.content) + '</span></li>';
+    }
+    h += '</ul>';
+    if (p.more) { h += '<p class="tb-note tb-gap">' + p.more + ' more to go</p>'; }
+    return h + '</div>';
+  }
+  // Waiting on you (a command to approve, a question to answer): the step in progress stops spinning.
+  function agentParked(){ return !!pendingApproval || !!log.querySelector('.questions:not(.answered)'); }
+  function renderTurnBox(){
+    if (turnBox.parentNode !== log) { log.appendChild(turnBox); }   // the log is rebuilt on reset / resume
+    const v = turnView(turn, agentParked());
+    const sig = JSON.stringify(v);
+    if (sig === turnBox.dataset.sig) { return; }
+    turnBox.dataset.sig = sig;
+    turnBox.innerHTML = turnBoxHtml(v);
+    turnBox.hidden = !v.plan && !v.next;
+    // Redrawn on every update, the spinner would restart each time: start it where a steady one would be.
+    const spin = turnBox.querySelector('.tb-spin .ci'); if (spin) { spin.style.animationDelay = '-' + (Date.now() % 900) + 'ms'; }
+    scrollIfStuck();
+  }
+  // Anything appended to the transcript lands after the card; put the card back at the end.
+  new MutationObserver(function(){
+    if (turnBox.parentNode === log && log.lastElementChild !== turnBox) { log.appendChild(turnBox); }
+  }).observe(log, { childList: true });
+  turnBox.addEventListener('click', function(e){
+    const b = e.target.closest && e.target.closest('[data-tb]'); if (!b || !turn.wrap) { return; }
+    const w = turn.wrap;
+    if (b.dataset.tb === 'reply') {
+      const a = (w.actions || [])[+b.dataset.i]; if (!a) { return; }
+      w.dismissed = true; renderTurnBox();
+      // A reply's words are the agent's (you saw its label): sent as a reply, never as text you typed.
+      sendOrQueue(a.message || a.label, [], true);
+    } else if (b.dataset.tb === 'dismiss') {
+      w.dismissed = true; renderTurnBox(); input.focus();
+    }
+  });
+
+  // ── Messages sent while the agent works (docs/PLAN-PROGRESS.md) ─────────────────────────────────────
+  // Enter while a run is going does not stop it: the message waits here, above the composer. When the run
+  // ends the first one is sent as your next message; a run that is stopped or fails gives them all back to
+  // the message box instead. "Send now" hands one to the running agent at its next step (the host's steer
+  // inbox) — the run is not stopped. An empty composer still turns the send button into Stop.
+  const queueBar = document.getElementById('queueBar');
+  const queue = [];        // { id, text, images, sending } — images are the composer's own attachment objects
+  let queueOpen = false;   // several messages: the list is open rather than folded to one row
+  let queueSeq = 0;
+  let awaitingStart = false;   // a message is on its way to the host and no run has started for it yet
+  let runIsAgent = false;      // the run going now is an agent run (only those can take "Send now")
+  let lastRunOk = true;        // how the last run ended: a queued message is sent only after one that finished
+  let stopAsked = false;       // ■ was pressed during this run (a stopped chat reply still ends "done")
+  function busy(){ return streaming || awaitingStart; }
+  function queuePeek(text){ return String(text || '').replace(/\s+/g, ' ').trim(); }
+  function queueCount(n){ return n + ' message' + (n === 1 ? '' : 's') + ' queued'; }
+  function canSendNow(e){ return !!e && !e.sending && !e.images.length && streaming && runIsAgent; }
+  function enqueue(text, images, reply){
+    queue.push({ id: 'q' + (++queueSeq) + '-' + Date.now().toString(36), text: text, images: images || [], sending: false, reply: reply === true });
+    renderQueue();
+  }
+  function queueEntry(id){ return queue.find(function(e){ return e.id === id; }); }
+  function dropQueued(id){ const i = queue.findIndex(function(e){ return e.id === id; }); return i < 0 ? null : queue.splice(i, 1)[0]; }
+  function queueBtn(act, id, iconHtml, label, extra){
+    return '<button type="button" class="qb-btn' + (extra || '') + '" data-q="' + act + '" data-id="' + escAttr(id) + '" title="' + escAttr(label) + '" aria-label="' + escAttr(label) + '">' + iconHtml + '</button>';
+  }
+  function queueHtml(){
+    if (!queue.length) { return ''; }
+    if (queue.length === 1) {
+      const e = queue[0];
+      return '<div class="qb' + (e.sending ? ' sending' : '') + '" role="group" aria-label="Queued message"><div class="qb-head">'
+        + '<span class="qb-count">' + queueCount(1) + '</span><span class="qb-peek" title="' + escAttr(e.text) + '">' + esc(queuePeek(e.text) || 'An image') + '</span>'
+        + (e.sending ? queueBtn('noop', e.id, codicon('spinner'), 'Sending at the agent’s next step…', ' busy')
+          : canSendNow(e) ? queueBtn('send', e.id, codicon('arrow-return'), 'Send now — the agent reads it at its next step') : '')
+        + (e.sending ? '' : queueBtn('edit', e.id, codicon('edit'), 'Edit in composer') + queueBtn('remove', e.id, codicon('close'), 'Remove from queue'))
+        + '</div></div>';
+    }
+    if (!queueOpen) {
+      return '<div class="qb"><button type="button" class="qb-head" data-q="open" aria-expanded="false">'
+        + '<span class="qb-count">' + queueCount(queue.length) + '</span><span class="qb-peek">Next: ' + esc(queuePeek(queue[0].text) || 'an image') + '</span>'
+        + '<span class="qb-btn" aria-hidden="true">' + codicon('chevron-down') + '</span></button></div>';
+    }
+    let h = '<div class="qb open"><div class="qb-head"><span class="qb-count">' + queueCount(queue.length) + '</span><span class="qb-peek"></span>'
+      + '<button type="button" class="qb-btn" data-q="close" aria-expanded="true" title="Collapse queued messages" aria-label="Collapse queued messages">' + codicon('chevron-up') + '</button></div>'
+      + '<ul class="qb-list" role="list" aria-label="Queued messages">';
+    for (const e of queue) {
+      h += '<li class="qb-item' + (e.sending ? ' sending' : '') + '" data-id="' + escAttr(e.id) + '">'
+        + '<span class="qb-text" dir="auto">' + esc(e.text || 'An image') + '</span><span class="qb-tools">'
+        + (e.sending ? queueBtn('noop', e.id, codicon('spinner'), 'Sending at the agent’s next step…', ' busy')
+          : queueBtn('grip', e.id, codicon('gripper'), 'Reorder queued message (drag, or Alt+↑ / Alt+↓)', ' qb-grip')
+            + '<button type="button" class="qb-btn" data-q="menu" data-id="' + escAttr(e.id) + '" aria-haspopup="menu" title="Queued message actions" aria-label="Queued message actions">' + codicon('kebab') + '</button>')
+        + '</span></li>';
+    }
+    return h + '</ul><div class="qb-foot"><button type="button" class="qb-clear" data-q="clear">Clear all</button></div></div>';
+  }
+  function renderQueue(){
+    const focusedId = document.activeElement && queueBar.contains(document.activeElement) ? (document.activeElement.dataset.id || document.activeElement.dataset.q) : null;
+    if (!queue.length) {
+      const band = queueBar.querySelector('.qb');
+      if (queueBar.hidden || !band) { queueBar.hidden = true; queueBar.innerHTML = ''; return; }
+      if (band.classList.contains('leaving')) { return; }
+      band.classList.add('leaving');
+      const gone = function(){ if (!queue.length) { queueBar.hidden = true; queueBar.innerHTML = ''; } };
+      band.addEventListener('animationend', gone); setTimeout(gone, 220);   // reduced motion: no animation to end
+      return;
+    }
+    if (queue.length < 2) { queueOpen = false; }
+    queueBar.innerHTML = queueHtml();
+    queueBar.hidden = false;
+    if (focusedId) { const f = queueBar.querySelector('[data-id="' + focusedId + '"][data-q="grip"]') || queueBar.querySelector('[data-q="' + focusedId + '"]'); if (f) { f.focus(); } }
+    scrollIfStuck();
+  }
+  function closeQueueMenu(){
+    const m = queueBar.querySelector('.qb-menu'); if (m) { m.remove(); }
+    queueBar.querySelectorAll('.menu-open').forEach(function(x){ x.classList.remove('menu-open'); });
+  }
+  function openQueueMenu(id, btn){
+    const open = queueBar.querySelector('.qb-menu');
+    closeQueueMenu();
+    if (open && open.dataset.id === id) { return; }   // the same button again closes it
+    const e = queueEntry(id), li = btn.closest('.qb-item'); if (!e || !li) { return; }
+    const m = document.createElement('div'); m.className = 'qb-menu'; m.setAttribute('role', 'menu'); m.dataset.id = id;
+    m.innerHTML = '<button type="button" role="menuitem" data-q="edit" data-id="' + escAttr(id) + '">Edit in composer</button>'
+      + '<button type="button" role="menuitem" data-q="send" data-id="' + escAttr(id) + '"' + (canSendNow(e) ? '' : ' disabled title="Only a text message, while the agent is working"') + '>Send now</button><hr>'
+      + '<button type="button" role="menuitem" class="danger" data-q="remove" data-id="' + escAttr(id) + '">Remove from queue</button>';
+    // Hung off the band, not the row: the list scrolls, and a menu inside it would be cut off at its edge.
+    // Under the button when it fits in the window, above it when it does not (the band sits low, over the composer).
+    li.classList.add('menu-open'); queueBar.appendChild(m);
+    const bar = queueBar.getBoundingClientRect(), b = btn.getBoundingClientRect();
+    m.style.right = Math.max(4, Math.round(bar.right - b.right)) + 'px';
+    const below = b.bottom + 2 + m.offsetHeight <= (window.innerHeight || document.documentElement.clientHeight);
+    m.style.top = Math.round(below ? b.bottom - bar.top + 2 : b.top - bar.top - m.offsetHeight - 2) + 'px';
+    const first = m.querySelector('button:not([disabled])'); if (first) { first.focus(); }
+  }
+  function moveQueued(id, to){
+    const from = queue.findIndex(function(e){ return e.id === id; });
+    if (from < 0 || to < 0 || to >= queue.length || to === from) { return; }
+    queue.splice(to, 0, queue.splice(from, 1)[0]);
+    renderQueue();
+  }
+  function sendQueuedNow(id){
+    const e = queueEntry(id); if (!e || e.sending) { return; }
+    if (!busy()) { dropQueued(id); renderQueue(); postSend(e.text, e.images, e.reply); return; }
+    if (!canSendNow(e)) { return; }
+    e.sending = true; renderQueue();
+    vscode.postMessage({ type: 'steer', id: e.id, text: e.text });
+  }
+  function editQueued(id){
+    const e = queueEntry(id); if (!e || e.sending) { return; }
+    dropQueued(id); renderQueue();
+    input.value = input.value.trim() ? input.value.replace(/\s+$/, '') + '\n\n' + e.text : e.text;
+    if (e.images.length) { pendingImages = pendingImages.concat(e.images); renderChips(); }
+    auto(); input.focus(); syncSendBtn();
+  }
+  // Give every queued message back to the message box (a run that did not finish, or a new chat).
+  function queueToComposer(why){
+    const back = queue.filter(function(e){ return !e.sending; });
+    if (!back.length) { return; }
+    for (const e of back) { dropQueued(e.id); }
+    renderQueue();
+    const texts = back.map(function(e){ return e.text; }).filter(Boolean);
+    if (texts.length) { input.value = (input.value.trim() ? input.value.replace(/\s+$/, '') + '\n\n' : '') + texts.join('\n\n'); auto(); }
+    const imgs = [].concat.apply([], back.map(function(e){ return e.images; }));
+    if (imgs.length) { pendingImages = pendingImages.concat(imgs); renderChips(); }
+    syncSendBtn();
+    note(back.length === 1 ? 'Your queued message wasn’t sent' + why + '. It’s back in the message box.'
+      : 'Your ' + back.length + ' queued messages weren’t sent' + why + '. They’re back in the message box.');
+  }
+  // A run is over: send the first queued message, or — after a run that was stopped or failed — give them back.
+  function drainQueue(){
+    if (busy() || !queue.length) { return; }
+    if (!lastRunOk) { queueToComposer(stopAsked ? ' because the run was stopped' : ' because the run didn’t finish'); return; }
+    const e = queue.find(function(x){ return !x.sending; }); if (!e) { return; }
+    dropQueued(e.id); renderQueue();
+    postSend(e.text, e.images, e.reply);
+  }
+  // A reply button in the next-step box, or anything else that sends on your behalf: queued while busy.
+  // `reply` marks words the agent wrote and you clicked, so the host does not count them as typed.
+  function sendOrQueue(text, images, reply){
+    if (busy()) { enqueue(text, images, reply); return; }
+    postSend(text, images, reply);
+  }
+  queueBar.addEventListener('click', function(ev){
+    const b = ev.target.closest && ev.target.closest('[data-q]');
+    if (!b || b.disabled) { if (!ev.target.closest('.qb-menu')) { closeQueueMenu(); } return; }
+    const id = b.dataset.id, q = b.dataset.q;
+    if (q !== 'menu') { closeQueueMenu(); }
+    if (q === 'open') { queueOpen = true; renderQueue(); const c = queueBar.querySelector('[data-q="close"]'); if (c) { c.focus(); } }
+    else if (q === 'close') { queueOpen = false; renderQueue(); const o = queueBar.querySelector('[data-q="open"]'); if (o) { o.focus(); } }
+    else if (q === 'menu') { openQueueMenu(id, b); }
+    else if (q === 'send') { sendQueuedNow(id); }
+    else if (q === 'edit') { editQueued(id); }
+    else if (q === 'remove') { dropQueued(id); renderQueue(); }
+    else if (q === 'clear') { for (const e of queue.filter(function(x){ return !x.sending; })) { dropQueued(e.id); } renderQueue(); }
+  });
+  queueBar.addEventListener('keydown', function(ev){
+    if (ev.key === 'Escape' && queueBar.querySelector('.qb-menu')) { ev.preventDefault(); const id = queueBar.querySelector('.qb-menu').dataset.id; closeQueueMenu(); const k = queueBar.querySelector('[data-q="menu"][data-id="' + id + '"]'); if (k) { k.focus(); } return; }
+    const g = ev.target.closest && ev.target.closest('[data-q="grip"]');
+    if (g && ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
+      ev.preventDefault();
+      const at = queue.findIndex(function(e){ return e.id === g.dataset.id; });
+      moveQueued(g.dataset.id, at + (ev.key === 'ArrowUp' ? -1 : 1));
+    }
+  });
+  document.addEventListener('mousedown', function(ev){ if (!queueBar.contains(ev.target)) { closeQueueMenu(); } });
+  // Drag to reorder, by the grip: the row is draggable only while the grip is held, so text in it stays selectable.
+  let queueDrag = null;
+  queueBar.addEventListener('mousedown', function(ev){ const g = ev.target.closest && ev.target.closest('.qb-grip'); const li = g && g.closest('.qb-item'); if (li) { li.draggable = true; } });
+  queueBar.addEventListener('dragstart', function(ev){
+    const li = ev.target.closest && ev.target.closest('.qb-item'); if (!li || !li.draggable) { return; }
+    queueDrag = li.dataset.id; li.classList.add('dragging');
+    try { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', ''); } catch (e) {}
+  });
+  queueBar.addEventListener('dragover', function(ev){
+    if (!queueDrag) { return; }
+    const li = ev.target.closest && ev.target.closest('.qb-item'); if (!li) { return; }
+    ev.preventDefault();
+    queueBar.querySelectorAll('.qb-item.over').forEach(function(x){ if (x !== li) { x.classList.remove('over'); } });
+    li.classList.add('over');
+  });
+  queueBar.addEventListener('drop', function(ev){
+    const li = ev.target.closest && ev.target.closest('.qb-item'); if (!queueDrag || !li) { return; }
+    ev.preventDefault();
+    const id = queueDrag; queueDrag = null;
+    moveQueued(id, queue.findIndex(function(e){ return e.id === li.dataset.id; }));
+  });
+  queueBar.addEventListener('dragend', function(){
+    queueDrag = null;
+    queueBar.querySelectorAll('.qb-item').forEach(function(x){ x.draggable = false; x.classList.remove('dragging', 'over'); });
+  });
+  // The send button while a run is going: Stop with an empty composer, Queue once something is typed.
+  function syncSendBtn(){
+    const queueing = busy() && (input.value.trim() !== '' || pendingImages.length > 0);
+    const stop = busy() && !queueing;
+    sendBtn.classList.toggle('stop', stop);
+    sendBtn.innerHTML = stop ? '&#9632;' : '&#8629;';     // ■ stops the run, ↵ sends (or queues)
+    sendBtn.title = stop ? 'Stop' : queueing ? 'Queue — it sends when the agent is ready (Enter)' : 'Send (Enter)';
   }
   function updateReviewBar(count, add, del){
     if (count > 0){
@@ -3486,11 +3806,11 @@
 
   function setStreaming(on){
     streaming = on;
-    sendBtn.classList.toggle('stop', on);
-    sendBtn.innerHTML = on ? '&#9632;' : '&#8629;';     // ■ while streaming, ↵ otherwise
-    sendBtn.title = on ? 'Stop' : 'Send (Enter)';
+    if (on){ awaitingStart = false; }
+    syncSendBtn();                                      // ■ while streaming (↵ to queue once you type), ↵ otherwise
     if (workbarEl){ workbarEl.hidden = !on; }           // the working bar is visible for the ENTIRE run
     if (on){ setWork('Working…'); }
+    else { setTimeout(drainQueue, 60); }                // the run is over: a queued message goes next
   }
   // Shell-style history recall in the composer: ↑ = previous sent message, ↓ = newer (back to your draft).
   // Session-only. In multiline text, ↑/↓ recall only when the caret is on the first/last line (arrows still move otherwise).
@@ -3499,8 +3819,14 @@
   function caretAtLastLine(el){ return el.value.indexOf('\n', el.selectionEnd) === -1; }
   function histSet(text){ input.value = text; auto(); const n = text.length; try { input.setSelectionRange(n, n); } catch (e) {} }
   async function doSend(){
-    if (streaming) { flushAll = true; ensurePump(); vscode.postMessage({ type: 'stop' }); return; }
     const t = input.value.trim();
+    // ■ — nothing typed while a run is going: stop it. Anything typed is queued instead (below).
+    if (busy() && !t && !pendingImages.length) {
+      stopAsked = true;
+      if (streaming) { flushAll = true; ensurePump(); vscode.postMessage({ type: 'stop' }); }
+      else { awaitingStart = false; syncSendBtn(); }    // a send the host never answered: let go of it
+      return;
+    }
     // An image with no words is a real message — "look at this" is implied by attaching it.
     if (!t && !pendingImages.length) return;
 
@@ -3533,14 +3859,23 @@
     if (/^\/mcp\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); vscode.postMessage({ type: 'listMcp' }); return; }
     if (/^\/sessions\b/i.test(t)){ input.value = ''; auto(); openSessions(); return; }
     if (/^\/rme\b/i.test(t)){ add('user', esc(t)); forceStick(); input.value = ''; auto(); addReminder(); return; }
-    const imgs = pendingImages.map(function(i){
+    const imgs = pendingImages.slice();
+    input.value = ''; auto(); clearImages(); renderChips();
+    if (busy()) { enqueue(t, imgs); syncSendBtn(); return; }   // the agent is working: it waits for its turn
+    postSend(t, imgs);
+  }
+  // Send a message: your bubble in the transcript, then the host. `imgs` are the composer's attachment objects.
+  function postSend(t, imgs, reply){
+    const payload = imgs.map(function(i){
       return { media_type: i.media_type, base64: i.base64, w: i.w, h: i.h, bytes: i.bytes };
     });
-    add('user', (imgs.length ? imgs.map(function(i, k){
-      return '<img class="msgimg" src="' + escAttr(pendingImages[k].url) + '" alt="attached image">';
+    add('user', (imgs.length ? imgs.map(function(i){
+      return '<img class="msgimg" src="' + escAttr(i.url) + '" alt="attached image">';
     }).join('') : '') + render(t));
-    forceStick(); input.value = ''; auto(); clearImages(); renderChips();
-    vscode.postMessage({ type: 'send', text: t, images: imgs });
+    forceStick();
+    if (turn.wrap) { turn.wrap.dismissed = true; renderTurnBox(); }   // you answered: the box has done its job
+    awaitingStart = true; stopAsked = false; syncSendBtn();
+    vscode.postMessage({ type: 'send', text: t, images: payload, reply: reply === true });
   }
 
   // ── attached images ───────────────────────────────────────────────────────────────────────────
@@ -3762,6 +4097,7 @@
   });
 
   sendBtn.onclick = doSend;
+  input.addEventListener('input', syncSendBtn);
   document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'addContext' });
   document.getElementById('attachImg').onclick = function(){
     if (!canSeeImages) { note((canSeeImagesModel || 'This model') + ' cannot read images. Switch to a vision model and try again.'); return; }
@@ -4751,10 +5087,11 @@
     else if (m.type === 'attachImages'){
       attachImageFiles((m.files || []).map(function(f){ return b64ToFile(f.base64, f.media_type, f.name); }));
     }
-    else if (m.type === 'assistantStart'){ shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
+    else if (m.type === 'assistantStart'){ runIsAgent = false; lastRunOk = true; shown = ''; pending = ''; doneSignaled = false; flushAll = false; current = makeStream(add('assistant', '')); setStreaming(true); }
     else if (m.type === 'assistantDelta'){ pending += m.text; ensurePump(); }
-    else if (m.type === 'assistantDone'){ doneSignaled = true; ensurePump(); }
+    else if (m.type === 'assistantDone'){ lastRunOk = !stopAsked; doneSignaled = true; ensurePump(); }
     else if (m.type === 'assistantError'){
+      lastRunOk = false; awaitingStart = false;
       pending = ''; flushAll = false; doneSignaled = false;
       const cap = capReachedInfo(m.message);
       if (isSessionExpired(m)){ current = null; addSignInCard(m); }
@@ -4773,16 +5110,20 @@
     else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
     else if (m.type === 'mode'){ applyMode(!!m.agent); }
     else if (m.type === 'approvals'){ applyApprovals(m.mode); }
-    else if (m.type === 'agentStart'){ closeGroup(); setStreaming(true); agentBubble = null; agentRaw = ''; turnLabeled = false; mcpMergePending = null; renderPlan([]); setAgentStatus('thinking…'); }
-    else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); }
+    else if (m.type === 'agentStart'){
+      closeGroup(); runIsAgent = true; lastRunOk = true; setStreaming(true); agentBubble = null; agentRaw = ''; turnLabeled = false; mcpMergePending = null; setAgentStatus('thinking…');
+      // A new run: the old hand-back is gone, and a list left by an earlier run shows with a caption until this one touches it.
+      turn.running = true; turn.wrap = null; turn.stale = turn.steps.length > 0; renderTurnBox();
+    }
+    else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); renderTurnBox(); }
     else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
     else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
     else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text, m.label, m.kind, m.path); }
     else if (m.type === 'diagramPending'){ lcdPending(m); }
     else if (m.type === 'diagram'){ lcdShow(m); }
     else if (m.type === 'diagramAscii'){ lcdAscii(m); }
-    else if (m.type === 'agentApproval'){ addApproval(m); }
-    else if (m.type === 'agentQuestions'){ addQuestions(m); }
+    else if (m.type === 'agentApproval'){ addApproval(m); renderTurnBox(); }
+    else if (m.type === 'agentQuestions'){ addQuestions(m); renderTurnBox(); }
     else if (m.type === 'termRun'){ addTermRun(m); }
     else if (m.type === 'termOutput'){ termOutputAppend(m); }
     else if (m.type === 'termExit'){ termExitFinish(m); }
@@ -4803,7 +5144,19 @@
     else if (m.type === 'editApplied'){ addEditCard(m); }
     else if (m.type === 'editResolved'){ resolveEditCard(m); }
     else if (m.type === 'reviewState'){ updateReviewBar(m.count, m.add, m.del); }
-    else if (m.type === 'plan'){ renderPlan(m.todos || []); }
+    else if (m.type === 'plan'){ turn.steps = Array.isArray(m.steps) ? m.steps : []; turn.stale = false; renderTurnBox(); }
+    else if (m.type === 'wrapUp'){ turn.wrap = { recap: m.recap || '', ask: m.ask || '', actions: Array.isArray(m.actions) ? m.actions : [], blocked: !!m.blocked, dismissed: false }; renderTurnBox(); }
+    else if (m.type === 'steersDelivered'){
+      // "Send now" messages the agent has just read: out of the queue, into the transcript where they landed.
+      turn.wrap = null;
+      for (const id of (m.ids || [])) { const e = dropQueued(id); if (e) { add('user', render(e.text)); } }
+      renderQueue(); renderTurnBox(); forceStick();
+    }
+    else if (m.type === 'steersReturned'){
+      // The run never reached them: back to waiting their turn (and sent now, if the run is already over).
+      for (const id of (m.ids || [])) { const e = queueEntry(id); if (e) { e.sending = false; } }
+      renderQueue(); if (!busy()) { setTimeout(drainQueue, 60); }
+    }
     else if (m.type === 'contextUsage'){ renderContext(m); }
     else if (m.type === 'compactStart'){ ctxCompact = 'busy'; renderCtxCard(); }
     else if (m.type === 'compactResult'){ onCompactResult(m); }
@@ -4815,8 +5168,12 @@
       // then, so a card still asking them to sign in would be wrong.
       if (!m.expired && sessionCard && sessionCard.isConnected){ sessionCard.remove(); sessionCard = null; } renderAccount(m); if (m.open) openAccount(); }
     else if (m.type === 'fileIndex'){ setFileIndex(m.files || []); }
-    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); closeGroup(); lcdSweep(); const cap = capReachedInfo(m.message); if (isSessionExpired(m)){ addSignInCard(m); } else if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
-    else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); lcdSweep(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps, m.costMicros); setStreaming(false); }
+    else if (m.type === 'agentError'){ clearStatus(); finishAgentBubble(); closeGroup(); lcdSweep(); lastRunOk = false; const cap = capReachedInfo(m.message); if (isSessionExpired(m)){ addSignInCard(m); } else if (cap){ addUpgradeCard(cap); } else if (isServiceIssue(m)){ addServiceCard(m); } else { add('assistant', '<span class="err">' + esc(m.message) + '</span>'); } }
+    else if (m.type === 'agentDone'){ clearStatus(); finishAgentBubble(); lcdSweep(); addAgentDone(m.reason, m.edits, m.credits, m.maxSteps, m.costMicros);
+      lastRunOk = m.reason === 'done'; awaitingStart = false;
+      turn.running = false; renderTurnBox();   // the list goes; a hand-back with a question shows instead
+      setStreaming(false);
+    }
     else if (m.type === 'context'){ selLabel = m.label; renderChips(); }
     else if (m.type === 'clearContext'){ selLabel = null; renderChips(); }
     else if (m.type === 'reset'){
@@ -4830,7 +5187,9 @@
       selLabel = null; ctxFiles = []; renderChips();
       for (const k in editCards) { delete editCards[k]; } for (const k in termCards) { delete termCards[k]; } for (const k in verifyCards) { delete verifyCards[k]; } for (const k in bgTasks) { delete bgTasks[k]; }
       for (const k in editSteps) { delete editSteps[k]; } for (const k in termSteps) { delete termSteps[k]; } for (const k in verifySteps) { delete verifySteps[k]; }   // step maps ride with their cards
-      renderBgTasks(); updateReviewBar(0); renderPlan([]); renderContext({ input: 0 });
+      renderBgTasks(); updateReviewBar(0); renderContext({ input: 0 });
+      turn.steps = []; turn.stale = false; turn.running = false; turn.wrap = null; turnBox.dataset.sig = ''; renderTurnBox();
+      awaitingStart = false; queueToComposer(' — a new chat started');
       pending = ''; shown = ''; doneSignaled = false; flushAll = false; current = null; setStreaming(false);
       forceStick();
     }
