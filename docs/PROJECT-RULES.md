@@ -76,6 +76,10 @@ model as Cursor and Copilot rules files. Two things bound the risk:
   command-approval prompts are enforced **host-side** in `commandSafety.js` / the extension — they
   are not driven by the prompt, so an `AGENTS.md` cannot turn them off. Still, only add rules from
   repositories you trust, as you would any project config.
+- **They don't speak for you to the reviewer.** In Ask When Risky (docs/ASK-WHEN-RISKY.md) the
+  reviewer counts only what you typed, and your answers to the agent's questions, as your word. A
+  rules file goes into the agent's instructions, which the reviewer is not shown; if the agent reads
+  the file with a tool, its contents reach the reviewer as untrusted activity, like any other file.
 
 ### Code map
 

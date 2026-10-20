@@ -201,7 +201,7 @@ function supportsTools(id) {
  *          system:string, messages:any[], tools?:any[], signal?:AbortSignal,
  *          onText?:(t:string)=>void, onToolStart?:(name:string, id?:string)=>void,
  *          onToolInput?:(id:string, name:string, partialJson:string)=>void,
- *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void}} o
+ *          onRetry?:(info:{attempt:number,retries:number,status:number})=>void, reasoningEffort?:string|null}} o
  */
 async function streamAgentTurn(o) {
 	const p = getProvider(o.providerId);

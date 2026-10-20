@@ -183,6 +183,11 @@ It expands (`--mo-base`) into a third zone, so nothing is lost, only deferred to
 
 ### 4.4 Search & filter (in the panel)
 
+> **As built:** the search field was taken out of the panel on 2026-08-02 (77d4f13), when History became a
+> list of the 30 most recent sessions. Search came back as **LevelCode: AI: Search Sessions…**, a quick pick
+> over every session's title and conversation — see `levelcode-sessions-memory.md` §12. The design below is
+> the original plan.
+
 - **One field, three indexes:** title (weighted highest), files-edited, commands-run. Match highlights show *why* a session matched ("matched `refund.rb`").
 - **Scope switch:** `This project` (default) ↔ `All projects` — because sometimes you remember the work, not the repo.
 - **Filter chips** (toggle, combine): `★ pinned`, `⟳ has edits`, `⚠ interrupted`, `by model ▾`, `date ▾`. Chips animate in/out and the list reflows at `--mo-base`. Active filters are summarized in the empty-result state ("No interrupted sessions in the last 7 days — clear filters?").

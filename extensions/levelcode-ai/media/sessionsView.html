@@ -65,6 +65,8 @@
   .factcard:hover .memacts, .factcard:focus-within .memacts { display: flex; }
   .factcard .memact[data-fact="remove"]:hover { background: color-mix(in srgb, var(--cc-danger) 18%, transparent); color: var(--cc-danger); }
   .factcard .memact[data-fact="confirm"]:hover { background: color-mix(in srgb, var(--cc-accent) 18%, transparent); color: var(--cc-accent); }
+  /* Notes from you (§12): what you asked the agent to keep, with your words under it. */
+  .factcard .factsaid { margin-top: 3px; font-size: 11.5px; line-height: 1.45; color: var(--cc-text2); }
   .sesslist { flex: 1 1 auto; overflow-y: auto; padding: 0 10px 12px; }
   .sessbucket { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--cc-text3); margin: 12px 4px 7px; }
   .sessbucket .cnt { letter-spacing: 0; }
@@ -243,6 +245,24 @@
       + '<button type="button" class="memact" data-act="forget" title="Forget this session">Forget</button></span></div>'
       + '</div>';
   }
+  // A note the person asked the agent to keep (§12): its kind, whether it could be credited to their words,
+  // and the words themselves — so it is plain that the note says no more than they did.
+  function noteCardHtml(f){
+    const mine = f.yours || f.confirmed;
+    const badge = mine ? '<span class="factbadge ok">yours</span>' : '<span class="factbadge warn">unconfirmed</span>';
+    const kind = '<span class="factbadge">' + esc(f.kind || 'preference') + '</span>';
+    const when = f.at ? new Date(f.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+    const meta = mine ? 'saved ' + esc(when) : 'not in effect until you confirm it';
+    const acts = '<span class="memacts">'
+      + (mine ? '' : '<button type="button" class="memact" data-fact="confirm" title="Confirm — keep this">Confirm</button>')
+      + '<button type="button" class="memact" data-fact="remove" title="Forget this note">Forget</button>'
+      + '</span>';
+    return '<div class="factcard' + (mine ? ' confirmed' : ' inferred') + '" data-key="' + escAttr(f.key || '') + '">'
+      + '<div class="facttext">' + esc(f.text || '') + ' ' + kind + badge + '</div>'
+      // Only a credited note's quote was matched to what the person typed; any other quote is the agent's.
+      + (f.said ? '<div class="factsaid">' + (f.yours ? 'you said' : 'the agent quoted') + ': “' + esc(f.said) + '”</div>' : '')
+      + '<div class="memline2"><span class="memmeta">' + meta + '</span>' + acts + '</div></div>';
+  }
   function factCardHtml(f){
     const state = f.superseded ? 'superseded' : f.confirmed ? 'confirmed' : 'inferred';
     const badge = '<span class="factbadge ' + (f.confirmed ? 'ok' : f.superseded ? 'warn' : '') + '">' + state + '</span>';
@@ -260,7 +280,10 @@
     const items = Array.isArray(msg && msg.items) ? msg.items : [];
     const facts = Array.isArray(msg && msg.facts) ? msg.facts : [];
     let html = '';
-    if (facts.length){ html += '<div class="memsection">Facts</div>' + facts.map(factCardHtml).join(''); }
+    const notes = facts.filter((f) => f.person);
+    const others = facts.filter((f) => !f.person);
+    if (notes.length){ html += '<div class="memsection">From you</div>' + notes.map(noteCardHtml).join(''); }
+    if (others.length){ html += '<div class="memsection">Facts</div>' + others.map(factCardHtml).join(''); }
     if (items.length){ html += '<div class="memsection">Sessions</div>' + items.map(memCardHtml).join(''); }
     list.innerHTML = html || '<div class="sessempty">Nothing remembered yet. As sessions finish, what they achieved appears here — plain text you can edit or forget.</div>';
   }

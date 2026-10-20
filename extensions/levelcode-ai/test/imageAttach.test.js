@@ -136,9 +136,10 @@ test('AGENT MODE: the default path carries images too', () => {
 	// I shipped this broken. handleSend stored the bytes and then early-returned into agentFlow(text),
 	// which never saw them — so in the DEFAULT mode a pasted screenshot was written to disk and
 	// dropped. The exact silent-drop failure this whole feature exists to prevent.
-	assert.match(ext, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks\); return; \}/,
+	// (The third argument marks the goal as typed, for the Ask When Risky reviewer — not about images.)
+	assert.match(ext, /if \(agentMode\) \{ await agentFlow\(text, imageBlocks(, \{ typed: true \})?\); return; \}/,
 		'agent mode must forward the image blocks');
-	assert.match(ext, /async function agentFlow\(text, imageBlocks\)/, 'agentFlow must accept them');
+	assert.match(ext, /async function agentFlow\(text, imageBlocks(, opts)?\)/, 'agentFlow must accept them');
 	const body = fnBody(ext, 'agentFlow');
 	assert.match(body, /imageBlocks && imageBlocks\.length/, 'and use them when present');
 	assert.match(body, /\[\.\.\.labelImages\(imageBlocks\), \{ type: 'text', text \}\]/, 'images lead the goal');

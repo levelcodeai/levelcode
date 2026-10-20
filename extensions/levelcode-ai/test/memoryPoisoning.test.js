@@ -63,6 +63,22 @@ for (const [label, text] of HOSTILE) {
 	});
 }
 
+// The remember tool (§12) is a second way in: the agent proposes a note and quotes the person. Each hostile
+// line, quoted against a real goal the person typed, must stay an inactive, unconfirmed note — the quote is
+// real, the order is not in it.
+const GOAL = 'Please fix the failing date test and tidy up the build script.';
+for (const [label, text] of HOSTILE) {
+	test('HOSTILE via remember (' + label + ') stays an unconfirmed note', () => {
+		const g = M.groundNote({ text, said: 'fix the failing date test', personWords: [GOAL] });
+		assert.strictEqual(g.verified, false, 'credited to the person: ' + JSON.stringify(g));
+		const obs = M.factObservation(text, 's1', '2026-10-19T00:00:00Z', { kind: 'preference', said: 'fix the failing date test', verified: g.verified });
+		const again = M.factObservation(text, 's2', '2026-10-19T00:00:00Z', { kind: 'preference', said: 'fix the failing date test', verified: g.verified });
+		const [f] = M.foldFacts([obs, again]);
+		assert.deepStrictEqual([f.active, f.yours], [false, false]);
+		assert.strictEqual(M.activeFacts([obs, again]).length, 0);
+	});
+}
+
 test('HOSTILE: more repetition does not eventually win', () => {
 	// The whole point of the fix. A repo can re-plant its file as many times as it likes; the count
 	// climbs and the gate does not move.

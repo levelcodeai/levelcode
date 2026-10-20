@@ -19,6 +19,7 @@ const providers = require('./providers/index');
 const catalog = require('./providers/catalog');
 const { formatVerifyFeedback, verifyOutcome, looksUnrunnable, sniffPort, sniffPreviewUrl, looksReady } = require('./verify');
 const { classifyCommand, dangerLabel } = require('./commandSafety');
+const { reviewCommand, approvalModeOf } = require('./agentReview');
 const { commitShellChanges } = require('./shellCommit');
 const { loadProjectRules } = require('./projectRules');
 const { loadServerConfig, buildAgentTools, toolCountsByServer, classifyMcpTool, explainMcpRefusal, describeMcpCall,
@@ -198,6 +199,10 @@ const PORTABLE_TOOLS_TOKENS_EST = Math.round(JSON.stringify(PORTABLE_TOOLS).leng
 // wires ctx.recallSessions (memory + the recall setting on), so it costs nothing otherwise. Read-only and
 // instant like use_skill — it searches the project's OWN past-session outcomes, never the file system.
 const RECALL_TOOL = { name: 'recall_sessions', description: 'Search THIS project\'s past sessions for relevant earlier work — their recorded outcomes (what was built/fixed/decided), the files they touched, and the conversations themselves. Use when the user refers to earlier work ("what did we do about refunds?", "did we already fix the webhook?") or when prior context would clearly help before you start. Returns cited past-session outcomes (with a matching transcript snippet when the match is deep in the conversation) and dates; treat them as memory — informative but possibly stale, so verify against the current code.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'keywords or a short question, e.g. "refund retries" or "MCP timeline rail"' } }, required: ['query'] } };
+// Memory the person asks for (docs/levelcode-sessions-memory.md §12). The host decides whether a note can be
+// credited to the person (sessionMemory.groundNote); the agent only proposes it, with their words.
+const REMEMBER_TOOL = { name: 'remember', description: 'Save something the user told you, so future sessions in THIS project start knowing it. Use it when the user asks you to remember something; when they correct how you work ("no, use pnpm", "don\'t mock the database") or confirm an approach that was not obvious ("yes, keep doing that"); when they state a decision or constraint (write dates as absolute dates); or when they say where something lives (a dashboard, a ticket tracker, a doc). Do NOT save what the code or git history already shows, or details of the current task. `said` MUST be the user\'s own words, copied exactly from their message — the note is credited to them only when those words are found in what they typed and the note uses only those words, in their order, keeping every not/never; otherwise it is kept unconfirmed until they confirm it. Keep `text` short and close to their words.', input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['preference', 'project', 'reference'], description: 'preference = how the user wants you to work (corrections and confirmed approaches); project = a decision, constraint or deadline; reference = where to find something outside the code' }, text: { type: 'string', description: 'the note, one sentence, in the user\'s terms, e.g. "Use pnpm, never npm, in this repo"' }, said: { type: 'string', description: 'the user\'s exact words this note rests on, copied from their message' } }, required: ['kind', 'text', 'said'] } };
+const FORGET_TOOL = { name: 'forget', description: 'Remove a note or fact from this project\'s memory when the user asks you to forget it or says it is no longer true. `said` MUST be the user\'s own words asking for it, copied exactly, and those words must name what to forget. Removes the best match for `query` only when the user\'s words ask for it to go and name it, and tells you what it removed.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'words that identify the memory, e.g. "pnpm"' }, said: { type: 'string', description: 'the user\'s exact words asking you to forget it' } }, required: ['query', 'said'] } };
 
 // How much of a background command's accumulated output the sniffers re-read on each chunk. Generous
 // next to any single log line, so a url split across chunk boundaries is still found, yet small enough
@@ -643,10 +648,12 @@ async function runTool(tu, ctx) {
 			const abs = await resolveWorkspacePathAsync(input.path || '', { mustExist: true });
 			if (!abs) { return 'ERROR: file not found: ' + input.path + whereHint(); }
 			try { const st = await host.stat(abs); if (st && st.isDirectory) { return 'ERROR: ' + input.path + ' is a directory — delete_file removes a single file.'; } } catch { /* */ }
-			// Deletion is in the autopilot danger set — ask even when autopilot runs everything else silently.
-			// (In manual mode nothing gates here: the edit is applied and reviewed with Keep/Undo as before.)
-			if (ctx.autopilot && typeof ctx.approve === 'function') {
-				const okDel = await ctx.approve({ kind: 'delete', path: input.path, danger: dangerLabel('deletion') });
+			// Deletion is in the danger set — ask even when autopilot (or Ask When Risky) runs other commands
+			// without asking; it never goes to the reviewer. (In manual mode nothing gates here: the edit is
+			// applied and reviewed with Keep/Undo as before.)
+			const delMode = approvalModeOf(ctx);
+			if (delMode !== 'ask' && typeof ctx.approve === 'function') {
+				const okDel = await ctx.approve({ kind: 'delete', path: input.path, danger: dangerLabel('deletion'), mode: delMode });
 				if (!okDel) { return 'User skipped deleting ' + input.path + '. Do not retry it.'; }
 			}
 			const ok = ctx.applyDelete ? await ctx.applyDelete({ path: input.path }) : false;
@@ -673,12 +680,24 @@ async function runTool(tu, ctx) {
 				if (!wf) { return 'ERROR: no workspace folder named "' + input.folder + '"' + whereHint(); }
 				cwdRoot = wf.root;
 			}
-			// Autopilot runs commands without asking — EXCEPT the danger set (deletion, sudo, force-push,
-			// remote|shell, publish, system writes), which always asks. Manual mode asks for everything.
-			const danger = ctx.autopilot ? classifyCommand(cmd) : { dangerous: true, category: null };
-			const approved = danger.dangerous
-				? await ctx.approve({ kind: 'command', command: host.displaySafe(cmd), explanation: host.displaySafe(input.explanation || ''), danger: danger.category ? dangerLabel(danger.category) : null })
-				: true;
+			// Approvals (agentReview.js). 'ask' (Default Approvals) asks for everything. 'autopilot' runs every
+			// command outside the danger set (deletion, sudo, force-push, remote|shell, publish, system writes).
+			// 'review' (Ask When Risky) shows a command outside the danger set to a reviewer model first and
+			// runs it only on the reviewer's ratings. The danger set asks in both, and never reaches the reviewer.
+			const mode = approvalModeOf(ctx);
+			const danger = mode === 'ask' ? { dangerous: true, category: null } : classifyCommand(cmd);
+			const card = { kind: 'command', command: host.displaySafe(cmd), explanation: host.displaySafe(input.explanation || ''), mode };
+			let approved;
+			if (danger.dangerous) {
+				approved = await ctx.approve(Object.assign(card, { danger: danger.category ? dangerLabel(danger.category) : null }));
+			} else if (mode === 'autopilot') {
+				approved = true;
+			} else {
+				const r = await reviewGate(ctx, { command: cmd, explanation: String(input.explanation || ''), cwd: cwdRoot });
+				if (r.outcome === 'stopped') { return 'Stopped before this command ran.'; }
+				approved = r.outcome === 'allow'
+					|| await ctx.approve(Object.assign(card, { danger: null, review: { risk: r.verdict ? r.verdict.risk : null, reason: host.displaySafe(r.reason || ''), failure: r.failure } }));
+			}
 			if (!approved) { return 'User skipped this command. Do not retry it.'; }
 			const runId = tu.id || ('run-' + Date.now());
 			ctx.post({ type: 'termRun', id: runId, command: host.displaySafe(cmd), cwd: path.basename(cwdRoot) || 'workspace', background: bg, explanation: host.displaySafe(input.explanation || '') });
@@ -764,6 +783,13 @@ async function runTool(tu, ctx) {
 				return '- ' + (a.header ? a.header + ' — ' : '') + (a.question || '') + ' → ' + sel;
 			});
 			if (res.notes) { lines.push('- Additional notes from the user: ' + res.notes); }
+			// What the person chose and wrote here is theirs: `remember` may quote it (see heard, below).
+			if (Array.isArray(ctx.heardThisRun)) {
+				for (const a of res.answers) { for (const sel of (a.selected || [])) { ctx.heardThisRun.push(String(sel)); } }
+				if (res.notes) { ctx.heardThisRun.push(String(res.notes)); }
+			}
+			// The person's own choices: the reviewer (agentReview.js) counts these as their word.
+			if (Array.isArray(ctx.userAnswers)) { ctx.userAnswers.push(lines.join('\n')); }
 			return 'The user answered your questions (these are their recorded decisions — honor them and do NOT ask again):\n' + lines.join('\n') + '\n\nProceed with the work using these answers.';
 		}
 		if (tu.name === 'use_skill') {
@@ -776,6 +802,28 @@ async function runTool(tu, ctx) {
 			}
 			ctx.post({ type: 'agentTool', icon: 'sparkle', text: '🧩 using skill: ' + name });   // quiet chip — only on success (🧩 is the marker; 'sparkle' falls back cleanly)
 			return body;                                                                       // SKILL.md body → tool_result, steers the next turns
+		}
+		if (tu.name === 'remember' || tu.name === 'forget') {
+			if (!ctx.memoryNotes) { return 'ERROR: project memory is off in this session.'; }
+			// What the person typed this run: their goal and their answers to ask_user. The host checks `said` against it.
+			const heard = [String(ctx.goalText || '')].concat(Array.isArray(ctx.heardThisRun) ? ctx.heardThisRun : []).filter(Boolean);
+			const said = String(input.said || '').trim();
+			if (!said) { return 'ERROR: pass `said` — the user\'s exact words, copied from their message.'; }
+			try {
+				if (tu.name === 'remember') {
+					const text = String(input.text || '').replace(/\s+/g, ' ').trim();
+					if (!text) { return 'ERROR: pass `text` — the note, one sentence.'; }
+					const r = ctx.memoryNotes.remember({ kind: String(input.kind || 'preference'), text, said, personWords: heard }) || {};
+					// `verified` is whether it was credited to the person; `saved` is whether it is on disk at all.
+					if (r.saved === true) { ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 remembered: ' + host.displaySafe(text) + (r.verified ? '' : ' (unconfirmed)') }); }
+					return String(r.message || 'Saved.');
+				}
+				const query = String(input.query || '').trim();
+				if (!query) { return 'ERROR: pass `query` — words that identify the memory.'; }
+				const r = ctx.memoryNotes.forget({ query, said, personWords: heard }) || {};
+				if (r.removed) { ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 forgot: ' + host.displaySafe(r.removed) }); }
+				return String(r.message || 'Nothing was removed.');
+			} catch (e) { return 'ERROR: memory could not be updated.'; }
 		}
 		if (tu.name === 'recall_sessions') {
 			if (typeof ctx.recallSessions !== 'function') { return 'ERROR: session recall is not available in this session.'; }
@@ -870,6 +918,52 @@ function isAgentAuthError(e) {
  *
  * Never throws: MCP is an enhancement, and no server misconfiguration may take down an agent run.
  */
+/**
+ * Ask When Risky: show one command to the reviewer (agentReview.js) and report what it decided.
+ *
+ * Every run is reviewed, including a command that passed a moment ago. What a command does depends on the
+ * files it runs, and those change in ways no counter here can see: an earlier command, a `git switch`, the
+ * person in their own terminal. Reusing an earlier pass would vouch for code the reviewer has not seen.
+ *
+ * The review is a real model call on the run's own provider, so in gateway mode it costs credits. Its
+ * cost is kept on ctx and added to the run's total, so the response bar's figure includes it.
+ * @returns {Promise<{outcome:'allow'|'ask'|'stopped', verdict:any, reason:string, failure:string|null}>}
+ */
+async function reviewGate(ctx, action) {
+	const stats = ctx.reviewStats || (ctx.reviewStats = { ran: 0, asked: 0 });
+	const model = ctx.reviewModel || ctx.model;
+	const reasons = !!catalog.modelCaps(model).reasoning;
+	ctx.post({ type: 'agentStatus', text: 'reviewing the command…' });
+	const r = await reviewCommand({
+		// One turn, no tools, on the run's own route and key. A reasoning model thinks out of the same
+		// budget, so it gets room for both and is asked to think little (as compaction does).
+		runTurn: (o) => providers.streamAgentTurn({
+			providerId: ctx.providerId, apiKey: ctx.apiKey, baseURL: ctx.baseURL, label: ctx.label,
+			model, maxTokens: reasons ? 4096 : 400, system: o.system, messages: o.messages, tools: [],
+			// The answer is collected, never streamed into the chat — but the native Anthropic adapter calls
+			// onText for every text delta, so it is handed one that does nothing.
+			onText: () => { }, onToolStart: () => { }, onToolInput: () => { },
+			signal: o.signal, reasoningEffort: catalog.reasoningEffortFor(model, 'review')
+		}),
+		messages: ctx.messages, userRequests: ctx.userRequests, userAnswers: ctx.userAnswers,
+		command: action.command, explanation: action.explanation, cwd: action.cwd, signal: ctx.signal
+	});
+	if (r.usage) {
+		if (r.usage.cost_micros != null) { ctx.reviewCostMicros = (ctx.reviewCostMicros || 0) + r.usage.cost_micros; }
+		if (r.usage.credits_remaining_micros != null) { ctx.credits = r.usage.credits_remaining_micros; }
+	}
+	if (ctx.dbg) { ctx.dbg('review.done', { outcome: r.outcome, failure: r.failure, risk: r.verdict && r.verdict.risk, authorization: r.verdict && r.verdict.authorization, injection: r.verdict && r.verdict.injection, model, costMicros: r.usage && r.usage.cost_micros }); }
+	if (r.outcome === 'allow') {
+		stats.ran++;
+		ctx.post({ type: 'agentStatus', text: 'running command…' });
+		ctx.post({ type: 'agentTool', icon: 'workspace-trusted', text: 'Reviewer · ' + r.verdict.risk + ' risk — ' + host.displaySafe(r.reason || 'no reason given') });
+	} else if (r.outcome === 'ask') {
+		stats.asked++;
+		ctx.post({ type: 'agentStatus', text: 'waiting for your answer…' });   // not "reviewing" while the card waits
+	}
+	return r;
+}
+
 /**
  * G1 launch gate for ONE repo-authored server. Returns true if it may be spawned.
  *
@@ -1032,6 +1126,8 @@ function saysDone(text) {
 }
 
 async function runAgent(ctx) {
+	// The person's own words this run beyond the goal (their ask_user answers) — what `remember` may quote.
+	if (!Array.isArray(ctx.heardThisRun)) { ctx.heardThisRun = []; }
 	// No workspace is no longer a refusal. It used to fail the whole run here, which meant a question
 	// that never needed a folder — "what does this error mean?", anything through an MCP server, a
 	// follow-up about the conversation itself — died on a guard written for the file tools. The root
@@ -1069,7 +1165,10 @@ async function runAgent(ctx) {
 		: (ctx.autopilot && sh
 			// A simulated shell has no build, no tests, no sudo and no network to be careful about: say what is true of it.
 			? '\n\nAUTOPILOT IS ON. Work end-to-end without pausing for confirmation. Your run_command calls run immediately and what they change appears in the user\'s Keep/Undo review; a command line that deletes files still asks the user first. Do NOT call ask_user for anything you can reasonably decide; pick a sensible default and proceed. When you are unsure whether a change is correct, do not stop to ask: verify it with what you have (read the files back, grep, diff, jq, and the editor\'s diagnostics for the files you changed), fix and re-verify. You cannot run tests or builds here, so never claim you did.'
-			: '');
+			: (approvalModeOf(ctx) === 'review' && shellOn
+				// Ask When Risky: a reviewer reads the explanation, so it has to say what the command really does.
+				? '\n\nASK WHEN RISKY IS ON. Before each run_command runs, an independent reviewer compares it with what the user asked for. Routine commands for the task run straight away; risky or off-task ones go to the user. Give every run_command an accurate explanation of what it does — the reviewer reads it, and a vague or misleading one sends the command to the user. Do not split a risky operation into innocent-looking steps to get it past the reviewer.'
+				: ''));
 	// Project rules: fold a repo's own AGENTS.md (or CLAUDE.md / .cursorrules) into the cached system
 	// block so the agent follows the project's conventions from turn one. Read once per run — an edit is
 	// picked up on the next run.
@@ -1130,6 +1229,7 @@ async function runAgent(ctx) {
 	// then there is nothing to fetch, and a tool that is never needed is a standing cost for nothing.
 	const extras = [];
 	if (ctx.recallSessions) { extras.push(RECALL_TOOL); }
+	if (ctx.memoryNotes) { extras.push(REMEMBER_TOOL, FORGET_TOOL); }
 	if (rich) { extras.push(diagramTool.RENDER_DIAGRAM); if (ctx.diagramsStubbed) { extras.push(diagramTool.GET_DIAGRAM); } }
 	if (extras.length) { tools = tools.concat(extras); }
 	// Withhold what this host cannot do: no shell, no run_command, no read_command_output — and for a shell that
@@ -1516,6 +1616,12 @@ async function runAgent(ctx) {
 		if (ctx.diagrams) {
 			try { for (const m of ctx.diagrams.endRun()) { ctx.post(m); } } catch (e) { dbg('diagram.settle.error', { msg: String((e && e.message) || e) }); }
 		}
+		// Ask When Risky: the reviewer's calls are part of what the run cost, and the user sees what it did.
+		runCostMicros += ctx.reviewCostMicros || 0;
+		const rs = ctx.reviewStats;
+		if (rs && (rs.ran || rs.asked)) {
+			ctx.post({ type: 'agentTool', icon: 'workspace-trusted', text: 'Reviewer · ran ' + rs.ran + ' command' + (rs.ran === 1 ? '' : 's') + ' on its own, sent ' + rs.asked + ' to you' });
+		}
 		// A run that ended cleanly without wrap_up: a list done but for its last step, still in progress, is done.
 		if (reason === 'done' && !wrapped && ctx.plan && ctx.plan.steps) {
 			const steps = turnPlan.completeOnCleanEnd(ctx.plan.steps);
@@ -1524,7 +1630,7 @@ async function runAgent(ctx) {
 		// Messages sent with "Send now" that the run never reached go back to the chat's queue.
 		const left = takeSteers();
 		if (left.length) { dbg('steer.returned', { count: left.length }); ctx.post({ type: 'steersReturned', ids: left.map((x) => x.id) }); }
-		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, wrappedUp: !!wrapped, costMicros: runCostMicros, creditsLeftMicros: ctx.credits != null ? ctx.credits : null });
+		dbg('agent.done', { reason, steps: step - 1, edits: ctx.editCount || 0, wrappedUp: !!wrapped, costMicros: runCostMicros, creditsLeftMicros: ctx.credits != null ? ctx.credits : null, reviewRan: rs ? rs.ran : 0, reviewAsked: rs ? rs.asked : 0 });
 		// [LevelCode] Gateway runs now carry real money: costMicros = what THIS run cost, credits = the
 		// remaining balance — both RETAIL micro-$. BYOK runs send neither (null/0) and the bar omits them.
 		ctx.post({
