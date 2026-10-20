@@ -68,6 +68,7 @@ test('GROUND: the note keeps every not and never, and adds none', () => {
 	assert.deepStrictEqual(mem.groundNote({ text: 'Use yarn', said: 'never use npm or yarn', personWords: ['never use npm or yarn'] }).reason, 'changes-a-not');
 	assert.strictEqual(mem.groundNote({ text: 'Don\u2019t push to main', said: "don't push to main", personWords: ["don't push to main"] }).verified, true, 'curly and straight apostrophes are the same not');
 	assert.strictEqual(mem.groundNote({ text: 'Never edit package.json by hand', said: 'never edit package.json by hand', personWords: ['never edit package.json by hand'] }).verified, true, 'a file name is one word, not two clauses');
+	assert.strictEqual(mem.groundNote({ text: 'No env files in commits', said: 'no .env files in commits', personWords: ['no .env files in commits'] }).verified, true, 'the dot of .env does not end the "no"');
 });
 test('GROUND: a quote too short to mean anything is not enough', () => {
 	assert.deepStrictEqual(mem.groundNote({ text: 'Yes', said: 'yes', personWords: ['yes'] }).reason, 'too-short');
@@ -268,6 +269,8 @@ test('SEARCH: an older title match outranks newer matches in the conversation, b
 	assert.strictEqual(r.length, 5);
 	assert.deepStrictEqual([r[0].id, r[0].inTitle], [idQuokkaTitle, true]);
 	assert.strictEqual(big.search('quokka', { limit: 100 }).length, 41);
+	// all in one step: the title match is the last one read, and must still survive the cut
+	assert.deepStrictEqual(big.search('quokka', { limit: 5, readMax: 1000 })[0].id, idQuokkaTitle);
 });
 test('SEARCH: the first step reports a title match anywhere, with no read; a later step adds its snippet', () => {
 	const first = big.searchStep('quokka migration', { readMax: 10 });
