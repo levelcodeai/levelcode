@@ -456,7 +456,7 @@
           "type": "boolean",
           "scope": "application",
           "default": true,
-          "description": "Show a light that travels round the message box while LevelCode works — thinking, writing, running a command, checking its edits. While it waits on you (a command to approve, a question to answer) the light stops and stays as a still ring. With reduced motion it is a still ring throughout. Turn off for no light at all; the working line above the message box still shows what is happening."
+          "description": "Show a thin line of light that travels round the message box's border while LevelCode works — thinking, writing, running a command, checking its edits. While it waits on you (a command to approve, a question to answer) the light stops and the border stays dimly lit. With reduced motion the border is lit without moving. Turn off for no light at all; the working line above the message box still shows what is happening."
         },
         "levelcode.cloud.endpoint": {
           "type": "string",

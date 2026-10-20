@@ -184,6 +184,9 @@ async function main() {
 			const a = w.getComputedStyle(c, '::after'), b = w.getComputedStyle(c, '::before');
 			return { cls: ['aura-working', 'aura-waiting'].filter((x) => d.body.classList.contains(x)), lineOpacity: +a.opacity, glowOpacity: +b.opacity,
 				anim: a.animationName, angle: a.getPropertyValue('--aura-angle').trim(), turn: c.style.getPropertyValue('--aura-turn'), bg: a.backgroundImage.slice(0, 40) }; })()`);
+		// The box itself: whether it has the focus, and the focus ring it draws.
+		const box = () => evalIn(chat, `(() => { const d = ${D}, w = ${W}, c = d.getElementById('composer'), s = w.getComputedStyle(c);
+			return { focused: c.classList.contains('focused'), shadow: s.boxShadow, border: s.borderTopColor }; })()`);
 		await front();
 
 		// ---- working ----
@@ -210,11 +213,20 @@ async function main() {
 		await shot('aura-1-working');
 		await sleep(800);
 		await shot('aura-1-working-later');   // the same run 0.8 s on: the light has moved round the box
+		// In real use the message box keeps the focus after Enter (here the key prompt took it). Its accent
+		// focus ring would swallow a 1px line, so while the light turns the ring steps back.
+		await evalIn(chat, `(() => { ${D}.getElementById('input').focus(); return true; })()`);
+		await sleep(300);
+		const wf = await box();
+		check('…and with the box focused, its focus ring steps back so the line shows', wf.focused && wf.shadow === 'none', JSON.stringify(wf));
+		await shot('aura-1-working-focused');
 		release();
 		await until('the run to end', () => evalIn(chat, `(() => /Done: thought/.test(${D}.getElementById('log').innerText))()`), 30000);
 		await sleep(700);
 		const idle = await ring();
 		check('idle: when the run is over the ring is gone', idle.cls.length === 0 && idle.lineOpacity === 0 && idle.glowOpacity === 0, JSON.stringify(idle));
+		const idleBox = await box();
+		check('…and a focused box has its full focus ring back', idleBox.focused && idleBox.shadow !== 'none', JSON.stringify(idleBox));
 
 		// ---- waiting ----
 		await send('run something');

@@ -985,11 +985,13 @@
   #composer.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 
   /* ---- the working aura: a light that travels round the message box while LevelCode works ----
-     Thinking, streaming, running a command, verifying: a short bright arc circles the box, trailing a soft
-     glow over a faint whole ring. Waiting on you (a command to approve, a question to answer) it stops and
-     dims to a thin ring with no glow — paused, because nothing happens until you act. Off: nothing at all.
-     Two rings on the box's own edge, cut to a band by a mask so the box's inside is untouched: ::after is
-     the sharp line, ::before the blurred glow under it. Both turn on one angle, so the glow never lags.
+     Thinking, streaming, running a command, verifying: a short arc of light slides along the box's own
+     border, a hairline with a faint soft edge. Waiting on you (a command to approve, a question to answer)
+     it stops and becomes a dim, still border, because nothing happens until you act. Off: nothing at all.
+     Two rings on the box's border, cut to a band by a mask so the box's inside is untouched: ::after is the
+     1px line, ::before a 2px blurred band under it. Both turn on one angle, so the soft edge never lags.
+     No ring of its own behind the arc: the box's border is the track, and while the light turns the focus
+     ring steps back (below), as in VS Code's chat, or a hairline in the accent colour is lost on it.
      Colours come from the theme: the progress colour while working (the theme's own "busy"), the focus
      colour while waiting. The speed is set per box (syncAura) so a wide panel does not look frantic. */
   @property --aura-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
@@ -997,33 +999,32 @@
   #composer {
     position: relative;
     --aura-color: var(--vscode-progressBar-background, var(--accent));
-    --aura-head: color-mix(in srgb, var(--aura-color) 62%, var(--vscode-foreground, #fff));
   }
   #composer::before, #composer::after {
-    content: ''; position: absolute; border-radius: inherit; pointer-events: none; opacity: 0;
+    content: ''; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; opacity: 0;
     transition: opacity .4s ease;
     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
     mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
   }
   #composer::before {
-    inset: -6px; padding: 6px; filter: blur(5px);
-    background: conic-gradient(from var(--aura-angle), transparent 0deg 255deg,
-      color-mix(in srgb, var(--aura-color) 38%, transparent) 318deg, color-mix(in srgb, var(--aura-head) 80%, transparent) 354deg, transparent 360deg);
+    padding: 2px; filter: blur(1.5px);
+    background: conic-gradient(from var(--aura-angle), transparent 0deg 285deg,
+      color-mix(in srgb, var(--aura-color) 45%, transparent) 335deg, transparent 360deg);
   }
   #composer::after {
-    inset: -1px; padding: 2px;
-    /* A faint whole ring (the box is busy) with the bright arc travelling over it. */
-    background: conic-gradient(from var(--aura-angle), color-mix(in srgb, var(--aura-color) 22%, transparent) 0deg 262deg,
-      color-mix(in srgb, var(--aura-color) 60%, transparent) 320deg, var(--aura-head) 355deg, color-mix(in srgb, var(--aura-color) 22%, transparent) 360deg);
+    padding: 1px;
+    background: conic-gradient(from var(--aura-angle), transparent 0deg 275deg,
+      color-mix(in srgb, var(--aura-color) 55%, transparent) 318deg, var(--aura-color) 338deg, transparent 360deg);
   }
   body.aura-working #composer::before, body.aura-working #composer::after { opacity: 1; animation: aura-turn var(--aura-turn, 2.4s) linear infinite; }
-  /* Waiting on you: paused — a thin, dim ring with no glow, weaker than working and than the box's own focus. */
-  body.aura-waiting #composer::after { opacity: 1; padding: 1px; background: color-mix(in srgb, var(--accent) 45%, transparent); }
+  body.aura-working #composer.focused { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); box-shadow: none; }
+  /* Waiting on you: paused — a dim, still border with no glow, weaker than working and than the box's own focus. */
+  body.aura-waiting #composer::after { opacity: 1; background: color-mix(in srgb, var(--accent) 45%, transparent); }
   @media (prefers-reduced-motion: reduce) {
-    /* No motion: working is a whole, bright ring with its glow — still distinct from waiting's dim one. */
+    /* No motion: working is a whole, still border in the progress colour — brighter than waiting's dim one. */
     body.aura-working #composer::before, body.aura-working #composer::after { animation: none; }
     body.aura-working #composer::after { background: color-mix(in srgb, var(--aura-color) 75%, transparent); }
-    body.aura-working #composer::before { background: color-mix(in srgb, var(--aura-color) 35%, transparent); }
+    body.aura-working #composer::before { opacity: 0; }
   }
   /* High contrast draws its own borders; a soft glow there is noise. The working bar still says it. */
   @media (forced-colors: active) { #composer::before, #composer::after { display: none; } }

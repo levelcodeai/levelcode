@@ -154,8 +154,34 @@ test('CSS: colours come from the theme — progress while working, focus while w
 	assert.match(rule('  #composer'), /--aura-color: var\(--vscode-progressBar-background, var\(--accent\)\)/);
 	assert.match(rule('body.aura-waiting #composer::after'), /var\(--accent\)/);
 	assert.ok(!/body\.aura-waiting #composer::before/.test(auraCss), 'waiting has a glow: it should read as paused, not busy');
-	const colours = auraCss.replace(/linear-gradient\(#000 0 0\)/g, '').replace(/var\(--vscode-foreground, #fff\)/g, '');
+	const colours = auraCss.replace(/linear-gradient\(#000 0 0\)/g, '');
 	assert.ok(!/#[0-9a-f]{3,8}\b|rgba?\(/i.test(colours), 'a fixed colour in the aura');
+});
+test('CSS: thin and quiet — a 1px line on the border, a 2px soft edge, a short arc, no ring or white head of its own', () => {
+	assert.match(rule('#composer::before, #composer::after'), /inset: -1px;/, 'both rings sit on the box\'s 1px border');
+	assert.match(rule('#composer::after'), /padding: 1px;/, 'the line is a hairline');
+	const glow = rule('#composer::before');
+	assert.ok(Number((glow.match(/padding: ([\d.]+)px/) || [])[1]) <= 2, 'the soft edge is at most 2px wide');
+	assert.ok(Number((glow.match(/filter: blur\(([\d.]+)px\)/) || [])[1]) <= 2, 'and blurred at most 2px');
+	for (const sel of ['#composer::before', '#composer::after']) {
+		const dark = rule(sel).match(/conic-gradient\(from var\(--aura-angle\), transparent 0deg (\d+)deg/);
+		assert.ok(dark, sel + ': the gradient is clear round the box, not a ring of its own');
+		assert.ok(360 - Number(dark[1]) <= 90, sel + ': the lit arc is at most a quarter turn');
+	}
+	assert.ok(!/--vscode-foreground/.test(auraCss), 'the arc is the theme colour, not mixed toward white');
+	const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce) {\n    /* No motion'));
+	assert.match(reduced.slice(0, 600), /body\.aura-working #composer::before \{ opacity: 0; \}/, 'reduced motion: a still border, no glow');
+});
+test('CSS: while the light turns the focus ring steps back — a hairline on an accent border is lost (desktop and browser)', () => {
+	const desk = rule('body.aura-working #composer.focused');
+	assert.match(desk, /box-shadow: none/);
+	assert.match(desk, /border-color: color-mix\(in srgb, var\(--accent\) 40%, var\(--border\)\)/);
+	const skin = fs.readFileSync(path.join(ROOT, '..', '..', 'web', 'ai-extension', 'skin', 'chat.css'), 'utf8');
+	const i = skin.indexOf('body.lc-web.aura-working #composer:focus-within, body.lc-web.aura-working #composer.focused {');
+	assert.ok(i >= 0, 'the browser skin\'s own focus halo (3px) is not stepped back while working');
+	const block = skin.slice(i, skin.indexOf('}', i));
+	assert.ok(!/0 0 0 3px/.test(block), 'the 3px halo is still drawn while working');
+	assert.ok(skin.indexOf('body.lc-web #composer:focus-within, body.lc-web #composer.focused {') < i, 'it must come after the halo it steps back');
 });
 
 // ---- the wiring -------------------------------------------------------------------------------------
