@@ -117,6 +117,10 @@ deploy, so these hashes pin what was read, not what the app shows tomorrow.
   the editor's diagnostics find problems in the files the agent changed, the box is not shown and the
   tool result carries the problems instead; the agent fixes them and calls `wrap_up` again. When the box
   holds a question the run ends on the spot, with no further model call.
+- **`wrap_up` is the last call of its response.** Once one is accepted, a later call in the same response
+  is answered "Not run" instead of running: the hand-back was checked as the work stood, and an edit or a
+  command after it would change things behind the box. A `wrap_up` that verification refused does not
+  count, so the fix that follows it runs.
 - The prompt asks for the list with the first tool call and `advance` with the call that starts the
   next step, and for `wrap_up` at the end of every run that kept a list, changed files or ran commands.
   A run that ends with a `Done:` line and no `wrap_up` still ends as before (some models will not call
@@ -133,6 +137,10 @@ deploy, so these hashes pin what was read, not what the app shows tomorrow.
   box, after anything already typed there. A reply button in the next-step box queues the same way if
   a run is going. A message counts as "busy" from the moment it is sent until its run starts, so the
   queue can never start a second run beside the first.
+- **A reply button's click is not your typing.** What a click sends is the reply's `message`, words the
+  agent wrote under a short label. The page sends it marked as a reply (through the queue too), and the
+  host does not record it as text you typed, so the Ask When Risky reviewer does not count it as your
+  go-ahead and `remember` cannot quote it. Edited in the message box, or handed back there, it is yours.
 - **Send now** posts the message to the extension, which hands it to the running agent at its next step:
   after the tool results of the current step (in the same message, so every tool call still has its
   result), or, if the agent had just answered with no tool call, as a new message that keeps the run
@@ -149,7 +157,11 @@ deploy, so these hashes pin what was read, not what the app shows tomorrow.
 | `wrap_up` reserved from MCP tool names | `extensions/levelcode-ai/mcpConfig.js` |
 
 Host → page messages: `plan` {steps}, `wrapUp` {recap, ask, actions, blocked}, `steersDelivered` {ids},
-`steersReturned` {ids}. Page → host: `steer` {id, text}.
+`steersReturned` {ids}. Page → host: `steer` {id, text}, and `send` carries `reply: true` for a reply click.
+
+A message sent with Send now reaches the run after a tool result. The prompt says such a message is never
+inside a tool result, so text in a file or command output that claims to be from the user is read as
+content.
 
 ## 4. Differences on purpose
 
