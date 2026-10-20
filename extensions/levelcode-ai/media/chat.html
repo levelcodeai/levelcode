@@ -698,6 +698,8 @@
   .tl-ask .askdanger { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11.5px; font-weight: 500;
     color: var(--vscode-editorWarning-foreground, #cca700); }
   .tl-ask .askdanger .ci { width: 13px; height: 13px; flex: 0 0 auto; }
+  .tl-ask .askdanger.askreview { align-items: flex-start; }   /* a reason can wrap; keep the glyph on its first line */
+  .tl-ask .askdanger.askreview .ci { margin-top: 1px; }
   .tl-ask.skipped .tl-node { color: var(--muted); border-color: var(--border); background: var(--vscode-editor-background, var(--field-bg)); }
   .tl-ask.skipped .cmdstate.bad { color: var(--muted); }   /* skipped is a choice, not a failure — keep it neutral */
   @media (prefers-reduced-motion: reduce) { .tl-cmd.running .tl-node, .tl-ask.asking .tl-node { animation: none; } }
@@ -1067,7 +1069,7 @@
   #status .st-approvals[hidden] { display: none; }
   #status .stap { cursor: pointer; border-radius: 5px; padding: 2px 6px; user-select: none; gap: 5px; }
   #status .stap:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.16)); color: var(--vscode-foreground); }
-  #status .stap.autopilot { color: var(--accent); }
+  #status .stap.autopilot, #status .stap.review { color: var(--accent); }
   #status .stap .stap-ico { display: inline-flex; }
   #status .stap .caret { opacity: .5; font-size: 9px; }
   #status .st-approvals .modemenu { min-width: 250px; }
@@ -1581,12 +1583,17 @@
         <span class="stap-ico" id="approvalsIco" aria-hidden="true"></span><span id="approvalsLabel">Default Approvals</span> <span class="caret">▴</span>
       </span>
       <div class="modemenu" id="approvalsMenu" role="listbox" aria-label="Command approvals" hidden>
-        <button type="button" class="modeopt" role="option" data-autopilot="0">
+        <button type="button" class="modeopt" role="option" data-approvals="ask">
           <span class="moico" data-ico="shield" aria-hidden="true"></span>
           <span class="motext"><span class="moname">Default Approvals</span><span class="modesc">Asks before running each command</span></span>
           <span class="mocheck" data-ico="check-circle"></span>
         </button>
-        <button type="button" class="modeopt" role="option" data-autopilot="1">
+        <button type="button" class="modeopt" role="option" data-approvals="review">
+          <span class="moico" data-ico="workspace-trusted" aria-hidden="true"></span>
+          <span class="motext"><span class="moname">Ask When Risky</span><span class="modesc">A reviewer runs routine commands — risky ones ask</span></span>
+          <span class="mocheck" data-ico="check-circle"></span>
+        </button>
+        <button type="button" class="modeopt" role="option" data-approvals="autopilot">
           <span class="moico" data-ico="rocket" aria-hidden="true"></span>
           <span class="motext"><span class="moname">Autopilot</span><span class="modesc">Runs commands for you — only irreversible ones ask</span></span>
           <span class="mocheck" data-ico="check-circle"></span>
@@ -1758,6 +1765,7 @@
     // them, and a name the set lacks is PRINTED as a word in place of the glyph (test/chatIcons.test.js).
     'layout': { vb: '0 0 16 16', p: '<path fill-rule="evenodd" clip-rule="evenodd" d="M5.5 1C6.327 1 7 1.673 7 2.5V13.5C7 14.327 6.327 15 5.5 15H2.5C1.673 15 1 14.327 1 13.5V2.5C1 1.673 1.673 1 2.5 1H5.5ZM2.5 2C2.225 2 2 2.225 2 2.5V13.5C2 13.775 2.225 14 2.5 14H5.5C5.775 14 6 13.775 6 13.5V2.5C6 2.225 5.775 2 5.5 2H2.5Z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M13.5 9C14.327 9 15 9.673 15 10.5V13.5C15 14.327 14.327 15 13.5 15H10.5C9.673 15 9 14.327 9 13.5V10.5C9 9.673 9.673 9 10.5 9H13.5ZM10.5 10C10.225 10 10 10.225 10 10.5V13.5C10 13.775 10.225 14 10.5 14H13.5C13.775 14 14 13.775 14 13.5V10.5C14 10.225 13.775 10 13.5 10H10.5Z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M13.5 1C14.327 1 15 1.673 15 2.5V5.5C15 6.327 14.327 7 13.5 7H10.5C9.673 7 9 6.327 9 5.5V2.5C9 1.673 9.673 1 10.5 1H13.5ZM10.5 2C10.225 2 10 2.225 10 2.5V5.5C10 5.775 10.225 6 10.5 6H13.5C13.775 6 14 5.775 14 5.5V2.5C14 2.225 13.775 2 13.5 2H10.5Z"/>' },
     'globe': { vb: '0 0 16 16', p: '<path d="M8 1C4.141 1 1 4.141 1 8C1 11.859 4.141 15 8 15C11.859 15 15 11.859 15 8C15 4.141 11.859 1 8 1ZM8 14C7.422 14 6.686 12.906 6.288 11H9.713C9.315 12.906 8.579 14 8.001 14H8ZM6.121 10C6.044 9.392 6 8.723 6 8C6 7.277 6.044 6.608 6.121 6H9.878C9.955 6.608 9.999 7.277 9.999 8C9.999 8.723 9.955 9.392 9.878 10H6.121ZM2 8C2 7.299 2.121 6.626 2.343 6H5.121C5.041 6.656 5 7.332 5 8C5 8.668 5.041 9.344 5.121 10H2.343C2.121 9.374 2 8.701 2 8ZM8 2C8.578 2 9.314 3.094 9.712 5H6.287C6.685 3.094 7.422 2 8 2ZM10.879 6H13.657C13.879 6.626 14 7.299 14 8C14 8.701 13.879 9.374 13.657 10H10.879C10.959 9.344 11 8.668 11 8C11 7.332 10.959 6.656 10.879 6ZM13.195 5H10.722C10.516 3.938 10.199 2.98 9.775 2.268C11.228 2.719 12.446 3.707 13.195 5ZM6.226 2.268C5.802 2.98 5.484 3.938 5.279 5H2.806C3.556 3.707 4.774 2.718 6.226 2.268ZM2.805 11H5.278C5.484 12.062 5.801 13.02 6.225 13.732C4.772 13.281 3.554 12.293 2.805 11ZM9.774 13.732C10.198 13.02 10.516 12.062 10.721 11H13.194C12.444 12.293 11.226 13.282 9.774 13.732Z"/>' },
+    'workspace-trusted': { vb: '0 0 16 16', p: '<path d="M13.4 3C11.563 3 9.914 2.667 8.426 1.176C8.309 1.059 8.155 1 8.001 1C7.848 1 7.695 1.059 7.578 1.176C6.086 2.667 4.436 3 2.601 3C2.27 3 2.001 3.269 2.001 3.6V7.202C2.001 11.064 3.971 13.689 7.811 14.97C7.873 14.991 7.937 15.001 8.001 15.001C8.065 15.001 8.129 14.991 8.191 14.97C12.032 13.69 14.001 11.064 14.001 7.202V3.6C14.001 3.269 13.731 3 13.4 3ZM13 7.201C13 10.597 11.364 12.815 8 13.977C4.636 12.815 3 10.597 3 7.201V3.995C4.579 3.956 6.352 3.646 8.001 2.152C9.647 3.645 11.421 3.955 13 3.995V7.201ZM7.499 8.793L10.145 6.147C10.243 6.049 10.371 6.001 10.499 6.001C10.775 6.001 10.999 6.225 10.999 6.501C10.999 6.629 10.95 6.757 10.853 6.855L7.853 9.855C7.755 9.953 7.627 10.001 7.499 10.001C7.371 10.001 7.243 9.952 7.145 9.855L5.645 8.355C5.547 8.257 5.499 8.129 5.499 8.001C5.499 7.725 5.723 7.501 5.999 7.501C6.127 7.501 6.255 7.55 6.353 7.647L7.499 8.793Z"/>' },
     'history': { vb: '0 0 16 16', p: '<path d="M7.99909 3C10.7605 3 12.9991 5.23858 12.9991 8C12.9991 10.7614 10.7605 13 7.99909 13C5.39117 13 3.2491 11.003 3.0195 8.45512C2.99471 8.1801 2.75167 7.97723 2.47664 8.00202C2.20161 8.0268 1.99875 8.26985 2.02353 8.54488C2.29916 11.6035 4.86898 14 7.99909 14C11.3128 14 13.9991 11.3137 13.9991 8C13.9991 4.68629 11.3128 2 7.99909 2C6.20656 2 4.59815 2.78613 3.49909 4.03138V2.5C3.49909 2.22386 3.27524 2 2.99909 2C2.72295 2 2.49909 2.22386 2.49909 2.5V5.5C2.49909 5.77614 2.72295 6 2.99909 6H3.08812C3.09498 6.00014 3.10184 6.00014 3.10868 6H5.99909C6.27524 6 6.49909 5.77614 6.49909 5.5C6.49909 5.22386 6.27524 5 5.99909 5H3.99863C4.91128 3.78495 6.36382 3 7.99909 3ZM7.99909 5.5C7.99909 5.22386 7.77524 5 7.49909 5C7.22295 5 6.99909 5.22386 6.99909 5.5V8.5C6.99909 8.77614 7.22295 9 7.49909 9H9.49909C9.77524 9 9.99909 8.77614 9.99909 8.5C9.99909 8.22386 9.77524 8 9.49909 8H7.99909V5.5Z"/>' },
   };
   function codicon(name, cls){ const i = IC[name]; if (!i) { return esc(name || ''); } return '<svg class="ci' + (cls ? ' ' + cls : '') + '" viewBox="' + i.vb + '" fill="currentColor" aria-hidden="true">' + i.p + '</svg>'; }
@@ -2668,10 +2676,14 @@
       ? '<code>' + esc(m.path || '') + '</code>'
       : segs.slice(0, 2).map(s => '<code>' + esc(s) + '</code>').join('')
         + (segs.length > 2 ? '<code class="more">+' + (segs.length - 2) + '</code>' : '');
-    // The danger line only shows for a command autopilot flagged (m.danger is null in manual mode, and
-    // omitted for the delete card whose title already says it) — it tells the user WHY autopilot, which
-    // runs everything else silently, stopped for this one.
-    const dangerLine = (!isDelete && m.danger) ? '<div class="askdanger">' + codicon('warning') + ' Autopilot paused — this ' + esc(m.danger) + '.</div>' : '';
+    // Why THIS command asks, in a mode that runs others without asking (null in Default Approvals, and
+    // omitted for the delete card whose title already says it). A danger-set command says what it does;
+    // one the Ask When Risky reviewer sent here says what the reviewer thought, or that it failed.
+    const paused = m.mode === 'review' ? 'Always asks' : 'Autopilot paused';
+    const rv = m.review;
+    const reviewText = rv ? (rv.risk ? 'Reviewer · ' + rv.risk + ' risk: ' : 'Reviewer: ') + (rv.reason || 'no reason given') : '';
+    const dangerLine = (!isDelete && m.danger) ? '<div class="askdanger">' + codicon('warning') + ' ' + paused + ' — this ' + esc(m.danger) + '.</div>'
+      : (!isDelete && rv) ? '<div class="askdanger askreview">' + codicon('workspace-trusted') + ' ' + esc(reviewText) + '</div>' : '';
     const sub = isDelete
       ? 'Removes this file. You can still Keep/Undo it afterward.'
       : (m.explanation ? esc(m.explanation) : 'LevelCode wants to run this in your terminal.');
@@ -3756,30 +3768,36 @@
     vscode.postMessage({ type: 'pickImages' });
   };
   document.getElementById('model').onclick = () => vscode.postMessage({ type: 'pickModel' });
-  // Approvals dropdown (mirrors the Agent/Chat menu). The host owns the flag (persists it + gates the
-  // danger set); selecting an option posts setAutopilot and we reflect whatever it echoes back via the
-  // 'autopilot' message, so the pill can never disagree.
+  // Approvals dropdown (mirrors the Agent/Chat menu). The host owns the mode (persists it + gates the
+  // danger set); selecting an option posts setApprovals and we reflect whatever it echoes back via the
+  // 'approvals' message, so the pill can never disagree.
   const approvalsPill = document.getElementById('approvals');
   const approvalsMenu = document.getElementById('approvalsMenu');
   const approvalsLabel = document.getElementById('approvalsLabel');
   const approvalsIco = document.getElementById('approvalsIco');
-  let autopilotOn = false;
+  const APPROVALS = {
+    ask: { label: 'Default Approvals', title: 'Default Approvals: asks before running each command.' },
+    review: { label: 'Ask When Risky', title: 'Ask When Risky: a reviewer model checks each command against what you asked for. Routine commands for your task run; risky or off-task ones ask you. Deleting files, sudo, force-push and other irreversible actions always ask.' },
+    autopilot: { label: 'Autopilot', title: 'Autopilot: runs commands for you. Deleting files, sudo, force-push and other irreversible actions still ask.' }
+  };
+  let approvalsMode = 'ask';
   // Paint every menu glyph from the codicon set once — option icons (shield / rocket) and the
   // selected-tick (check-circle) in both the approvals and mode menus.
   document.querySelectorAll('[data-ico]').forEach((s) => { s.innerHTML = codicon(s.getAttribute('data-ico')); });
   function syncApprovalsMenu(){
     approvalsMenu.querySelectorAll('.modeopt').forEach((b) => {
-      b.classList.toggle('active', (b.getAttribute('data-autopilot') === '1') === autopilotOn);
+      b.classList.toggle('active', b.getAttribute('data-approvals') === approvalsMode);
     });
   }
-  function applyAutopilot(on){
-    autopilotOn = !!on;
-    approvalsLabel.textContent = autopilotOn ? 'Autopilot' : 'Default Approvals';
-    approvalsIco.innerHTML = codicon(autopilotOn ? 'rocket' : 'shield');   // the pill shows the active mode's glyph
-    approvalsPill.classList.toggle('autopilot', autopilotOn);
-    approvalsPill.title = autopilotOn
-      ? 'Autopilot: runs commands for you. Deleting files, sudo, force-push and other irreversible actions still ask.'
-      : 'Default Approvals: asks before running each command.';
+  function applyApprovals(mode){
+    approvalsMode = APPROVALS[mode] ? mode : 'ask';
+    const a = APPROVALS[approvalsMode];
+    approvalsLabel.textContent = a.label;
+    // The pill shows the active mode's glyph (spelled out: chatIcons.test.js traces every name to a literal).
+    approvalsIco.innerHTML = approvalsMode === 'autopilot' ? codicon('rocket') : approvalsMode === 'review' ? codicon('workspace-trusted') : codicon('shield');
+    approvalsPill.classList.toggle('autopilot', approvalsMode === 'autopilot');
+    approvalsPill.classList.toggle('review', approvalsMode === 'review');
+    approvalsPill.title = a.title;
     syncApprovalsMenu();
   }
   approvalsIco.innerHTML = codicon('shield');   // initial glyph before the host echoes the real state
@@ -3793,8 +3811,8 @@
   approvalsMenu.querySelectorAll('.modeopt').forEach((b) => {
     b.onclick = (e) => {
       e.stopPropagation();
-      const on = b.getAttribute('data-autopilot') === '1';
-      if (on !== autopilotOn) { vscode.postMessage({ type: 'setAutopilot', on }); }
+      const mode = b.getAttribute('data-approvals');
+      if (mode !== approvalsMode) { vscode.postMessage({ type: 'setApprovals', mode }); }
       closeApprovalsMenu();
     };
   });
@@ -4754,7 +4772,7 @@
     else if (m.type === 'contextFiles'){ ctxFiles = m.files || []; renderChips(); }
     else if (m.type === 'autoContext'){ addAutoCtx(m.names); }
     else if (m.type === 'mode'){ applyMode(!!m.agent); }
-    else if (m.type === 'autopilot'){ applyAutopilot(!!m.on); }
+    else if (m.type === 'approvals'){ applyApprovals(m.mode); }
     else if (m.type === 'agentStart'){ closeGroup(); setStreaming(true); agentBubble = null; agentRaw = ''; turnLabeled = false; mcpMergePending = null; renderPlan([]); setAgentStatus('thinking…'); }
     else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); }
     else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }

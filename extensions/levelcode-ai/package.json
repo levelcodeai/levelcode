@@ -502,7 +502,34 @@
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "description": "Autopilot: let the agent run commands without asking, and prefer verifying its own work over pausing to ask you. It still stops and asks before anything hard to undo — deleting files, sudo, force-push / history rewrite, piping a remote script into a shell, publishing a package, or writing outside the project. File edits stay reviewable with Keep/Undo either way. Off by default."
+          "description": "Autopilot: let the agent run commands without asking, and prefer verifying its own work over pausing to ask you. It still stops and asks before anything hard to undo — deleting files, sudo, force-push / history rewrite, piping a remote script into a shell, publishing a package, or writing outside the project. File edits stay reviewable with Keep/Undo either way. Off by default. Same as choosing Autopilot in levelcode.ai.agent.approvals, which takes precedence when set."
+        },
+        "levelcode.ai.agent.approvals": {
+          "type": "string",
+          "scope": "application",
+          "enum": [
+            "ask",
+            "review",
+            "autopilot"
+          ],
+          "enumItemLabels": [
+            "Default Approvals",
+            "Ask When Risky",
+            "Autopilot"
+          ],
+          "enumDescriptions": [
+            "Asks before running each command.",
+            "A reviewer model checks each command against what you asked for. Routine commands for your task run; risky or off-task ones ask you. Anything hard to undo always asks.",
+            "Runs commands without asking. Anything hard to undo still asks."
+          ],
+          "default": "ask",
+          "markdownDescription": "How the agent's commands are approved. The same choice as the approvals menu under the chat input.\n\n**Ask When Risky** sends each command, together with your requests and the agent's recent activity, to a reviewer model before it runs. The reviewer rates the risk and whether you asked for it; LevelCode runs it only when the risk is low, or medium and clearly part of your task. Everything else, and any review that fails or takes longer than 30 seconds, shows you the usual approval card with the reviewer's reason. Deleting files, `sudo`, force-push and the rest of the irreversible set always ask you and are never left to the reviewer. Each review is one extra model call (with LevelCode Cloud it uses credits, and the run's cost includes it); see `#levelcode.ai.agent.reviewModel#`."
+        },
+        "levelcode.ai.agent.reviewModel": {
+          "type": "string",
+          "scope": "application",
+          "default": "",
+          "markdownDescription": "The model that reviews commands in **Ask When Risky**. Empty uses the agent's own model. A smaller, faster model from the same provider makes each review quicker and cheaper. If it cannot be reached, every command asks you instead."
         },
         "levelcode.ai.diagrams.enabled": {
           "type": "boolean",

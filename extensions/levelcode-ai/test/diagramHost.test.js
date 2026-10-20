@@ -121,6 +121,7 @@ const makeHost = new Function('env', [
 	decl('FILE_EXCLUDES'),
 	'let abort = null, agentMessages = [], lastAgentGoal = null, diagramsStubbed = false;',
 	'let conversation = [], currentCheckpoint = null, agentMode = true;',
+	'let humanGoals = [], humanAnswers = [];',   // resumeSession resets the reviewer's record of the person's goals
 	decl('diagramFolders'),
 	...HOST.map(extract),
 	'return { ' + HOST.join(', ') + ',',
@@ -130,7 +131,7 @@ const makeHost = new Function('env', [
 
 function boot(over) {
 	const { vscode, ui } = makeVscode();
-	const stats = [], logs = [], flows = [], posted = [];
+	const stats = [], logs = [], flows = [], typedFlows = [], posted = [];
 	const settings = Object.assign({ 'diagrams.enabled': true }, over && over.settings);
 	const diagrams = createDiagrams({ resolveLink: (link) => diagramLinks.resolveLink(link, [{ name: 'app', root: ws }]), onStat: (ev) => stats.push(ev) });
 	const env = {
@@ -143,7 +144,7 @@ function boot(over) {
 		aiConfig: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }),
 		dbg: (label, data) => logs.push({ label, data }),
 		recordDiagramStat: (ev) => stats.push(ev),
-		agentFlow: async (text) => { flows.push(text); host.setGoal(text); },
+		agentFlow: async (text, _img, opts) => { flows.push(text); if (opts && opts.typed) { typedFlows.push(text); } host.setGoal(text); },
 		findCompactionCut, estimateMsgTokens, meterModel: () => 'm',
 		prepProviderRequest: async () => ({ ok: true, providerId: 'claude', model: 'm' }),
 		authRetry: async (req, fn) => fn(req),
@@ -156,7 +157,7 @@ function boot(over) {
 		replaySessionExpired: async () => { }, postContextFiles: () => { }, refreshSessions: () => { }, focusChatView: () => { }
 	};
 	const host = makeHost(env);
-	return { host, ui, diagrams, stats, logs, flows, posted };
+	return { host, ui, diagrams, stats, logs, flows, typedFlows, posted };
 }
 const jev = () => ({
 	title: 'Jev classifies; your code decides the action',
@@ -489,6 +490,9 @@ function drawn(b, input, key) { b.diagrams.beginRun(); const out = b.diagrams.re
 			assert.ok(b.flows[0].includes('/edges/2/to: unknown node "ghost". Known ids: in, jev, bill.'), 'the model is told what was wrong');
 			assert.ok(b.flows[0].includes('1 edge dropped: unknown nodes'));
 			assert.strictEqual(b.host.goal(), 'the user\'s real goal', 'Retry/Continue on the response bar still mean what the user asked');
+			// The redraw request is written from the model's spec and the repair report — never the person's
+			// word to the Ask When Risky reviewer.
+			assert.deepStrictEqual(b.typedFlows, [], 'a diagram retry was passed off as typed');
 		});
 
 		// ── context budget: stubbed at compaction, never turn by turn ───────────────────────────────

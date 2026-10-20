@@ -246,7 +246,8 @@ async function streamClaudeAgentTurn(opts) {
 		} else if (ev.type === 'content_block_delta') {
 			const blk = blocks[ev.index];
 			if (!blk) { return; }
-			if (ev.delta.type === 'text_delta') { blk.text += ev.delta.text; opts.onText(ev.delta.text); }
+			// Optional, as in the OpenAI adapter: a caller that only wants the finished turn passes none.
+			if (ev.delta.type === 'text_delta') { blk.text += ev.delta.text; if (opts.onText) { opts.onText(ev.delta.text); } }
 			else if (ev.delta.type === 'input_json_delta') {
 				blk._json += ev.delta.partial_json || '';
 				// The arguments so far, for a caller that shows progress while a long input streams.
