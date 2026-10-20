@@ -2347,6 +2347,12 @@ async function compactAgentMemory() {
 
 let lastAgentGoal = null;   // remembered so the response bar's Retry can re-run it
 /**
+ * The goal as the person typed it, for `remember` and `forget` to quote: '' unless `opts.typed`. A Retry of a
+ * diagram is built from the model's own title and validation messages, and Continue or a resumed goal is not
+ * typed now; none of them is the person's word to remember (the same rule as rememberTypedGoal below).
+ */
+function typedGoalText(text, opts) { return (opts && opts.typed) ? String(text || '') : ''; }
+/**
  * Only what the person typed becomes their word to the Ask When Risky reviewer. A retried or generated goal
  * stays activity: a typed goal that Retry repeats is already on the list, and one from a resumed session
  * must not be (see resumeSession). The newest 20 are kept.
@@ -2467,7 +2473,7 @@ async function agentFlow(text, imageBlocks, opts) {
 			recallSessions: (aiConfig().get('sessions.memory.enabled', true) && aiConfig().get('sessions.memory.recallTool', true)) ? recallSessionsTool : undefined,
 			// Memory the person asks for: the remember/forget tools, and the goal as typed, which is what a
 			// note's quoted words are checked against (docs/levelcode-sessions-memory.md §12).
-			goalText: String(text || ''),
+			goalText: typedGoalText(text, opts),
 			memoryNotes: (aiConfig().get('sessions.memory.enabled', true) && aiConfig().get('sessions.memory.notes', true)) ? { remember: rememberNoteTool, forget: forgetNoteTool } : undefined,
 
 			// MCP (docs/MCP.md S3). Config is read HERE and handed in, like verify/commandTimeout, so

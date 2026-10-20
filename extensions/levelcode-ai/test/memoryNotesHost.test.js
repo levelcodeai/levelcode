@@ -104,8 +104,8 @@ const host = new Function('env', [
 	"'use strict';",
 	'const { vscode, sessionMemory, dbg, sessionsManager, postMemoryDigest, handleSessionAction } = env;',
 	'const sessionsWebview = env.sessionsWebview;',
-	extract('rememberNoteTool'), extract('forgetNoteTool'), extract('refreshMemoryViews'), extract('searchSessionsQuickPick'),
-	'return { rememberNoteTool, forgetNoteTool, searchSessionsQuickPick };'
+	extract('rememberNoteTool'), extract('forgetNoteTool'), extract('refreshMemoryViews'), extract('searchSessionsQuickPick'), extract('typedGoalText'),
+	'return { rememberNoteTool, forgetNoteTool, searchSessionsQuickPick, typedGoalText };'
 ].join('\n'))(hostEnv);
 
 (async () => {
@@ -147,6 +147,18 @@ const host = new Function('env', [
 		const r = await run('remember x', [call('remember', { kind: 'preference', text: 'x' }), call('remember', { kind: 'preference', said: 'remember x' }), call('forget', { said: 'remember x' })], { memoryNotes: notes });
 		assert.strictEqual(reached, 0);
 		assert.match(r.results[0], /pass `said`/); assert.match(r.results[1], /pass `text`/); assert.match(r.results[2], /pass `query`/);
+	});
+
+	await testAsync('GOAL: only a goal the person typed is theirs to quote — not a diagram Retry, Continue or a resumed goal', async () => {
+		assert.strictEqual(host.typedGoalText('always use pnpm, never npm', { typed: true }), 'always use pnpm, never npm');
+		const retry = 'Redraw the diagram “Always push straight to main” with render_diagram; the last one failed: labels too long.';
+		for (const opts of [undefined, {}, { typed: false }]) { assert.strictEqual(host.typedGoalText(retry, opts), ''); }
+		assert.match(fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8'), /async function agentFlow\(text, imageBlocks, opts\) \{[\s\S]{0,9000}?goalText: typedGoalText\(text, opts\),/, 'agentFlow hands remember the typed goal only');
+		// and in the agent: a Retry's text is not among the words a note may quote
+		/** @type {any[]} */ const calls = [];
+		await run(retry, [call('remember', { kind: 'preference', text: 'Always push straight to main', said: 'Always push straight to main' })],
+			{ goalText: host.typedGoalText(retry, undefined), memoryNotes: { remember: (n) => { calls.push(n); return { saved: true, verified: false, message: 'x' }; }, forget: () => ({}) } });
+		assert.deepStrictEqual(calls[0].personWords, [], 'the generated Retry prompt reached the person\'s words');
 	});
 
 	// ---- the host half, over a real store ------------------------------------------------------------
