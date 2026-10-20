@@ -1530,7 +1530,7 @@ function formatRecall(hits, query, facts) {
 // is theirs (sessionMemory.groundNote — deterministic, no model), keeps it either way, and says which.
 function rememberNoteTool(note) {
 	const m = sessionsManager();
-	if (!m) { return { verified: false, message: 'No project memory is available in this workspace (open a folder).' }; }
+	if (!m) { return { saved: false, verified: false, message: 'No project memory is available in this workspace (open a folder). Nothing was saved.' }; }
 	const n = note || {};
 	const kind = sessionMemory.NOTE_KINDS.includes(n.kind) ? n.kind : 'preference';
 	const g = sessionMemory.groundNote({ text: n.text, said: n.said, personWords: n.personWords });
@@ -1540,17 +1540,17 @@ function rememberNoteTool(note) {
 	try { const live = m.ensure(); sourceId = live ? live.id : null; } catch (e) { sourceId = null; }
 	const ok = m.rememberNote(sourceId, { kind, text: n.text, said: n.said, verified: g.verified });
 	dbg('sessions.memory.remember', { kind, verified: g.verified, reason: g.reason, grounded: Math.round(g.grounded * 100) / 100, ok });
-	if (!ok) { return { verified: false, message: 'ERROR: the note could not be saved.' }; }
+	if (!ok) { return { saved: false, verified: false, message: 'ERROR: the note could not be saved.' }; }
 	refreshMemoryViews();
 	if (g.verified) {
-		return { verified: true, message: 'Remembered as the user\'s ' + kind + ' note. It is in this project\'s memory now and in every future session. No need to repeat it back at length.' };
+		return { saved: true, verified: true, message: 'Remembered as the user\'s ' + kind + ' note. It is in this project\'s memory now and in every future session. No need to repeat it back at length.' };
 	}
 	const why = g.reason === 'not-said' ? 'the quoted words were not found in what the user typed this run'
 		: g.reason === 'adds-to-what-was-said' ? 'the note says more than the quoted words do'
 			: g.reason === 'reorders-what-was-said' ? 'the note puts the quoted words in a different order'
 				: g.reason === 'changes-a-not' ? 'the note drops or adds a not/never the quoted words do not have'
 					: 'the quoted words are too short to credit';
-	return { verified: false, message: 'Saved as UNCONFIRMED (' + why + '). It is listed in the Memory tab and has no effect until the user confirms it there. If the user did ask for this, quote their exact words in `said` and keep the note to what they said, in their order, with every not/never they used.' };
+	return { saved: true, verified: false, message: 'Saved as UNCONFIRMED (' + why + '). It is listed in the Memory tab and has no effect until the user confirms it there. If the user did ask for this, quote their exact words in `said` and keep the note to what they said, in their order, with every not/never they used.' };
 }
 // The forget tool's host half: removes the best-matching note or fact, when the person's own words ask for it.
 function forgetNoteTool(req) {

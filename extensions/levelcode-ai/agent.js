@@ -786,7 +786,8 @@ async function runTool(tu, ctx) {
 					const text = String(input.text || '').replace(/\s+/g, ' ').trim();
 					if (!text) { return 'ERROR: pass `text` — the note, one sentence.'; }
 					const r = ctx.memoryNotes.remember({ kind: String(input.kind || 'preference'), text, said, personWords: heard }) || {};
-					ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 remembered: ' + host.displaySafe(text) + (r.verified ? '' : ' (unconfirmed)') });
+					// `verified` is whether it was credited to the person; `saved` is whether it is on disk at all.
+					if (r.saved === true) { ctx.post({ type: 'agentTool', icon: 'history', text: '🧠 remembered: ' + host.displaySafe(text) + (r.verified ? '' : ' (unconfirmed)') }); }
 					return String(r.message || 'Saved.');
 				}
 				const query = String(input.query || '').trim();

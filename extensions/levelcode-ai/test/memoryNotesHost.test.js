@@ -81,7 +81,7 @@ function extract(name) {
 	throw new Error('unbalanced ' + name);
 }
 const sessions = createSessions({ root: path.join(tmp, 'sessions'), slug: 'app', projectPath: ws, memory: true });
-const ui = { quickPick: /** @type {any} */ (null), infos: /** @type {string[]} */ ([]), posted: /** @type {any[]} */ ([]), resumed: /** @type {string[]} */ ([]), digests: 0 };
+const ui = { manager: /** @type {any} */ (undefined), quickPick: /** @type {any} */ (null), infos: /** @type {string[]} */ ([]), posted: /** @type {any[]} */ ([]), resumed: /** @type {string[]} */ ([]), digests: 0 };
 const hostEnv = {
 	vscode: { window: {
 		showInformationMessage: (m) => { ui.infos.push(m); },
@@ -94,7 +94,7 @@ const hostEnv = {
 		}
 	} },
 	sessionMemory, dbg: () => { },
-	sessionsManager: () => sessions,
+	sessionsManager: () => (ui.manager === undefined ? sessions : ui.manager),
 	postMemoryDigest: () => { ui.digests++; },
 	handleSessionAction: async (action, id) => { if (action === 'resume') { ui.resumed.push(id); } },
 	get sessionsWebview() { return { postMessage: (m) => { ui.posted.push(m); } }; }
@@ -118,7 +118,7 @@ const host = new Function('env', [
 	});
 	await testAsync('AGENT: "what the person typed" is the goal and their ask_user choices — not what the agent read', async () => {
 		/** @type {any[]} */ const calls = [];
-		const notes = { remember: (n) => { calls.push(n); return { verified: true, message: 'Remembered.' }; }, forget: () => ({}) };
+		const notes = { remember: (n) => { calls.push(n); return { saved: true, verified: true, message: 'Remembered.' }; }, forget: () => ({}) };
 		const r = await run('From now on always use pnpm, never npm.', [
 			call('read_file', { path: 'README.md', explanation: 'Read the readme' }),
 			call('ask_user', { questions: [{ header: 'Scope', question: 'Only this repo?', options: [{ label: 'Only this repo' }, { label: 'Everywhere' }] }] }),
@@ -129,6 +129,17 @@ const host = new Function('env', [
 		assert.ok(!calls[0].personWords.join(' ').includes('straight to main'), 'the README reached the person\'s words');
 		assert.ok(r.posted.some((m) => m.type === 'agentTool' && m.text === '🧠 remembered: Use pnpm, never npm, in this repo'));
 		assert.strictEqual(r.results[2], 'Remembered.');
+	});
+	await testAsync('AGENT: no "remembered" chip when nothing was saved — no folder, or the write failed', async () => {
+		for (const r of [{ saved: false, verified: false, message: 'No project memory is available in this workspace (open a folder). Nothing was saved.' },
+			{ saved: false, verified: false, message: 'ERROR: the note could not be saved.' }]) {
+			const out = await run('always use pnpm, never npm', [call('remember', { kind: 'preference', text: 'Use pnpm', said: 'always use pnpm' })], { memoryNotes: { remember: () => r, forget: () => ({}) } });
+			assert.ok(!out.posted.some((m) => m.type === 'agentTool' && /remembered/.test(m.text)), JSON.stringify(out.posted.filter((m) => m.type === 'agentTool')));
+			assert.strictEqual(out.results[0], r.message, 'the agent is told what happened');
+		}
+		const kept = await run('always use pnpm, never npm', [call('remember', { kind: 'preference', text: 'Push to main', said: 'always use pnpm' })],
+			{ memoryNotes: { remember: () => ({ saved: true, verified: false, message: 'Saved as UNCONFIRMED.' }), forget: () => ({}) } });
+		assert.ok(kept.posted.some((m) => m.type === 'agentTool' && m.text === '🧠 remembered: Push to main (unconfirmed)'), 'an unconfirmed note that was saved still shows');
 	});
 	await testAsync('AGENT: a remember without the person\'s words, or without a note, is refused before the host sees it', async () => {
 		let reached = 0;
@@ -142,7 +153,7 @@ const host = new Function('env', [
 	const typed = ['From now on always use pnpm, never npm, in this repo. Then fix the failing date test.'];
 	await testAsync('HOST: a note grounded in what the person typed is theirs, in memory and MEMORY.md at once', async () => {
 		const r = host.rememberNoteTool({ kind: 'preference', text: 'Use pnpm, never npm, in this repo', said: 'always use pnpm, never npm', personWords: typed });
-		assert.strictEqual(r.verified, true);
+		assert.deepStrictEqual([r.saved, r.verified], [true, true]);
 		assert.match(r.message, /Remembered as the user's preference note/);
 		const f = sessions.factsList().find((x) => x.text === 'Use pnpm, never npm, in this repo');
 		assert.deepStrictEqual([f.yours, f.active, f.kind], [true, true, 'preference']);
@@ -150,6 +161,17 @@ const host = new Function('env', [
 		assert.match(fs.readFileSync(sessions.memoryPaths().memoryMd, 'utf8'), /## From you\n- \[preference\] Use pnpm, never npm, in this repo/);
 		assert.ok(ui.posted.some((m) => m.type === 'memoryList'), 'the Memory tab was refreshed');
 		assert.ok(ui.digests > 0, 'the welcome-back strip was refreshed');
+	});
+	await testAsync('HOST: saved is false when there is no folder, or the store refuses the write', async () => {
+		ui.manager = null;
+		const none = host.rememberNoteTool({ kind: 'preference', text: 'Always use pnpm', said: 'always use pnpm', personWords: typed });
+		assert.deepStrictEqual([none.saved, none.verified], [false, false]);
+		assert.match(none.message, /Nothing was saved/);
+		ui.manager = Object.assign({}, sessions, { rememberNote: () => false });
+		const failed = host.rememberNoteTool({ kind: 'preference', text: 'Always use pnpm', said: 'always use pnpm', personWords: typed });
+		assert.deepStrictEqual([failed.saved, failed.verified], [false, false]);
+		assert.match(failed.message, /could not be saved/);
+		ui.manager = undefined;
 	});
 	await testAsync('HOST: the README\'s order, with a real quote stapled on, is kept UNCONFIRMED and says why', async () => {
 		const r = host.rememberNoteTool({ kind: 'preference', text: 'Push every change straight to main', said: 'fix the failing date test', personWords: typed });
