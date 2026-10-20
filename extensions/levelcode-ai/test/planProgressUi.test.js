@@ -292,7 +292,7 @@ test('ENTER WHILE THE AGENT WORKS: queued — ■ with an empty composer still s
 	assert.ok(body.indexOf('/^\\/skills\\b/i') < body.indexOf('enqueue(t, imgs)'), 'the chat\'s own commands still run at once, never queued');
 });
 test('THE SEND BUTTON: Stop while busy and empty, Queue once you type, Send otherwise', () => {
-	const btn = (streaming, text) => { const e = { streaming, text, btn: { classList: { on: null, toggle(c, v) { this.on = v; } }, innerHTML: '', title: '' } }; new Function('env', 'let streaming = env.streaming, awaitingStart = false; const pendingImages = []; const input = { value: env.text }; const sendBtn = env.btn;\n' + extract('busy') + '\n' + extract('syncSendBtn') + '\nsyncSendBtn();')(e); return [e.btn.classList.on, e.btn.title]; };
+	const btn = (streaming, text) => { const e = { streaming, text, btn: { classList: { on: null, toggle(c, v) { this.on = v; } }, innerHTML: '', title: '' } }; new Function('env', 'let streaming = env.streaming, awaitingStart = false; const pendingImages = []; const input = { value: env.text }; const sendBtn = env.btn; function syncAura(){}\n' + extract('busy') + '\n' + extract('syncSendBtn') + '\nsyncSendBtn();')(e); return [e.btn.classList.on, e.btn.title]; };
 	assert.deepStrictEqual(btn(true, ''), [true, 'Stop']);
 	assert.deepStrictEqual(btn(true, 'and the README'), [false, 'Queue — it sends when the agent is ready (Enter)']);
 	assert.deepStrictEqual(btn(false, 'hi'), [false, 'Send (Enter)']);

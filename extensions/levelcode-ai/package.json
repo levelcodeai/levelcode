@@ -452,6 +452,12 @@
           "default": true,
           "description": "Fold consecutive agent actions (reads, edits, commands) into one collapsible activity card in the chat — the header shows the live step while running and a summary when done. Turn off for the flat, ungrouped timeline."
         },
+        "levelcode.ai.chat.workingAura": {
+          "type": "boolean",
+          "scope": "application",
+          "default": true,
+          "description": "Show a light that travels round the message box while LevelCode works — thinking, writing, running a command, checking its edits. While it waits on you (a command to approve, a question to answer) the light stops and stays as a still ring. With reduced motion it is a still ring throughout. Turn off for no light at all; the working line above the message box still shows what is happening."
+        },
         "levelcode.cloud.endpoint": {
           "type": "string",
           "default": "https://levelcode.ai",

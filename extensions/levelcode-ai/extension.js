@@ -3291,13 +3291,15 @@ function sendConfigToWebview() {
 	// "unconstrained": the way to widen the measure is a large number, not 0.
 	const proseSize = clampSetting(cfg.get('chat.fontSize', 0), 8, 24);
 	const proseWidth = clampSetting(cfg.get('chat.proseWidth', 0), 320, 2000);
+	// The light round the message box while LevelCode works (media/chat.html, "the working aura").
+	const workingAura = cfg.get('chat.workingAura', true) !== false;
 	if (providerMode() === 'gateway' && cloudSignedIn) {
 		const model = gatewayModel();
 		post({
 			type: 'config', provider: 'gateway', proseSize, proseWidth, model: gatewayModelLabel(model), modelId: model,
 			providerLabel: 'LevelCode Cloud', contextLimit: contextLimitFor('openai', capsModel(model)),
 			gateway: true, plan: cloudPlanName() || 'Free', paid: isPaidCloudPlan(cloudPlanName()),
-			groupActivity: groupActivity, canSeeImages: supportsVisionForModel('openai', capsModel(model)), maxImages: maxImagesPerMessage()
+			groupActivity: groupActivity, workingAura, canSeeImages: supportsVisionForModel('openai', capsModel(model)), maxImages: maxImagesPerMessage()
 		});
 		return;
 	}
@@ -3306,7 +3308,7 @@ function sendConfigToWebview() {
 	// Carry the model's context window so the footer meter updates the moment the model changes.
 	// canSeeImages travels with the model so the composer can refuse an attachment BEFORE anything is
 	// typed and lost, rather than after a send that the provider would reject.
-	post({ type: 'config', provider: providerId, proseSize, proseWidth, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity, canSeeImages: supportsVisionForModel(providerId, activeModel(cfg, providerId)), maxImages: maxImagesPerMessage() });
+	post({ type: 'config', provider: providerId, proseSize, proseWidth, model: activeModel(cfg, providerId), providerLabel: p.label, contextLimit: currentContextLimit(), groupActivity: groupActivity, workingAura, canSeeImages: supportsVisionForModel(providerId, activeModel(cfg, providerId)), maxImages: maxImagesPerMessage() });
 }
 
 /**
