@@ -366,21 +366,25 @@
             "Any OpenAI-compatible endpoint (set levelcode.ai.baseURL) — vLLM, LM Studio, LiteLLM…"
           ],
           "default": "claude",
+          "scope": "application",
           "markdownDescription": "Which AI provider chat, inline completion and edit use. Every provider except Anthropic speaks the OpenAI-compatible `/v1/chat/completions` protocol, so one key + one setting unlocks it. **Agent mode currently runs on Anthropic (Claude) only.** Pick a model with **LevelCode: AI: Select Model…** — it sets the provider and model together."
         },
         "levelcode.ai.model": {
           "type": "string",
           "default": "",
+          "scope": "application",
           "markdownDescription": "Active model id for the selected provider (used by every provider except Claude and Ollama, which keep their own `levelcode.ai.claude.model` / `levelcode.ai.ollama.model`). Usually set for you by **LevelCode: AI: Select Model…**; you can also type any model id your provider serves (e.g. `gpt-4o`, `anthropic/claude-sonnet-4-6` on OpenRouter)."
         },
         "levelcode.ai.baseURL": {
           "type": "string",
           "default": "",
+          "scope": "application",
           "markdownDescription": "Base URL for the **OpenAI-compatible (custom)** provider — must end in `/v1` (e.g. `http://localhost:8000/v1` for vLLM, `http://localhost:1234/v1` for LM Studio). Only used when `levelcode.ai.provider` is `custom`. Prefer `https` (or explicit localhost) — your key is sent as a Bearer token to this host."
         },
         "levelcode.ai.cloudModel": {
           "type": "string",
           "default": "moonshotai/kimi-k2.7-code",
+          "scope": "application",
           "markdownDescription": "Which **LevelCode Cloud** (gateway) model to run on a paid plan — chosen from your plan's roster via **LevelCode: AI: Select Model…** (the picker shows the live models with their credit multiplier + turns-left). Ignored on the free plan (always gpt-oss-120b) and in BYOK mode. The backend re-checks entitlement, so this can't over-reach your plan."
         },
         "levelcode.ai.includeActiveFile": {
@@ -451,11 +455,13 @@
         "levelcode.cloud.endpoint": {
           "type": "string",
           "default": "https://levelcode.ai",
+          "scope": "application",
           "markdownDescription": "Base URL of your LevelCode Cloud host (Rails on Elastic Beanstalk) — one host serves sign-in, the account dashboard, AND the metered AI gateway. **Dev:** set to your ngrok URL, e.g. `https://thinly.ngrok.app`. **Prod:** `https://levelcode.ai`. Set to empty to make sign-in inert. In **BYOK** mode your keys never leave your machine."
         },
         "levelcode.cloud.apiUrl": {
           "type": "string",
           "default": "",
+          "scope": "application",
           "markdownDescription": "Advanced: override the **backend API** base (metered gateway + token exchange) only if you split the API onto a different host from the website. Leave empty to use `levelcode.cloud.endpoint` (the normal one-host setup)."
         },
         "levelcode.ai.providerMode": {
@@ -469,32 +475,38 @@
             "LevelCode Cloud gateway (default) — when you're signed in, AI runs through your metered LevelCode plan (no provider key needed) and automatically falls back to your own key (BYOK) when you're signed out."
           ],
           "default": "gateway",
+          "scope": "application",
           "markdownDescription": "How AI requests are routed. **gateway** (default): when you're signed in to LevelCode Cloud, requests run through your metered LevelCode plan via `levelcode.cloud.apiUrl` (the Rails backend) — no provider key required — and **automatically fall back to BYOK when you're signed out**, so simply signing in puts you on your plan with nothing to toggle. **byok**: always go direct to your provider with your own key, even when signed in. (The gateway is only ever used while signed in, so this default is safe when signed out.)"
         },
         "levelcode.ai.commandTimeout": {
           "type": "number",
           "default": 120000,
+          "scope": "application",
           "description": "Backstop timeout in milliseconds before an approved shell command is force-killed (its whole process group). The Stop button on the terminal card is the primary control; set 0 to disable the backstop so long-running servers run until you stop them."
         },
         "levelcode.ai.contextWindow": {
           "type": "number",
           "default": 200000,
+          "scope": "application",
           "description": "The model's context window in tokens, used for the in-chat context-usage meter and warning. Claude 4 models are 200000; raise to 1000000 if you've enabled the 1M-token context beta."
         },
         "levelcode.ai.debug": {
           "type": "boolean",
           "default": false,
+          "scope": "application",
           "description": "Print detailed debug logs (every agent/chat action) inline in the chat, prefixed with 🐛 DEBUG. For diagnosing agent/chat issues. Off by default — when on, logs may include file contents, tool arguments, and full model responses, so avoid enabling it during screen-shares or recorded demos."
         },
         "levelcode.ai.agent.maxSteps": {
           "type": "number",
           "default": 25,
+          "scope": "application",
           "minimum": 1,
           "description": "Maximum tool-use steps the AI agent may take for one goal before stopping."
         },
         "levelcode.ai.agent.maxTokens": {
           "type": "number",
           "default": 8192,
+          "scope": "application",
           "minimum": 1024,
           "maximum": 32768,
           "description": "Maximum output tokens per agent turn (agent mode only; chat/completions use levelcode.ai.claude.maxTokens). If a turn hits this cap mid-output the agent automatically continues in the next turn (so long answers/files aren't truncated), but raising it lets more come out in one turn. Capped at 32768 to bound worst-case spend across continuation turns."
@@ -502,7 +514,35 @@
         "levelcode.ai.agent.autopilot": {
           "type": "boolean",
           "default": false,
-          "description": "Autopilot: let the agent run commands without asking, and prefer verifying its own work over pausing to ask you. It still stops and asks before anything hard to undo — deleting files, sudo, force-push / history rewrite, piping a remote script into a shell, publishing a package, or writing outside the project. File edits stay reviewable with Keep/Undo either way. Off by default."
+          "scope": "application",
+          "description": "Autopilot: let the agent run commands without asking, and prefer verifying its own work over pausing to ask you. It still stops and asks before anything hard to undo — deleting files, sudo, force-push / history rewrite, piping a remote script into a shell, publishing a package, or writing outside the project. File edits stay reviewable with Keep/Undo either way. Off by default. Same as choosing Autopilot in levelcode.ai.agent.approvals, which takes precedence when set."
+        },
+        "levelcode.ai.agent.approvals": {
+          "type": "string",
+          "scope": "application",
+          "enum": [
+            "ask",
+            "review",
+            "autopilot"
+          ],
+          "enumItemLabels": [
+            "Default Approvals",
+            "Ask When Risky",
+            "Autopilot"
+          ],
+          "enumDescriptions": [
+            "Asks before running each command.",
+            "A reviewer model checks each command against what you asked for. Routine commands for your task run; risky or off-task ones ask you. Anything hard to undo always asks.",
+            "Runs commands without asking. Anything hard to undo still asks."
+          ],
+          "default": "ask",
+          "markdownDescription": "How the agent's commands are approved. The same choice as the approvals menu under the chat input.\n\n**Ask When Risky** sends each command, together with your requests and the agent's recent activity, to a reviewer model before it runs. The reviewer rates the risk and whether you asked for it; LevelCode runs it only when the risk is low, or medium and clearly part of your task. Everything else, and any review that fails or takes longer than 30 seconds, shows you the usual approval card with the reviewer's reason. Deleting files, `sudo`, force-push and the rest of the irreversible set always ask you and are never left to the reviewer. Each review is one extra model call (with LevelCode Cloud it uses credits, and the run's cost includes it); see `#levelcode.ai.agent.reviewModel#`."
+        },
+        "levelcode.ai.agent.reviewModel": {
+          "type": "string",
+          "scope": "application",
+          "default": "",
+          "markdownDescription": "The model that reviews commands in **Ask When Risky**. Empty uses the agent's own model. A smaller, faster model from the same provider makes each review quicker and cheaper. If it cannot be reached, every command asks you instead."
         },
         "levelcode.ai.diagrams.enabled": {
           "type": "boolean",
@@ -512,11 +552,13 @@
         "levelcode.ai.skills.enabled": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "description": "Let the agent self-select bundled skills (expert playbooks) for matching tasks like code review, bug fixes, and test writing. Each skill is a SKILL.md the agent loads on demand."
         },
         "levelcode.ai.sessions.enabled": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "description": "Save each chat/agent session to History so you can browse and reopen past work. Sessions are stored as plain-text JSONL files under levelcode.ai.sessions.dir (default ~/.levelcode/sessions), one folder per project, and listed with /sessions or the Sessions panel. Turn off to stop recording new sessions (existing files are left untouched)."
         },
         "levelcode.ai.sessions.dir": {
@@ -528,37 +570,44 @@
         "levelcode.ai.sessions.memory.enabled": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "description": "Project memory: as each session finishes, record a one-line outcome (what it did, which files, its state) to a per-project journal at memory/journal.jsonl, so future sessions can recall what past ones achieved. Plain text you own — greppable, editable, local. Turn off to stop recording outcomes."
         },
         "levelcode.ai.sessions.memory.summarize": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "description": "When a substantive session finishes, make one small, fast-model call to refine its journal outcome into a concrete sentence (what was built/fixed/decided) instead of just its goal headline. Runs in the background and only summarizes outcomes and actions, never quoted code. Turn off to skip the model call and keep the plain headline (no cost)."
         },
         "levelcode.ai.sessions.memory.recallTool": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "description": "Give the agent a recall_sessions tool so it can search this project's past-session outcomes on demand — e.g. when you ask \"what did we do about refunds?\" it looks up the earlier work instead of guessing. Read-only, searches only the local journal. Turn off to remove the tool."
         },
         "levelcode.ai.sessions.memory.notes": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "description": "Let the agent keep what you ask it to remember — a correction (\"no, use pnpm\"), a confirmed approach, a decision, where something lives — and forget it when you ask. A note counts as yours only when the words it quotes are in what you typed and it says no more than they do; any other note waits in the Memory tab until you confirm it. Notes are plain lines in this project's memory folder, shown under \"From you\". Turn off to remove the remember and forget tools."
         },
         "levelcode.ai.sessions.memory.facts": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "description": "Let the session summarizer also note durable project facts it observes — stable truths like \"the changelog is RELEASE-NOTES.md\" or a convention. Facts stay marked (inferred) and low-trust until they recur across sessions or you confirm them in the Memory panel, and are only ever outcomes/decisions, never secrets or code. Turn off to record outcomes only."
         },
         "levelcode.ai.sessions.autoArchiveDays": {
           "type": "number",
           "default": 30,
+          "scope": "application",
           "minimum": 0,
           "description": "Automatically archive sessions you haven't touched in this many days, to keep History focused on recent work. Archived sessions are hidden from the list but never deleted (the JSONL stays on disk), and pinned sessions are always kept. Set to 0 to turn auto-archiving off."
         },
         "levelcode.ai.sessions.resumeBudgetPct": {
           "type": "number",
           "default": 40,
+          "scope": "application",
           "minimum": 5,
           "maximum": 100,
           "description": "When you resume a session, the share of the model's context window its restored transcript may fill before it is summarized to fit. Lower = resume with less history (cheaper, faster); higher = carry more of the past conversation verbatim. The full transcript is always kept on disk and shown in the replay regardless."
@@ -566,27 +615,32 @@
         "levelcode.ai.verify.enabled": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "description": "After the agent finishes editing, automatically verify its work — pull editor diagnostics (type/lint errors) for the files it changed and, if a verify command is set, run it — then feed any failures back so the agent self-corrects until clean (bounded by levelcode.ai.verify.maxRounds)."
         },
         "levelcode.ai.verify.command": {
           "type": "string",
           "default": "",
+          "scope": "application",
           "markdownDescription": "Optional one-shot command run to verify the agent's edits (e.g. `npm run typecheck`, `npm test`, `npm run lint`). It MUST exit on its own — do **not** use a dev server or watch command (those block; the `commandTimeout` backstop force-kills them). Leave empty to verify with editor diagnostics only."
         },
         "levelcode.ai.verify.maxRounds": {
           "type": "number",
           "default": 2,
+          "scope": "application",
           "minimum": 0,
           "description": "How many times the agent may be sent back to fix failing verification before it stops and hands the remaining problems to you. 0 = report-only (verification still runs and is shown, but the agent won't auto-retry)."
         },
         "levelcode.ai.verify.includeWarnings": {
           "type": "boolean",
           "default": false,
+          "scope": "application",
           "description": "Treat editor warnings (not just errors) as verification failures the agent must fix. Off by default — only errors block."
         },
         "levelcode.ai.preview.autoOpen": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "markdownDescription": "When the agent starts a web server in the background, automatically open the site in LevelCode's built-in browser, beside the chat.\n\nOnly **local** addresses are ever opened — `localhost`, `127.0.0.1`, or the IPv6 loopback `[::1]`. The bind addresses `0.0.0.0` and `[::]` count as local and are shown as `localhost`, since a browser can't resolve them. A remote URL printed by a dev script is ignored, never opened.\n\nEach address opens at most once per session, so closing the tab is respected, and your focus is never taken. Turn this off to open previews yourself with **Simple Browser: Show**."
         },
         "levelcode.ai.mcp.servers": {
@@ -604,6 +658,7 @@
         "levelcode.ai.completions.enabled": {
           "type": "boolean",
           "default": true,
+          "scope": "application",
           "description": "Show inline AI code completions (ghost text) as you type. Accept with Tab."
         },
         "levelcode.ai.completions.model": {
@@ -619,11 +674,13 @@
             "Claude Opus 4.8 (most capable, slower)"
           ],
           "default": "claude-haiku-4-5-20251001",
+          "scope": "application",
           "description": "Claude model used for inline completions. A fast model is recommended for low latency."
         },
         "levelcode.ai.completions.debounce": {
           "type": "number",
           "default": 150,
+          "scope": "application",
           "minimum": 0,
           "description": "Idle time in milliseconds before requesting an inline completion (lower = snappier but more requests)."
         },
@@ -640,22 +697,26 @@
             "Claude Haiku 4.5 (fastest)"
           ],
           "default": "claude-sonnet-4-6",
+          "scope": "application",
           "description": "Claude model to use."
         },
         "levelcode.ai.claude.maxTokens": {
           "type": "number",
           "default": 4096,
+          "scope": "application",
           "minimum": 256,
           "description": "Maximum tokens in a Claude chat/completion response. (Agent turns use the separate levelcode.ai.agent.maxTokens setting.)"
         },
         "levelcode.ai.ollama.url": {
           "type": "string",
           "default": "http://localhost:11434",
+          "scope": "application",
           "description": "Base URL of your local Ollama server."
         },
         "levelcode.ai.ollama.model": {
           "type": "string",
           "default": "llama3.1",
+          "scope": "application",
           "description": "Ollama model name (must be pulled locally, e.g. `ollama pull llama3.1`)."
         }
       }

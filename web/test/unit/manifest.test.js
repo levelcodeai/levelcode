@@ -102,9 +102,9 @@ test('no setting a folder can set decides where the session goes, what runs, or 
 		'levelcode.ai.agent.autopilot', 'levelcode.ai.agent.maxSteps', 'levelcode.ai.agent.maxTokens', 'levelcode.ai.skills.enabled']) {
 		assert.strictEqual(props[k].scope, 'application', k);
 	}
-	// the desktop manifest is not touched by any of it
+	// the desktop opens the same list (extensions/levelcode-ai/test/settingsScope.test.js), so here it adds no scope of its own
 	const dprops = Object.assign({}, ...(Array.isArray(desktop.contributes.configuration) ? desktop.contributes.configuration : [desktop.contributes.configuration]).map((s) => s.properties));
-	assert.strictEqual(dprops['levelcode.cloud.endpoint'].scope, undefined);
+	assert.deepStrictEqual(Object.keys(dprops).filter((k) => !dprops[k].scope).sort(), [...web.WORKSPACE_SETTINGS_OK].sort());
 });
 
 test('the browser binds a key the browser lets through', () => {
