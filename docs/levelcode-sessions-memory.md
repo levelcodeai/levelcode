@@ -204,10 +204,14 @@ kind of memory, a correction ("no, use pnpm") or a confirmed approach, is usuall
   (with an absolute date), or says where something lives. Each note has a `kind` (`preference`, `project`,
   `reference`), the note `text`, and `said`: the person's own words, copied from their message.
 - **A note is credited to the person by code, not by the model** (`sessionMemory.groundNote`):
-  1. `said` must appear in what the person typed *this run*: their goal (handed over by the host as typed)
-     and their ask_user choices and notes. Nothing the agent read counts.
-  2. The note must say no more than those words: at least two thirds of its content words must come from
-     them (exact, a shared start of four letters or more, or a five-letter stem).
+  1. `said` must appear in what the person typed *this run*: their goal, only when they typed it (not a
+     diagram Retry, Continue or a resumed goal), and their ask_user choices and notes. Nothing the agent read
+     counts.
+  2. The note must say what those words say and no more: every content word of the note comes from them
+     (exact, a shared start of four letters or more, or a five-letter stem), except a word naming where it
+     applies ("repo", "project"); in their order; and each negated as it is in the quote (a not/never counts
+     for the next content word in its clause, two cancel, "stop" and "avoid" count as one). Word overlap is
+     not enough: "Use npm, never pnpm" has every word of "use pnpm, never npm".
 
   A credited note is active at once, even phrased as an order, because the person said it. Any other note is
   still kept and listed, as *unconfirmed*: one Confirm click in the Memory tab makes it active. That is the
@@ -219,14 +223,24 @@ kind of memory, a correction ("no, use pnpm") or a confirmed approach, is usuall
   (`supersedableFacts`). Only the person changes it: `remember` again, `forget`, or the panel.
 - **`MEMORY.md`** gets a "From you" section, each line with the person's words beside it. Every line older
   than a day says how old it is ("9 days old"). The always-on file is capped at 25 notes and 15 facts; the
-  rest are named as "…and N more; recall_sessions finds them".
-- **`forget`** removes the best match for a query, only when the request is in the person's own words, and
-  tells the agent what it removed so it can say so.
+  rest are named as "…and N more; recall_sessions finds them". A note the person confirmed in the Memory tab
+  is listed there too, marked "you confirmed it": its quote was never matched to what they typed, so it is not
+  shown as theirs (the Memory tab calls such a quote "the agent quoted").
+- **A credited note keeps the words it was credited on.** A later `remember` of the same note that cannot be
+  credited does not change its text, its quote or its date.
+- **`forget`** removes the best match for a query only when the person's words (`said`, typed this run) ask for
+  something to be forgotten ("forget", not "don't forget"; "remove" or "delete" only beside memory, note,
+  rule or preference; "no longer true", "outdated") and name that memory: a word of its text, or of a
+  credited note's quote, other than words every memory shares (`sessionMemory.asksToForget`). Otherwise it
+  removes nothing and says which memory came closest; the Memory tab's Forget is the way out. It tells the
+  agent what it removed, and says so when the store refused the write.
 - **Search Sessions…** (Command Palette, and a search icon in the Sessions panel's title bar): every session
   not in the trash, archived ones included, matched on its title and its whole conversation (all words must
   match), newest first, each with the line it matched. A quick pick, not a field in History: History stays
   the short list of recent work it was cut down to on 2026-08-02 (77d4f13), and this reaches what that list no
-  longer shows. Transcripts are read at most 150 at a time and cached by file size and modification time.
+  longer shows. Titles come from the index, so every session's is checked at once; conversations are read 50
+  at a time (`searchStep`) while the list fills in, matched whole, and cached by file size and modification
+  time up to 20 million characters in all. Title matches are ranked first before the list is cut to 40.
 
 ### Where the shape came from: Claude's desktop app
 
@@ -275,6 +289,23 @@ goal is stored, titled, compacted and replayed, and is a separate change.
   call through the Memory tab, the next session's instructions and Search Sessions reopening the conversation.
 
 Not run: a real model deciding when to call `remember` (only a scripted one has), the browser edition, Linux.
+
+### After review (2026-10-20, macOS, Node 24)
+
+The PR review found ten problems, all real. Each fix is its own commit: credit rule (order and negation, every
+word from the quote), a credited note's words kept together, confirmed notes under "From you", the chip only
+when saved, `forget` tied to a request that names the memory, a failed removal reported, typed goals only,
+and Search Sessions over every session and whole conversations, ranked before the cut.
+
+- `memoryNotes.test.js` now has 32 cases and `memoryNotesHost.test.js` 14; `scripts/test-extensions.sh`: 133
+  files pass after merging develop (#112, #113).
+- 21 single-defect mutations of the fixes, run on a copy with the network refused: all 21 caught (two needed a
+  test added).
+- `memory-editor-check.js`: 11 of 11 on a second run. On the first, "History lists the first conversation
+  after New Session" timed out (its 15-second wait for the rebuilt panel); nothing in these fixes touches
+  History.
+- Still not run: a real model, the browser edition, Linux. The stem rule (a shared five-letter start) can still
+  pair two different words ("transaction" and "translate"); order and negation narrow what that can change.
 
 ---
 
