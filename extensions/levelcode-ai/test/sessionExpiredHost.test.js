@@ -112,6 +112,7 @@ const makeHost = new Function('env', [
 	'let agentMessages = [], currentCheckpoint = null, lastAgentGoal = null, agentPlan = { steps: null }, steerInbox = [];',
 	// resumeSession starts the Ask When Risky reviewer's record of the person's goals over (agentReview.js).
 	'let humanGoals = [], humanAnswers = [];',
+	'const webLedger = { clear() {}, addText() {} };',   // resumeSession / New Chat forget the conversation's web addresses
 	// onConfigChanged re-reads the approvals mode (Settings, another window).
 	"let approvalMode = 'ask';", decl('APPROVAL_MODES'),
 	// resumeSession also hands a session's stored diagrams back to the diagram service

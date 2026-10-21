@@ -122,6 +122,7 @@ const makeHost = new Function('env', [
 	'let abort = null, agentMessages = [], lastAgentGoal = null, diagramsStubbed = false, agentPlan = { steps: null }, steerInbox = [];',
 	'let conversation = [], currentCheckpoint = null, agentMode = true;',
 	'let humanGoals = [], humanAnswers = [];',   // resumeSession resets the reviewer's record of the person's goals
+	'const webLedger = { clear() {}, addText() {} };',   // resumeSession / New Chat forget the conversation's web addresses
 	decl('diagramFolders'),
 	...HOST.map(extract),
 	'return { ' + HOST.join(', ') + ',',

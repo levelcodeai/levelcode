@@ -69,7 +69,7 @@ const enc = (s) => new TextEncoder().encode(s);
 	fs.mkdirSync(path.join(tmp, 'dir'));
 
 	await test('desktop: every capability is on', () => {
-		assert.deepStrictEqual({ ...host.caps }, { shell: true, mcpStdio: true, ripgrep: true, unaskedSignIn: true });
+		assert.deepStrictEqual({ ...host.caps }, { shell: true, mcpStdio: true, ripgrep: true, unaskedSignIn: true, webDirect: true });
 		assert.strictEqual(host.isBrowser, false);
 	});
 	await test('desktop: inline completion is offered in file and untitled documents, as before, and nowhere else', () => {
@@ -128,7 +128,7 @@ const enc = (s) => new TextEncoder().encode(s);
 	vsFiles.set('/blob.bin', new Uint8Array([7, 0, 7]));
 
 	await test('browser: no shell, no local MCP, no ripgrep — and no sign-in result nobody asked for', () => {
-		assert.deepStrictEqual({ ...host.caps }, { shell: false, mcpStdio: false, ripgrep: false, unaskedSignIn: false });
+		assert.deepStrictEqual({ ...host.caps }, { shell: false, mcpStdio: false, ripgrep: false, unaskedSignIn: false, webDirect: false });
 		assert.strictEqual(host.isBrowser, true);
 	});
 	await test('browser: a path maps back to the folder that contains it, longest match wins', () => {
