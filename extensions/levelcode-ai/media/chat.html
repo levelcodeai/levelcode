@@ -529,6 +529,12 @@
   /* UI font, not the editor font: these rows carry the model's own sentence ("Understand how levels
      are authored"), and monospace made prose read like a command line. */
   .tl-tool .toolt { display: block; font-size: 12px; color: var(--muted); line-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* A web search / page read (docs/WEB-SEARCH.md): what it found, as small links under the row. */
+  .tl-tool .webmeta { font-size: 11px; color: var(--muted); opacity: .8; margin-left: 6px; }
+  .websrc { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .websrc a { display: inline-flex; align-items: center; max-width: 220px; font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 9px;
+    border: 1px solid var(--border); color: var(--muted); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .websrc a:hover, .websrc a:focus-visible { color: var(--fg); border-color: var(--accent); }
   /* heavier command action — collapsible boxed card: header (chevron · verb · chips · state)
      → highlighted command → streamed output → status foot → italic why */
   .tl-cmd .tl-node { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--vscode-editor-background, var(--field-bg))); }
@@ -2391,6 +2397,10 @@
     }
     if (creates.length){ parts.push('created ' + files(creates)); }
     if (dels.length){ parts.push('deleted ' + files(dels)); }
+    const webs = steps.filter((s) => s.kind === 'web').length;
+    const pages = uniq(steps.filter((s) => s.kind === 'webread' && s.path).map((s) => s.path)).length;
+    if (webs){ parts.push('searched the web' + (webs > 1 ? ' ' + webs + ' times' : '')); }
+    if (pages){ parts.push('read ' + (pages === 1 ? 'a web page' : pages + ' web pages')); }
     if (searches){ parts.push('searched the workspace'); }
     if (lists){ parts.push('listed files'); }
     if (cmds){ parts.push('ran ' + (cmds === 1 ? 'a command' : cmds + ' commands')); }
@@ -2457,6 +2467,8 @@
                   : { kind: 'mcp', base: titled || t };
     }
     if (/^🌐 preview/.test(t)){ return { kind: 'preview', base: titled || t }; }
+    if (kind === 'web'){ return { kind: 'web', base: titled || t }; }
+    if (kind === 'webread'){ return { kind: 'webread', base: titled || t, path: path || '' }; }
     return { kind: 'note', base: titled || t };
   }
   // The label for a command step: the model's explanation (imperative, per the system prompt), or
@@ -2605,14 +2617,24 @@
   }
 
   // A tool action (read / edit / search …) — rendered as a light node on the activity timeline rail.
-  function addAgentLine(icon, text, label, kind, path){
+  // Under a web row: how many results and how long, then the pages as small links (title as the tooltip). Every
+  // address is the host's, from the search or the page read, and is escaped like any other text.
+  function webMeta(m){
+    return (m && (m.kind === 'web' || m.kind === 'webread') && m.detail) ? '<span class="webmeta">' + esc(m.detail) + '</span>' : '';
+  }
+  function webSources(m){
+    if (!m || (m.kind !== 'web' && m.kind !== 'webread')){ return ''; }
+    const src = Array.isArray(m.sources) ? m.sources.filter((x) => x && /^https?:\/\//i.test(String(x.url || ''))).slice(0, 8) : [];
+    return src.length ? '<div class="websrc">' + src.map((x) => '<a href="' + escAttr(x.url) + '" title="' + escAttr(x.title || x.url) + '">' + esc(x.host || x.url) + '</a>').join('') + '</div>' : '';
+  }
+  function addAgentLine(icon, text, label, kind, path, m){
     clearEmpty(); clearStatus();
     const st = chipStep(icon, text, label, kind, path); st.status = 'done';
     // Inside a group the row reads as the model's sentence ("Read the runAgent call site"); the raw
     // tool text stays as the tooltip so the underlying path/query is never lost.
     const shown = (groupsOn && st.base) ? st.base : String(text || '');
     const rowHtml = '<div class="tl-rail"><span class="tl-node">' + (IC[icon] ? codicon(icon) : esc(icon || '•')) + '</span></div>'
-      + '<div class="tl-body"><span class="toolt" title="' + escAttr(text || '') + '">' + esc(shown) + '</span></div>';
+      + '<div class="tl-body"><span class="toolt" title="' + escAttr(text || '') + '">' + esc(shown) + webMeta(m) + '</span>' + webSources(m) + '</div>';
     // MCP: an APPROVED tool call's run-node folds INTO the approval chip that gated it (mcpMergePending,
     // set in addMcpApproval) so the pair is ONE row — Copilot-style — instead of "Approved …" plus a
     // separate "🔌 …". An allow-listed call has no pending chip and renders its own node below; a
@@ -5193,7 +5215,7 @@
     else if (m.type === 'agentStatus'){ finishAgentBubble(); setAgentStatus(m.text || 'working…'); renderTurnBox(); }
     else if (m.type === 'agentDelta'){ clearStatus(); setWork('Responding…'); if (!agentBubble){ agentBubble = makeStream(add('assistant', '')); agentRaw = ''; } agentRaw += m.text; streamFeed(agentBubble, agentRaw); }
     else if (m.type === 'agentTurnEnd'){ finishAgentBubble(); }
-    else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text, m.label, m.kind, m.path); }
+    else if (m.type === 'agentTool'){ finishAgentBubble(); addAgentLine(m.icon, m.text, m.label, m.kind, m.path, m); }
     else if (m.type === 'diagramPending'){ lcdPending(m); }
     else if (m.type === 'diagram'){ lcdShow(m); }
     else if (m.type === 'diagramAscii'){ lcdAscii(m); }

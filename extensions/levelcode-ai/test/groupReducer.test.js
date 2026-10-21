@@ -99,7 +99,7 @@ function newHarness(groupsOn) {
 		+ [
 			'tenseLabel', 'groupAggregate', 'chipStep', 'cmdBase', 'groupCountsHtml', 'openGroup',
 			'collapseMember', 'groupAppend', 'refreshGroupHead', 'finalizeGroup', 'closeGroup',
-			'groupStepDone', 'groupStepCounts', 'addAgentLine', 'add'
+			'groupStepDone', 'groupStepCounts', 'webMeta', 'webSources', 'addAgentLine', 'add'
 		].map(extract).join('\n')
 		+ '\nthis.api = { openGroup, groupAppend, closeGroup, groupStepDone, groupStepCounts, addAgentLine, add, groupAggregate, chipStep, get curGroup(){ return curGroup; } };';
 	new Function('document', 'log', src).call(sandbox, { createElement: (t) => new El(t) }, log);

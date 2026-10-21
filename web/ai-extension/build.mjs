@@ -105,6 +105,7 @@ await esbuild.build({
 		os: shim('os'), 'node:os': shim('os'),
 		crypto: shim('crypto'), 'node:crypto': shim('crypto'),
 		child_process: shim('child_process'), 'node:child_process': shim('child_process'),
+		...Object.fromEntries(['http', 'https', 'dns', 'net', 'zlib'].flatMap((m) => [[m, shim('network')], ['node:' + m, shim('network')]])),
 	},
 	inject: [path.join(HERE, 'inject.js')],
 	define: { global: 'globalThis' },

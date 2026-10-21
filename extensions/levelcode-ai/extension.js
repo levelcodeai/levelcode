@@ -14,7 +14,9 @@ const fs = require('fs');
 const os = require('os');
 const cp = require('child_process');
 const crypto = require('crypto');
-const host = require('./host');   // workspace I/O + what this machine can do (browser vs desktop)
+const host = require('./host');
+const web = require('./webSearch');   // the agent's web_search / web_fetch (docs/WEB-SEARCH.md)
+const { GATEWAY_PATH } = require('./providers/gateway');   // workspace I/O + what this machine can do (browser vs desktop)
 const providers = require('./providers/index');
 const catalog = require('./providers/catalog');
 const { resolveGateway } = require('./providers/gateway');
@@ -114,6 +116,10 @@ let review;
 /** Persistent agent transcript for the session (tool calls + results), so follow-up goals
  *  remember prior runs. Reset by New Chat. */
 let agentMessages = [];
+/** The addresses web_fetch may open in THIS conversation: search results, pages it opened and links on them, and
+ *  what the person typed. Reset by New Chat and on resume. The cache of searches and pages is shared (ten minutes). */
+const webLedger = web.makeLedger();
+const webCache = web.makeCache();
 /** The agent's task list for this conversation (docs/PLAN-PROGRESS.md). agent.js keeps `steps` current through
  *  update_plan and wrap_up, and every run of the conversation gets the same object, so an {"advance": true}
  *  moves the list an earlier run left. A new conversation, and a resumed one, start with none. */
@@ -1805,6 +1811,7 @@ async function resumeSession(id) {
 
 	agentMessages = Array.isArray(r.messages) ? r.messages.slice() : [];   // what the model resumes with
 	agentPlan = { steps: null }; steerInbox = [];                          // the list is drawn live, never replayed
+	webLedger.clear();                                                     // a session file's addresses are not the person's
 	// The Ask When Risky reviewer counts only goals typed since this point as the person's word. A session
 	// file is read back from `sessions.dir`, which a workspace setting can point anywhere, so its earlier
 	// goals go to the reviewer as activity. That errs toward asking, never toward running.
@@ -1901,6 +1908,7 @@ function resetConversationState() {
 	agentMessages = [];
 	agentPlan = { steps: null }; steerInbox = [];
 	humanGoals = []; humanAnswers = [];
+	webLedger.clear();
 	diagrams.reset();                      // the next conversation starts at d-1, owing nothing
 	diagramsStubbed = false;
 	checkpoints.length = 0; currentCheckpoint = null;   // drop the per-turn restore stack
@@ -2393,6 +2401,54 @@ let lastAgentGoal = null;   // remembered so the response bar's Retry can re-run
  * typed now; none of them is the person's word to remember (the same rule as rememberTypedGoal below).
  */
 function typedGoalText(text, opts) { return (opts && opts.typed) ? String(text || '') : ''; }
+/** SecretStorage key of the person's own key for a search API (levelcode.ai.web.searchProvider). */
+const WEB_KEY_PREFIX = 'levelcode.ai.web.key.';
+/**
+ * Web access for a run (docs/WEB-SEARCH.md): `{ backend, ledger, cache }`, or `{ off: why }` so the model can say how to get it.
+ * LevelCode Cloud searches (credits) whenever the person is signed in, whatever runs the model; their own Brave, Tavily or
+ * Exa key is the desktop alternative. Pages are read from this machine on the desktop and through the Cloud in a browser.
+ */
+async function webAccessFor() {
+	const cfg = aiConfig();
+	if (cfg.get('web.search', true) === false) { return { off: 'turned off in settings: levelcode.ai.web.search' }; }
+	for (const t of humanGoals) { webLedger.addText(t); }                // an address the person typed may be opened
+	for (const a of humanAnswers) { webLedger.addText(typeof a === 'string' ? a : JSON.stringify(a)); }
+	const env = (k) => (typeof process !== 'undefined' && process.env && process.env[k]) || '';
+	// A test that serves pages from this machine sets LEVELCODE_WEB_ALLOW_PRIVATE; the editor never does.
+	const pages = host.caps.webDirect ? ((url, o) => require('./webFetchNode').fetchPage(url, Object.assign({}, o, { allowPrivate: !!env('LEVELCODE_WEB_ALLOW_PRIVATE') }))) : null;
+	const shared = { ledger: webLedger, cache: webCache };
+	const provider = String(cfg.get('web.searchProvider', 'levelcode') || 'levelcode');
+	if (provider !== 'levelcode' && web.PROVIDERS[provider] && host.caps.webDirect) {
+		const key = ctx ? await ctx.secrets.get(WEB_KEY_PREFIX + provider) : null;
+		if (!key) { return { off: 'no ' + web.PROVIDERS[provider].label + ' key is set' }; }
+		return Object.assign({ backend: web.keyBackend(provider, key, fetch, pages, env('LEVELCODE_WEB_' + provider.toUpperCase() + '_URL') || undefined) }, shared);
+	}
+	// LevelCode Cloud: the same host and the same https rule as the gateway (the token is a bearer credential).
+	const token = ctx ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null;
+	const endpoint = cloudApiUrl();
+	if (!token) { return { off: 'not signed in to LevelCode Cloud, and no search key of your own is set' }; }
+	if (!/^https:\/\//i.test(endpoint)) { return { off: 'the LevelCode Cloud address is not https' }; }
+	return Object.assign({
+		backend: web.cloudBackend({
+			baseURL: endpoint + GATEWAY_PATH, fetchImpl: fetch, fetchPageImpl: pages || undefined,
+			token: async () => (await ctx.secrets.get(ACCOUNT_TOKEN_KEY)) || '',
+			refresh: async () => ((await refreshGatewayToken()) ? await ctx.secrets.get(ACCOUNT_TOKEN_KEY) : null)
+		})
+	}, shared);
+}
+/** "LevelCode: Set Web Search Key": the person's own key for Brave Search, Tavily or Exa, kept in SecretStorage. */
+async function setWebSearchKey() {
+	const pick = await vscode.window.showQuickPick(Object.keys(web.PROVIDERS).map((id) => ({ label: web.PROVIDERS[id].label, id })).concat([{ label: 'LevelCode Cloud', id: 'levelcode', description: 'no key: searches use your credits' }]),
+		{ placeHolder: 'Where should the agent\'s web searches go?' });
+	if (!pick) { return; }
+	if (pick.id !== 'levelcode') {
+		const key = await vscode.window.showInputBox({ prompt: pick.label + ' API key (kept in your system keychain)', password: true, ignoreFocusOut: true });
+		if (!key || !key.trim()) { return; }
+		await ctx.secrets.store(WEB_KEY_PREFIX + pick.id, key.trim());
+	}
+	await aiConfig().update('web.searchProvider', pick.id, vscode.ConfigurationTarget.Global);
+	vscode.window.showInformationMessage(pick.id === 'levelcode' ? 'Web searches go through LevelCode Cloud.' : 'Web searches go to ' + pick.label + ' with your key.');
+}
 /**
  * Only what the person typed becomes their word to the Ask When Risky reviewer. A retried or generated goal
  * stays activity: a typed goal that Retry repeats is already on the list, and one from a resumed session
@@ -2461,6 +2517,8 @@ async function agentFlow(text, imageBlocks, opts) {
 	}
 	const diagBaseline = verifyCfg.enabled ? snapshotDiagnostics() : new Map();
 	dbg('verify.config', { enabled: verifyCfg.enabled, hasCommand: !!verifyCfg.command, maxRounds: verifyCfg.maxRounds, includeWarnings: verifyCfg.includeWarnings });
+	const webAccess = await webAccessFor();
+	dbg('web.access', webAccess.backend ? { backend: webAccess.backend.id, pages: webAccess.backend.fetch ? 'yes' : 'no' } : { off: webAccess.off });
 	const runToken = {};
 	activeAgentRun = runToken;
 	try {
@@ -2520,6 +2578,8 @@ async function agentFlow(text, imageBlocks, opts) {
 			// note's quoted words are checked against (docs/levelcode-sessions-memory.md §12).
 			goalText: typedGoalText(text, opts),
 			memoryNotes: (aiConfig().get('sessions.memory.enabled', true) && aiConfig().get('sessions.memory.notes', true)) ? { remember: rememberNoteTool, forget: forgetNoteTool } : undefined,
+			// web_search / web_fetch: a backend when a search route exists, else why not (the model is told, so it can say).
+			web: webAccess,
 
 			// MCP (docs/MCP.md S3). Config is read HERE and handed in, like verify/commandTimeout, so
 			// agent.js keeps doing the loading + connecting + naming without reaching for the editor API.
@@ -3922,6 +3982,7 @@ function activate(context) {
 		vscode.commands.registerCommand('levelcode.ai.sessions', () => revealSessions('history')),
 		vscode.commands.registerCommand('levelcode.ai.memory', () => revealSessions('memory')),
 		vscode.commands.registerCommand('levelcode.ai.searchSessions', () => searchSessionsQuickPick()),
+		vscode.commands.registerCommand('levelcode.ai.setWebSearchKey', () => setWebSearchKey()),
 		// Reachable from an image tab's title bar: dropping a file onto the workbench opens it there,
 		// so that is where someone already is when they realise the drop did not attach it.
 		// Called by the CORE patch in editorDropTarget.ts when an image is dropped onto the chat

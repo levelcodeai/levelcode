@@ -15,6 +15,7 @@ const REMOVED_COMMANDS = new Set([
 	'levelcode.import.vscode',      // reads another editor's settings from this machine's disk
 	'levelcode.ai.manageMcp',       // MCP servers are local processes
 	'levelcode.ai.sketch',          // Agent Sketch has not been run in the browser
+	'levelcode.ai.setWebSearchKey', // an own search key is used from the desktop only; a tab searches through LevelCode Cloud
 ]);
 
 /** Settings that only mean something with a local disk, a local model server or a program that serves a page. */
@@ -25,6 +26,7 @@ const REMOVED_SETTINGS = new Set([
 	'levelcode.ai.sessions.dir',
 	'levelcode.ai.ollama.url',
 	'levelcode.ai.ollama.model',
+	'levelcode.ai.web.searchProvider',   // a tab always searches through LevelCode Cloud (webSearch.cloudBackend)
 ]);
 
 /**

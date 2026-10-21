@@ -148,6 +148,11 @@
         "icon": "$(search)"
       },
       {
+        "command": "levelcode.ai.setWebSearchKey",
+        "title": "AI: Set Web Search Key…",
+        "category": "LevelCode"
+      },
+      {
         "command": "levelcode.ai.memory",
         "title": "AI: Project Memory",
         "category": "LevelCode",
@@ -457,6 +462,20 @@
           "scope": "application",
           "default": true,
           "description": "Show a thin line of light that travels round the message box's border while LevelCode works — thinking, writing, running a command, checking its edits. While it waits on you (a command to approve, a question to answer) the light stops and the border stays dimly lit. With reduced motion the border is lit without moving. Turn off for no light at all; the working line above the message box still shows what is happening."
+        },
+        "levelcode.ai.web.search": {
+          "type": "boolean",
+          "scope": "application",
+          "default": true,
+          "description": "Let the agent search the web and read pages (web_search and web_fetch) when a question depends on facts outside your workspace: current docs and versions, error messages, standards, companies, people. Searches go through LevelCode Cloud when you are signed in (they use your credits) or to your own search key (levelcode.ai.web.searchProvider). The agent opens only pages that came from its search results, a page it opened, or your own message, and never pages on your local network. Turn off and the agent has no web access."
+        },
+        "levelcode.ai.web.searchProvider": {
+          "type": "string",
+          "scope": "application",
+          "enum": ["levelcode", "brave", "tavily", "exa"],
+          "enumDescriptions": ["LevelCode Cloud: no key needed, searches use your credits (needs sign-in).", "Brave Search, with your own API key (desktop).", "Tavily, with your own API key (desktop).", "Exa, with your own API key (desktop)."],
+          "default": "levelcode",
+          "markdownDescription": "Where the agent's web searches go. Set your own key with the command **LevelCode: AI: Set Web Search Key…**; it is kept in your system keychain. In LevelCode in the browser, searches always go through LevelCode Cloud."
         },
         "levelcode.cloud.endpoint": {
           "type": "string",

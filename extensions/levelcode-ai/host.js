@@ -43,6 +43,8 @@ const caps = Object.freeze({
 	mcpStdio: !isBrowser,
 	/** Search file contents with the ripgrep binary the editor ships. */
 	ripgrep: !isBrowser,
+	/** Open web pages from this machine (web_fetch). In a browser tab another site can only be read through LevelCode Cloud. */
+	webDirect: !isBrowser,
 	/**
 	 * Take a sign-in result that no sign-in of this editor asked for: the old token-in-the-link form, or a code
 	 * with no sign-in pending. The desktop does what it always did. In a browser the callback is a page of the
