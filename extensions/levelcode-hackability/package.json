@@ -58,6 +58,7 @@
       "properties": {
         "levelcode.init.enabled": {
           "type": "boolean",
+          "scope": "application",
           "default": true,
           "description": "Run your user init script (~/.levelcode/init.js) when LevelCode starts."
         }
