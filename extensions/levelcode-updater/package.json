@@ -34,16 +34,19 @@
       "properties": {
         "levelcode.update.enabled": {
           "type": "boolean",
+          "scope": "application",
           "default": true,
           "description": "Periodically check for new LevelCode releases and notify with a download link (does not auto-install)."
         },
         "levelcode.update.url": {
           "type": "string",
+          "scope": "application",
           "default": "",
           "description": "Update feed base URL. Overrides product.json updateUrl. Leave blank to use product.json. For local testing, point at the reference update server (e.g. http://localhost:9696)."
         },
         "levelcode.update.intervalHours": {
           "type": "number",
+          "scope": "application",
           "default": 4,
           "minimum": 1,
           "description": "How often to check for updates, in hours."
